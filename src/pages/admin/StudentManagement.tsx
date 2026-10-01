@@ -13,10 +13,31 @@ import {
   Search, User, Users, Eye, Edit2,
   Bell, Trash2, Filter, Plus, X, RefreshCw, AlertTriangle,
   Send, Loader2, Copy, CheckCheck, ShieldCheck, Clock, Activity,
-  BookOpen, Ban, CheckCircle2, FileText,
+  BookOpen, Ban, CheckCircle2, FileText, ChevronDown,
 } from "lucide-react";
 
 const G      = "#064E3B";
+const G0 = "#061409", G1 = "#0f2d1f", G2 = "#1a3d27", G3 = "#276749";
+const GOLD = "#c9a84c", WARM = "#faf8f4", BRD = "#e5ddd3";
+
+// Registration pipeline steps — identical to the Pipeline Tracker (TasjeelAdmin)
+const STEP_CFG: Record<string, { label: string; icon: string; color: string; bg: string }> = {
+  enrollment:       { label: "Enrollment",       icon: "📝", color: "#6366f1", bg: "#EEF2FF" },
+  payment:          { label: "Payment",          icon: "💳", color: "#0ea5e9", bg: "#F0F9FF" },
+  onboarding:       { label: "Onboarding",       icon: "📋", color: "#8b5cf6", bg: "#F5F3FF" },
+  exam:             { label: "Entrance Exam",    icon: "📖", color: "#f59e0b", bg: "#FFFBEB" },
+  review:           { label: "Under Review",     icon: "🔍", color: "#ef4444", bg: "#FEF2F2" },
+  level_assignment: { label: "Awaiting Session", icon: "📅", color: "#f97316", bg: "#FFF7ED" },
+  completed:        { label: "Completed",        icon: "✅", color: "#22c55e", bg: "#F0FDF4" },
+};
+const STEP_ORDER = ["enrollment", "payment", "onboarding", "exam", "review", "level_assignment", "completed"];
+const TIMELINE   = ["enrollment", "payment", "onboarding", "exam", "level_assignment", "completed"];
+
+const Pill = ({ label, value }: { label: string; value: any }) => (
+  <div style={{ padding: "5px 10px", borderRadius: 8, background: "#fff", border: `1px solid ${BRD}`, fontSize: 11 }}>
+    <span style={{ color: "#9CA3AF" }}>{label}: </span><strong style={{ color: "#374151" }}>{value ?? "—"}</strong>
+  </div>
+);
 const ROLES  = ["student", "teacher", "admin"] as const;
 const STUDENT_TYPES = ["general", "private"] as const;
 
@@ -428,208 +449,214 @@ export default function StudentManagement() {
     setSuspending(null);
   };
 
+  // ── Pipeline progress (same data the Pipeline Tracker uses) ─────────────
+  const [pipeline, setPipeline] = useState<Record<string, any>>({});
+  const [expanded, setExpanded] = useState<string | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await (supabase as any).from("tasjeel_progress").select("user_id,current_step,level_assigned");
+        const m: Record<string, any> = {};
+        (data || []).forEach((p: any) => { m[p.user_id] = p; });
+        setPipeline(m);
+      } catch { /* table optional */ }
+    })();
+  }, [users.length]);
+
+  const count = (id: string) => {
+    if (id === "all") return users.length;
+    if (id === "suspended") return users.filter(u => u.payment_status === "suspended").length;
+    if (id === "private") return users.filter(u => u.roles.includes("student") && u.student_type === "private").length;
+    return users.filter(u => u.roles.includes(id)).length;
+  };
+  const ROLE_CHIPS = [
+    { id: "all", label: "All" },
+    { id: "student", label: "Students" },
+    { id: "teacher", label: "Teachers" },
+    { id: "admin", label: "Admins" },
+  ];
+  const sel: React.CSSProperties = { ...inp, background: "#fff", border: `1.5px solid ${BRD}`, borderRadius: 12, padding: "9px 10px", width: "auto", flex: 1, minWidth: 0 };
+
   return (
-    <div style={{ minHeight: "100vh", background: "#F3F4F6" }}>
+    <div style={{ background: WARM, padding: "14px 14px 32px", display: "flex", flexDirection: "column", gap: 12, fontFamily: "'Cairo',sans-serif" }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
-      {/* Header */}
-      <div style={{ background: "#fff", borderBottom: "1px solid #E5E7EB", padding: "14px 16px" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-          <div>
-            <h1 style={{ fontSize: 17, fontWeight: 800, color: "#111", margin: 0 }}>User Management</h1>
-            <p style={{ fontSize: 11, color: "#6B7280", margin: 0 }}>{users.length} total · {filtered.length} shown</p>
+      {/* Hero */}
+      <div style={{ borderRadius: 20, padding: "16px 14px", background: `linear-gradient(135deg,${G1},${G2})`, border: `1px solid ${GOLD}33`, boxShadow: `0 4px 24px ${G1}44` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 8 }}>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,.5)", letterSpacing: 0.6 }}>USER MANAGEMENT</p>
+            <p style={{ margin: "2px 0 0", fontWeight: 900, fontSize: 18, color: "#fff" }}>{users.length} users <span style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,.5)" }}>· {filtered.length} shown</span></p>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            {/* Create User */}
-            <button
-              onClick={() => setCreateDialog(true)}
-              style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, border: "none", background: `linear-gradient(135deg,${G},#075E54)`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer" }}
-            >
-              <Plus size={13} /> Create User
+          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+            <button onClick={() => setCreateDialog(true)} style={{ padding: "8px 12px", borderRadius: 10, border: "none", background: GOLD, color: G0, fontSize: 12, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontFamily: "inherit" }}>
+              <Plus size={13} /> Create
             </button>
-            <button onClick={() => setNotifDialog(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB", background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", color: "#374151" }}>
-              <Bell size={13} /> Notify
+            <button onClick={() => { setNotifTarget([]); setNotifDialog(true); }} style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid rgba(255,255,255,.25)", background: "rgba(255,255,255,.1)", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center" }} aria-label="Notify">
+              <Bell size={14} />
             </button>
-            <button onClick={loadUsers} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 10, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
-              <RefreshCw size={14} color="#6B7280" />
+            <button onClick={loadUsers} disabled={loading} style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid rgba(255,255,255,.25)", background: "rgba(255,255,255,.1)", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center" }} aria-label="Refresh">
+              <RefreshCw size={14} style={{ animation: loading ? "spin .8s linear infinite" : "none" }} />
             </button>
           </div>
         </div>
-
-        {/* Filters */}
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
-            <Search size={13} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "#9CA3AF" }} />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name, email, ID…" style={{ ...inp, paddingLeft: 28 }} />
-          </div>
-          <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} style={{ ...inp, width: "auto", minWidth: 110 }}>
-            <option value="all">All Roles</option>
-            {ROLES.map(r => <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>)}
-          </select>
-          <select value={levelFilter} onChange={e => setLevelFilter(e.target.value)} style={{ ...inp, width: "auto", minWidth: 130 }}>
-            <option value="all">All Levels</option>
-            {academicLevels.map(l => <option key={l.slug} value={l.slug}>{l.name_en}</option>)}
-          </select>
-          <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={{ ...inp, width: "auto", minWidth: 130 }}>
-            <option value="all">All Types</option>
-            <option value="general">👥 General</option>
-            <option value="private">🔒 Private</option>
-          </select>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
+          {[{ v: count("student"), l: "Students", c: "#93c5fd" }, { v: count("teacher"), l: "Teachers", c: "#86efac" }, { v: count("private"), l: "Private", c: "#d8b4fe" }, { v: count("suspended"), l: "Suspended", c: "#fca5a5" }].map(s => (
+            <div key={s.l} style={{ background: "rgba(255,255,255,.07)", borderRadius: 12, padding: "10px 4px", textAlign: "center", border: "1px solid rgba(255,255,255,.08)" }}>
+              <p style={{ margin: 0, fontWeight: 900, fontSize: 18, color: s.c, lineHeight: 1 }}>{s.v}</p>
+              <p style={{ margin: "4px 0 0", fontSize: 9, color: "rgba(255,255,255,.45)", fontWeight: 700, textTransform: "uppercase" }}>{s.l}</p>
+            </div>
+          ))}
         </div>
       </div>
 
-      <div style={{ padding: 16, maxWidth: 800, margin: "0 auto" }}>
-        {loading ? (
-          <div style={{ textAlign: "center", padding: 60 }}><Loader2 size={28} style={{ animation: "spin .8s linear infinite", color: G }} /></div>
-        ) : filtered.length === 0 ? (
-          <div style={{ textAlign: "center", padding: 60, color: "#9CA3AF" }}>
-            <Users size={48} style={{ margin: "0 auto 12px", display: "block" }} />
-            <p>No users found</p>
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {filtered.map(u => {
-              const isSuspended = u.payment_status === "suspended";
-              const st = u.student_type || "general";
-              const sc = studentTypeColor[st] || studentTypeColor.general;
-              return (
-              <div key={u.user_id} style={{
-                background: "#fff", borderRadius: 16,
-                border: `1px solid ${isSuspended ? "#FEE2E2" : "#E5E7EB"}`,
-                overflow: "hidden",
-                boxShadow: "0 1px 4px rgba(0,0,0,.04)",
-              }}>
-                {/* ── TOP: avatar + info ── */}
-                <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 14px 10px" }}>
-                  {/* Avatar */}
-                  <div style={{ flexShrink: 0, position: "relative" }}>
-                    {u.avatar_url ? (
-                      <img src={u.avatar_url} style={{ width: 46, height: 46, borderRadius: 12, objectFit: "cover" }} />
-                    ) : (
-                      <div style={{ width: 46, height: 46, borderRadius: 12, background: `linear-gradient(135deg,${G},#075E54)`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <span style={{ fontSize: 19, fontWeight: 900, color: "#fff" }}>{(u.full_name || u.email || "U")[0].toUpperCase()}</span>
-                      </div>
-                    )}
-                    {isSuspended && (
-                      <div style={{ position: "absolute", bottom: -3, right: -3, width: 14, height: 14, borderRadius: "50%", background: "#DC2626", border: "2px solid #fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <Ban size={7} color="#fff" />
-                      </div>
-                    )}
+      {/* Search */}
+      <div style={{ position: "relative" }}>
+        <Search size={14} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#9CA3AF" }} />
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name, email or student ID…"
+          style={{ width: "100%", padding: "11px 12px 11px 34px", borderRadius: 12, border: `1.5px solid ${BRD}`, fontSize: 13, outline: "none", background: "#fff", boxSizing: "border-box", fontFamily: "inherit" }} />
+      </div>
+
+      {/* Role chips */}
+      <div style={{ display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "none" as any }}>
+        {ROLE_CHIPS.map(f => (
+          <button key={f.id} onClick={() => setRoleFilter(f.id)}
+            style={{ flexShrink: 0, padding: "7px 14px", borderRadius: 20, border: `1.5px solid ${roleFilter === f.id ? G2 : BRD}`, background: roleFilter === f.id ? G2 : "#fff", color: roleFilter === f.id ? "#fff" : "#374151", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            {f.label} ({count(f.id)})
+          </button>
+        ))}
+      </div>
+
+      {/* Level + type */}
+      <div style={{ display: "flex", gap: 8 }}>
+        <select value={levelFilter} onChange={e => setLevelFilter(e.target.value)} style={sel}>
+          <option value="all">All Levels</option>
+          {academicLevels.map(l => <option key={l.slug} value={l.slug}>{l.name_en}</option>)}
+        </select>
+        <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={sel}>
+          <option value="all">All Types</option>
+          <option value="general">👥 General</option>
+          <option value="private">🔒 Private</option>
+        </select>
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 50 }}><Loader2 size={28} style={{ animation: "spin .8s linear infinite", color: G2 }} /></div>
+      ) : filtered.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "40px 20px", background: "#fff", borderRadius: 16, border: `1.5px dashed ${BRD}` }}>
+          <p style={{ fontSize: 36, margin: "0 0 6px" }}>👥</p>
+          <p style={{ fontWeight: 700, color: "#374151", margin: 0 }}>No users found</p>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {filtered.map(u => {
+            const isSuspended = u.payment_status === "suspended";
+            const isStudent = u.roles.includes("student");
+            const st = u.student_type || "general";
+            const sc = studentTypeColor[st] || studentTypeColor.general;
+            const lvl = u.level || u.course_level;
+            const open = expanded === u.user_id;
+            const pg = pipeline[u.user_id];
+            const cfg = pg ? (STEP_CFG[pg.current_step] || { label: pg.current_step, icon: "•", color: "#9CA3AF", bg: "#F9FAFB" }) : null;
+            const stepIdx = pg ? STEP_ORDER.indexOf(pg.current_step) : -1;
+            const done = pg?.current_step === "completed";
+            const act = (icon: React.ReactNode, label: string, onClick: () => void, bg = "#fff", color = "#6B7280", disabled = false) => (
+              <button key={label} onClick={onClick} disabled={disabled} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, padding: "10px 2px", background: bg, border: "none", borderRight: "1px solid #F3F4F6", cursor: disabled ? "wait" : "pointer", opacity: disabled ? 0.5 : 1, fontFamily: "inherit" }}>
+                {icon}<span style={{ fontSize: 9, color, fontWeight: 700 }}>{label}</span>
+              </button>
+            );
+            return (
+              <div key={u.user_id} style={{ background: "#fff", borderRadius: 16, border: `1px solid ${isSuspended ? "#FECACA" : BRD}`, overflow: "hidden" }}>
+                <div onClick={() => setExpanded(open ? null : u.user_id)} style={{ padding: "12px 14px", cursor: "pointer" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ position: "relative", flexShrink: 0 }}>
+                      {u.avatar_url
+                        ? <img src={u.avatar_url} alt="" style={{ width: 40, height: 40, borderRadius: "50%", objectFit: "cover" }} />
+                        : <div style={{ width: 40, height: 40, borderRadius: "50%", background: `linear-gradient(135deg,${G2},${G3})`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 16 }}>{(u.full_name || u.email || "U")[0].toUpperCase()}</div>}
+                      {isSuspended && <div style={{ position: "absolute", bottom: -2, right: -2, width: 14, height: 14, borderRadius: "50%", background: "#DC2626", border: "2px solid #fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Ban size={7} color="#fff" /></div>}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ margin: 0, fontWeight: 800, fontSize: 14, color: G2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.full_name || "—"}</p>
+                      <p style={{ margin: "1px 0 0", fontSize: 11, color: "#9CA3AF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.email}</p>
+                    </div>
+                    <ChevronDown size={16} color="#9ca3af" style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .2s", flexShrink: 0 }} />
                   </div>
 
-                  {/* Info */}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    {/* Name + suspension badge */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                      <span style={{ fontWeight: 800, fontSize: 14, color: "#111", lineHeight: 1.2 }}>{u.full_name || "—"}</span>
-                      {isSuspended && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 20, background: "#FEE2E2", color: "#DC2626", border: "1px solid #FECACA", fontWeight: 800 }}>SUSPENDED</span>}
-                    </div>
-
-                    {/* Email — truncated */}
-                    <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {u.email}
-                      {u.student_id ? <span style={{ color: "#C4B5FD", fontWeight: 700 }}> · #{u.student_id}</span> : null}
-                    </p>
-
-                    {/* Last seen + Joined — each on own line, no wrapping issues */}
-                    <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 3 }}>
-                      {u.last_sign_in_at && (
-                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          <Activity size={9} color="#059669" />
-                          <span style={{ fontSize: 10, color: "#059669", fontWeight: 600, whiteSpace: "nowrap" }}>
-                            Last seen: {formatLastSeen(u.last_sign_in_at)}
-                          </span>
-                        </div>
-                      )}
-                      {!u.last_sign_in_at && (
-                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          <Activity size={9} color="#D1D5DB" />
-                          <span style={{ fontSize: 10, color: "#D1D5DB", fontWeight: 600 }}>Never logged in</span>
-                        </div>
-                      )}
-                      {u.created_at && (
-                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          <Clock size={9} color="#9CA3AF" />
-                          <span style={{ fontSize: 10, color: "#9CA3AF", whiteSpace: "nowrap" }}>
-                            Joined: {fmt12Date(new Date(u.created_at))}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Badges row */}
-                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10, gap: 8 }}>
+                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap", minWidth: 0 }}>
                       {(u.roles || ["student"]).map((r: string) => {
                         const rc = roleColor[r] || { bg: "#F3F4F6", text: "#374151", border: "#D1D5DB" };
                         return <span key={r} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: rc.bg, color: rc.text, border: `1px solid ${rc.border}`, fontWeight: 700 }}>{r}</span>;
                       })}
-                      {(u.level || u.course_level) && (
-                        <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#FFFBEB", color: "#92400E", border: "1px solid #FDE68A", fontWeight: 700 }}>
-                          {u.level || u.course_level}
-                        </span>
-                      )}
-                      {u.roles.includes("student") && (
-                        <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: sc.bg, color: sc.text, border: `1px solid ${sc.border}`, fontWeight: 700 }}>
-                          {sc.icon} {st.charAt(0).toUpperCase() + st.slice(1)}
-                        </span>
-                      )}
-                      {u.country && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#F3F4F6", color: "#6B7280", border: "1px solid #E5E7EB" }}>🌍 {u.country}</span>}
+                      {isStudent && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: sc.bg, color: sc.text, border: `1px solid ${sc.border}`, fontWeight: 700 }}>{sc.icon} {st}</span>}
+                      {isSuspended && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#FEE2E2", color: "#DC2626", border: "1px solid #FECACA", fontWeight: 800 }}>SUSPENDED</span>}
                     </div>
+                    <span style={{ fontSize: 10, color: u.last_sign_in_at ? "#059669" : "#9CA3AF", fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>
+                      {u.last_sign_in_at ? formatLastSeen(u.last_sign_in_at).replace(/\s+\(.*\)$/, "") : "Never logged in"}
+                    </span>
                   </div>
-                </div>
 
-                {/* ── BOTTOM: action buttons full-width strip ── */}
-                <div style={{ display: "flex", borderTop: "1px solid #F3F4F6" }}>
-                  {[
-                    { icon: <Eye size={13} color="#6B7280" />, label: "View", onClick: () => navigate(`/admin/students/${u.user_id}/view`), style: {} },
-                    { icon: <FileText size={13} color={G} />, label: "Report Card", onClick: () => navigate(`/admin/students/${u.user_id}/report-card`), style: {} },
-                    { icon: <Edit2 size={13} color={G} />, label: "Edit", onClick: () => openEdit(u), style: {} },
-                    { icon: <Bell size={13} color="#6B7280" />, label: "Notify", onClick: () => { setNotifTarget([u.user_id]); setNotifDialog(true); }, style: {} },
-                  ].map((btn, i) => (
-                    <button key={i} onClick={btn.onClick} style={{
-                      flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                      gap: 3, padding: "9px 4px", background: "#fff", border: "none",
-                      borderRight: "1px solid #F3F4F6", cursor: "pointer",
-                    }}>
-                      {btn.icon}
-                      <span style={{ fontSize: 9, color: "#9CA3AF", fontWeight: 600 }}>{btn.label}</span>
-                    </button>
-                  ))}
-                  {u.user_id !== currentUser?.id && (
+                  {/* Registration pipeline strip (students that went through registration) */}
+                  {isStudent && pg && cfg && (
                     <>
-                      <button
-                        onClick={() => toggleSuspend(u)}
-                        disabled={suspending === u.user_id}
-                        style={{
-                          flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                          gap: 3, padding: "9px 4px", cursor: suspending === u.user_id ? "wait" : "pointer",
-                          background: isSuspended ? "#F0FDF4" : "#FFFBEB", border: "none",
-                          borderRight: "1px solid #F3F4F6", opacity: suspending === u.user_id ? 0.5 : 1,
-                        }}
-                      >
-                        {suspending === u.user_id
-                          ? <Loader2 size={13} style={{ animation: "spin .8s linear infinite", color: "#92400E" }} />
-                          : isSuspended ? <CheckCircle2 size={13} color="#16A34A" /> : <Ban size={13} color="#D97706" />}
-                        <span style={{ fontSize: 9, color: isSuspended ? "#16A34A" : "#D97706", fontWeight: 600 }}>
-                          {isSuspended ? "Unsuspend" : "Suspend"}
-                        </span>
-                      </button>
-                      <button onClick={() => setDeleteDialog(u)} style={{
-                        flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                        gap: 3, padding: "9px 4px", background: "#FEF2F2", border: "none", cursor: "pointer",
-                      }}>
-                        <Trash2 size={13} color="#DC2626" />
-                        <span style={{ fontSize: 9, color: "#DC2626", fontWeight: 600 }}>Delete</span>
-                      </button>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
+                        <span style={{ padding: "3px 10px", borderRadius: 20, background: cfg.bg, color: cfg.color, fontSize: 11, fontWeight: 700, border: `1px solid ${cfg.color}33` }}>{cfg.icon} {cfg.label}</span>
+                        {lvl && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#FFFBEB", color: "#92400E", border: "1px solid #FDE68A", fontWeight: 700 }}>🎓 {lvl}</span>}
+                      </div>
+                      <div style={{ display: "flex", gap: 3, marginTop: 8 }}>
+                        {TIMELINE.map(sid => {
+                          const idx = STEP_ORDER.indexOf(sid);
+                          const reached = done || idx < stepIdx || pg.current_step === sid;
+                          return <div key={sid} style={{ flex: 1, height: 5, borderRadius: 3, background: reached ? (pg.current_step === sid && !done ? GOLD : G3) : "#E5E7EB" }} />;
+                        })}
+                      </div>
                     </>
                   )}
+                  {!(isStudent && pg) && lvl && (
+                    <div style={{ marginTop: 8 }}><span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#FFFBEB", color: "#92400E", border: "1px solid #FDE68A", fontWeight: 700 }}>🎓 {lvl}</span></div>
+                  )}
                 </div>
+
+                {open && (
+                  <div style={{ borderTop: "1px solid #f3f4f6" }}>
+                    <div style={{ padding: "12px 14px 12px", display: "flex", flexDirection: "column", gap: 10 }}>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {u.student_id && <Pill label="ID" value={`#${u.student_id}`} />}
+                        {u.country && <Pill label="Country" value={u.country} />}
+                        {u.phone && <Pill label="Phone" value={u.phone} />}
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <div style={{ background: "#F0FDF4", borderRadius: 12, padding: 10, border: "1px solid #86EFAC" }}>
+                          <p style={{ margin: 0, fontSize: 9, fontWeight: 800, color: "#166534", textTransform: "uppercase" }}>⚡ Last seen</p>
+                          <p style={{ margin: "4px 0 0", fontSize: 11, fontWeight: 700, color: "#374151" }}>{u.last_sign_in_at ? formatLastSeen(u.last_sign_in_at) : "Never"}</p>
+                        </div>
+                        <div style={{ background: "#F5F3FF", borderRadius: 12, padding: 10, border: "1px solid #C4B5FD" }}>
+                          <p style={{ margin: 0, fontSize: 9, fontWeight: 800, color: "#6d28d9", textTransform: "uppercase" }}>🕐 Joined</p>
+                          <p style={{ margin: "4px 0 0", fontSize: 11, fontWeight: 700, color: "#374151" }}>{u.created_at ? fmt12Date(new Date(u.created_at)) : "—"}</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", borderTop: "1px solid #F3F4F6" }}>
+                      {act(<Eye size={14} color="#6B7280" />, "View", () => navigate(`/admin/students/${u.user_id}/view`))}
+                      {act(<FileText size={14} color={G} />, "Report", () => navigate(`/admin/students/${u.user_id}/report-card`), "#fff", G)}
+                      {act(<Edit2 size={14} color={G} />, "Edit", () => openEdit(u), "#fff", G)}
+                      {act(<Bell size={14} color="#6B7280" />, "Notify", () => { setNotifTarget([u.user_id]); setNotifDialog(true); })}
+                      {u.user_id !== currentUser?.id && (
+                        <>
+                          {act(
+                            suspending === u.user_id ? <Loader2 size={14} style={{ animation: "spin .8s linear infinite", color: "#92400E" }} /> : isSuspended ? <CheckCircle2 size={14} color="#16A34A" /> : <Ban size={14} color="#D97706" />,
+                            isSuspended ? "Unsuspend" : "Suspend", () => toggleSuspend(u), isSuspended ? "#F0FDF4" : "#FFFBEB", isSuspended ? "#16A34A" : "#D97706", suspending === u.user_id)}
+                          {act(<Trash2 size={14} color="#DC2626" />, "Delete", () => setDeleteDialog(u), "#FEF2F2", "#DC2626")}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* ═══ CREATE USER DIALOG ═════════════════════════════════════════ */}
       {createDialog && (
