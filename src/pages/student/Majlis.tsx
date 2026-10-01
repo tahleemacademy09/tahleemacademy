@@ -19,13 +19,15 @@ import {
   Menu, Settings, User, Bell, HelpCircle, Bookmark,
   ChevronDown, Archive, Eye, Moon, LayoutDashboard, Users,
   Music, MapPin, Phone, File,
-  Video, UserCircle2, BarChart3, Sticker as StickerIcon, Ban, PhoneIncoming, PhoneOff as PhoneOffIcon, Link2, PlayCircle
+  Video, UserCircle2, BarChart3, Sticker as StickerIcon, Ban, PhoneIncoming, PhoneOff as PhoneOffIcon, Link2, PlayCircle, Radio
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import CreateChannelDialog from "@/components/majlis/CreateChannelDialog";
 import BrowseChannelsDialog from "@/components/majlis/BrowseChannelsDialog";
 import GroupInfoPanel from "@/components/majlis/GroupInfoPanel";
 import MajlisCallRoom from "@/components/majlis/MajlisCallRoom";
+import MajlisLive from "@/components/majlis/MajlisLive";
+import { useMajlisLive } from "@/components/majlis/useMajlisLive";
 import type { ChatChannel, ChatMessage, UserProfile } from "@/components/majlis/types";
 
 // ── Constants ────────────────────────────────────────────────────
@@ -532,6 +534,10 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
   const [showForwardSheet,setShowForwardSheet]       = useState(false);
   const [showCreateDialog,setShowCreateDialog]       = useState(false);
   const [showBrowseChannels,setShowBrowseChannels]   = useState(false);
+  // Al-Majlis Live (meetings / urgent discussions, run through the classroom)
+  const [showMajlisLive,setShowMajlisLive]           = useState(false);
+  const majlisLive = useMajlisLive();
+  useEffect(()=>{ if(new URLSearchParams(window.location.search).get("live")==="1") setShowMajlisLive(true); },[]);
   const [showNewSheet,setShowNewSheet]               = useState(false);
   const [newDmSearch,setNewDmSearch]                 = useState("");
   const [activeFilter,setActiveFilter]               = useState<"all"|"unread"|"groups"|"announcements">("all");
@@ -2188,6 +2194,9 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             <span style={{color:"#fff",fontWeight:700,fontSize:17}}>Al-Majlis</span>
           </div>
           <div style={{display:"flex",gap:4}}>
+            <button onClick={()=>setShowMajlisLive(true)} title="Majlis Live" style={{background:majlisLive.isLive?"#DC2626":"none",border:"none",color:"#fff",cursor:"pointer",padding:6,borderRadius:8,position:"relative",display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:700}}>
+              <Radio size={18}/>{majlisLive.isLive&&<span>LIVE</span>}
+            </button>
             <button onClick={()=>setShowBrowseChannels(true)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6,borderRadius:8}}>
               <Search size={18}/>
             </button>
@@ -2199,6 +2208,18 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             </button>
           </div>
         </div>
+
+        {/* Majlis Live banner — shows while a meeting / urgent discussion is on */}
+        {majlisLive.isLive&&(
+          <div onClick={()=>setShowMajlisLive(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",cursor:"pointer",background:majlisLive.liveMeeting?.kind==="urgent"?"#DC2626":"#1a3d27",color:"#fff"}}>
+            <Radio size={16}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:12,fontWeight:800}}>{majlisLive.liveMeeting?.kind==="urgent"?"🚨 Urgent — live now":"🔴 Majlis Live now"}</div>
+              <div style={{fontSize:12,opacity:.85,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{majlisLive.liveMeeting?.title||majlisLive.liveSession?.topic||"Tap to join"}</div>
+            </div>
+            <span style={{fontSize:12,fontWeight:800,background:"rgba(255,255,255,.2)",padding:"5px 12px",borderRadius:16}}>Join</span>
+          </div>
+        )}
 
         {/* Search bar */}
         <div style={{padding:"8px 12px",background:isDark?"#111b21":"#fff"}}>
@@ -3043,6 +3064,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
           </div>
         </div>
       )}
+
+      {showMajlisLive&&<MajlisLive isPrivileged={canModerate} onClose={()=>setShowMajlisLive(false)}/>}
 
       {/* Al-Majlis discussion call — multi-party LiveKit room, distinct from the Go Live broadcast */}
       {showMajlisCall&&(callChannelId||activeChannel)&&(()=>{
