@@ -257,8 +257,13 @@ const mvMeasureInk = (svgText: string, vb: MvBox): Promise<{ box: MvBox | null; 
   });
 
 /** fitHeight: pixels of screen NOT available to the page (bars, buttons). When set, the whole page is fitted to the screen height. */
-export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, onBackground, highlight, selected, onAyahClick, onUnavailable }: {
+export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, onUnavailable }: {
   page: number; fontSize?: number; halves?: [number, number]; fitHeight?: number;
+  /** force a pure white page with pure black ink (recolours the printed SVG) */
+  pureWhite?: boolean;
+  /** full-screen mode: pixel height the page may use. The page fills it, stretching vertically by at most `maxStretch`; if it would be taller than this it is narrowed instead so it never scrolls */
+  availableHeight?: number;
+  maxStretch?: number;
   /** no card, shadow or rounded corners — the page blends into whatever is behind it */
   seamless?: boolean;
   /** called with the page's own background colour so the surrounding screen can use the same one */
@@ -278,7 +283,9 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
   const [mode, setMode] = useState<"loading" | "inline" | "img" | "text">("loading");
   const [imgReady, setImgReady] = useState(false);
   const [aspect, setAspect] = useState<number | null>(null);
-  const [bg, setBg] = useState("#fffdf6");
+  const [bg, setBg] = useState(pureWhite ? "#ffffff" : "#fffdf6");
+  const [boxW, setBoxW] = useState(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const unavailRef = useRef(onUnavailable);
   unavailRef.current = onUnavailable;
   const [winH, setWinH] = useState(() => (typeof window !== "undefined" ? window.innerHeight : 800));
@@ -308,6 +315,22 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
           ".hl-sel{fill:rgba(6,78,59,.16)!important;fill-opacity:1!important}" +
           ".hl-play{fill:rgba(201,168,76,.42)!important;fill-opacity:1!important}";
         root.appendChild(st);
+        if (pureWhite) {
+          // Printed SVG ships brown-ish ink on cream. Push every dark fill/stroke to #000 and every
+          // near-white fill to #fff. Ayah hit-polygons and mid-tone ornaments are left alone.
+          const rgb = (c: string) => { const m = c.match(/rgba?\(([^)]+)\)/); if (!m) return null; const [r, g, b, a] = m[1].split(",").map((x) => parseFloat(x)); return { avg: (r + g + b) / 3, a: a === undefined ? 1 : a }; };
+          root.querySelectorAll("path,rect,circle,ellipse,polygon,polyline,line,text,tspan").forEach((el) => {
+            if (el.matches(MV_POLY)) return;
+            const cs = getComputedStyle(el);
+            const f = rgb(cs.fill);
+            if (f && f.a > 0.05) {
+              if (f.avg < 150) (el as SVGElement).style.setProperty("fill", "#000", "important");
+              else if (f.avg > 225) (el as SVGElement).style.setProperty("fill", "#fff", "important");
+            }
+            const sk = rgb(cs.stroke);
+            if (sk && sk.a > 0.05 && sk.avg < 150) (el as SVGElement).style.setProperty("stroke", "#000", "important");
+          });
+        }
         if (!root.querySelector(MV_POLY)) unavailRef.current?.(); // no ayah layer → caller falls back to its own reader
         const svg = root.querySelector("svg") as SVGSVGElement | null;
         if (!svg) { setMode("img"); return; }
@@ -334,7 +357,8 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
           const m = vb ? await mvMeasureInk(clean, vb) : { box: null, bg: null }; // real dark-ink extent + page colour
           let box: MvBox | null = m.box;
           if (!alive) return;
-          if (m.bg) { setBg(m.bg); onBackground?.(m.bg); }
+          if (pureWhite) { setBg("#ffffff"); onBackground?.("#ffffff"); }
+          else if (m.bg) { setBg(m.bg); onBackground?.(m.bg); }
           if (!box) {
             try { const b = svg.getBBox(); if (b.width > 10 && b.height > 10) box = { x: b.x, y: b.y, w: b.width, h: b.height }; } catch { /* ignore */ }
           }
@@ -345,7 +369,18 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
       })
       .catch(() => { if (alive) { setMode("img"); unavailRef.current?.(); } });
     return () => { alive = false; };
-  }, [src]);
+  }, [src, pureWhite]);
+
+  // track the width the page can use (parent box)
+  useEffect(() => {
+    const parent = wrapRef.current?.parentElement;
+    if (!parent) return;
+    const upd = () => setBoxW(parent.clientWidth);
+    upd();
+    const ro = new ResizeObserver(upd);
+    ro.observe(parent);
+    return () => ro.disconnect();
+  }, []);
 
   // paint playing / selected ayah
   useEffect(() => {
@@ -368,18 +403,35 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
     if (a) onAyahClick(a.surah, a.ayah);
   };
 
+  const zoom = Math.min(1.8, Math.max(0.8, fontSize / 26)); // A− / A+ zooms the page (26 = fit to width)
+  // full-screen mode: fill availableHeight (stretch up to maxStretch), or narrow the page if it is too tall
+  let fillW: number | undefined;
+  let fillH: number | undefined;
+  if (availableHeight && aspect && boxW && zoom <= 1) {
+    const naturalH = boxW / aspect;
+    if (naturalH > availableHeight) fillW = Math.floor(availableHeight * aspect);
+    else fillH = Math.round(naturalH * Math.min(maxStretch, availableHeight / naturalH));
+  }
+
+  // apply (or clear) the vertical stretch on the inline SVG
+  useEffect(() => {
+    const svg = hostRef.current?.shadowRoot?.querySelector("svg") as SVGSVGElement | null;
+    if (!svg || mode !== "inline") return;
+    if (fillH) { svg.setAttribute("preserveAspectRatio", "none"); svg.style.height = `${fillH}px`; }
+    else { svg.setAttribute("preserveAspectRatio", "xMidYMid meet"); svg.style.height = "auto"; }
+  }, [fillH, mode, aspect, src]);
+
   if (mode === "text") return <MushafTextPage page={safe} fontSize={fontSize} halves={halves} />;
 
   const partial = !!halves && !(halves[0] === 0 && halves[1] === 1);
   const dimTop = partial && halves![0] === 1;      // portion is the 2nd half → fade the top
   const dimBottom = partial && halves![1] === 0;   // portion is the 1st half → fade the bottom
-  const zoom = Math.min(1.8, Math.max(0.8, fontSize / 26)); // A− / A+ zooms the page (26 = fit to width)
   const shown = mode === "inline" || (mode === "img" && imgReady);
   const fitW = fitHeight && aspect && zoom <= 1 ? Math.floor(Math.max(200, winH - fitHeight) * aspect * zoom) : undefined;
   const fade = bg.startsWith("rgb(") ? bg.replace("rgb(", "rgba(").replace(")", ",.88)") : "rgba(253,248,238,.88)";
 
   return (
-    <div style={{ margin: seamless ? "0 auto" : "8px auto 12px", width: "100%", maxWidth: fitW }}>
+    <div ref={wrapRef} style={{ margin: seamless ? "0 auto" : "8px auto 12px", width: "100%", maxWidth: fillW ?? fitW }}>
       <div style={{ overflowX: zoom > 1 ? "auto" : "visible", borderRadius: seamless ? 0 : 6, boxShadow: seamless ? "none" : "0 4px 24px rgba(0,0,0,.14)", background: bg }}>
         <div style={{ position: "relative", width: `${zoom * 100}%`, minHeight: shown ? undefined : 420 }}>
           {!shown && (
