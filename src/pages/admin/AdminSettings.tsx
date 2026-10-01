@@ -156,15 +156,12 @@ export default function AdminSettings() {
   /* ── Notification preferences ────────────────────────────────── */
   const [notifs, setNotifs] = useState({
     push_notifications:         false,
-    email_notifications:        true,
-    whatsapp_notifications:     false,
     new_registration_alert:     true,
     payment_alert:              true,
     exam_submission_alert:      true,
     recitation_submission_alert:true,
     student_complaint_alert:    true,
     daily_summary_email:        false,
-    announcement_notifications: true,
   });
 
   /* ── Load profile ────────────────────────────────────────────── */
@@ -193,15 +190,12 @@ export default function AdminSettings() {
           push_notifications:          (typeof Notification !== "undefined" && Notification.permission === "granted")
                                          ? (d.push_notifications ?? n.push_notifications)
                                          : false,
-          email_notifications:         d.email_notifications         ?? n.email_notifications,
-          whatsapp_notifications:      d.whatsapp_notifications      ?? n.whatsapp_notifications,
           new_registration_alert:      d.new_registration_alert      ?? n.new_registration_alert,
           payment_alert:               d.payment_alert               ?? n.payment_alert,
           exam_submission_alert:       d.exam_submission_alert       ?? n.exam_submission_alert,
           recitation_submission_alert: d.recitation_submission_alert ?? n.recitation_submission_alert,
           student_complaint_alert:     d.student_complaint_alert     ?? n.student_complaint_alert,
           daily_summary_email:         d.daily_summary_email         ?? n.daily_summary_email,
-          announcement_notifications:  d.announcement_notifications  ?? n.announcement_notifications,
         }));
       }
     })();
@@ -414,10 +408,10 @@ export default function AdminSettings() {
         return;
       }
       const next = {
-        push_notifications: result === "granted", email_notifications: true, whatsapp_notifications: true,
+        push_notifications: result === "granted",
         new_registration_alert: true, payment_alert: true, exam_submission_alert: true,
         recitation_submission_alert: true, student_complaint_alert: true,
-        daily_summary_email: true, announcement_notifications: true,
+        daily_summary_email: true,
       };
       setNotifs(next);
       const { push_notifications: _skip, ...toSave } = next;
@@ -432,10 +426,10 @@ export default function AdminSettings() {
         await supabase.from("push_subscriptions" as any).delete().eq("user_id", user.id);
       } catch {}
       const next = {
-        push_notifications: false, email_notifications: false, whatsapp_notifications: false,
+        push_notifications: false,
         new_registration_alert: false, payment_alert: false, exam_submission_alert: false,
         recitation_submission_alert: false, student_complaint_alert: false,
-        daily_summary_email: false, announcement_notifications: false,
+        daily_summary_email: false,
       };
       setNotifs(next);
       const { push_notifications: _skip, ...toSave } = next;
@@ -892,19 +886,6 @@ export default function AdminSettings() {
             </div>
           )}
 
-          {/* WhatsApp warning if enabled without number */}
-          {notifs.whatsapp_notifications && !form.whatsapp && !form.phone && (
-            <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 10 }}>
-              <span style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>⚠️</span>
-              <div>
-                <p style={{ fontWeight: 700, fontSize: 13, color: "#92400E", margin: "0 0 2px" }}>WhatsApp number required</p>
-                <p style={{ fontSize: 12, color: "#B45309", margin: 0 }}>
-                  Go to the <strong>Profile tab</strong> and add your WhatsApp number.
-                </p>
-              </div>
-            </div>
-          )}
-
           <Sec title="Channels">
             {/* ── Phone / Web Push toggle ── */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #F9FAFB" }}>
@@ -926,13 +907,6 @@ export default function AdminSettings() {
                 onCheckedChange={handlePushToggle}
               />
             </div>
-            <Tog label="Email Notifications" sub="Receive alerts to your email"
-              checked={notifs.email_notifications} onChange={v => setNotifs(n => ({ ...n, email_notifications: v }))} />
-            <Tog label="WhatsApp Notifications"
-              sub={form.whatsapp || form.phone ? `Will message: ${form.whatsapp || form.phone}` : "Add your number in the Profile tab first"}
-              checked={notifs.whatsapp_notifications} onChange={v => setNotifs(n => ({ ...n, whatsapp_notifications: v }))} />
-            <Tog label="Academy Announcements" sub="When you send an announcement"
-              checked={notifs.announcement_notifications} onChange={v => setNotifs(n => ({ ...n, announcement_notifications: v }))} />
           </Sec>
 
           <Sec title="Student Activity">
