@@ -266,12 +266,26 @@ const mvPageOf = (src: string) => parseInt((src.match(/(\d{3})\.svg$/) || [])[1]
 
 // Optional: public URL of the tahleem-mushaf bucket (custom domain or r2.dev), e.g. https://mushaf.example.com
 // Set VITE_MUSHAF_PUBLIC_URL in Vercel to load pages straight from R2 (fastest, browser-cached).
-const MV_PUBLIC = ((import.meta as any).env?.VITE_MUSHAF_PUBLIC_URL as string | undefined)?.replace(/\/+$/, "");
+// Paste your public R2 URL here (no trailing slash), e.g. "https://pub-xxxxxxxx.r2.dev" or "https://mushaf.yourdomain.com".
+// Leave "" to keep using the edge function. VITE_MUSHAF_PUBLIC_URL in Vercel, if set, takes priority.
+const MV_PUBLIC_URL = "https://pub-f46d548912da492f80624384e49c543d.r2.dev";
+const MV_PUBLIC = (((import.meta as any).env?.VITE_MUSHAF_PUBLIC_URL as string | undefined) || MV_PUBLIC_URL).replace(/\/+$/, "");
 
 const mvWithTimeout = <T,>(p: Promise<T>, ms: number): Promise<T> =>
   new Promise<T>((res, rej) => { const t = setTimeout(() => rej(new Error("timeout")), ms); p.then((v) => { clearTimeout(t); res(v); }, (e) => { clearTimeout(t); rej(e); }); });
 
-async function mvFetchSvg(src: string): Promise<string> {
+/* Persistent device cache (Cache API): once a page has been fetched it is read back in a few ms, even offline
+   or after a restart. Only the printed-page SVGs are kept here (never user data). */
+const MV_CACHE_NAME = "mushaf-svg-v1";
+const mvCacheOpen = () => (typeof caches !== "undefined" ? caches.open(MV_CACHE_NAME).catch(() => null) : Promise.resolve(null));
+async function mvCacheGet(src: string): Promise<string | null> {
+  try { const c = await mvCacheOpen(); const r = c && (await c.match(src)); if (r) { const t = await r.text(); if (t.includes("<svg")) return t; } } catch { /* ignore */ }
+  return null;
+}
+async function mvCachePut(src: string, svg: string) {
+  try { const c = await mvCacheOpen(); if (c) await c.put(src, new Response(svg, { headers: { "Content-Type": "image/svg+xml" } })); } catch { /* quota etc. */ }
+}
+async function mvNetworkSvg(src: string): Promise<string> {
   const pg = mvPageOf(src);
   if (MV_PUBLIC) {
     try {
@@ -280,7 +294,7 @@ async function mvFetchSvg(src: string): Promise<string> {
     } catch { /* fall through to function */ }
   }
   try {
-    const { data, error } = await mvWithTimeout(supabase.functions.invoke("mushaf-page", { body: { page: pg } }), 8000);
+    const { data, error } = (await mvWithTimeout(supabase.functions.invoke("mushaf-page", { body: { page: pg } }), 8000)) as any;
     if (!error && data) {
       const txt = typeof data === "string" ? data : data instanceof Blob ? await data.text() : "";
       if (txt.includes("<svg")) return txt;
@@ -290,9 +304,72 @@ async function mvFetchSvg(src: string): Promise<string> {
   if (!r.ok) throw new Error("http");
   return r.text();
 }
+async function mvFetchSvg(src: string): Promise<string> {
+  const cached = await mvCacheGet(src);
+  if (cached) return cached;
+  const txt = await mvNetworkSvg(src);
+  mvCachePut(src, txt);
+  return txt;
+}
+
+/** download pages into the device cache in the background (no parsing) — gentle: 2 at a time, only when idle/online */
+const MV_WARMING = new Set<number>();
+export function mvWarmPages(pages: number[]) {
+  if (typeof window === "undefined") return;
+  const conn: any = (navigator as any).connection;
+  if (conn?.saveData) return;
+  const queue = Array.from(new Set(pages.map((n) => Math.min(604, Math.max(1, Math.round(n)))))).filter((n) => !MV_WARMING.has(n));
+  queue.forEach((n) => MV_WARMING.add(n));
+  const idle = (fn: () => void) => ((window as any).requestIdleCallback ? (window as any).requestIdleCallback(fn, { timeout: 3000 }) : setTimeout(fn, 300));
+  const worker = async () => {
+    while (queue.length) {
+      const n = queue.shift()!;
+      const src = mvSrc(n);
+      try {
+        if (!(await mvCacheGet(src))) mvCachePut(src, await mvNetworkSvg(src));
+      } catch { MV_WARMING.delete(n); }
+      await new Promise<void>((r) => idle(() => r()));
+    }
+  };
+  worker(); worker();
+}
+/** pages to have ready at all times: the first page of every surah */
+export const mvSurahStartPages = () => Array.from(new Set((SURAHS as any[]).map((s) => s.page).filter(Boolean))) as number[];
 
 type MvPrep = { clean: string; box: MvBox | null; bg: string | null };
 const MV_PREP = new Map<string, Promise<MvPrep>>();
+const MV_READY = new Map<string, MvPrep & { white?: string }>();
+const MV_MEAS_KEY = "mushaf-measure-v1";
+const mvMeasLoad = (): Record<string, { box: MvBox | null; bg: string | null }> => { try { return JSON.parse(localStorage.getItem(MV_MEAS_KEY) || "{}"); } catch { return {}; } };
+let MV_MEAS: Record<string, { box: MvBox | null; bg: string | null }> | null = null;
+const mvMeasGet = (src: string) => (MV_MEAS ??= mvMeasLoad())[src];
+const mvMeasSet = (src: string, v: { box: MvBox | null; bg: string | null }) => { (MV_MEAS ??= mvMeasLoad())[src] = v; try { localStorage.setItem(MV_MEAS_KEY, JSON.stringify(MV_MEAS)); } catch { /* ignore */ } };
+
+/** recolour to pure white/black ONCE per page (off-screen) so opening it later costs nothing */
+const MV_POLY_SEL = ".ayahPolygon, path[ayah]";
+function mvRecolor(clean: string): string {
+  const host = document.createElement("div");
+  host.style.cssText = "position:fixed;left:-99999px;top:0;width:600px;visibility:hidden;pointer-events:none";
+  document.body.appendChild(host);
+  try {
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = clean;
+    const rgb = (c: string) => { const m = c.match(/rgba?\(([^)]+)\)/); if (!m) return null; const [r, g, b, a] = m[1].split(",").map((x) => parseFloat(x)); return { avg: (r + g + b) / 3, a: a === undefined ? 1 : a }; };
+    root.querySelectorAll("path,rect,circle,ellipse,polygon,polyline,line,text,tspan").forEach((el) => {
+      if (el.matches(MV_POLY_SEL)) return;
+      const cs = getComputedStyle(el);
+      const f = rgb(cs.fill);
+      if (f && f.a > 0.05) {
+        if (f.avg < 150) (el as SVGElement).style.setProperty("fill", "#000", "important");
+        else if (f.avg > 225) (el as SVGElement).style.setProperty("fill", "#fff", "important");
+      }
+      const sk = rgb(cs.stroke);
+      if (sk && sk.a > 0.05 && sk.avg < 150) (el as SVGElement).style.setProperty("stroke", "#000", "important");
+    });
+    const svg = root.querySelector("svg");
+    return svg ? new XMLSerializer().serializeToString(svg) : clean;
+  } catch { return clean; } finally { host.remove(); }
+}
 /** fetch (cache → network) + sanitise + measure ink, once per page; keeps only the ~24 most recent pages in memory */
 function mvPrep(src: string): Promise<MvPrep> {
   const hit = MV_PREP.get(src);
@@ -307,19 +384,26 @@ function mvPrep(src: string): Promise<MvPrep> {
     const vb: MvBox | null = nums.length === 4 && nums[2] > 0 && nums.every((n) => !isNaN(n))
       ? { x: nums[0], y: nums[1], w: nums[2], h: nums[3] }
       : ow > 0 && oh > 0 ? { x: 0, y: 0, w: ow, h: oh } : null;
-    const m = vb ? await mvMeasureInk(clean, vb) : { box: null, bg: null };
-    return { clean, box: m.box, bg: m.bg } as MvPrep;
+    const saved = mvMeasGet(src);
+    let m: { box: MvBox | null; bg: string | null };
+    if (saved && saved.box) m = saved;
+    else { m = vb ? await mvMeasureInk(clean, vb) : { box: null, bg: null }; if (m.box) mvMeasSet(src, m); }
+    const prepared = { clean, box: m.box, bg: m.bg } as MvPrep;
+    MV_READY.set(src, prepared);
+    return prepared;
   });
   p.catch(() => { if (MV_PREP.get(src) === p) MV_PREP.delete(src); });
   MV_PREP.set(src, p);
-  while (MV_PREP.size > 24) MV_PREP.delete(MV_PREP.keys().next().value as string);
+  while (MV_PREP.size > 24) { const k = MV_PREP.keys().next().value as string; MV_PREP.delete(k); MV_READY.delete(k); }
   return p;
 }
 /** warm the pages around `page` so the next swipe is instant */
-function mvPrefetchAround(page: number): () => void {
+function mvPrefetchAround(page: number, white = false): () => void {
   const timers = [1, -1, 2, 3, 4, -2].map((d, i) => {
     const n = page + d;
-    return n < 1 || n > 604 ? 0 : window.setTimeout(() => { mvPrep(mvSrc(n)).catch(() => {}); }, 60 + 140 * i);
+    return n < 1 || n > 604 ? 0 : window.setTimeout(() => {
+      mvPrep(mvSrc(n)).then((pr) => { if (white) { const r = MV_READY.get(mvSrc(n)); if (r && !r.white) r.white = mvRecolor(pr.clean); } }).catch(() => {});
+    }, 40 + 120 * i);
   });
   return () => timers.forEach((t) => t && clearTimeout(t));
 }
@@ -365,12 +449,14 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
 
   useEffect(() => {
     let alive = true;
-    setMode("loading");
+    const ready = MV_READY.get(src);
+    if (!ready) setMode("loading");
     setImgReady(false);
-    mvPrep(src)
-      .then((prep) => {
+    const run = (prep: MvPrep) => {
         if (!alive) return;
-        const clean = prep.clean;
+        const rd = MV_READY.get(src);
+        const useWhite = !!pureWhite && !!rd?.white;
+        const clean = useWhite ? (rd!.white as string) : prep.clean;
         const host = hostRef.current;
         if (!clean || !host) { setMode("img"); return; }
         const root = host.shadowRoot ?? host.attachShadow({ mode: "open" });
@@ -382,21 +468,11 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
           ".hl-sel{fill:rgba(6,78,59,.16)!important;fill-opacity:1!important}" +
           ".hl-play{fill:rgba(201,168,76,.42)!important;fill-opacity:1!important}";
         root.appendChild(st);
-        if (pureWhite) {
-          // Printed SVG ships brown-ish ink on cream. Push every dark fill/stroke to #000 and every
-          // near-white fill to #fff. Ayah hit-polygons and mid-tone ornaments are left alone.
-          const rgb = (c: string) => { const m = c.match(/rgba?\(([^)]+)\)/); if (!m) return null; const [r, g, b, a] = m[1].split(",").map((x) => parseFloat(x)); return { avg: (r + g + b) / 3, a: a === undefined ? 1 : a }; };
-          root.querySelectorAll("path,rect,circle,ellipse,polygon,polyline,line,text,tspan").forEach((el) => {
-            if (el.matches(MV_POLY)) return;
-            const cs = getComputedStyle(el);
-            const f = rgb(cs.fill);
-            if (f && f.a > 0.05) {
-              if (f.avg < 150) (el as SVGElement).style.setProperty("fill", "#000", "important");
-              else if (f.avg > 225) (el as SVGElement).style.setProperty("fill", "#fff", "important");
-            }
-            const sk = rgb(cs.stroke);
-            if (sk && sk.a > 0.05 && sk.avg < 150) (el as SVGElement).style.setProperty("stroke", "#000", "important");
-          });
+        if (pureWhite && !useWhite) {
+          const done = mvRecolor(prep.clean);
+          root.innerHTML = done;
+          root.appendChild(st);
+          if (rd) rd.white = done;
         }
         if (!root.querySelector(MV_POLY)) unavailRef.current?.(); // no ayah layer → caller falls back to its own reader
         const svg = root.querySelector("svg") as SVGSVGElement | null;
@@ -433,13 +509,14 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
           else if (vb) setAspect(vb.w / vb.h);
           setMode("inline");
         })();
-      })
-      .catch(() => { if (alive) { setMode("img"); unavailRef.current?.(); } });
+    };
+    if (ready) run(ready);
+    else mvPrep(src).then(run).catch(() => { if (alive) { setMode("img"); unavailRef.current?.(); } });
     return () => { alive = false; };
   }, [src, pureWhite]);
 
   // once this page is up, quietly fetch its neighbours
-  useEffect(() => mvPrefetchAround(safe), [safe]);
+  useEffect(() => mvPrefetchAround(safe, !!pureWhite), [safe, pureWhite]);
 
   // track the width the page can use (parent box)
   useEffect(() => {
