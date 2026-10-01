@@ -226,7 +226,7 @@ const mvMeasureInk = (svgText: string, vb: MvBox): Promise<{ box: MvBox | null; 
       const img = new Image();
       img.onload = () => {
         try {
-          const W = 700;
+          const W = 420;
           const H = Math.max(1, Math.round((W * vb.h) / vb.w));
           const c = document.createElement("canvas");
           c.width = W; c.height = H;
@@ -264,9 +264,23 @@ const mvMeasureInk = (svgText: string, vb: MvBox): Promise<{ box: MvBox | null; 
 const mvSrc = (page: number) => `${MV_CDN}/${String(Math.min(604, Math.max(1, Math.round(page)))).padStart(3, "0")}.svg`;
 const mvPageOf = (src: string) => parseInt((src.match(/(\d{3})\.svg$/) || [])[1] || "1", 10);
 
+// Optional: public URL of the tahleem-mushaf bucket (custom domain or r2.dev), e.g. https://mushaf.example.com
+// Set VITE_MUSHAF_PUBLIC_URL in Vercel to load pages straight from R2 (fastest, browser-cached).
+const MV_PUBLIC = ((import.meta as any).env?.VITE_MUSHAF_PUBLIC_URL as string | undefined)?.replace(/\/+$/, "");
+
+const mvWithTimeout = <T,>(p: Promise<T>, ms: number): Promise<T> =>
+  new Promise<T>((res, rej) => { const t = setTimeout(() => rej(new Error("timeout")), ms); p.then((v) => { clearTimeout(t); res(v); }, (e) => { clearTimeout(t); rej(e); }); });
+
 async function mvFetchSvg(src: string): Promise<string> {
+  const pg = mvPageOf(src);
+  if (MV_PUBLIC) {
+    try {
+      const r = await mvWithTimeout(fetch(`${MV_PUBLIC}/svg/hafs-kfqc/${String(pg).padStart(3, "0")}.svg`), 8000);
+      if (r.ok) { const t = await r.text(); if (t.includes("<svg")) return t; }
+    } catch { /* fall through to function */ }
+  }
   try {
-    const { data, error } = await supabase.functions.invoke("mushaf-page", { body: { page: mvPageOf(src) } });
+    const { data, error } = await mvWithTimeout(supabase.functions.invoke("mushaf-page", { body: { page: pg } }), 8000);
     if (!error && data) {
       const txt = typeof data === "string" ? data : data instanceof Blob ? await data.text() : "";
       if (txt.includes("<svg")) return txt;
@@ -279,7 +293,7 @@ async function mvFetchSvg(src: string): Promise<string> {
 
 type MvPrep = { clean: string; box: MvBox | null; bg: string | null };
 const MV_PREP = new Map<string, Promise<MvPrep>>();
-/** fetch (cache → network) + sanitise + measure ink, once per page; keeps only the ~16 most recent pages in memory */
+/** fetch (cache → network) + sanitise + measure ink, once per page; keeps only the ~24 most recent pages in memory */
 function mvPrep(src: string): Promise<MvPrep> {
   const hit = MV_PREP.get(src);
   if (hit) { MV_PREP.delete(src); MV_PREP.set(src, hit); return hit; }
@@ -298,14 +312,14 @@ function mvPrep(src: string): Promise<MvPrep> {
   });
   p.catch(() => { if (MV_PREP.get(src) === p) MV_PREP.delete(src); });
   MV_PREP.set(src, p);
-  while (MV_PREP.size > 16) MV_PREP.delete(MV_PREP.keys().next().value as string);
+  while (MV_PREP.size > 24) MV_PREP.delete(MV_PREP.keys().next().value as string);
   return p;
 }
 /** warm the pages around `page` so the next swipe is instant */
 function mvPrefetchAround(page: number): () => void {
-  const timers = [1, 2, 3, -1, -2].map((d, i) => {
+  const timers = [1, -1, 2, 3, 4, -2].map((d, i) => {
     const n = page + d;
-    return n < 1 || n > 604 ? 0 : window.setTimeout(() => { mvPrep(mvSrc(n)).catch(() => {}); }, 250 * (i + 1));
+    return n < 1 || n > 604 ? 0 : window.setTimeout(() => { mvPrep(mvSrc(n)).catch(() => {}); }, 60 + 140 * i);
   });
   return () => timers.forEach((t) => t && clearTimeout(t));
 }
