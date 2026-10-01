@@ -29,6 +29,7 @@ import {
   CreditCard, UserCog, Calendar, AlertTriangle, CheckCircle,
   Sun, Moon, Coffee,
 } from "lucide-react";
+import PushBlockedHelp from "@/components/settings/PushBlockedHelp";
 import { enablePushNotifications, hardResetPushNotifications } from "@/components/NotificationPermissionBanner";
 
 /* ── Palette ────────────────────────────────────────────────────── */
@@ -345,7 +346,7 @@ export default function AdminSettings() {
         } catch {}
         toast({ title: "✅ Push notifications enabled!" });
       } else if (result === "denied") {
-        toast({ title: "Notifications blocked", description: "Allow notifications in your browser site settings, then try again.", variant: "destructive" });
+        toast({ title: "Notifications blocked", description: "Follow the 3 steps shown on this page — it will switch on automatically once you allow it.", variant: "destructive" });
       } else {
         // "error" or any other unexpected outcome — surface it so the admin
         // isn't left staring at a silently-off toggle with no explanation.
@@ -404,7 +405,7 @@ export default function AdminSettings() {
       const result = await hardResetPushNotifications(user.id);
       if (result === "denied") {
         setMasterToggling(false);
-        toast({ title: "Notifications blocked", description: "Allow notifications in your browser site settings, then try again.", variant: "destructive" });
+        toast({ title: "Notifications blocked", description: "Follow the 3 steps shown on this page — it will switch on automatically once you allow it.", variant: "destructive" });
         return;
       }
       const next = {
@@ -874,16 +875,11 @@ export default function AdminSettings() {
           </div>
 
           {/* Push notification enable card */}
-          {typeof Notification !== "undefined" && Notification.permission === "denied" && (
-            <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ fontSize: 20, flexShrink: 0 }}>🔕</span>
-              <div style={{ flex: 1 }}>
-                <p style={{ fontWeight: 700, fontSize: 13, color: "#991B1B", margin: "0 0 2px" }}>Push notifications blocked</p>
-                <p style={{ fontSize: 11, color: "#B91C1C", margin: 0 }}>
-                  Unblock via browser → Site Settings → Notifications → Allow.
-                </p>
-              </div>
-            </div>
+          {typeof Notification !== "undefined" && Notification.permission === "denied" && user && (
+            <PushBlockedHelp userId={user.id} onEnabled={() => {
+              setNotifs(n => ({ ...n, push_notifications: true }));
+              toast({ title: "✅ Push notifications enabled!" });
+            }} />
           )}
 
           <Sec title="Channels">
@@ -895,7 +891,7 @@ export default function AdminSettings() {
                   {typeof Notification === "undefined"
                     ? "Not supported on this browser"
                     : Notification.permission === "denied"
-                    ? "Blocked — allow in browser site settings to enable"
+                    ? "Blocked — follow the steps above to allow"
                     : notifs.push_notifications
                     ? "On — platform alerts arrive even when the app is closed"
                     : "Off — tap to get registration, payment and other alerts on this device"}
@@ -903,7 +899,6 @@ export default function AdminSettings() {
               </div>
               <Switch
                 checked={notifs.push_notifications}
-                disabled={typeof Notification !== "undefined" && Notification.permission === "denied"}
                 onCheckedChange={handlePushToggle}
               />
             </div>
