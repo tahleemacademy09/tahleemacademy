@@ -23,6 +23,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { toast } from "@/hooks/use-toast";
+import MushafPageView from "@/components/hifdh/MushafPageView";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -1259,13 +1260,12 @@ export const OralSignalListener = () => {
 export const OralErrorFlashListener = OralSignalListener;
 
 // ── Waiting-room banner (host side) ──────────────────────────────────────
-// Two different situations land here with the same one flag: a student
-// hitting a class with Waiting Room turned on for the first time, or a
-// blocked student trying to rejoin. Either way livekit-token flags their
-// class_participants row (join_request_status='pending') instead of a flat
-// rejection. This banner realtime-subscribes to that same table for THIS
-// session, and shows a prompt for every pending request so the host doesn't
-// have to go digging in the Participants panel to notice someone's waiting.
+// A blocked student trying to rejoin no longer gets a flat rejection —
+// livekit-token now flags their class_participants row (join_request_status
+// ='pending') instead. This banner realtime-subscribes to that same table
+// for THIS session, and shows a prompt for every pending request so the
+// host doesn't have to go digging in the Participants panel to notice
+// someone is trying to get back in.
 export const JoinRequestBanner=({sessionId,isPrivileged}:{sessionId:string|null;isPrivileged:boolean})=>{
   const[requests,setRequests]=useState<any[]>([]);
   const[busyId,setBusyId]=useState<string|null>(null);
@@ -1316,7 +1316,7 @@ export const JoinRequestBanner=({sessionId,isPrivileged}:{sessionId:string|null;
         }}>
           <UserCheck style={{width:16,height:16,color:"#facc15",flexShrink:0}}/>
           <span style={{color:"#fff",fontSize:13,fontFamily:"system-ui,sans-serif",whiteSpace:"nowrap"}}>
-            <b>{row.profiles?.full_name||"A student"}</b> wants to join the call
+            <b>{row.profiles?.full_name||"A student"}</b> wants to rejoin the call
           </span>
           <Button size="sm" disabled={busyId===row.id} onClick={()=>respond(row,"admit")} style={{height:28,padding:"0 10px"}}>Admit</Button>
           <Button size="sm" variant="outline" disabled={busyId===row.id} onClick={()=>respond(row,"deny")} style={{height:28,padding:"0 10px"}}>Deny</Button>
@@ -3164,6 +3164,9 @@ export const InClassQuranReader=({onClose}:any)=>{
   const audioRef=useRef<HTMLAudioElement|null>(null);
   const[playingVerse,setPlayingVerse]=useState<string|null>(null);
   const[reciter,setReciter]=useState("Alafasy_128kbps");
+  /* printed Madinah Mushaf page (SVG). If it cannot load we fall back to the text reader below. */
+  const[printedFail,setPrintedFail]=useState(false);
+  useEffect(()=>{setPrintedFail(false);},[page]);
 
   const RECITERS=[
     {id:"Alafasy_128kbps",       name:"Alafasy",    ar:"العفاسي"},
@@ -3570,7 +3573,19 @@ export const InClassQuranReader=({onClose}:any)=>{
               style={{flex:1,overflowY:"auto",background:"linear-gradient(180deg,#f5f0e8 0%,#ede8da 100%)"}}
               onTouchStart={onTouchStart}
               onTouchEnd={onTouchEnd}
-            >              {mushafLoading&&(
+            >
+              {/* ── Printed Madinah Mushaf page — tap an ayah to hear it, playing ayah is highlighted ── */}
+              {!printedFail&&(
+                <div style={{padding:"8px 6px 16px",maxWidth:460,margin:"0 auto"}}>
+                  <MushafPageView
+                    page={page}
+                    highlight={playingVerse?(()=>{const[ps,pv]=playingVerse.split(":").map(Number);return{surah:ps,ayah:pv};})():null}
+                    onAyahClick={(sn,an)=>playVerse(sn,an)}
+                    onUnavailable={()=>setPrintedFail(true)}
+                  />
+                </div>
+              )}
+              {printedFail&&mushafLoading&&(
                 <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:40,gap:10}}>
                   <div style={{width:28,height:28,border:"3px solid #1a3d24",borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
                   <span style={{fontSize:11,color:"#7a9e88",fontFamily:"'Amiri',serif"}}>جارٍ تحميل الصفحة…</span>
@@ -3578,7 +3593,7 @@ export const InClassQuranReader=({onClose}:any)=>{
               )}
 
               {/* ── Line-by-line mode (quran.com word data) ── */}
-              {!mushafLoading&&mushafLineMode&&mushafLines.length>0&&(
+              {printedFail&&!mushafLoading&&mushafLineMode&&mushafLines.length>0&&(
                 <div style={{padding:"8px 6px 16px",maxWidth:460,margin:"0 auto"}}>
                   <div style={{
                     background:"#fdf6e3",
@@ -3725,7 +3740,7 @@ export const InClassQuranReader=({onClose}:any)=>{
               )}
 
               {/* ── Fallback: flowing text mode (alquran.cloud, no line data) ── */}
-              {!mushafLoading&&!mushafLineMode&&mushafAyahs.length>0&&(
+              {printedFail&&!mushafLoading&&!mushafLineMode&&mushafAyahs.length>0&&(
                 <div style={{padding:"10px 8px 20px",maxWidth:460,margin:"0 auto"}}>
                   <div style={{background:"#fdf6e3",border:"2px solid rgba(201,168,76,.5)",borderRadius:4,boxShadow:"0 4px 20px rgba(26,61,36,0.15)",position:"relative"}}>
                     <div style={{position:"absolute",inset:7,border:"1px solid rgba(201,168,76,.25)",borderRadius:1,pointerEvents:"none",zIndex:1}}/>
@@ -3790,7 +3805,7 @@ export const InClassQuranReader=({onClose}:any)=>{
                 </div>
               )}
 
-              {!mushafLoading&&mushafLines.length===0&&mushafAyahs.length===0&&(
+              {printedFail&&!mushafLoading&&mushafLines.length===0&&mushafAyahs.length===0&&(
                 <div style={{padding:"40px 20px",textAlign:"center",fontFamily:"'Amiri',serif"}}>
                   <div style={{fontSize:36,marginBottom:12}}>📖</div>
                   <p style={{fontSize:13,color:"#7a9e88",margin:"0 0 16px"}}>تعذّر تحميل الصفحة</p>
@@ -5478,19 +5493,6 @@ export const ParticipantSignalIcon=({participant}:{participant:any})=>{
 // with a Provider — e.g. if ParticipantTile is ever reused somewhere else.
 export const ClassroomAdminContext = createContext<{isPrivileged:boolean;sessionId:string|null}>({isPrivileged:false,sessionId:null});
 
-// ── Camera-off avatar: initial letter + deterministic color ─────────────
-// Same idea as the little colored-circle avatars in Meet/Zoom/Teams: pick
-// one letter and one color, both derived from the person's name so the same
-// person always gets the same avatar across renders/devices, with no photo
-// lookup needed as a fallback.
-const AVATAR_PALETTE = ["#F2765A","#5B8DEF","#4CAF7D","#C77DFF","#FF9F5A","#4FC3D9","#E85D9E","#8E9AAF"];
-const getAvatarInitial = (name: string) => (name?.trim()?.[0] || "?").toUpperCase();
-const getAvatarColor = (name: string) => {
-  let hash = 0;
-  for (let i = 0; i < (name || "").length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
-  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
-};
-
 export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{participant:any;isLocal:boolean;size?:"normal"|"large"|"small";pip?:boolean})=>{
   const videoRef=useRef<HTMLVideoElement>(null);
   const[hasVideo,setHasVideo]=useState(false);
@@ -5677,11 +5679,8 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
   const[avatarImgError,setAvatarImgError]=useState(false);
   useEffect(()=>{setAvatarImgError(false);},[avatarUrl]);
 
-  // Camera-off avatar circle: sized to sit well short of the tile's edges
-  // (like the reference "centered circle on black" layout) rather than the
-  // old full-bleed photo/silhouette that filled every corner of the tile.
-  const avatarD = pip ? 46 : size==="small" ? 92 : 168; // circle diameter, px
-  const avatarFont = pip ? 18 : size==="small" ? 34 : 60; // initial-letter size, px
+  // WhatsApp-style avatar sizes
+  const avatarW = pip ? "55%" : size==="small" ? "60%" : "52%";
 
   return(
     <div
@@ -5728,26 +5727,21 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
         style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal?"scaleX(-1)":"none"}}
       />
 
-      {/* Camera-off placeholder: plain black background with one small
-          centered circle avatar (real photo if we have one, otherwise a
-          colored initial), matching the reference layout instead of the old
-          full-bleed photo/silhouette that filled the whole tile. */}
+      {/* Camera-off profile: full-bleed photo filling all four corners of the tile */}
       {!hasVideo&&(
-        <div style={{position:"absolute",inset:0,background:"#000",display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <div style={{position:"absolute",inset:0,background:"#131313",overflow:"hidden"}}>
           {avatarUrl&&!avatarImgError ? (
             <img src={avatarUrl} alt="" onError={()=>setAvatarImgError(true)}
-              style={{width:avatarD,height:avatarD,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>
+              style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>
           ) : (
-            <div style={{
-              width:avatarD,height:avatarD,borderRadius:"50%",flexShrink:0,
-              display:"flex",alignItems:"center",justifyContent:"center",
-              background:getAvatarColor(name),
-            }}>
-              <span style={{fontSize:avatarFont,fontWeight:600,color:"#fff",fontFamily:"'Google Sans',sans-serif",lineHeight:1}}>
-                {getAvatarInitial(name)}
-              </span>
+            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(160deg,#1f2c34 0%,#111b21 100%)"}}>
+              <svg viewBox="0 0 200 220" style={{width:avatarW,height:avatarW,maxWidth:220,maxHeight:240}} fill="none">
+                <circle cx="100" cy="72" r="52" fill="#8696a0"/>
+                <path d="M0 220 C0 148 36 128 100 128 C164 128 200 148 200 220Z" fill="#8696a0"/>
+              </svg>
             </div>
           )}
+          <div style={{position:"absolute",left:0,right:0,bottom:0,height:"38%",background:"linear-gradient(to top,rgba(0,0,0,.6),rgba(0,0,0,0))",pointerEvents:"none"}}/>
         </div>
       )}
 
