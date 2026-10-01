@@ -209,7 +209,7 @@ export default function ViewAsStudent() {
               <p style={{ fontWeight: 800, fontSize: 13, color: G, margin: "0 0 12px" }}>📋 Profile Details</p>
               {[
                 ["Email", profile.email], ["Phone", profile.phone], ["Country", profile.country],
-                ["City", profile.city], ["Nationality", profile.nationality],
+                ["City", profile.city],
                 ["Date of Birth", profile.date_of_birth], ["Parent", profile.parent_name],
                 ["Parent Phone", profile.parent_phone], ["Level", profile.level],
               ].filter(([, v]) => v).map(([l, v]) => (
