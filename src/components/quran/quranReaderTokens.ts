@@ -8,9 +8,9 @@ export const Q_GREEN      = "#0f2d1f";   // deep green (headers, active state)
 export const Q_GREEN_MID  = "#1a3d24";   // mid green
 export const Q_GOLD       = "#C9A84C";   // primary gold accent
 export const Q_GOLD_DARK  = "#b7911f";   // pressed / active gold
-export const Q_PARCHMENT  = "#fffdf6";   // page background (mushaf paper)
+export const Q_PARCHMENT  = "#ffffff";   // page background (pure white for maximum contrast)
 export const Q_PARCH_ALT  = "#f9f2dc";   // verse row alternate / active bg
-export const Q_INK        = "#1a1007";   // Arabic ink colour
+export const Q_INK        = "#000000";   // Arabic ink colour (pure black)
 export const Q_BORDER     = "#e8dcb8";   // hairline borders on parchment
 export const Q_MUTED      = "#8a7a52";   // secondary text on parchment
 
