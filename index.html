@@ -29,7 +29,9 @@
     <!-- ✅ Google Fonts — single consolidated request, no duplicates -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400;1,700&family=Aref+Ruqaa:wght@400;700&family=Cairo:wght@400;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,500&display=swap" rel="stylesheet" />
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400;1,700&family=Aref+Ruqaa:wght@400;700&family=Cairo:wght@400;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,500&display=swap" />
+    <link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400;1,700&family=Aref+Ruqaa:wght@400;700&family=Cairo:wght@400;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,500&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400;1,700&family=Aref+Ruqaa:wght@400;700&family=Cairo:wght@400;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,500&display=swap" rel="stylesheet" /></noscript>
 
     <!-- Open Graph / Facebook / WhatsApp -->
     <meta property="og:type" content="website" />
@@ -193,8 +195,23 @@
 
   <body>
     <div id="root"></div>
-    <!-- Paystack: defer keeps it non-blocking but still executes before app JS -->
-    <script defer src="https://js.paystack.co/v1/inline.js"></script>
+    <!-- Paystack: loaded once the browser is idle (off the critical path) so it
+         never competes with the app's own code. Still present long before anyone
+         reaches a payment screen; RegisterContinue also loads it itself if needed. -->
+    <script>
+      (function () {
+        function load() {
+          if (document.getElementById('paystack-script')) return;
+          var s = document.createElement('script');
+          s.id = 'paystack-script'; s.src = 'https://js.paystack.co/v1/inline.js'; s.async = true;
+          document.body.appendChild(s);
+        }
+        window.addEventListener('load', function () {
+          if ('requestIdleCallback' in window) requestIdleCallback(load, { timeout: 3000 });
+          else setTimeout(load, 1500);
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
 
     <!--
