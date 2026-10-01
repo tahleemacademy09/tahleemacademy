@@ -212,12 +212,10 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       { to:"/student/courses",     icon:BookOpenCheck, label:t("Courses","الدورات") },
       ...(isTimetableModuleEnabled ? [{ to:"/student/timetable", icon:Calendar, label:t("Jadwal (Timetable)","الجدول الدراسي") }] : []),
       { to:"/student/live-now",    icon:Video,          label:t("Live Now","مباشر الآن") },
-      { to:"/student/assignments", icon:ClipboardList,  label:t("Assignments","الواجبات") },
+      { to:"/student/revision",    icon:RefreshCw,      label:t("Al-Murāja'ah","المراجعة") },
+      { to:"/student/hifdh-program", icon:BookMarked,   label:t("Hifdh Program","برنامج الحفظ") },
+      { to:"/student/musabaqah",   icon:Trophy,         label:t("Al-Musābaqah 🏆","المسابقة 🏆") },
     ]},
-    { type:"group", key:"revision", icon:RefreshCw, label:t("Al-Murāja'ah","المراجعة"), children:[
-      { to:"/student/revision", icon:BookMarked, label:t("At-Tadārus","التدارس") },
-    ]},
-    { type:"link", to:"/student/hifdh-program", icon:BookMarked, label:t("Hifdh Program","برنامج الحفظ") },
     { type:"group", key:"exams", icon:ClipboardList, label:t("Al-Ikhtibārāt","الاختبارات"), children:[
       ...(isExamsModuleEnabled ? [{ to:"/student/exams", icon:ClipboardList, label:t("Ikhtibārātī","اختباراتي") }] : []),
       ...(subjectRegistrationOpen ? [{ to:"/student/exams/register", icon:UserPlus,      label:t("Register for Exams","التسجيل للاختبارات") }] : []),
@@ -226,9 +224,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       { to:"/student/attendance",     icon:CheckSquare,   label:t("Al-Ḥuḍūr (Attendance)","الحضور والغياب") },
     ]},
     { type:"link", to:"/student/majlis",     icon:MessageCircle, label:t("Al-Majlis","المجلس") },
-    // ── Musabaqah (updated route) ──────────────────────────────
-    { type:"link", to:"/student/musabaqah",  icon:Trophy,        label:t("Al-Musābaqah 🏆","المسابقة 🏆") },
-    { type:"link", to:"/student/support",    icon:LifeBuoy,      label:t("Help & Support","المساعدة والدعم") },
+    { type:"link", to:"/student/support",    icon:LifeBuoy,      label:t("Al-Musā'adah","المساعدة") },
     { type:"link", to:"/student/profile",    icon:UserCircle,    label:t("Al-I'dādāt","الإعدادات") },
   ];
 
