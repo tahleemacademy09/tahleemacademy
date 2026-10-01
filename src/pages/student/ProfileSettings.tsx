@@ -29,6 +29,7 @@ import {
   Camera, Save, Lock, LogOut, Trash2,
   Eye, EyeOff, Loader2, AlertTriangle, Moon, Sun, LifeBuoy,
 } from "lucide-react";
+import PushBlockedHelp from "@/components/settings/PushBlockedHelp";
 import { enablePushNotifications, hardResetPushNotifications } from "@/components/NotificationPermissionBanner";
 import TermSwitcher from "@/components/settings/TermSwitcher";
 
@@ -364,7 +365,7 @@ export default function ProfileSettings() {
         toast({ title: "✅ Push notifications enabled!" });
       } else if (result === "denied") {
         setPushBlocked(true);
-        toast({ title: "Notifications blocked", description: "Allow notifications in your browser site settings, then try again.", variant: "destructive" });
+        toast({ title: "Notifications blocked", description: "Follow the 3 steps shown on this page — it will switch on automatically once you allow it.", variant: "destructive" });
       } else {
         // "error" or any other unexpected outcome — surface it so the user
         // isn't left staring at a silently-off toggle.
@@ -406,7 +407,7 @@ export default function ProfileSettings() {
       if (result === "denied") {
         setPushBlocked(true);
         setMasterToggling(false);
-        toast({ title: "Notifications blocked", description: "Allow notifications in your browser site settings, then try again.", variant: "destructive" });
+        toast({ title: "Notifications blocked", description: "Follow the 3 steps shown on this page — it will switch on automatically once you allow it.", variant: "destructive" });
         return;
       }
       const next = {
@@ -667,16 +668,12 @@ export default function ProfileSettings() {
             <Switch checked={allNotifsOn} disabled={masterToggling} onCheckedChange={handleMasterToggle} />
           </div>
 
-          {pushBlocked && (
-            <div style={{ background: dark ? "#450a0a" : "#FEF2F2", border: `1px solid ${dark ? "#7f1d1d" : "#FECACA"}`, borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 10 }}>
-              <span style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>🔕</span>
-              <div>
-                <p style={{ fontWeight: 700, fontSize: 13, color: dark ? "#fca5a5" : "#991B1B", margin: "0 0 3px" }}>Phone notifications are blocked</p>
-                <p style={{ fontSize: 12, color: dark ? "#f87171" : "#B91C1C", margin: 0, lineHeight: 1.5 }}>
-                  Open your browser → Site Settings → Notifications → <strong>allow</strong> for <em>tahleemacademy.vercel.app</em>, then refresh.
-                </p>
-              </div>
-            </div>
+          {pushBlocked && user && (
+            <PushBlockedHelp userId={user.id} dark={dark} onEnabled={() => {
+              setNotifs(n => ({ ...n, push_notifications: true }));
+              setPushBlocked(false);
+              toast({ title: "✅ Push notifications enabled!" });
+            }} />
           )}
 
           <PSec title="Channels" T={T}>
@@ -688,7 +685,7 @@ export default function ProfileSettings() {
                   {typeof Notification === "undefined"
                     ? "Not supported on this browser"
                     : Notification.permission === "denied"
-                    ? "Blocked — allow in browser site settings to enable"
+                    ? "Blocked — follow the steps above to allow"
                     : notifs.push_notifications
                     ? "On — you'll get alerts even when the app is closed"
                     : "Off — tap to get class reminders on this device"}
@@ -696,7 +693,6 @@ export default function ProfileSettings() {
               </div>
               <Switch
                 checked={notifs.push_notifications}
-                disabled={typeof Notification !== "undefined" && Notification.permission === "denied"}
                 onCheckedChange={handlePushToggle}
               />
             </div>
