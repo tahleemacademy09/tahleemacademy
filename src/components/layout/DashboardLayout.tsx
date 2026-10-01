@@ -2,7 +2,8 @@
   DashboardLayout.tsx — Tahleem Academy
   Mobile-first responsive layout with collapsible admin nav groups
 */
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
+import PageFallback from "@/components/layout/PageFallback";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -363,7 +364,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           }
         )
         .subscribe();
-      iv = setInterval(load, 15000);
+      iv = setInterval(load, 60000); // realtime delivers instantly; this is only a safety net
     };
 
     const stop = () => {
@@ -603,7 +604,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   // Majlis renders full-screen without the dashboard chrome. Kept below every
   // hook so hook order/count stays identical on every render (React #310).
   if (isMajlis) {
-    return <div style={{ position: "fixed", inset: 0, zIndex: 40 }}><Outlet /></div>;
+    return <div style={{ position: "fixed", inset: 0, zIndex: 40 }}><Suspense fallback={<PageFallback />}><Outlet /></Suspense></div>;
   }
 
   return (
@@ -953,7 +954,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           {isPaymentLocked && PAYMENT_GATED_ROUTES.has(location.pathname) ? (
             <PaymentLockScreen />
           ) : (
-            <Outlet/>
+            <Suspense fallback={<PageFallback />}><Outlet /></Suspense>
           )}
         </main>
       </div>

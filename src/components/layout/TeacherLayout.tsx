@@ -3,7 +3,8 @@
 // notification bell — rebuilt on Tailwind + the app's emerald/gold design tokens
 // (rounded-2xl cards, shadow-premium, consistent spacing) instead of inline styles.
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
+import PageFallback from "@/components/layout/PageFallback";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -233,7 +234,7 @@ const TeacherLayout = () => {
         .on("postgres_changes" as any, { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
           (p: any) => { if (!belongsToTeacher(p.new)) return; setNotifList(prev => [p.new, ...prev]); setUnreadNotifs(n => n + 1); })
         .subscribe();
-      iv = setInterval(load, 20000);
+      iv = setInterval(load, 60000); // realtime delivers instantly; safety net only
     };
     const stop = () => {
       if (iv) { clearInterval(iv); iv = null; }
@@ -564,7 +565,7 @@ const TeacherLayout = () => {
 
         <main className="flex-1 overflow-auto">
           <NotificationPermissionBanner />
-          <Outlet />
+          <Suspense fallback={<PageFallback />}><Outlet /></Suspense>
         </main>
       </div>
     </div>
