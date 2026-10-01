@@ -201,6 +201,19 @@ const mvClean = (raw: string): string | null => {
 };
 
 type MvBox = { x: number; y: number; w: number; h: number };
+export type MvAyahRef = { surah: number; ayah: number };
+
+const MV_POLY = ".ayahPolygon, path[ayah]";
+/** The shipped SVG contains a transparent polygon per ayah with surah/ayah attributes (and a SSSAAA `number`). */
+const mvAyahOf = (el: Element): MvAyahRef | null => {
+  let sNum = parseInt(el.getAttribute("surah") || "", 10);
+  let aNum = parseInt(el.getAttribute("ayah") || "", 10);
+  if (!(sNum > 0 && aNum > 0)) {
+    const n = el.getAttribute("number") || el.getAttribute("data-number") || "";
+    if (/^\d{4,6}$/.test(n)) { const v = parseInt(n, 10); sNum = Math.floor(v / 1000); aNum = v % 1000; }
+  }
+  return sNum > 0 && aNum > 0 ? { surah: sNum, ayah: aNum } : null;
+};
 
 /** Render the SVG to a small canvas: find the true extent of the dark ink and sample the page's own background colour. */
 const mvMeasureInk = (svgText: string, vb: MvBox): Promise<{ box: MvBox | null; bg: string | null }> =>
@@ -244,12 +257,20 @@ const mvMeasureInk = (svgText: string, vb: MvBox): Promise<{ box: MvBox | null; 
   });
 
 /** fitHeight: pixels of screen NOT available to the page (bars, buttons). When set, the whole page is fitted to the screen height. */
-export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, onBackground }: {
+export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, onBackground, highlight, selected, onAyahClick, onUnavailable }: {
   page: number; fontSize?: number; halves?: [number, number]; fitHeight?: number;
   /** no card, shadow or rounded corners — the page blends into whatever is behind it */
   seamless?: boolean;
   /** called with the page's own background colour so the surrounding screen can use the same one */
   onBackground?: (css: string) => void;
+  /** ayah that is currently playing / being read — drawn in gold behind the text */
+  highlight?: MvAyahRef | null;
+  /** ayah the user selected — drawn in soft green behind the text */
+  selected?: MvAyahRef | null;
+  /** tap on an ayah (inline mode only) */
+  onAyahClick?: (surah: number, ayah: number) => void;
+  /** called when the interactive printed page can't be used (offline, blocked, no ayah layer) so the caller can show its own reader */
+  onUnavailable?: () => void;
 }) {
   const safe = Math.min(604, Math.max(1, Math.round(Number(page) || 1)));
   const src = `${MV_CDN}/${String(safe).padStart(3, "0")}.svg`;
@@ -258,6 +279,8 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
   const [imgReady, setImgReady] = useState(false);
   const [aspect, setAspect] = useState<number | null>(null);
   const [bg, setBg] = useState("#fffdf6");
+  const unavailRef = useRef(onUnavailable);
+  unavailRef.current = onUnavailable;
   const [winH, setWinH] = useState(() => (typeof window !== "undefined" ? window.innerHeight : 800));
   useEffect(() => {
     const on = () => setWinH(window.innerHeight);
@@ -278,6 +301,14 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
         if (!clean || !host) { setMode("img"); return; }
         const root = host.shadowRoot ?? host.attachShadow({ mode: "open" });
         root.innerHTML = clean;
+        const st = document.createElement("style");
+        st.textContent =
+          "svg *{pointer-events:none}" +
+          ".ayahPolygon,path[ayah]{pointer-events:all;cursor:pointer;-webkit-tap-highlight-color:transparent}" +
+          ".hl-sel{fill:rgba(6,78,59,.16)!important;fill-opacity:1!important}" +
+          ".hl-play{fill:rgba(201,168,76,.42)!important;fill-opacity:1!important}";
+        root.appendChild(st);
+        if (!root.querySelector(MV_POLY)) unavailRef.current?.(); // no ayah layer → caller falls back to its own reader
         const svg = root.querySelector("svg") as SVGSVGElement | null;
         if (!svg) { setMode("img"); return; }
         // page box in user units (viewBox, or width/height when there is none)
@@ -312,9 +343,30 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
           setMode("inline");
         })();
       })
-      .catch(() => { if (alive) setMode("img"); });
+      .catch(() => { if (alive) { setMode("img"); unavailRef.current?.(); } });
     return () => { alive = false; };
   }, [src]);
+
+  // paint playing / selected ayah
+  useEffect(() => {
+    const root = hostRef.current?.shadowRoot;
+    if (!root || mode !== "inline") return;
+    root.querySelectorAll(MV_POLY).forEach((el) => {
+      const a = mvAyahOf(el);
+      el.classList.toggle("hl-play", !!a && !!highlight && a.surah === highlight.surah && a.ayah === highlight.ayah);
+      el.classList.toggle("hl-sel", !!a && !!selected && a.surah === selected.surah && a.ayah === selected.ayah);
+    });
+  }, [mode, src, highlight?.surah, highlight?.ayah, selected?.surah, selected?.ayah]);
+
+  useEffect(() => { if (mode === "img" || mode === "text") unavailRef.current?.(); }, [mode]);
+
+  const handleClick = (e: React.MouseEvent) => {
+    if (!onAyahClick) return;
+    const t = (e.nativeEvent.composedPath?.()[0] || e.target) as Element;
+    const poly = t && (t as any).closest ? (t as Element).closest(MV_POLY) : null;
+    const a = poly ? mvAyahOf(poly) : null;
+    if (a) onAyahClick(a.surah, a.ayah);
+  };
 
   if (mode === "text") return <MushafTextPage page={safe} fontSize={fontSize} halves={halves} />;
 
@@ -337,7 +389,7 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
           )}
 
           {/* inline SVG lives in a shadow root inside this host */}
-          <div ref={hostRef} style={mode === "inline" ? { display: "block" } : { visibility: "hidden", position: "absolute", left: 0, top: 0, width: "100%", height: 0, overflow: "hidden" }} />
+          <div ref={hostRef} onClick={handleClick} style={mode === "inline" ? { display: "block" } : { visibility: "hidden", position: "absolute", left: 0, top: 0, width: "100%", height: 0, overflow: "hidden" }} />
 
           {mode === "img" && (
             <img
