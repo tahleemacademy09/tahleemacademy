@@ -29,6 +29,10 @@ const G_LIGHT     = "#1f5138";
 const GOLD       = "#c9a84c";
 const GOLD_LIGHT = "#e4c36a";
 const CREAM      = "#faf6ee";
+const PAPER      = "#fffdf6";   // adhkar card background (cream paper)
+const INK        = "#000000";   // Arabic text
+const INK_SOFT   = "#2b2618";   // translation / secondary text
+const GOLD_DARK  = "#7a5f12";   // gold readable on cream
 
 interface Family {
   id: string;
@@ -320,15 +324,15 @@ export default function AdhkaarPage() {
                 transition={{ duration: 0.22, ease: "easeOut" }}
                 className="flex-1 rounded-3xl px-6 py-7 flex flex-col"
                 style={{
-                  background: "linear-gradient(165deg, rgba(255,255,255,0.09), rgba(255,255,255,0.04))",
-                  border: `1px solid ${GOLD}30`,
-                  boxShadow: `0 20px 60px -20px ${G}, inset 0 1px 0 rgba(255,255,255,0.06)`,
+                  background: PAPER,
+                  border: `1px solid ${GOLD}66`,
+                  boxShadow: `0 20px 60px -20px ${G}`,
                 }}
               >
                 {/* Title */}
                 <h3
                   className="text-center text-[15px] font-semibold mb-4"
-                  style={{ color: GOLD_LIGHT, fontFamily: "'Playfair Display', serif" }}
+                  style={{ color: GOLD_DARK, fontFamily: "'Playfair Display', serif" }}
                 >
                   {t(current.title, current.titleAr)}
                 </h3>
@@ -337,14 +341,14 @@ export default function AdhkaarPage() {
                 <div className="flex items-center justify-between mb-5 gap-2">
                   <span
                     className="px-3 py-1 rounded-full text-[11px] font-semibold shrink-0"
-                    style={{ background: `${GOLD}22`, color: GOLD_LIGHT }}
+                    style={{ background: `${GOLD}2e`, color: GOLD_DARK }}
                   >
                     {current.repeat > 1 ? `${t("Read", "اقرأ")} ${current.repeat}×` : t("Read once", "مرة واحدة")}
                   </span>
                   <div className="flex items-center gap-3 shrink-0">
                     <button onClick={toggleListen} className="flex items-center gap-1.5 text-[11px] font-medium transition active:scale-95"
-                            style={{ color: `${CREAM}cc` }}>
-                      {speaking ? <VolumeX className="h-3.5 w-3.5" style={{ color: GOLD }} /> : <Volume2 className="h-3.5 w-3.5" />}
+                            style={{ color: INK_SOFT }}>
+                      {speaking ? <VolumeX className="h-3.5 w-3.5" style={{ color: GOLD_DARK }} /> : <Volume2 className="h-3.5 w-3.5" />}
                       {speaking ? t("Stop", "إيقاف") : t("Listen", "استماع")}
                     </button>
                     <a
@@ -352,7 +356,7 @@ export default function AdhkaarPage() {
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-1 text-[11px] font-medium transition active:scale-95"
-                      style={{ color: `${GOLD_LIGHT}cc` }}
+                      style={{ color: GOLD_DARK }}
                       title={t("Open reciter audio in browser", "افتح تسجيل القارئ في المتصفح")}
                     >
                       <ExternalLink className="h-3 w-3" />
@@ -366,28 +370,28 @@ export default function AdhkaarPage() {
                   <p
                     dir="rtl"
                     className="text-center leading-[2.1] px-1"
-                    style={{ fontFamily: "'Amiri', serif", fontSize: "1.65rem", color: CREAM }}
+                    style={{ fontFamily: "'Amiri', serif", fontSize: "1.65rem", color: INK }}
                   >
                     {current.arabic}
                   </p>
                 </div>
 
-                <p className="text-center italic text-[13px] mt-4 mb-3" style={{ color: `${GOLD_LIGHT}dd` }}>
+                <p className="text-center italic text-[13px] mt-4 mb-3" style={{ color: GOLD_DARK }}>
                   {current.transliteration}
                 </p>
 
-                <p className="text-center text-[13.5px] leading-relaxed mb-3" style={{ color: `${CREAM}e0` }}>
+                <p className="text-center text-[13.5px] leading-relaxed mb-3" style={{ color: INK_SOFT }}>
                   {current.translation}
                 </p>
 
                 {current.virtue && (
-                  <div className="rounded-xl px-3 py-2.5 mb-3 flex gap-2" style={{ background: "rgba(255,255,255,0.05)" }}>
-                    <BookOpen className="h-3.5 w-3.5 shrink-0 mt-0.5" style={{ color: GOLD }} />
-                    <p className="text-[12px] leading-relaxed" style={{ color: `${CREAM}bb` }}>{current.virtue}</p>
+                  <div className="rounded-xl px-3 py-2.5 mb-3 flex gap-2" style={{ background: `${GOLD}14` }}>
+                    <BookOpen className="h-3.5 w-3.5 shrink-0 mt-0.5" style={{ color: GOLD_DARK }} />
+                    <p className="text-[12px] leading-relaxed" style={{ color: INK_SOFT }}>{current.virtue}</p>
                   </div>
                 )}
 
-                <p className="text-center text-[11px]" style={{ color: `${CREAM}70` }}>{current.reference}</p>
+                <p className="text-center text-[11px]" style={{ color: "#6b6350" }}>{current.reference}</p>
               </motion.div>
             ) : null}
           </AnimatePresence>
