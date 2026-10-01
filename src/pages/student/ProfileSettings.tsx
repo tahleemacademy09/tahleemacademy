@@ -11,6 +11,9 @@
    4. WhatsApp toggle shows the phone number it will message.
    5. Push notification permission banner.
    6. date_of_birth "" → null, all nullable fields sanitised.
+   7. STANDARDISED: nationality + "prefer not to say" gender removed; only
+      Push + Class Reminders remain under Notifications (Telegram, email,
+      WhatsApp, announcements, exam/result/recording alerts removed).
    ────────────────────────────────────────────────────────────────────
 */
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -24,7 +27,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import {
   Camera, Save, Lock, LogOut, Trash2,
-  Eye, EyeOff, Loader2, AlertTriangle, Moon, Sun,
+  Eye, EyeOff, Loader2, AlertTriangle, Moon, Sun, LifeBuoy,
 } from "lucide-react";
 import { enablePushNotifications, hardResetPushNotifications } from "@/components/NotificationPermissionBanner";
 import TermSwitcher from "@/components/settings/TermSwitcher";
@@ -224,15 +227,13 @@ export default function ProfileSettings() {
   const [changingPw,      setChangingPw]      = useState(false);
   const [pw,              setPw]              = useState({ new: "", confirm: "" });
   const [pushBlocked,     setPushBlocked]     = useState(false);
-  const [tgChatId,        setTgChatId]        = useState<string | null>(null);
-  const [tgCode,          setTgCode]          = useState<string | null>(null);
-  const [tgPolling,       setTgPolling]       = useState(false);
+  const [signingOutAll,  setSigningOutAll]  = useState(false);
 
   // Form state — only updated on blur, NOT on every keystroke
   const [form, setForm] = useState({
     full_name: "", full_name_ar: "", phone: "", whatsapp: "",
     parent_name: "", parent_phone: "", date_of_birth: "",
-    bio: "", gender: "", nationality: "", country: "", city: "", avatar_url: "",
+    bio: "", gender: "", country: "", city: "", avatar_url: "",
   });
 
   // Stable field updater — memoised so identity never changes between renders
@@ -241,14 +242,8 @@ export default function ProfileSettings() {
   }, []);
 
   const [notifs, setNotifs] = useState({
-    push_notifications:         false,
-    email_notifications:        true,
-    whatsapp_notifications:     false,
-    class_reminder:             true,
-    exam_reminder:              true,
-    results_notification:       true,
-    new_recording_alert:        true,
-    announcement_notifications: true,
+    push_notifications: false,
+    class_reminder:     true,
   });
 
   const [prefs, setPrefs] = useState({
@@ -283,7 +278,6 @@ export default function ProfileSettings() {
         date_of_birth: p.date_of_birth || "",
         bio:           p.bio           || "",
         gender:        p.gender        || "",
-        nationality:   p.nationality   || "",
         country:       p.country       || "",
         city:          p.city          || "",
         avatar_url:    p.avatar_url    || "",
@@ -297,13 +291,7 @@ export default function ProfileSettings() {
           push_notifications:         (typeof Notification !== "undefined" && Notification.permission === "granted")
                                         ? (d.push_notifications ?? n.push_notifications)
                                         : false,
-          email_notifications:        d.email_notifications        ?? n.email_notifications,
-          whatsapp_notifications:     d.whatsapp_notifications     ?? n.whatsapp_notifications,
           class_reminder:             d.class_reminder             ?? n.class_reminder,
-          exam_reminder:              d.exam_reminder              ?? n.exam_reminder,
-          results_notification:       d.results_notification       ?? n.results_notification,
-          new_recording_alert:        d.new_recording_alert        ?? n.new_recording_alert,
-          announcement_notifications: d.announcement_notifications ?? n.announcement_notifications,
         }));
         setNotifsLoaded(true);
         const savedDark = d.dark_mode ?? dark;
@@ -320,17 +308,6 @@ export default function ProfileSettings() {
           setDark(d.dark_mode);
         }
       }
-
-      // Telegram link state
-      const { data: tg } = await supabase
-        .from("profiles")
-        .select("telegram_chat_id, telegram_link_code")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      if (tg) {
-        setTgChatId((tg as any).telegram_chat_id ?? null);
-        setTgCode((tg as any).telegram_link_code ?? null);
-      }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
@@ -345,47 +322,9 @@ export default function ProfileSettings() {
     parent_phone:  f.parent_phone  || null,
     bio:           f.bio           || null,
     gender:        f.gender        || null,
-    nationality:   f.nationality   || null,
     country:       f.country       || null,
     city:          f.city          || null,
   });
-
-  // ── Telegram link ─────────────────────────────────────────────────
-  const generateTgCode = async () => {
-    if (!user) return;
-    const code = `${user.id.slice(0, 6)}-${Math.random().toString(36).slice(2, 8)}`;
-    const { error } = await supabase
-      .from("profiles")
-      .update({ telegram_link_code: code })
-      .eq("user_id", user.id);
-    if (error) { toast({ title: "Could not generate code", description: error.message, variant: "destructive" }); return; }
-    setTgCode(code); setTgPolling(true);
-  };
-
-  const unlinkTelegram = async () => {
-    if (!user) return;
-    const { error } = await supabase.from("profiles")
-      .update({ telegram_chat_id: null, telegram_link_code: null })
-      .eq("user_id", user.id);
-    if (error) { toast({ title: "Unlink failed", description: error.message, variant: "destructive" }); return; }
-    setTgChatId(null); setTgCode(null); setTgPolling(false);
-    toast({ title: "✅ Telegram unlinked" });
-  };
-
-  useEffect(() => {
-    if (!tgPolling || !user || tgChatId) return;
-    const t = setInterval(async () => {
-      const { data } = await supabase.from("profiles")
-        .select("telegram_chat_id, telegram_link_code")
-        .eq("user_id", user.id).maybeSingle();
-      if ((data as any)?.telegram_chat_id) {
-        setTgChatId((data as any).telegram_chat_id);
-        setTgCode(null); setTgPolling(false);
-        toast({ title: "✅ Telegram linked! You'll get notifications there." });
-      }
-    }, 4000);
-    return () => clearInterval(t);
-  }, [tgPolling, user, tgChatId, toast]);
 
   const saveProfile = async () => {
     if (!user) return;
@@ -471,14 +410,8 @@ export default function ProfileSettings() {
         return;
       }
       const next = {
-        push_notifications:         result === "granted",
-        email_notifications:        true,
-        whatsapp_notifications:     true,
-        class_reminder:             true,
-        exam_reminder:              true,
-        results_notification:       true,
-        new_recording_alert:        true,
-        announcement_notifications: true,
+        push_notifications: result === "granted",
+        class_reminder:     true,
       };
       setNotifs(next);
       setPushBlocked(false);
@@ -493,11 +426,7 @@ export default function ProfileSettings() {
         if (sub) { await sub.unsubscribe(); }
         await supabase.from("push_subscriptions" as any).delete().eq("user_id", user.id);
       } catch {}
-      const next = {
-        push_notifications: false, email_notifications: false, whatsapp_notifications: false,
-        class_reminder: false, exam_reminder: false, results_notification: false,
-        new_recording_alert: false, announcement_notifications: false,
-      };
+      const next = { push_notifications: false, class_reminder: false };
       setNotifs(next);
       const { push_notifications: _skip, ...toSave } = next;
       await supabase.from("student_preferences" as any)
@@ -510,9 +439,6 @@ export default function ProfileSettings() {
   const saveNotifs = async () => {
     if (!user) return;
     if (!notifsLoaded) return;  // don't save stale defaults before DB load completes
-    if (notifs.whatsapp_notifications && !form.whatsapp && !form.phone) {
-      toast({ title: "⚠️ No WhatsApp number saved", description: "Go to Profile tab and add your WhatsApp number.", variant: "destructive" });
-    }
     setSaving(true);
     // push_notifications is browser-state only (controlled by the OS permission),
     // not a DB column — strip it before saving to student_preferences
@@ -549,6 +475,14 @@ export default function ProfileSettings() {
     setChangingPw(false);
     if (error) toast({ title: "Error", description: error.message, variant: "destructive" });
     else { toast({ title: "✅ Password updated!" }); setShowPw(false); setPw({ new: "", confirm: "" }); }
+  };
+
+  const signOutEverywhere = async () => {
+    setSigningOutAll(true);
+    const { error } = await supabase.auth.signOut({ scope: "global" });
+    setSigningOutAll(false);
+    if (error) { toast({ title: "Couldn't sign out of all devices", description: error.message, variant: "destructive" }); return; }
+    navigate("/login");
   };
 
   const deleteAccount = async () => {
@@ -668,17 +602,17 @@ export default function ProfileSettings() {
                 <StableInput value={form.full_name_ar} onCommit={updateField("full_name_ar")} dir="rtl" style={inp} />
               </PFld>
             </div>
+            <PFld label="Email" T={T}>
+              <input style={{ ...inp, opacity: .7, cursor: "not-allowed" }} type="email" value={user?.email ?? ""} readOnly disabled />
+            </PFld>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <PFld label="Phone" T={T}>
                 <StableInput value={form.phone} onCommit={updateField("phone")} type="tel" style={inp} />
               </PFld>
               <PFld label="WhatsApp" T={T}>
-                <StableInput value={form.whatsapp} onCommit={updateField("whatsapp")} type="tel" placeholder="+44 7700 000000" style={inp} />
+                <StableInput value={form.whatsapp} onCommit={updateField("whatsapp")} type="tel" placeholder="+234 800 000 0000" style={inp} />
               </PFld>
             </div>
-            <p style={{ fontSize: 11, color: T.text2, margin: "-6px 0 10px" }}>
-              📱 Add your WhatsApp number with country code (e.g. +44 7700…) to receive class reminders via WhatsApp.
-            </p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <PFld label="Date of Birth" T={T}>
                 {/* Date inputs are fine with onChange — no keyboard involved */}
@@ -687,21 +621,18 @@ export default function ProfileSettings() {
               </PFld>
               <PFld label="Gender" T={T}>
                 <StableSelect style={inp} value={form.gender} onChange={v => setForm(f => ({ ...f, gender: v }))}>
-                  <option value="">Prefer not to say</option>
+                  <option value="" disabled>Select gender</option>
                   <option value="male">Male / ذكر</option>
                   <option value="female">Female / أنثى</option>
                 </StableSelect>
               </PFld>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <PFld label="Country" T={T}>
                 <StableInput value={form.country} onCommit={updateField("country")} style={inp} />
               </PFld>
               <PFld label="City" T={T}>
                 <StableInput value={form.city} onCommit={updateField("city")} style={inp} />
-              </PFld>
-              <PFld label="Nationality" T={T}>
-                <StableInput value={form.nationality} onCommit={updateField("nationality")} style={inp} />
               </PFld>
             </div>
           </PSec>
@@ -748,47 +679,6 @@ export default function ProfileSettings() {
             </div>
           )}
 
-
-          {notifs.whatsapp_notifications && !form.whatsapp && !form.phone && (
-            <div style={{ background: dark ? "#431407" : "#FFFBEB", border: `1px solid ${dark ? "#92400e" : "#FDE68A"}`, borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 10 }}>
-              <span style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>⚠️</span>
-              <div>
-                <p style={{ fontWeight: 700, fontSize: 13, color: dark ? "#fbbf24" : "#92400E", margin: "0 0 3px" }}>WhatsApp number required</p>
-                <p style={{ fontSize: 12, color: dark ? "#f59e0b" : "#B45309", margin: 0, lineHeight: 1.5 }}>
-                  Go to the <strong>Profile tab</strong> and add your WhatsApp number with country code.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Telegram */}
-          <div style={{ background: tgChatId ? (dark ? "#052e16" : "#ECFDF5") : (dark ? "#0c1a3a" : "#EFF6FF"), border: `1px solid ${tgChatId ? (dark ? "#166534" : "#86EFAC") : (dark ? "#1e3a8a" : "#BFDBFE")}`, borderRadius: 12, padding: 14, marginBottom: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-              <span style={{ fontSize: 22 }}>✈️</span>
-              <div style={{ flex: 1 }}>
-                <p style={{ fontWeight: 700, fontSize: 14, color: T.text, margin: 0 }}>Telegram Notifications</p>
-                <p style={{ fontSize: 11, color: T.text2, margin: "2px 0 0" }}>
-                  {tgChatId ? "Linked — you'll receive alerts on Telegram." : "Get all alerts on Telegram even when the site is closed."}
-                </p>
-              </div>
-              {tgChatId && (
-                <button onClick={unlinkTelegram} style={{ padding: "6px 12px", border: "1px solid #DC2626", color: "#DC2626", background: "transparent", borderRadius: 8, fontWeight: 600, fontSize: 12, cursor: "pointer" }}>Unlink</button>
-              )}
-            </div>
-            {!tgChatId && !tgCode && (
-              <button onClick={generateTgCode} style={{ padding: "9px 16px", border: "none", background: G, color: "#fff", borderRadius: 9, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-                Link Telegram
-              </button>
-            )}
-            {!tgChatId && tgCode && (
-              <div style={{ fontSize: 12, color: T.text3, lineHeight: 1.6 }}>
-                <p style={{ margin: "0 0 6px" }}>1. Open <a href={`https://t.me/Tahleembot?start=${tgCode}`} target="_blank" rel="noreferrer" style={{ color: G, fontWeight: 700, textDecoration: "underline" }}>@Tahleembot</a> on Telegram.</p>
-                <p style={{ margin: "0 0 6px" }}>2. Tap <strong>Start</strong> (or send <code>/start {tgCode}</code>).</p>
-                <p style={{ margin: 0, color: T.text2 }}>Waiting for confirmation… <Loader2 size={12} style={{ display: "inline", animation: "spin 1s linear infinite" }} /></p>
-              </div>
-            )}
-          </div>
-
           <PSec title="Channels" T={T}>
             {/* ── Phone / Web Push toggle ── */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${T.surface2}` }}>
@@ -810,24 +700,10 @@ export default function ProfileSettings() {
                 onCheckedChange={handlePushToggle}
               />
             </div>
-            <PTog label="Email Notifications" sub="Updates via email"
-              checked={notifs.email_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, email_notifications: v }))} T={T} />
-            <PTog label="WhatsApp Notifications"
-              sub={form.whatsapp || form.phone ? `Will message: ${form.whatsapp || form.phone}` : "Add your number in the Profile tab first"}
-              checked={notifs.whatsapp_notifications}
-              onChange={(v: boolean) => setNotifs(n => ({ ...n, whatsapp_notifications: v }))} T={T} />
-            <PTog label="Announcements" sub="Academy-wide messages"
-              checked={notifs.announcement_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, announcement_notifications: v }))} T={T} />
           </PSec>
-          <PSec title="Classes & Exams" T={T}>
+          <PSec title="Classes" T={T}>
             <PTog label="Class Reminders" sub="15 min + 5 min before class starts"
               checked={notifs.class_reminder} onChange={(v: boolean) => setNotifs(n => ({ ...n, class_reminder: v }))} T={T} />
-            <PTog label="Exam Reminders"
-              checked={notifs.exam_reminder} onChange={(v: boolean) => setNotifs(n => ({ ...n, exam_reminder: v }))} T={T} />
-            <PTog label="Results Released" sub="When exam results are ready"
-              checked={notifs.results_notification} onChange={(v: boolean) => setNotifs(n => ({ ...n, results_notification: v }))} T={T} />
-            <PTog label="New Recordings" sub="When class recordings are uploaded"
-              checked={notifs.new_recording_alert} onChange={(v: boolean) => setNotifs(n => ({ ...n, new_recording_alert: v }))} T={T} />
           </PSec>
           <PSaveBtn fn={saveNotifs} saving={saving} />
         </>}
@@ -852,11 +728,6 @@ export default function ProfileSettings() {
               }}
               T={T}
             />
-            <PFld label="Playback Speed" T={T}>
-              <StableSelect style={inp} value={prefs.playback_speed} onChange={v => setPrefs(p => ({ ...p, playback_speed: v }))}>
-                {["0.75x","1x","1.25x","1.5x","2x"].map(s => <option key={s} value={s}>{s}</option>)}
-              </StableSelect>
-            </PFld>
             <PFld label="Default View" T={T}>
               <StableSelect style={inp} value={prefs.default_subject_view} onChange={v => setPrefs(p => ({ ...p, default_subject_view: v }))}>
                 <option value="grid">Grid</option>
@@ -865,7 +736,12 @@ export default function ProfileSettings() {
             </PFld>
           </PSec>
 
-          <PSec title="Learning" T={T}>
+          <PSec title="Recordings & Playback" T={T}>
+            <PFld label="Default Playback Speed" T={T}>
+              <StableSelect style={inp} value={prefs.playback_speed} onChange={v => setPrefs(p => ({ ...p, playback_speed: v }))}>
+                {["0.75x","1x","1.25x","1.5x","2x"].map(s => <option key={s} value={s}>{s}</option>)}
+              </StableSelect>
+            </PFld>
             <PTog label="Autoplay Recordings" checked={prefs.autoplay_recordings} onChange={(v: boolean) => setPrefs(p => ({ ...p, autoplay_recordings: v }))}  T={T}/>
             <PTog label="Show Subtitles" checked={prefs.show_subtitles} onChange={(v: boolean) => setPrefs(p => ({ ...p, show_subtitles: v }))}  T={T}/>
           </PSec>
@@ -890,14 +766,34 @@ export default function ProfileSettings() {
                 <p style={{ fontWeight: 600, fontSize: 13, color: T.text3, margin: 0 }}>Email</p>
                 <p style={{ fontSize: 11, color: T.text2, margin: 0 }}>{user?.email}</p>
               </div>
-              <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "#DCFCE7", color: "#166534", fontWeight: 700 }}>✓ Verified</span>
+              {user?.email_confirmed_at
+                ? <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "#DCFCE7", color: "#166534", fontWeight: 700 }}>✓ Verified</span>
+                : <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "#FEF3C7", color: "#92400E", fontWeight: 700 }}>Not verified</span>}
             </div>
+          </PSec>
+          <PSec title="Help" T={T}>
+            <button onClick={() => navigate("/student/support")}
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: T.surface2, border: `1px solid ${T.border}`, cursor: "pointer", width: "100%", textAlign: "left" }}>
+              <LifeBuoy size={16} color={dark ? "#34d399" : G} />
+              <div>
+                <p style={{ fontWeight: 700, fontSize: 13, color: T.text, margin: 0 }}>Help &amp; Support</p>
+                <p style={{ fontSize: 11, color: T.text2, margin: 0 }}>Get help or contact the academy</p>
+              </div>
+            </button>
           </PSec>
           <PSec title="Session" T={T}>
             <button onClick={async () => { await signOut(); navigate("/login"); }}
               style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: dark ? "rgba(217,119,6,.12)" : "#FFF7ED", border: `1px solid ${dark ? "rgba(217,119,6,.3)" : "#FED7AA"}`, cursor: "pointer", width: "100%", marginBottom: 8 }}>
               <LogOut size={16} color="#D97706" />
               <p style={{ fontWeight: 700, fontSize: 13, color: "#D97706", margin: 0 }}>Sign Out</p>
+            </button>
+            <button onClick={signOutEverywhere} disabled={signingOutAll}
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: dark ? "rgba(217,119,6,.12)" : "#FFF7ED", border: `1px solid ${dark ? "rgba(217,119,6,.3)" : "#FED7AA"}`, cursor: signingOutAll ? "not-allowed" : "pointer", width: "100%", marginBottom: 8, textAlign: "left" }}>
+              {signingOutAll ? <Loader2 size={16} color="#D97706" style={{ animation: "spin .8s linear infinite" }} /> : <LogOut size={16} color="#D97706" />}
+              <div>
+                <p style={{ fontWeight: 700, fontSize: 13, color: "#D97706", margin: 0 }}>Sign Out of All Devices</p>
+                <p style={{ fontSize: 11, color: T.text2, margin: 0 }}>Use this if you logged in on a shared or lost device</p>
+              </div>
             </button>
             <button onClick={() => setShowDelete(true)}
               style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: dark ? "rgba(220,38,38,.1)" : "#FEF2F2", border: `1px solid ${dark ? "rgba(220,38,38,.3)" : "#FECACA"}`, cursor: "pointer", width: "100%" }}>
@@ -930,6 +826,7 @@ export default function ProfileSettings() {
                 onChange={e => setPw(p => ({ ...p, confirm: e.target.value }))}
                 style={inp} />
             </div>
+            <p style={{ fontSize: 11, color: T.text2, margin: "-6px 0 0" }}>Use at least 8 characters.</p>
             {pw.new && pw.confirm && pw.new !== pw.confirm && <p style={{ fontSize: 12, color: "#DC2626", margin: 0 }}>⚠️ Passwords don't match</p>}
             <button onClick={changePassword} disabled={changingPw || !pw.new || pw.new !== pw.confirm}
               style={{ padding: "12px 0", borderRadius: 12, border: "none", cursor: "pointer", fontWeight: 700, color: "#fff", background: changingPw || !pw.new || pw.new !== pw.confirm ? "#9CA3AF" : G, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
