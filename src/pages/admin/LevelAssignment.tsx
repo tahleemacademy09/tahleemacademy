@@ -119,7 +119,7 @@ const suggestLevel = (final: number | null): Level => {
 
 // ── Small helpers ──────────────────────────────────────────────────────────
 const ScorePill = ({ score, label, bg }: { score: number | null; label: string; bg: string }) => (
-  <div style={{ background: bg, borderRadius: 8, padding: "5px 10px", textAlign: "center", minWidth: 56 }}>
+  <div style={{ background: bg, borderRadius: 8, padding: "5px 6px", textAlign: "center" }}>
     <div style={{ fontSize: 14, fontWeight: 900, color: scoreColor(score) }}>{fmtScore(score)}</div>
     <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, textTransform: "uppercase" as const }}>{label}</div>
   </div>
@@ -482,58 +482,57 @@ const LevelAssignment = () => {
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div style={{ fontFamily: "'Segoe UI', system-ui, sans-serif", minHeight: "100vh", background: "#F0F4F0" }}>
-      <style>{"@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}} @keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}} @media(max-width:600px){.score-pills-row{flex-direction:column!important;align-items:flex-start!important} .score-pills-row>div{flex-direction:row!important;flex-wrap:wrap!important} .grid-2col{grid-template-columns:1fr!important} .hide-mobile{display:none!important}}"}</style>
+    <div style={{ fontFamily: "'Cairo', system-ui, sans-serif", background: "#faf8f4", paddingBottom: 32 }}>
+      <style>{"@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}} @keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}} @media(max-width:640px){.grid-2col{grid-template-columns:1fr!important} .hide-mobile{display:none!important}}"}</style>
 
-      {/* ── HEADER ── */}
-      <div style={{ background: `linear-gradient(135deg,${G},${GM})`, padding: "24px 20px 20px" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 20 }}>
-          <div>
-            <h1 style={{ fontSize: 20, fontWeight: 900, color: "#fff", margin: "0 0 2px" }}>New Registrations</h1>
-            <p style={{ fontSize: 12, color: "rgba(255,255,255,.6)", margin: 0 }}>{students.length} total students · {filtered.length} shown</p>
+      {/* ── HERO ── */}
+      <div style={{ margin: "14px 14px 0", borderRadius: 20, padding: "16px 14px", background: `linear-gradient(135deg,#0f2d1f,#1a3d27)`, border: "1px solid #c9a84c33", boxShadow: "0 4px 24px #0f2d1f44" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,.5)", letterSpacing: 0.6 }}>NEW REGISTRATIONS</p>
+            <p style={{ margin: "2px 0 0", fontWeight: 900, fontSize: 18, color: "#fff" }}>{students.length} students</p>
+            <p style={{ margin: "1px 0 0", fontSize: 11, color: "rgba(255,255,255,.5)" }}>{filtered.length} shown</p>
           </div>
-          <button onClick={load} disabled={loading} style={{ padding: "9px 16px", borderRadius: 10, border: "1.5px solid rgba(255,255,255,.3)", background: "rgba(255,255,255,.12)", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+          <button onClick={load} disabled={loading} style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,.25)", background: "rgba(255,255,255,.1)", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontFamily: "inherit", flexShrink: 0 }}>
             <RefreshCw size={13} style={{ animation: loading ? "spin .8s linear infinite" : "none" }} /> Refresh
           </button>
         </div>
 
-        {/* Stats row */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
           {[
-            { label: "Total Students", val: students.length,  color: "#fff" },
-            { label: "Pending Review", val: pendingCount,      color: GOLD },
-            { label: "Level Assigned", val: approvedCount,     color: "#22c55e" },
+            { label: "Total", val: students.length, color: "#fff" },
+            { label: "Pending", val: pendingCount, color: "#c9a84c" },
+            { label: "Assigned", val: approvedCount, color: "#86efac" },
           ].map(s => (
-            <div key={s.label} style={{ background: "rgba(255,255,255,.1)", borderRadius: 12, padding: "12px 14px" }}>
-              <div style={{ fontSize: 26, fontWeight: 900, color: s.color }}>{s.val}</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,.6)", marginTop: 2 }}>{s.label}</div>
+            <div key={s.label} style={{ background: "rgba(255,255,255,.07)", borderRadius: 12, padding: "10px 6px", textAlign: "center", border: "1px solid rgba(255,255,255,.08)" }}>
+              <div style={{ fontSize: 20, fontWeight: 900, color: s.color, lineHeight: 1 }}>{s.val}</div>
+              <div style={{ fontSize: 9, color: "rgba(255,255,255,.45)", marginTop: 4, fontWeight: 700, textTransform: "uppercase" }}>{s.label}</div>
             </div>
           ))}
         </div>
 
-        {/* Search */}
         <div style={{ position: "relative" }}>
           <Search size={13} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "rgba(255,255,255,.5)" }} />
-          <input value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="Search by name, email, phone, country…" style={{ ...inp, background: "rgba(255,255,255,.12)", color: "#fff", border: "1.5px solid rgba(255,255,255,.2)", paddingLeft: 34 }} />
+          <input value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="Search name, email, phone, country…" style={{ ...inp, background: "rgba(255,255,255,.1)", color: "#fff", border: "1.5px solid rgba(255,255,255,.2)", paddingLeft: 34 }} />
         </div>
       </div>
 
-      {/* ── FILTER TABS ── */}
-      <div style={{ background: "#fff", borderBottom: "1px solid #E5E7EB", display: "flex", gap: 0, overflowX: "auto", scrollbarWidth: "none" }}>
+      {/* ── FILTER PILLS ── */}
+      <div style={{ display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "none", padding: "12px 14px 0" }}>
         {[
           { k: "all",      label: `All (${students.length})` },
           { k: "pending",  label: `Pending (${pendingCount})` },
           { k: "approved", label: `Assigned (${approvedCount})` },
         ].map(t => (
           <button key={t.k} onClick={() => setFilter(t.k as any)}
-            style={{ padding: "12px 20px", border: "none", borderBottom: `3px solid ${filter === t.k ? GM : "transparent"}`, background: "transparent", color: filter === t.k ? G : "#6B7280", fontSize: 13, fontWeight: filter === t.k ? 700 : 500, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0 }}>
+            style={{ flexShrink: 0, padding: "7px 14px", borderRadius: 20, border: `1.5px solid ${filter === t.k ? "#1a3d27" : "#e5ddd3"}`, background: filter === t.k ? "#1a3d27" : "#fff", color: filter === t.k ? "#fff" : "#374151", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             {t.label}
           </button>
         ))}
       </div>
 
       {/* ── STUDENT LIST ── */}
-      <div style={{ padding: "16px", maxWidth: 860, margin: "0 auto" }}>
+      <div style={{ padding: "12px 14px 0", maxWidth: 860, margin: "0 auto" }}>
         {loading && (
           <div style={{ textAlign: "center", padding: 60 }}>
             <Loader2 size={28} style={{ animation: "spin .8s linear infinite", color: G }} />
@@ -561,72 +560,66 @@ const LevelAssignment = () => {
           return (
             <div key={student.user_id} style={{ background: "#fff", borderRadius: 18, boxShadow: "0 2px 12px rgba(0,0,0,.07)", marginBottom: 14, overflow: "hidden", animation: "fadeUp .3s ease", border: student.admin_approved ? "2px solid #86EFAC" : "2px solid #e5e7eb" }}>
 
-              {/* ── STUDENT CARD HEADER ── */}
-              <div style={{ padding: "16px 18px", display: "flex", alignItems: "flex-start", gap: 14, cursor: "pointer", background: isOpen ? "#FAFAFA" : "#fff" }}
+              {/* ── STUDENT CARD HEADER (mobile stack) ── */}
+              <div style={{ padding: "14px", cursor: "pointer", background: isOpen ? "#FAFAFA" : "#fff" }}
                 onClick={() => {
                   const next = isOpen ? null : student.user_id;
                   setExpanded(next);
                   if (next && student.rec_audio_path) resolveAudio(student.rec_audio_path, student.user_id);
                 }}>
 
-                {/* Avatar */}
-                {student.avatar_url
-                  ? <img src={student.avatar_url} style={{ width: 52, height: 52, borderRadius: "50%", objectFit: "cover", flexShrink: 0, border: `2px solid ${student.admin_approved ? "#86EFAC" : "#e5e7eb"}` }} alt="" />
-                  : <div style={{ width: 52, height: 52, borderRadius: "50%", background: `linear-gradient(135deg,${G},${GM})`, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 900, fontSize: 20, flexShrink: 0 }}>
-                      {student.full_name[0]?.toUpperCase() || "?"}
-                    </div>
-                }
+                {/* Row 1: avatar + name + chevron */}
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  {student.avatar_url
+                    ? <img src={student.avatar_url} style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover", flexShrink: 0, border: `2px solid ${student.admin_approved ? "#86EFAC" : "#e5e7eb"}` }} alt="" />
+                    : <div style={{ width: 44, height: 44, borderRadius: "50%", background: `linear-gradient(135deg,#1a3d27,#276749)`, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 900, fontSize: 18, flexShrink: 0 }}>
+                        {student.full_name[0]?.toUpperCase() || "?"}
+                      </div>}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 800, fontSize: 15, color: "#1a3d27", lineHeight: 1.25, wordBreak: "break-word" }}>{student.full_name}</div>
+                    {student.full_name_ar && <div style={{ fontSize: 13, color: "#9ca3af", fontFamily: "'Amiri',serif" }}>{student.full_name_ar}</div>}
+                  </div>
+                  <ChevronDown size={18} color="#9ca3af" style={{ transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .2s", flexShrink: 0 }} />
+                </div>
 
-                {/* Name + details */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
-                    <span style={{ fontWeight: 800, fontSize: 15, color: G }}>{student.full_name}</span>
-                    {student.full_name_ar && <span style={{ fontSize: 13, color: "#9ca3af", fontFamily: "'Amiri',serif" }}>{student.full_name_ar}</span>}
-                    {student.admin_approved && (
-                      <span style={{ background: "#E8F5E9", color: "#166534", fontSize: 10, fontWeight: 800, padding: "2px 10px", borderRadius: 20, display: "flex", alignItems: "center", gap: 4 }}>
-                        <CheckCircle2 size={10} /> Level Assigned
-                      </span>
-                    )}
-                    <span style={{ background: stepCfg.bg, color: stepCfg.color, fontSize: 10, fontWeight: 700, padding: "2px 10px", borderRadius: 20 }}>
-                      {stepCfg.label}
+                {/* Row 2: status badges side by side */}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+                  {student.admin_approved && (
+                    <span style={{ background: "#E8F5E9", color: "#166534", fontSize: 10, fontWeight: 800, padding: "3px 10px", borderRadius: 20, display: "flex", alignItems: "center", gap: 4 }}>
+                      <CheckCircle2 size={10} /> Level Assigned
                     </span>
-                  </div>
-
-                  {/* Contact info row — always visible */}
-                  <div style={{ fontSize: 12, color: "#6B7280", display: "flex", flexWrap: "wrap", gap: "4px 14px" }}>
-                    <span>📧 {student.email || "—"}</span>
-                    {student.phone && <span>📞 {student.phone}</span>}
-                    {student.country && <span>🌍 {student.country}</span>}
-                    <span style={{ color: "#9ca3af" }}>ID: {student.student_id}</span>
-                    {student.registered_at && <span style={{ color: "#9ca3af" }}>Registered: {fmtDate(student.registered_at)}</span>}
-                  </div>
-
-                  {/* Assigned level badge */}
+                  )}
+                  <span style={{ background: stepCfg.bg, color: stepCfg.color, fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 20 }}>
+                    {stepCfg.label}
+                  </span>
                   {student.admin_approved && student.final_level && (
-                    <div style={{ marginTop: 6 }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, background: LEVEL_CFG[student.final_level as Level]?.bg || "#F0FDF4", color: LEVEL_CFG[student.final_level as Level]?.color || G, padding: "2px 10px", borderRadius: 20, border: `1px solid ${LEVEL_CFG[student.final_level as Level]?.border || "#86EFAC"}` }}>
-                        {LEVEL_CFG[student.final_level as Level]?.label || student.final_level}
-                      </span>
-                    </div>
+                    <span style={{ fontSize: 10, fontWeight: 700, background: LEVEL_CFG[student.final_level as Level]?.bg || "#F0FDF4", color: LEVEL_CFG[student.final_level as Level]?.color || G, padding: "3px 10px", borderRadius: 20, border: `1px solid ${LEVEL_CFG[student.final_level as Level]?.color || G}33` }}>
+                      {LEVEL_CFG[student.final_level as Level]?.label || student.final_level}
+                    </span>
                   )}
                 </div>
 
-                {/* Score pills — compact */}
-                <div className="score-pills-row" style={{ display: "flex", gap: 5, flexShrink: 0, flexDirection: "column", alignItems: "flex-end" }}>
-                  <div style={{ display: "flex", gap: 5 }}>
-                    <ScorePill score={student.exam_score}        label="Exam"    bg="#FFFBEB" />
-                    <ScorePill score={student.rec_ai_score}      label="AI"      bg="#EFF6FF" />
-                    <ScorePill score={student.rec_teacher_score} label="Teacher" bg="#F5F3FF" />
-                    {final !== null && (
-                      <div style={{ background: `${scoreColor(final)}12`, borderRadius: 8, padding: "5px 10px", textAlign: "center", minWidth: 56, border: `1px solid ${scoreColor(final)}30` }}>
-                        <div style={{ fontSize: 14, fontWeight: 900, color: scoreColor(final) }}>{final}%</div>
-                        <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, textTransform: "uppercase" as const }}>Final</div>
-                      </div>
-                    )}
+                {/* Row 3: contact info (email full width, rest side by side) */}
+                <div style={{ marginTop: 10, fontSize: 12, color: "#6B7280" }}>
+                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 4 }}>📧 {student.email || "—"}</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3px 10px" }}>
+                    {student.phone && <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📞 {student.phone}</span>}
+                    {student.country && <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🌍 {student.country}</span>}
+                    <span style={{ color: "#9ca3af", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>ID: {student.student_id}</span>
+                    {student.registered_at && <span style={{ color: "#9ca3af", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📅 {fmtDate(student.registered_at)}</span>}
                   </div>
                 </div>
 
-                <ChevronDown size={16} color="#9ca3af" style={{ transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .2s", flexShrink: 0, marginTop: 4 }} />
+                {/* Row 4: scores, 4 across */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6, marginTop: 12 }}>
+                  <ScorePill score={student.exam_score}        label="Exam"    bg="#FFFBEB" />
+                  <ScorePill score={student.rec_ai_score}      label="AI"      bg="#EFF6FF" />
+                  <ScorePill score={student.rec_teacher_score} label="Teacher" bg="#F5F3FF" />
+                  <div style={{ background: final !== null ? `${scoreColor(final)}12` : "#F3F4F6", borderRadius: 8, padding: "5px 6px", textAlign: "center", border: `1px solid ${final !== null ? scoreColor(final) + "30" : "#E5E7EB"}` }}>
+                    <div style={{ fontSize: 14, fontWeight: 900, color: final !== null ? scoreColor(final) : "#9ca3af" }}>{final !== null ? `${final}%` : "—"}</div>
+                    <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, textTransform: "uppercase" as const }}>Final</div>
+                  </div>
+                </div>
               </div>
 
               {/* ── EXPANDED FULL DETAILS ── */}
@@ -649,7 +642,7 @@ const LevelAssignment = () => {
                     ))}
                   </div>
 
-                  <div style={{ padding: 20 }}>
+                  <div style={{ padding: 14 }}>
 
                     {/* ══ FULL PROFILE TAB (Issue 7: shows ALL info) ══ */}
                     {tab === "overview" && (
@@ -702,7 +695,7 @@ const LevelAssignment = () => {
                         {student.onboarding && (
                           <div style={{ background: "#F0FDF4", borderRadius: 14, padding: 16, border: "1px solid #86EFAC", gridColumn: "1 / -1" }}>
                             <div style={{ fontSize: 11, fontWeight: 800, color: G, marginBottom: 12, textTransform: "uppercase", letterSpacing: 0.5 }}>📚 Academic Background</div>
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "6px 20px" }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 14px" }}>
                               <InfoRow label="Quran Level"     value={student.onboarding.quran_level || "—"} />
                               <InfoRow label="Tajweed"         value={student.onboarding.tajweed_knowledge || "—"} />
                               <InfoRow label="Arabic Level"    value={student.onboarding.arabic_level || "—"} />

@@ -133,7 +133,6 @@ const LetterAudioRecorder   = lazy(() => import("./pages/admin/LetterAudioRecord
 const AdminRecitationSession = lazy(() => import("./pages/admin/RecitationSession"));
 const LevelSubjectMapping   = lazy(() => import("./pages/admin/LevelSubjectMapping"));
 const LevelManagement       = lazy(() => import("./pages/admin/LevelManagement"));
-const RegistrationDiagnostics   = lazy(() => import("./pages/admin/RegistrationDiagnostics"));
 // Merged hub pages — group several of the above into one tabbed page so
 // related admin functions are accessed together instead of being split
 // across separate settings screens. The individual routes below still
@@ -401,7 +400,7 @@ const App = () => (
                     <Route path="/admin/public-classes"              element={<PublicClassManagement />} />
                     <Route path="/admin/registration-settings"       element={<RegistrationHub />} />
                     <Route path="/admin/subject-registration"        element={<RegistrationHub />} />
-                    <Route path="/admin/registration-diagnostics"   element={<RegistrationDiagnostics />} />
+                    <Route path="/admin/registration-diagnostics"   element={<RegistrationHub />} />
                     <Route path="/admin/student-registration"        element={<RegistrationHub />} />
                     <Route path="/admin/settings"                    element={<AdminSettings />} />
                     <Route path="/admin/tasjeel"                     element={<RegistrationHub />} />

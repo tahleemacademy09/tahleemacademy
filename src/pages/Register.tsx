@@ -118,20 +118,6 @@ const Register = () => {
 
   const isRTL = language === "ar";
 
-  // ── Daily cap check ────────────────────────────────────────────────────────
-  const [dailyCapReached, setDailyCapReached] = useState(false);
-  useEffect(() => {
-    if (!config.max_daily_registrations || config.max_daily_registrations === 0) return;
-    (async () => {
-      const { supabase } = await import("@/integrations/supabase/client");
-      const today = new Date().toISOString().slice(0, 10);
-      const { count } = await supabase.from("profiles")
-        .select("*", { count: "exact", head: true })
-        .gte("created_at", `${today}T00:00:00`);
-      if ((count || 0) >= config.max_daily_registrations) setDailyCapReached(true);
-    })();
-  }, [config.max_daily_registrations]);
-
   // ── Form state ─────────────────────────────────────────────────────────────
   const [fullName, setFullName]   = useState("");
   const [email, setEmail]         = useState("");
@@ -247,10 +233,8 @@ const Register = () => {
   }
 
   // ── REGISTRATION CLOSED ────────────────────────────────────────────────────
-  if (!config.registration_open || dailyCapReached) {
-    const msg = dailyCapReached
-      ? "Daily registration limit reached. Please try again tomorrow."
-      : (isRTL ? config.closed_message_ar : config.closed_message);
+  if (!config.registration_open) {
+    const msg = isRTL ? config.closed_message_ar : config.closed_message;
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "'Cairo',sans-serif", background: `radial-gradient(ellipse at 20% 50%,rgba(15,45,31,.08),transparent 60%),#f8fafb` }}>
         <style>{`@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}`}</style>
@@ -262,7 +246,7 @@ const Register = () => {
           <p style={{ fontSize: 12, color: "#7a9e88", margin: "0 0 28px" }}>أكاديمية التعليم</p>
           <div style={{ background: "#FEF2F2", borderRadius: 16, padding: "20px", border: "2px solid #FECACA", marginBottom: 24 }}>
             <AlertCircle size={32} color="#DC2626" style={{ margin: "0 auto 12px", display: "block" }} />
-            <p style={{ fontWeight: 800, fontSize: 16, color: "#991B1B", margin: "0 0 8px" }}>{dailyCapReached ? "Daily Limit Reached" : "Registration Closed"}</p>
+            <p style={{ fontWeight: 800, fontSize: 16, color: "#991B1B", margin: "0 0 8px" }}>Registration Closed</p>
             <p style={{ fontSize: 13, color: "#DC2626", margin: 0, lineHeight: 1.6 }}>{msg}</p>
           </div>
           <Link to="/login" style={{ display: "block", padding: "13px 0", borderRadius: 14, background: `linear-gradient(135deg,${G},${GM})`, color: "#fff", fontSize: 14, fontWeight: 800, textDecoration: "none", marginBottom: 12 }}>Sign In Instead →</Link>

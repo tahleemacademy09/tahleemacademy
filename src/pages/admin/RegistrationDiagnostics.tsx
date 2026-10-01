@@ -60,7 +60,7 @@ const fmtDate = (iso: string) =>
 
 // ── Card wrapper ───────────────────────────────────────────────────────────
 const Card = ({ children, style = {} }: { children: React.ReactNode; style?: React.CSSProperties }) => (
-  <div style={{ background: "#fff", borderRadius: 16, border: `1px solid ${BORDER}`, boxShadow: "0 2px 8px rgba(0,0,0,.05)", padding: "20px 22px", ...style }}>
+  <div style={{ background: "#fff", borderRadius: 16, border: `1px solid ${BORDER}`, boxShadow: "0 2px 8px rgba(0,0,0,.05)", padding: "14px 14px", ...style }}>
     {children}
   </div>
 );
@@ -340,7 +340,7 @@ export default function RegistrationDiagnostics() {
   }
 
   return (
-    <div style={{ padding: "24px 20px", maxWidth: 1100, margin: "0 auto", fontFamily: "'Cairo',sans-serif" }}>
+    <div style={{ padding: "14px 14px 32px", background: "#faf8f4", fontFamily: "'Cairo',sans-serif" }}>
       <style>{`
         @keyframes spin { to { transform: rotate(360deg) } }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: translateY(0) } }
@@ -348,33 +348,31 @@ export default function RegistrationDiagnostics() {
         .diag-action:hover { opacity: .85; transform: translateY(-1px); }
       `}</style>
 
-      {/* ── Header ── */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 28, flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 40, height: 40, borderRadius: 12, background: G, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Activity size={20} color={GOLD} />
-            </div>
-            <div>
-              <h1 style={{ fontSize: 20, fontWeight: 900, color: G, margin: 0 }}>Registration Diagnostics</h1>
-              <div style={{ fontSize: 12, color: "#7a9e88", marginTop: 2 }}>Live pipeline health check — find where students are getting stuck</div>
-            </div>
+      {/* ── Header (hero) ── */}
+      <div style={{ marginBottom: 14, borderRadius: 20, padding: "16px 14px", background: "linear-gradient(135deg,#0f2d1f,#1a3d27)", border: "1px solid #c9a84c33", boxShadow: "0 4px 24px #0f2d1f44", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(255,255,255,.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Activity size={20} color={GOLD} />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,.5)", letterSpacing: 0.6 }}>DIAGNOSTICS</p>
+            <p style={{ margin: "2px 0 0", fontSize: 15, fontWeight: 900, color: "#fff" }}>Pipeline health check</p>
           </div>
         </div>
         <button
           onClick={fetchAll}
           disabled={refreshing}
-          style={{ display: "flex", alignItems: "center", gap: 7, padding: "10px 18px", borderRadius: 10, background: G, border: "none", color: "#fff", fontSize: 13, fontWeight: 700, cursor: refreshing ? "not-allowed" : "pointer", opacity: refreshing ? .6 : 1 }}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 10, background: "rgba(255,255,255,.1)", border: "1px solid rgba(255,255,255,.25)", color: "#fff", fontSize: 12, fontWeight: 700, cursor: refreshing ? "not-allowed" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
         >
-          <RefreshCw size={14} style={{ animation: refreshing ? "spin .8s linear infinite" : "none" }} />
-          {refreshing ? "Refreshing…" : "Refresh"}
+          <RefreshCw size={13} style={{ animation: refreshing ? "spin .8s linear infinite" : "none" }} />
+          {refreshing ? "…" : "Refresh"}
         </button>
       </div>
 
       {/* ── Environment Health ── */}
-      <Card style={{ marginBottom: 20, animation: "fadeIn .4s ease" }}>
+      <Card style={{ marginBottom: 14, animation: "fadeIn .4s ease" }}>
         <SectionTitle icon={Shield} title="Environment Health" sub="Critical configuration checks" />
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,240px),1fr))", gap: 12 }}>
           {[
             {
               label:   "Paystack Public Key",
@@ -646,7 +644,7 @@ export default function RegistrationDiagnostics() {
       </Card>
 
       {/* ── Recent Payments ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20, animation: "fadeIn .55s ease" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,300px),1fr))", gap: 14, marginBottom: 20, animation: "fadeIn .55s ease" }}>
         {/* Recent successful */}
         <Card>
           <SectionTitle icon={CreditCard} title="Recent Payments" sub="Last 20 transactions" />
@@ -712,7 +710,7 @@ export default function RegistrationDiagnostics() {
             <div style={{ marginBottom: 12, padding: "10px 14px", background: "#fffbeb", borderRadius: 10, border: "1px solid #fde68a", fontSize: 12, color: "#92400e" }}>
               ⚠️ These accounts exist in <code>profiles</code> but have no <code>tasjeel_progress</code> row. This means the user created an account but never clicked the verification link — or verification failed.
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,240px),1fr))", gap: 8 }}>
               {unverified.map((u, i) => {
                 const cooldown = resendCooldowns[u.email] || 0;
                 const isSending = resendingEmail === u.email;

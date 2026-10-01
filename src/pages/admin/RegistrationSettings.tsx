@@ -1,360 +1,282 @@
 // src/pages/admin/RegistrationSettings.tsx
-// Admin panel — every toggle here directly controls Register.tsx behaviour
-// Uses useRegistrationSettings hook (same data source as Register.tsx)
-
-import { useState, useEffect } from "react";
+// Admin → Registration → Settings.  Mobile-first, same look as Daily Hifdh Revision.
+//
+//  • Master gate  — "Registration open" decides whether /register accepts students.
+//                   Saved immediately; closing notifies students. Read back from the
+//                   DB after saving so the admin sees what is really live.
+//  • Enrollment flow — tap an icon to switch that step on/off (auto-saves).
+//                   Payment icon = registration fee on/off (amount keeps its last saved value).
+//  • Website messages — welcome + closed messages (EN/AR), saved with one button.
+//  • Registration link — open / copy the public page students use.
+//  • Recent registrations + counters.
+import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useRegistrationSettings, RegistrationConfig } from "@/hooks/useRegistrationSettings";
-import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
-  UserPlus, UserX, CreditCard, GraduationCap, Mic,
-  FileText, AlertTriangle, Loader2, Settings, Bell,
-  ChevronRight, Shield, Users, BarChart2, RefreshCw,
+  UserPlus, UserX, Loader2, Bell, Lock, ExternalLink, Copy, Users,
+  RefreshCw, AlertTriangle, CheckCircle2, Save,
 } from "lucide-react";
 
-const G = "#064E3B";
+const G0 = "#061409", G1 = "#0f2d1f", G2 = "#1a3d27", G3 = "#276749";
+const GOLD = "#c9a84c", GOLD_L = "#e6c97a";
+const WARM = "#faf8f4", BRD = "#e5ddd3", PASS = "#16a34a", FAIL = "#dc2626";
 
-/* Stable sub-components — defined outside to prevent keyboard dismiss on re-render */
-const Sec = ({ title, icon, children }: { title: string; icon?: React.ReactNode; children: React.ReactNode }) => (
-  <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", overflow: "hidden", marginBottom: 14 }}>
-    <div style={{ padding: "11px 16px", background: "#F9FAFB", borderBottom: "1px solid #E5E7EB", display: "flex", alignItems: "center", gap: 8 }}>
-      {icon}<p style={{ fontWeight: 800, fontSize: 12, color: "#374151", margin: 0, textTransform: "uppercase" as const, letterSpacing: .5 }}>{title}</p>
-    </div>
-    <div style={{ padding: "14px 16px" }}>{children}</div>
-  </div>
-);
-const Tog = ({ label, sub, checked, onChange }: any) => (
-  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 0", borderBottom: "1px solid #F9FAFB" }}>
-    <div>
-      <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>{label}</p>
-      {sub && <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{sub}</p>}
-    </div>
-    <Switch checked={checked} onCheckedChange={onChange} />
-  </div>
-);
+type FlowKey = "entrance_fee_enabled" | "onboarding_required" | "entrance_exam_required" | "recitation_test_required";
+
+const card: React.CSSProperties = { background: "#fff", borderRadius: 16, border: `1px solid ${BRD}`, padding: "14px 14px" };
+const label: React.CSSProperties = { fontSize: 11, fontWeight: 800, color: G2, textTransform: "uppercase", letterSpacing: 0.5, margin: 0 };
+const area: React.CSSProperties = { width: "100%", padding: "10px 12px", borderRadius: 12, border: `1.5px solid ${BRD}`, fontSize: 13, outline: "none", background: WARM, boxSizing: "border-box", resize: "none", fontFamily: "inherit" };
 
 export default function RegistrationSettings() {
-  const { user }     = useAuth();
-  const { toast }    = useToast();
-  const { config: serverConfig, loading, saveAll, fetch, currencySymbol } = useRegistrationSettings();
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const { config: server, loading, saveAll, fetch, currencySymbol } = useRegistrationSettings();
 
-  // Local draft — saved only when admin clicks "Save All Settings"
-  const [draft, setDraft]         = useState<RegistrationConfig | null>(null);
-  const [saving, setSaving]       = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [pendingOpen, setPendingOpen] = useState<boolean | null>(null);
-  const [recentRegs, setRecentRegs]   = useState<any[]>([]);
-  const [regStats, setRegStats]       = useState({ today: 0, week: 0, total: 0 });
+  const [d, setD] = useState<RegistrationConfig | null>(null);
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState<boolean | null>(null);
+  const [msgDirty, setMsgDirty] = useState(false);
+  const [stats, setStats] = useState({ today: 0, week: 0, total: 0 });
+  const [recent, setRecent] = useState<any[]>([]);
 
-  // Initialise draft from server when loaded
-  useEffect(() => {
-    if (!loading && serverConfig) setDraft({ ...serverConfig });
-  }, [loading, serverConfig]);
+  useEffect(() => { if (!loading && server && !msgDirty) setD({ ...server }); }, [loading, server]); // eslint-disable-line
 
-  // Load registration stats
-  useEffect(() => {
-    (async () => {
-      const today = new Date().toISOString().slice(0, 10);
-      const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
-      const [todayRes, weekRes, totalRes, recentRes] = await Promise.all([
-        supabase.from("profiles").select("*", { count: "exact", head: true }).gte("created_at", `${today}T00:00:00`),
-        supabase.from("profiles").select("*", { count: "exact", head: true }).gte("created_at", weekAgo),
-        supabase.from("profiles").select("*", { count: "exact", head: true }),
-        supabase.from("profiles").select("full_name, created_at, country, avatar_url").order("created_at", { ascending: false }).limit(5),
-      ]);
-      setRegStats({ today: todayRes.count || 0, week: weekRes.count || 0, total: totalRes.count || 0 });
-      setRecentRegs(recentRes.data || []);
-    })();
+  const loadStats = useCallback(async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+    const [a, b, c, r] = await Promise.all([
+      supabase.from("profiles").select("*", { count: "exact", head: true }).gte("created_at", `${today}T00:00:00`),
+      supabase.from("profiles").select("*", { count: "exact", head: true }).gte("created_at", weekAgo),
+      supabase.from("profiles").select("*", { count: "exact", head: true }),
+      supabase.from("profiles").select("full_name, created_at, country").order("created_at", { ascending: false }).limit(5),
+    ]);
+    setStats({ today: a.count || 0, week: b.count || 0, total: c.count || 0 });
+    setRecent(r.data || []);
   }, []);
+  useEffect(() => { loadStats(); }, [loadStats]);
 
-  if (loading || !draft) return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh" }}>
-      <Loader2 size={28} style={{ animation: "spin .8s linear infinite", color: G }} />
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-    </div>
-  );
+  if (loading || !d) {
+    return (
+      <div style={{ display: "flex", justifyContent: "center", padding: 60 }}>
+        <Loader2 size={26} style={{ animation: "spin .8s linear infinite", color: G2 }} />
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      </div>
+    );
+  }
 
-  const d = draft; // shorthand
-  const set = (patch: Partial<RegistrationConfig>) => setDraft(prev => prev ? { ...prev, ...patch } : prev);
+  const sym = currencySymbol(d.entrance_fee_currency);
+  const registerUrl = `${window.location.origin}/register`;
 
-  const handleToggleOpen = (v: boolean) => {
-    setPendingOpen(v);
-    setShowConfirm(true);
+  // Save a patch right away; on failure roll back and tell the admin.
+  const persist = async (patch: Partial<RegistrationConfig>, key: string, okMsg: string) => {
+    const prev = d;
+    const next = { ...d, ...patch };
+    setD(next);
+    setSavingKey(key);
+    try {
+      await saveAll(next, user?.id);
+      toast({ title: okMsg, description: "Live on the website now." });
+      return true;
+    } catch (e: any) {
+      setD(prev);
+      toast({ title: "Could not save", description: e.message, variant: "destructive" });
+      return false;
+    } finally { setSavingKey(null); }
   };
 
-  const confirmToggle = async () => {
-    if (pendingOpen === null) return;
-    const newDraft = { ...d, registration_open: pendingOpen };
-    setDraft(newDraft);
-    setShowConfirm(false);
-    // Save immediately for the master gate
-    setSaving(true);
-    await saveAll(newDraft, user?.id);
-    setSaving(false);
+  const toggleFlow = (k: FlowKey, name: string) =>
+    persist({ [k]: !d[k] } as any, k, `${name} ${!d[k] ? "enabled" : "disabled"}`);
 
-    // Notify all students if closing
-    if (!pendingOpen) {
+  const confirmGate = async () => {
+    if (confirmOpen === null) return;
+    const open = confirmOpen;
+    setConfirmOpen(null);
+    const ok = await persist({ registration_open: open }, "gate", open ? "Registration is now OPEN" : "Registration is now CLOSED");
+    if (ok && !open) {
       const { data: roles } = await supabase.from("user_roles" as any).select("user_id").eq("role", "student");
       if (roles?.length) {
         await supabase.from("notifications" as any).insert(
-          (roles as any[]).map((r: any) => ({
-            user_id: r.user_id,
-            title: "Registration Update",
-            message: d.closed_message,
-            type: "system_announcement",
-            is_read: false,
-          }))
+          (roles as any[]).map((r: any) => ({ user_id: r.user_id, title: "Registration Update", message: d.closed_message, type: "system_announcement", is_read: false }))
         );
       }
     }
-    toast({ title: pendingOpen ? "✅ Registration is now OPEN" : "✅ Registration is now CLOSED" });
-    setPendingOpen(null);
   };
 
-  const handleSaveAll = async () => {
-    setSaving(true);
-    await saveAll(d, user?.id);
-    setSaving(false);
-    toast({ title: "✅ All registration settings saved", description: "Changes are live on the website immediately." });
+  const saveMessages = async () => {
+    const ok = await persist({}, "msg", "Messages saved");
+    if (ok) setMsgDirty(false);
+  };
+  const setMsg = (patch: Partial<RegistrationConfig>) => { setD({ ...d, ...patch }); setMsgDirty(true); };
+
+  const copyLink = async () => {
+    try { await navigator.clipboard.writeText(registerUrl); toast({ title: "Link copied" }); }
+    catch { toast({ title: registerUrl }); }
   };
 
-  const inp: React.CSSProperties = { width: "100%", padding: "9px 12px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none", background: "#FAFAFA", boxSizing: "border-box" as const };
-
-  const sym = currencySymbol(d.entrance_fee_currency);
+  const flow: { k: FlowKey | null; name: string; icon: string; on: boolean; sub: string }[] = [
+    { k: null, name: "Account", icon: "👤", on: true, sub: "Always" },
+    { k: "entrance_fee_enabled", name: `Pay ${sym}${d.entrance_fee_amount.toLocaleString()}`, icon: "💳", on: d.entrance_fee_enabled, sub: "Fee" },
+    { k: "onboarding_required", name: "Onboarding", icon: "📝", on: d.onboarding_required, sub: "Form" },
+    { k: "entrance_exam_required", name: "Exam", icon: "📋", on: d.entrance_exam_required, sub: "Entrance" },
+    { k: "recitation_test_required", name: "Recitation", icon: "🎤", on: d.recitation_test_required, sub: "Test" },
+    { k: null, name: "Dashboard", icon: "🏠", on: true, sub: "Always" },
+  ];
 
   return (
-    <div style={{ minHeight: "100vh", background: "#F3F4F6" }}>
+    <div style={{ background: WARM, padding: "14px 14px 32px", display: "flex", flexDirection: "column", gap: 12, fontFamily: "'Cairo',sans-serif" }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
-      {/* Header */}
-      <div style={{ background: "#fff", borderBottom: "1px solid #E5E7EB", padding: "14px 16px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ width: 44, height: 44, borderRadius: 12, background: d.registration_open ? "#F0FDF4" : "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            {d.registration_open ? <UserPlus size={22} color="#16A34A" /> : <UserX size={22} color="#DC2626" />}
+      {/* ── Master gate (hero card) ── */}
+      <div style={{ borderRadius: 20, overflow: "hidden", padding: "18px 16px",
+        background: d.registration_open ? `linear-gradient(135deg,${G1},${G2})` : `linear-gradient(135deg,#3b0d0d,#7f1d1d)`,
+        border: `1px solid ${d.registration_open ? GOLD + "33" : "#fca5a533"}`, boxShadow: `0 4px 24px ${G1}44` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,.5)", letterSpacing: 0.6 }}>NEW STUDENT REGISTRATION</p>
+            <p style={{ margin: "3px 0 0", fontWeight: 900, fontSize: 22, color: "#fff", letterSpacing: -0.5 }}>
+              {d.registration_open ? "Open" : "Closed"}
+            </p>
           </div>
-          <div style={{ flex: 1 }}>
-            <h1 style={{ fontSize: 18, fontWeight: 800, color: "#111", margin: 0 }}>Registration Settings</h1>
-            <p style={{ fontSize: 12, color: "#6B7280", margin: 0 }}>Controls the website registration page directly</p>
+          <div style={{ width: 44, height: 44, borderRadius: 12, background: "rgba(255,255,255,.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {savingKey === "gate"
+              ? <Loader2 size={20} color="#fff" style={{ animation: "spin .8s linear infinite" }} />
+              : d.registration_open ? <UserPlus size={22} color="#86efac" /> : <UserX size={22} color="#fca5a5" />}
           </div>
-          <button onClick={fetch} style={{ padding: "7px 10px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "#6B7280" }}>
-            <RefreshCw size={13} /> Refresh
+        </div>
+        <p style={{ margin: "0 0 14px", fontSize: 12, color: "rgba(255,255,255,.65)", lineHeight: 1.5 }}>
+          {d.registration_open
+            ? "Students can create an account on the registration page."
+            : "The registration page shows your closed message. Existing students are unaffected."}
+        </p>
+        <button onClick={() => setConfirmOpen(!d.registration_open)} disabled={savingKey === "gate"}
+          style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", cursor: "pointer", fontFamily: "inherit", fontWeight: 900, fontSize: 15,
+            background: d.registration_open ? "rgba(255,255,255,.12)" : `linear-gradient(135deg,${GOLD},${GOLD_L})`,
+            color: d.registration_open ? "#fff" : G0, boxShadow: d.registration_open ? "none" : `0 4px 20px ${GOLD}55` }}>
+          {d.registration_open ? "Close Registration" : "Open Registration"}
+        </button>
+      </div>
+
+      {/* ── Stats side by side ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+        {[{ v: stats.today, l: "Today" }, { v: stats.week, l: "7 Days" }, { v: stats.total, l: "Total" }].map(s => (
+          <div key={s.l} style={{ background: `linear-gradient(135deg,${G1},${G2})`, borderRadius: 14, padding: "12px 6px", textAlign: "center", border: "1px solid rgba(255,255,255,.08)" }}>
+            <p style={{ margin: 0, fontWeight: 900, fontSize: 20, color: GOLD, lineHeight: 1 }}>{s.v}</p>
+            <p style={{ margin: "4px 0 0", fontSize: 9, color: "rgba(255,255,255,.5)", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>{s.l}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Registration link ── */}
+      <div style={card}>
+        <p style={label}>Registration page</p>
+        <p style={{ margin: "6px 0 10px", fontSize: 12, color: "#6B7280", wordBreak: "break-all" }}>{registerUrl}</p>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <a href="/register" target="_blank" rel="noreferrer"
+            style={{ padding: "11px 0", borderRadius: 12, background: `linear-gradient(135deg,${G2},${G3})`, color: "#fff", fontWeight: 800, fontSize: 13, textDecoration: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            <ExternalLink size={14} /> Preview
+          </a>
+          <button onClick={copyLink}
+            style={{ padding: "11px 0", borderRadius: 12, border: `1.5px solid ${BRD}`, background: "#fff", color: G2, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            <Copy size={14} /> Copy link
           </button>
         </div>
       </div>
 
-      <div style={{ padding: 16, maxWidth: 680, margin: "0 auto" }}>
-
-        {/* Stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
-          {[
-            { v: regStats.today, l: "Today",  icon: "📅", bg: "#EFF6FF", c: "#1D4ED8" },
-            { v: regStats.week,  l: "7 Days",  icon: "📈", bg: "#F0FDF4", c: "#166534" },
-            { v: regStats.total, l: "Total",   icon: "👥", bg: "#F5F3FF", c: "#6D28D9" },
-          ].map((s, i) => (
-            <div key={i} style={{ background: s.bg, borderRadius: 12, padding: "12px 14px" }}>
-              <div style={{ fontSize: 18, marginBottom: 3 }}>{s.icon}</div>
-              <div style={{ fontSize: 22, fontWeight: 900, color: s.c }}>{s.v}</div>
-              <div style={{ fontSize: 11, color: s.c, opacity: .7, fontWeight: 600 }}>Registrations {s.l}</div>
-            </div>
-          ))}
+      {/* ── Enrollment flow (tap icons) ── */}
+      <div style={card}>
+        <p style={label}>Enrollment flow — tap to switch on/off</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginTop: 12 }}>
+          {flow.map((f, i) => {
+            const locked = f.k === null;
+            const busy = savingKey === f.k;
+            return (
+              <button key={i} disabled={locked || !!savingKey}
+                onClick={() => f.k && toggleFlow(f.k, f.name.startsWith("Pay") ? "Registration fee" : f.name)}
+                style={{ padding: "12px 4px", borderRadius: 14, cursor: locked ? "default" : "pointer", fontFamily: "inherit",
+                  border: `2px solid ${f.on ? G3 : BRD}`, background: f.on ? `${G1}0d` : "#f3f4f6", opacity: f.on ? 1 : 0.7,
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 44, height: 44, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20,
+                  background: f.on ? `linear-gradient(135deg,${G2},${G3})` : "#e5e7eb", filter: f.on ? "none" : "grayscale(1)" }}>
+                  {busy ? <Loader2 size={18} color="#fff" style={{ animation: "spin .8s linear infinite" }} /> : f.icon}
+                </span>
+                <span style={{ fontSize: 11, fontWeight: 800, color: f.on ? G2 : "#9CA3AF", lineHeight: 1.2 }}>{f.name}</span>
+                <span style={{ fontSize: 9, fontWeight: 700, color: locked ? "#9CA3AF" : f.on ? PASS : FAIL, display: "flex", alignItems: "center", gap: 3 }}>
+                  {locked ? <><Lock size={9} /> {f.sub}</> : f.on ? "ON" : "OFF"}
+                </span>
+              </button>
+            );
+          })}
         </div>
+        <p style={{ margin: "12px 0 0", fontSize: 11, color: "#6B7280", lineHeight: 1.5 }}>
+          Students go: Create account → Verify email{d.entrance_fee_enabled ? " → Pay" : ""}{d.onboarding_required ? " → Onboarding" : ""}{d.entrance_exam_required ? " → Exam" : ""}{d.recitation_test_required ? " → Recitation" : ""} → Level assignment.
+        </p>
+      </div>
 
-        {/* ── MASTER GATE ── */}
-        <div style={{
-          borderRadius: 16, padding: "18px 20px", marginBottom: 16,
-          background: d.registration_open ? "#F0FDF4" : "#FEF2F2",
-          border: `2px solid ${d.registration_open ? "#86EFAC" : "#FECACA"}`,
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <div style={{ width: 50, height: 50, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: d.registration_open ? "#16A34A" : "#DC2626", flexShrink: 0 }}>
-              {d.registration_open ? <UserPlus size={22} color="#fff" /> : <UserX size={22} color="#fff" />}
-            </div>
-            <div style={{ flex: 1 }}>
-              <p style={{ fontWeight: 900, fontSize: 16, margin: 0, color: d.registration_open ? "#166534" : "#991B1B" }}>
-                Registration is {d.registration_open ? "OPEN" : "CLOSED"}
-              </p>
-              <p style={{ fontSize: 12, margin: "3px 0 0", color: d.registration_open ? "#16A34A" : "#DC2626" }}>
-                {d.registration_open
-                  ? `New students can register on the website${d.entrance_fee_enabled ? ` · ${sym}${d.entrance_fee_amount.toLocaleString()} fee required` : " · No payment required"}`
-                  : "Website shows closed message — no new registrations accepted"}
-              </p>
-            </div>
-            {saving ? <Loader2 size={20} style={{ animation: "spin .8s linear infinite", color: G }} /> : null}
-            <Switch checked={d.registration_open} onCheckedChange={handleToggleOpen} />
+      {/* ── Messages ── */}
+      <div style={card}>
+        <p style={{ ...label, display: "flex", alignItems: "center", gap: 6 }}><Bell size={13} /> Website messages</p>
+        {([
+          ["Welcome message", "registration_message", false],
+          ["رسالة الترحيب (العربية)", "registration_message_ar", true],
+          ["Closed message", "closed_message", false],
+          ["رسالة الإغلاق (العربية)", "closed_message_ar", true],
+        ] as const).map(([l, k, rtl]) => (
+          <div key={k} style={{ marginTop: 10 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>{l}</label>
+            <textarea rows={2} style={{ ...area, direction: rtl ? "rtl" : "ltr" }} value={d[k]} onChange={e => setMsg({ [k]: e.target.value } as any)} />
           </div>
-        </div>
-
-        {/* ── ENROLLMENT FLOW — which steps appear on website ── */}
-        <Sec title="Enrollment Flow" icon={<GraduationCap size={14} color={G} />}>
-          {/* Visual preview */}
-          <div style={{ display: "flex", alignItems: "center", gap: 6, overflowX: "auto", padding: "10px 0 14px", borderBottom: "1px solid #F3F4F6", marginBottom: 12 }}>
-            {[
-              { label: "Account", always: true, icon: "👤" },
-              { label: `Pay ${sym}${d.entrance_fee_amount.toLocaleString()}`, show: d.entrance_fee_enabled, icon: "💳" },
-              { label: "Onboarding",  show: d.onboarding_required,      icon: "📝" },
-              { label: "Exam",        show: d.entrance_exam_required,   icon: "📋" },
-              { label: "Recitation",  show: d.recitation_test_required, icon: "🎤" },
-              { label: "Dashboard",   always: true, icon: "🏠" },
-            ].map((step, i, arr) => {
-              const active = step.always || step.show;
-              return (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                  <div style={{ textAlign: "center" }}>
-                    <div style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, background: active ? G : "#E5E7EB", margin: "0 auto 3px", opacity: active ? 1 : .4 }}>
-                      {step.icon}
-                    </div>
-                    <p style={{ fontSize: 9, fontWeight: 700, color: active ? G : "#9CA3AF", margin: 0, maxWidth: 56, textAlign: "center", lineHeight: 1.2 }}>{step.label}</p>
-                  </div>
-                  {i < arr.length - 1 && <ChevronRight size={12} color={active ? G : "#D1D5DB"} />}
-                </div>
-              );
-            })}
-          </div>
-          <p style={{ fontSize: 11, color: "#9CA3AF", margin: "0 0 12px" }}>
-            ↑ This is exactly what students see on the registration page. Toggle below to update.
-          </p>
-          <Tog label="Onboarding Form" sub="Student fills background info before exam" checked={d.onboarding_required} onChange={(v: boolean) => set({ onboarding_required: v })} />
-          <Tog label="Entrance Exam" sub="Written placement test after payment/signup" checked={d.entrance_exam_required} onChange={(v: boolean) => set({ entrance_exam_required: v })} />
-          <Tog label="Recitation Test" sub="Audio/live Quran recitation evaluation" checked={d.recitation_test_required} onChange={(v: boolean) => set({ recitation_test_required: v })} />
-        </Sec>
-
-        {/* ── PAYMENT SETTINGS ── */}
-        <Sec title="Payment Settings" icon={<CreditCard size={14} color={G} />}>
-          <Tog label="Require Registration Fee" sub="Students pay before accessing onboarding & exam" checked={d.entrance_fee_enabled} onChange={(v: boolean) => set({ entrance_fee_enabled: v })} />
-
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10, marginTop: 12, opacity: d.entrance_fee_enabled ? 1 : .45 }}>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>Fee Amount</label>
-              <input type="number" style={inp} value={d.entrance_fee_amount} min={0} disabled={!d.entrance_fee_enabled}
-                onChange={e => set({ entrance_fee_amount: Number(e.target.value) })} />
-            </div>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>Currency</label>
-              <select style={inp} value={d.entrance_fee_currency} disabled={!d.entrance_fee_enabled}
-                onChange={e => set({ entrance_fee_currency: e.target.value })}>
-                {[["NGN","₦ Nigerian Naira"],["USD","$ US Dollar"],["GBP","£ British Pound"],["EUR","€ Euro"],["GHS","₵ Ghana Cedi"]].map(([v,l]) => (
-                  <option key={v} value={v}>{l}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {d.entrance_fee_enabled && (
-            <div style={{ marginTop: 12, padding: "10px 14px", borderRadius: 10, background: "#FFF7ED", border: "1px solid #FED7AA", fontSize: 12, color: "#C2410C" }}>
-              ⚠️ Make sure <code>VITE_PAYSTACK_PUBLIC_KEY</code> is set in Vercel environment variables for payments to work.
-            </div>
-          )}
-
-          {/* Quick presets */}
-          <div style={{ marginTop: 14 }}>
-            <p style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", marginBottom: 8 }}>Quick Presets</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {[
-                { label: "🌙 Ramadan Special — Waive Fee", action: () => set({ entrance_fee_enabled: false }) },
-                { label: "💰 Standard Fee ₦5,000",         action: () => set({ entrance_fee_enabled: true, entrance_fee_amount: 5000, entrance_fee_currency: "NGN" }) },
-                { label: "🎓 Full Onboarding Flow",         action: () => set({ onboarding_required: true, entrance_exam_required: true, recitation_test_required: true }) },
-                { label: "⚡ Quick Signup (No Steps)",       action: () => set({ entrance_fee_enabled: false, onboarding_required: false, entrance_exam_required: false, recitation_test_required: false }) },
-              ].map((p, i) => (
-                <button key={i} onClick={p.action}
-                  style={{ padding: "9px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB", background: "#FAFAFA", cursor: "pointer", textAlign: "left", fontSize: 12, fontWeight: 600, color: "#374151" }}>
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </Sec>
-
-        {/* ── LIMITS ── */}
-        <Sec title="Registration Limits" icon={<Shield size={14} color={G} />}>
-          <div>
-            <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>
-              Max Registrations Per Day (0 = unlimited)
-            </label>
-            <input type="number" style={inp} value={d.max_daily_registrations} min={0}
-              onChange={e => set({ max_daily_registrations: Number(e.target.value) })} />
-            <p style={{ fontSize: 11, color: "#9CA3AF", marginTop: 4, marginBottom: 0 }}>
-              {d.max_daily_registrations === 0
-                ? "Unlimited — no daily cap enforced"
-                : `Website will stop accepting registrations after ${d.max_daily_registrations} today`}
-            </p>
-          </div>
-        </Sec>
-
-        {/* ── MESSAGES ── */}
-        <Sec title="Website Messages" icon={<Bell size={14} color={G} />}>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>
-              Welcome Message (shown on the registration page sidebar)
-            </label>
-            <textarea rows={2} style={{ ...inp, resize: "none" }} value={d.registration_message}
-              onChange={e => set({ registration_message: e.target.value })} />
-          </div>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>رسالة الترحيب (العربية)</label>
-            <textarea rows={2} style={{ ...inp, resize: "none", direction: "rtl" }} value={d.registration_message_ar}
-              onChange={e => set({ registration_message_ar: e.target.value })} />
-          </div>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>
-              Closed Message (shown when registration is off)
-            </label>
-            <textarea rows={2} style={{ ...inp, resize: "none" }} value={d.closed_message}
-              onChange={e => set({ closed_message: e.target.value })} />
-          </div>
-          <div>
-            <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>رسالة الإغلاق (العربية)</label>
-            <textarea rows={2} style={{ ...inp, resize: "none", direction: "rtl" }} value={d.closed_message_ar}
-              onChange={e => set({ closed_message_ar: e.target.value })} />
-          </div>
-        </Sec>
-
-        {/* ── RECENT REGISTRATIONS ── */}
-        {recentRegs.length > 0 && (
-          <Sec title="Recent Registrations" icon={<Users size={14} color={G} />}>
-            {recentRegs.map((r, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: i < recentRegs.length - 1 ? "1px solid #F9FAFB" : "none" }}>
-                <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12, color: "#1D4ED8", flexShrink: 0 }}>
-                  {(r.full_name || "?")[0].toUpperCase()}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>{r.full_name || "Unknown"}</p>
-                  <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{r.country || "—"} · {new Date(r.created_at).toLocaleDateString()}</p>
-                </div>
-              </div>
-            ))}
-          </Sec>
-        )}
-
-        {/* Save button */}
-        <button onClick={handleSaveAll} disabled={saving}
-          style={{ width: "100%", padding: "14px 0", borderRadius: 13, border: "none", cursor: saving ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 15, color: "#fff", background: saving ? "#9CA3AF" : G, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 24 }}>
-          {saving ? <><Loader2 size={16} style={{ animation: "spin .8s linear infinite" }} /> Saving…</> : <><Settings size={16} /> Save All Settings — Apply to Website</>}
+        ))}
+        <button onClick={saveMessages} disabled={!msgDirty || savingKey === "msg"}
+          style={{ marginTop: 12, width: "100%", padding: 13, borderRadius: 14, border: "none", fontFamily: "inherit", fontWeight: 900, fontSize: 14,
+            cursor: msgDirty ? "pointer" : "default", background: msgDirty ? `linear-gradient(135deg,${GOLD},${GOLD_L})` : "#e5e7eb", color: msgDirty ? G0 : "#9CA3AF",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          {savingKey === "msg" ? <Loader2 size={16} style={{ animation: "spin .8s linear infinite" }} /> : msgDirty ? <Save size={16} /> : <CheckCircle2 size={16} />}
+          {msgDirty ? "Save messages" : "Messages saved"}
         </button>
       </div>
 
-      {/* Confirm toggle dialog */}
-      <Dialog open={showConfirm} onOpenChange={v => !v && setShowConfirm(false)}>
-        <DialogContent style={{ maxWidth: 380, borderRadius: 20, padding: 28, textAlign: "center" }}>
-          <div style={{ width: 56, height: 56, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px", background: pendingOpen ? "#F0FDF4" : "#FEF2F2" }}>
-            <AlertTriangle size={26} color={pendingOpen ? "#16A34A" : "#DC2626"} />
+      {/* ── Recent registrations ── */}
+      {recent.length > 0 && (
+        <div style={card}>
+          <p style={{ ...label, display: "flex", alignItems: "center", gap: 6 }}><Users size={13} /> Recent registrations</p>
+          {recent.map((r, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderTop: i ? "1px solid #f3f4f6" : "none", marginTop: i ? 0 : 8 }}>
+              <div style={{ width: 32, height: 32, borderRadius: "50%", background: `linear-gradient(135deg,${G2},${G3})`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12, color: "#fff", flexShrink: 0 }}>
+                {(r.full_name || "?")[0].toUpperCase()}
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <p style={{ fontWeight: 700, fontSize: 13, color: G2, margin: 0 }}>{r.full_name || "Unknown"}</p>
+                <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{r.country || "—"} · {new Date(r.created_at).toLocaleDateString()}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button onClick={() => { fetch(); loadStats(); }}
+        style={{ alignSelf: "center", padding: "9px 16px", borderRadius: 12, border: `1.5px solid ${BRD}`, background: "#fff", color: "#6B7280", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6 }}>
+        <RefreshCw size={13} /> Reload from server
+      </button>
+
+      {/* Confirm open/close */}
+      <Dialog open={confirmOpen !== null} onOpenChange={v => !v && setConfirmOpen(null)}>
+        <DialogContent style={{ maxWidth: 360, borderRadius: 20, padding: 24, textAlign: "center" }}>
+          <div style={{ width: 52, height: 52, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px", background: confirmOpen ? "#F0FDF4" : "#FEF2F2" }}>
+            <AlertTriangle size={24} color={confirmOpen ? PASS : FAIL} />
           </div>
-          <h3 style={{ fontWeight: 800, fontSize: 17, marginBottom: 8 }}>
-            {pendingOpen ? "Open Registration?" : "Close Registration?"}
-          </h3>
-          <p style={{ fontSize: 13, color: "#6B7280", marginBottom: 20, lineHeight: 1.6 }}>
-            {pendingOpen
-              ? `The website registration page will immediately accept new students. ${d.entrance_fee_enabled ? `Fee: ${sym}${d.entrance_fee_amount.toLocaleString()}` : "No fee required."}`
-              : `The website will show your closed message. Existing students are unaffected. All connected students will receive a notification.`}
+          <h3 style={{ fontWeight: 800, fontSize: 17, marginBottom: 6 }}>{confirmOpen ? "Open registration?" : "Close registration?"}</h3>
+          <p style={{ fontSize: 13, color: "#6B7280", marginBottom: 18, lineHeight: 1.6 }}>
+            {confirmOpen
+              ? "The registration page will accept new students immediately."
+              : "The registration page will show your closed message and all students will be notified."}
           </p>
           <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={() => setShowConfirm(false)}
-              style={{ flex: 1, padding: 12, borderRadius: 12, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Cancel</button>
-            <button onClick={confirmToggle}
-              style={{ flex: 1, padding: 12, borderRadius: 12, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13, color: "#fff", background: pendingOpen ? "#16A34A" : "#DC2626" }}>
-              {pendingOpen ? "Open Now" : "Close Now"}
+            <button onClick={() => setConfirmOpen(null)} style={{ flex: 1, padding: 12, borderRadius: 12, border: `1.5px solid ${BRD}`, background: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Cancel</button>
+            <button onClick={confirmGate} style={{ flex: 1, padding: 12, borderRadius: 12, border: "none", cursor: "pointer", fontWeight: 800, fontSize: 13, color: "#fff", background: confirmOpen ? PASS : FAIL }}>
+              {confirmOpen ? "Open now" : "Close now"}
             </button>
           </div>
         </DialogContent>

@@ -37,9 +37,13 @@ interface TabbedHubProps {
   tabs: HubTab[];
   /** Render the tabs as one row of coloured icons (no text labels). */
   iconOnly?: boolean;
+  /** Dark-green Daily-Hifdh-Revision look: gradient header + underline tab strip. */
+  hifdh?: boolean;
+  /** Arabic line shown under the title in the hifdh variant. */
+  subtitleAr?: string;
 }
 
-export default function TabbedHub({ title, subtitle, tabs, iconOnly = false }: TabbedHubProps) {
+export default function TabbedHub({ title, subtitle, tabs, iconOnly = false, hifdh = false, subtitleAr }: TabbedHubProps) {
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -53,6 +57,65 @@ export default function TabbedHub({ title, subtitle, tabs, iconOnly = false }: T
       navigate(tab.path, { replace: false });
     }
   };
+
+  if (hifdh) {
+    const G0 = "#061409", G1 = "#0f2d1f", G2 = "#1a3d27", GOLD = "#c9a84c";
+    return (
+      <div className="w-full" style={{ background: "#faf8f4", minHeight: "100dvh", fontFamily: "'Cairo',sans-serif" }}>
+        <div style={{ maxWidth: 720, margin: "0 auto" }}>
+          <div style={{ background: `linear-gradient(165deg,${G0} 0%,${G1} 60%,${G2} 100%)`, padding: "16px 16px 18px", position: "relative", overflow: "hidden" }}>
+            <div style={{ position: "absolute", top: -40, right: -40, width: 180, height: 180, borderRadius: "50%", border: `1px solid ${GOLD}18` }} />
+            <div style={{ position: "absolute", bottom: -30, left: -30, width: 140, height: 140, borderRadius: "50%", border: `1px solid ${GOLD}10` }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 12, position: "relative", zIndex: 1 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ margin: 0, fontWeight: 900, fontSize: 17, color: "#fff", letterSpacing: -0.2 }}>{title}</p>
+                {(subtitleAr || subtitle) && (
+                  <p style={{ margin: "2px 0 0", fontSize: 11, color: `${GOLD}cc` }}>{subtitleAr || subtitle}</p>
+                )}
+              </div>
+              <div style={{ fontFamily: "'Amiri',serif", color: GOLD, fontSize: "1.5em" }}>﷽</div>
+            </div>
+          </div>
+
+          <Tabs value={activeTab} onValueChange={handleChange} className="w-full">
+            <TabsList
+              className="flex flex-nowrap h-auto w-full justify-start rounded-none p-0 overflow-x-auto"
+              style={{ background: "#fff", borderBottom: "1px solid #e5ddd3", scrollbarWidth: "none" as any }}
+            >
+              {tabs.map((tab) => {
+                const on = tab.key === activeTab;
+                return (
+                  <TabsTrigger
+                    key={tab.key}
+                    value={tab.key}
+                    className="flex-1 flex items-center justify-center gap-1.5 whitespace-nowrap rounded-none shadow-none data-[state=active]:shadow-none"
+                    style={{
+                      padding: "12px 12px", background: "transparent", fontSize: 12,
+                      fontWeight: on ? 800 : 600, color: on ? G2 : "#9CA3AF",
+                      borderBottom: on ? `2.5px solid ${G2}` : "2.5px solid transparent",
+                    }}
+                  >
+                    {tab.icon && <tab.icon className="w-4 h-4" />}
+                    {tab.label}
+                    {!!tab.badge && (
+                      <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-bold" style={{ background: "#DC2626" }}>
+                        {tab.badge}
+                      </span>
+                    )}
+                  </TabsTrigger>
+                );
+              })}
+            </TabsList>
+            {tabs.map((tab) => (
+              <TabsContent key={tab.key} value={tab.key} className="mt-0">
+                <tab.component />
+              </TabsContent>
+            ))}
+          </Tabs>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full">

@@ -242,13 +242,11 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { type:"link", to:"/admin/analytics", icon:Eye, label:t("Site Analytics","إحصائيات الموقع") },
 
     // 1 ── Student Pipeline ─────────────────────────────────────
-    // New Registrations, Pipeline Tracker, Student Registration, Registration
-    // Settings & Subject Registration now live together as tabs on one page
-    // (RegistrationHub) instead of being split across separate screens.
+    // New Registrations, Pipeline Tracker, Registration Settings, Recitation
+    // Settings & Diagnostics all live as tabs on one page (RegistrationHub).
     { type:"group", key:"pipeline", icon:UserPlus, label:t("Student Pipeline","سير التسجيل"), children:[
       { to:"/admin/level-assignment",             icon:GraduationCap, label:t("Registration","التسجيل") },
       { to:"/admin/levels",                       icon:Layers,        label:t("Manage Levels","إدارة المستويات") },
-      { to:"/admin/registration-diagnostics",     icon:Activity,      label:t("Reg. Diagnostics 🔍","تشخيص التسجيل 🔍") },
     ]},
 
     // 2 ── Students ─────────────────────────────────────────────
