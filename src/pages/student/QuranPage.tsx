@@ -18,6 +18,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { SURAHS, RECITERS, DEFAULT_RECITER } from "@/components/hifdh/surahData";
 import { getPageText, getAyahPage, getFullQuranText, searchQuranText, QuranVerse, prefetchPage, getPageGlyphLines, prefetchPageGlyphLines, QcfLine } from "@/lib/quranTextApi";
 import { loadQcfPageFont, qcfPageFontFamily, isQcfPageFontLoaded, ensureUthmanicHafsFontLoaded } from "@/lib/qcfFontLoader";
+import MushafPageView from "@/components/hifdh/MushafPageView";
 import { listRecitationsForSurah, CustomRecitation } from "@/lib/quranRecitations";
 import { buildAyahSegments, CUSTOM_RECITER_PREFIX } from "@/lib/quranPlaybackSource";
 import { useQuranAudioEngine, AyahSegment } from "@/hooks/useQuranAudioEngine";
@@ -232,6 +233,9 @@ export default function QuranPage() {
   // area, instead of scrolling or shrinking only some lines.
   const [linesReady, setLinesReady] = useState(false);
   const [pageReady, setPageReady] = useState(false); // true once the page is measured + correctly scaled — gates visibility so nothing ever visibly resizes
+  // Printed Madinah Mushaf (SVG) is the primary view; the QCF glyph reader below is the fallback if it can't load.
+  const [printedFail, setPrintedFail] = useState(false);
+  useEffect(() => { setPrintedFail(false); }, [currentPage]);
   // Guards the swipe flash: while a page is turning, `qcfLines` is briefly
   // null (not yet fetched). Left unguarded, that null was read as "confirmed
   // no line data" and the page popped in immediately at the *previous*
@@ -821,11 +825,20 @@ export default function QuranPage() {
               // it only ever appears at its final, static size. No fade, no
               // animated resize; just there, already right, the moment it
               // shows up.
-              visibility: pageReady ? "visible" : "hidden",
+              visibility: (!printedFail || pageReady) ? "visible" : "hidden",
             }}
           >
           <div className="quran-page-frame">
-            {(() => {
+            {!printedFail && (
+              <MushafPageView
+                page={currentPage}
+                highlight={engine.currentSurah != null && engine.currentAyah != null ? { surah: engine.currentSurah, ayah: engine.currentAyah } : null}
+                selected={selected}
+                onAyahClick={handleVerseTap}
+                onUnavailable={() => setPrintedFail(true)}
+              />
+            )}
+            {printedFail && (() => {
               const wordSpan = (surah: number, ayah: number, text: string, isAyahEnd: boolean, key: string, isFirstOfAyah: boolean, waqfMark?: string) => (
                 <span
                   key={key}
