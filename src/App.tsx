@@ -177,6 +177,7 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 60_000,          // 60s before background refetch
+      gcTime: 10 * 60_000,        // keep visited pages' data 10 min so going back is instant
       retry: 1,                   // only 1 retry on network error
       refetchOnWindowFocus: false, // avoid re-fetching on every tab focus
     },
