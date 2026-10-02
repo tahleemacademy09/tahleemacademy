@@ -120,12 +120,14 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
     return () => { supabase.removeChannel(ch); };
   }, [sessionId, sessionStartedAt]);
 
-  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages.length, target?.id, privThread?.messages.length]);
+  useEffect(() => { const el = scrollRef.current; if (el?.parentElement) el.parentElement.scrollTo({ top: el.parentElement.scrollHeight, behavior: "smooth" }); }, [messages.length, target?.id, privThread?.messages.length]);
 
   /* ── send text — optimistic UI so messages appear instantly ── */
   const sendMessage = async (text?: string, type = "text", attachmentUrl?: string, attachmentName?: string) => {
     const msg = text || input.trim();
-    if ((!msg && !attachmentUrl) || !user || !sessionId) return;
+    if (!user) { toast({ title: "Sign in to chat", variant: "destructive" }); return; }
+    if (!sessionId) { toast({ title: "Class chat isn't ready yet", variant: "destructive" }); return; }
+    if (!msg && !attachmentUrl) return;
 
     // Clear input immediately — feels instant
     if (!text && !attachmentUrl) setInput("");
@@ -155,15 +157,15 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
       ...(attachmentUrl ? { attachment_url: attachmentUrl, attachment_name: attachmentName || "" } : {}),
     }).select().single();
 
-    if (error) {
-      // Rollback on failure
-      optimisticIds.current.delete(tempId);
+    optimisticIds.current.delete(tempId);
+    if (error || !data) {
       setMessages(prev => prev.filter(m => m.id !== tempId));
-    } else if (data) {
-      // Swap temp message for the real DB row (has correct id & created_at)
-      optimisticIds.current.delete(tempId);
-      setMessages(prev => prev.map(m => m.id === tempId ? data : m));
+      if (!text && !attachmentUrl) setInput(msg);
+      toast({ title: "Message not sent", description: error?.message || "Please try again", variant: "destructive" });
+      return false;
     }
+    setMessages(prev => prev.some(m => m.id === data.id) ? prev.filter(m => m.id !== tempId) : prev.map(m => m.id === tempId ? data : m));
+    return true;
   };
 
   /* ── image paste ── */
@@ -179,27 +181,34 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
     if (!user || !sessionId) return;
     setUploading(true);
     try {
-      const ext  = file.name.split(".").pop() || "bin";
+      const ext  = (file.name.split(".").pop() || "bin").replace(/[^a-zA-Z0-9]/g, "").slice(0, 8) || "bin";
       const path = `chat/${sessionId}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
-      const { error: upErr } = await supabase.storage.from(UPLOAD_BUCKET).upload(path, file, { upsert: false, contentType: file.type });
+      const { error: upErr } = await supabase.storage.from(UPLOAD_BUCKET).upload(path, file, { upsert: false, contentType: file.type || "application/octet-stream" });
       if (upErr) throw upErr;
       const { data: pub } = supabase.storage.from(UPLOAD_BUCKET).getPublicUrl(path);
       const url = pub.publicUrl;
       const type = file.type.startsWith("image/") ? "image" : "file";
       await sendMessage(file.name, type, url, file.name);
-    } catch { /* silent */ } finally { setUploading(false); }
+    } catch (e: any) {
+      toast({ title: "Upload failed", description: e?.message || "Could not upload the file", variant: "destructive" });
+    } finally { setUploading(false); }
   };
 
   const onFilePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; e.target.value = "";
-    if (f) await uploadFile(f);
+    if (!f) return;
+    if (f.size > 25 * 1024 * 1024) { toast({ title: "File too large", description: "Maximum size is 25 MB", variant: "destructive" }); return; }
+    await uploadFile(f);
   };
 
   /* ── voice recording ── */
+  const recMime = useRef("audio/webm");
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mr = new MediaRecorder(stream);
+      const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"].find(m => (window as any).MediaRecorder?.isTypeSupported?.(m)) || "";
+      const mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      recMime.current = mr.mimeType || mime || "audio/webm";
       recChunks.current = [];
       mr.ondataavailable = e => { if (e.data.size > 0) recChunks.current.push(e.data); };
       mr.start(500);
@@ -207,7 +216,9 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
       setRecording(true);
       setRecSeconds(0);
       recTimer.current = setInterval(() => setRecSeconds(s => s + 1), 1000);
-    } catch { /* mic denied */ }
+    } catch {
+      toast({ title: "Microphone unavailable", description: "Allow microphone access to send voice messages", variant: "destructive" });
+    }
   };
 
   const stopRecording = async () => {
@@ -215,20 +226,25 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
     setRecording(false);
     setRecSeconds(0);
     const mr = mrRef.current; if (!mr) return;
-    mr.stop();
-    await new Promise<void>(res => { mr.onstop = () => res(); });
-    const blob = new Blob(recChunks.current, { type: "audio/webm" });
-    if (blob.size < 500) return;
-    if (!user || !sessionId) return;
+    const stopped = new Promise<void>(res => { mr.onstop = () => res(); });
+    if (mr.state !== "inactive") mr.stop();
+    await stopped;
+    mr.stream.getTracks().forEach(t => t.stop());
+    mrRef.current = null;
+    const mime = recMime.current.split(";")[0];
+    const ext = mime.includes("mp4") ? "m4a" : mime.includes("ogg") ? "ogg" : "webm";
+    const blob = new Blob(recChunks.current, { type: mime });
+    if (blob.size < 500 || !user || !sessionId) return;
     setUploading(true);
     try {
-      const path = `chat/${sessionId}/voice-${Date.now()}.webm`;
-      const { error: upErr } = await supabase.storage.from(UPLOAD_BUCKET).upload(path, blob, { upsert: false, contentType: "audio/webm" });
+      const path = `chat/${sessionId}/voice-${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from(UPLOAD_BUCKET).upload(path, blob, { upsert: false, contentType: mime });
       if (upErr) throw upErr;
       const { data: pub } = supabase.storage.from(UPLOAD_BUCKET).getPublicUrl(path);
-      await sendMessage("🎤 Voice message", "voice", pub.publicUrl, "voice.webm");
-    } catch { /* silent */ } finally { setUploading(false); }
-    mrRef.current?.stream?.getTracks().forEach(t => t.stop());
+      await sendMessage("🎤 Voice message", "voice", pub.publicUrl, `voice.${ext}`);
+    } catch (e: any) {
+      toast({ title: "Voice message failed", description: e?.message || "Could not upload", variant: "destructive" });
+    } finally { setUploading(false); }
   };
 
   const deleteMessage = async (id: string) => {
@@ -272,7 +288,7 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
   const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
   return (
-    <div style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%", background: T.bg, fontFamily: "system-ui,sans-serif" }}>
+    <div style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1, minHeight: 0, height: "100%", width: "100%", background: T.bg, fontFamily: "system-ui,sans-serif" }}>
 
       {/* Lightbox */}
       {lightbox && (
@@ -324,7 +340,7 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
       ))}
 
       {/* Messages */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
         {inPrivate && target ? (
           <>
             <div style={{ textAlign: "center", margin: "2px 0 6px" }}>
@@ -462,7 +478,7 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
 
       {/* Input row */}
       {!recording && (
-        <div style={{ padding: "8px 10px", borderTop: `1px solid ${T.border}`, display: "flex", gap: 6, alignItems: "center", background: T.surface, flexShrink: 0 }}>
+        <div style={{ padding: "8px 10px calc(8px + env(safe-area-inset-bottom, 0px))", borderTop: `1px solid ${T.border}`, display: "flex", gap: 6, alignItems: "center", background: T.surface, flexShrink: 0 }}>
           <input ref={fileRef} type="file" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx" style={{ display: "none" }} onChange={onFilePick} />
 
           <button onClick={() => setShowEmoji(!showEmoji)} style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,.08)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, flexShrink: 0 }}>
@@ -485,7 +501,8 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
             onPaste={handlePaste}
             placeholder={inPrivate ? `Private message to ${target?.name}...` : uploading ? "Uploading…" : t("Message the class...", "أرسل رسالة...")}
             style={{ flex: 1, background: "rgba(255,255,255,.06)", border: `1px solid ${T.border}`, borderRadius: 20, padding: "7px 14px", fontSize: 13, color: T.text, outline: "none", fontFamily: "inherit" }}
-            onKeyDown={e => e.key === "Enter" && submit()}
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !(e.nativeEvent as any).isComposing) { e.preventDefault(); submit(); } }}
+            enterKeyHint="send"
           />
 
           <button onClick={() => submit()} disabled={!input.trim() || uploading} style={{ width: 32, height: 32, borderRadius: "50%", background: input.trim() ? "#0a7c68" : "rgba(255,255,255,.06)", border: "none", cursor: input.trim() ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", flexShrink: 0 }}>
