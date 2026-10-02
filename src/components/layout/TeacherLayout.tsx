@@ -12,11 +12,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import {
-  LayoutDashboard, Users, UserCheck, Video, ClipboardList,
+  LayoutDashboard, Users, Video, ClipboardList,
   LogOut, Globe, Menu, X, Settings, Trophy, MessageSquare,
   CheckSquare, Mic, BookOpen, GraduationCap, BarChart2,
-  Megaphone, Calendar, Headphones, Radio, ChevronDown,
-  ChevronRight, Bell, BookMarked, Clock, Trash2,
+  Megaphone, Calendar, ChevronDown,
+  ChevronRight, Bell, Clock, Trash2,
 } from "lucide-react";
 import NotificationPermissionBanner from "@/components/NotificationPermissionBanner";
 
@@ -38,19 +38,18 @@ const buildNav = (t: (a: string, b: string) => string, badges: Record<string, nu
     link: { to: "/teacher", icon: LayoutDashboard, label: t("Dashboard", "لوحة التحكم") },
   },
 
-  // ── Teaching ─────────────────────────────────────────────────────
+  // ── Academics ────────────────────────────────────────────────────
   {
     type: "group",
     group: {
-      key: "teaching",
+      key: "academics",
       icon: Video,
-      label: t("Teaching", "التدريس"),
+      label: t("Academics", "الأكاديمية"),
       children: [
         { to: "/teacher/classes",      icon: Video,      label: t("My Classes",      "فصولي الحية") },
         { to: "/teacher/timetable",    icon: Clock,      label: t("Timetable",       "جدولي الدراسي") },
         { to: "/teacher/subjects",     icon: BookOpen,   label: t("Subjects",        "موادي") },
-        { to: "/teacher/recordings",   icon: Headphones, label: t("Recordings",      "التسجيلات") },
-        { to: "/teacher/public-classes", icon: Radio,    label: t("Public Classes",  "الدروس العامة") },
+        { to: "/teacher/musabaqah",    icon: Trophy,     label: t("Al-Musābaqah 🏆", "المسابقة 🏆") },
       ],
     },
   },
@@ -64,8 +63,6 @@ const buildNav = (t: (a: string, b: string) => string, badges: Record<string, nu
       label: t("Students", "الطلاب"),
       children: [
         { to: "/teacher/students",         icon: Users,      label: t("All Students",      "جميع الطلاب") },
-        { to: "/teacher/private-students", icon: UserCheck,  label: t("Private Students",  "الطلاب الخاصون") },
-        { to: "/teacher/private-sessions", icon: BookMarked, label: t("Private Sessions",  "الجلسات الخاصة") },
         { to: "/teacher/attendance",       icon: Calendar,   label: t("Attendance",        "الحضور والغياب") },
         { to: "/teacher/announcements",    icon: Megaphone,  label: t("Announcements",     "الإعلانات") },
       ],
@@ -107,12 +104,6 @@ const buildNav = (t: (a: string, b: string) => string, badges: Record<string, nu
   {
     type: "link",
     link: { to: "/teacher/majlis", icon: MessageSquare, label: t("Al-Majlis", "المجلس") },
-  },
-
-  // ── Al-Musābaqah ─────────────────────────────────────────────────
-  {
-    type: "link",
-    link: { to: "/teacher/musabaqah", icon: Trophy, label: t("Al-Musābaqah 🏆", "المسابقة 🏆") },
   },
 
   // ── Settings ─────────────────────────────────────────────────────
@@ -157,8 +148,8 @@ const TeacherLayout = () => {
   // ── Auto-expand active group ────────────────────────────────────
   useEffect(() => {
     const groupDefs: Record<string, string[]> = {
-      teaching:    ["/teacher/classes","/teacher/timetable","/teacher/subjects","/teacher/recordings","/teacher/public-classes"],
-      students:    ["/teacher/students","/teacher/private-students","/teacher/private-sessions","/teacher/attendance","/teacher/announcements"],
+      academics:   ["/teacher/classes","/teacher/timetable","/teacher/subjects","/teacher/musabaqah"],
+      students:    ["/teacher/students","/teacher/attendance","/teacher/announcements"],
       assessments: ["/teacher/exams","/teacher/grading","/teacher/results","/teacher/transcripts"],
       recitation:  ["/teacher/recitation","/teacher/hifdh","/teacher/hifdh-program"],
     };
