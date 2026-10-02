@@ -20,7 +20,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { useViewingTermId } from "@/hooks/useCurrentTermId";
+import { useViewingTermId, useStaffTermId } from "@/hooks/useCurrentTermId";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { uploadStorageFile, getSignedUrl } from "@/integrations/supabase/storageClient";
@@ -371,6 +371,7 @@ export function AssignmentFormModal({
   subjectId, assignment, userId, onClose, onSaved,
 }: { subjectId: string; assignment: any | null; userId: string; onClose: () => void; onSaved: () => void }) {
   const { t } = useLanguage();
+  const staffTermId = useStaffTermId();
   const isEdit = !!assignment;
   const [title, setTitle]           = useState(assignment?.title || "");
   const [titleAr, setTitleAr]       = useState(assignment?.title_ar || "");
@@ -440,7 +441,7 @@ export function AssignmentFormModal({
           .maybeSingle();
         const { error: inErr } = await supabase
           .from("subject_assignments")
-          .insert({ ...payload, term_id: currentTerm?.id ?? null, created_by: userId, status: "open" });
+          .insert({ ...payload, term_id: staffTermId ?? currentTerm?.id ?? null, created_by: userId, status: "open" });
         if (inErr) throw inErr;
       }
       onSaved();
