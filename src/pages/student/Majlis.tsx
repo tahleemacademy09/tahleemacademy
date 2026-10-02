@@ -18,7 +18,7 @@ import {
   Edit2, CheckSquare, Square, AtSign, ChevronRight,
   Menu, Settings, User, Bell, HelpCircle, Bookmark,
   ChevronDown, Archive, Eye, Moon, LayoutDashboard, Users,
-  Music, MapPin, Phone, File,
+  Music, MapPin, Phone, File, Clock,
   Video, UserCircle2, BarChart3, Sticker as StickerIcon, Ban, PhoneIncoming, PhoneOff as PhoneOffIcon, Link2, PlayCircle, Radio
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -38,6 +38,24 @@ const WA_BUBBLE_ME  = "#DCF8C6";
 const BUCKET        = "majlis-media";
 const EDIT_WINDOW   = 15 * 60 * 1000;
 const LP_DELAY      = 500;
+
+// Profiles of other people go through a SECURITY DEFINER RPC because students are not
+// allowed to read other students' rows in `profiles` directly (that is why names showed
+// as "Unknown"). Falls back to a direct select (works for your own row / teachers).
+const PROFILE_COLS = "user_id,full_name,full_name_ar,avatar_url,level,email,student_id";
+const loadProfiles = async (ids:string[]): Promise<UserProfile[]> => {
+  const uniq=[...new Set((ids||[]).filter(Boolean))];
+  if(uniq.length===0) return [];
+  try{
+    const {data,error}=await supabase.rpc("majlis_profiles" as any,{p_ids:uniq});
+    if(!error&&Array.isArray(data)) return data as unknown as UserProfile[];
+  }catch{}
+  try{
+    const {data}=await supabase.from("profiles").select(PROFILE_COLS).in("user_id",uniq);
+    return (data||[]) as unknown as UserProfile[];
+  }catch{ return []; }
+};
+const normalizeChannel = (c:any):ChatChannel => (c&&c.type==="direct"?{...c,type:"dm"}:c) as ChatChannel;
 
 // ── Types ────────────────────────────────────────────────────────
 interface AppSettings {
@@ -136,7 +154,7 @@ const FormattedText = ({ text, sz }:{ text:string; sz:string }) => {
     .replace(/~([^~\n]+)~/g,"<s>$1</s>")
     .replace(/`([^`\n]+)`/g,`<code style="background:rgba(0,0,0,0.08);padding:1px 5px;border-radius:3px;font-family:monospace;font-size:11px">$1</code>`)
     .replace(/@(\w[\w ]*)/g,`<span style="color:${WA_GREEN};font-weight:700">@$1</span>`);
-  return <span style={{ whiteSpace:"pre-wrap", fontSize:sz }} dangerouslySetInnerHTML={{ __html:html }} />;
+  return <span style={{ whiteSpace:"pre-wrap", fontSize:sz, wordBreak:"normal", overflowWrap:"break-word", lineHeight:1.35 }} dangerouslySetInnerHTML={{ __html:html }} />;
 };
 
 // ── Date separator ───────────────────────────────────────────────
@@ -462,7 +480,7 @@ const SwipeBubble = ({ children, onReply, disabled, isMe }:SwipeBubbleProps) => 
     dragging.current=false;
   };
   return (
-    <div ref={wrapRef} style={{position:"relative",display:"flex",flexDirection:isMe?"row-reverse":"row",alignItems:"center"}}
+    <div ref={wrapRef} style={{position:"relative",display:"flex",flexDirection:isMe?"row-reverse":"row",alignItems:"center",minWidth:0,maxWidth:"100%"}}
       onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
       {/* Reply hint icon that appears as you swipe */}
       <div style={{position:"absolute",left:isMe?"auto":"100%",right:isMe?"100%":"auto",padding:"0 6px",opacity:0,transform:"scale(.5)",transition:"opacity .15s,transform .15s",pointerEvents:"none"}}
@@ -484,13 +502,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
   const navigate               = useNavigate();
 
   // ── Settings ─────────────────────────────────────────────
-  const [settings,setSettings] = useState<AppSettings>(()=>{
-    try { return {...DEFAULT_SETTINGS,...JSON.parse(localStorage.getItem("majlis-settings")||"{}")}; }
-    catch { return DEFAULT_SETTINGS; }
-  });
-  const saveSetting = <K extends keyof AppSettings>(key:K, val:AppSettings[K]) => {
-    setSettings(prev=>{ const next={...prev,[key]:val}; localStorage.setItem("majlis-settings",JSON.stringify(next)); return next; });
-  };
+  // The Majlis settings screen was removed — the chat always uses the defaults.
+  const settings: AppSettings = DEFAULT_SETTINGS;
 
   // ── Core state ────────────────────────────────────────────
   const [channels,setChannels]                 = useState<ChatChannel[]>([]);
@@ -558,18 +571,30 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
   const [editName,setEditName]                       = useState("");
   const [editDesc,setEditDesc]                       = useState("");
   const [showHeaderMenu,setShowHeaderMenu]           = useState(false);
-  const [showSettings,setShowSettings]               = useState(false);
-  const [settingsTab,setSettingsTab]                 = useState("profile");
-  const [showHamburger,setShowHamburger]             = useState(false);
+  const [showSidebarMenu,setShowSidebarMenu]       = useState(false);
+  const [showPeople,setShowPeople]                   = useState(false);
+  const [peopleSearch,setPeopleSearch]               = useState("");
+  const [directory,setDirectory]                     = useState<(UserProfile&{kind?:string})[]>([]);
+  const [directoryLoaded,setDirectoryLoaded]         = useState(false);
+  const [selectableId,setSelectableId]               = useState<string|null>(null);
+  const [showStarredSheet,setShowStarredSheet]       = useState(false);
+  const [starredList,setStarredList]                 = useState<ChatMessage[]>([]);
+  const [activeMemberIds,setActiveMemberIds]         = useState<string[]>([]);
+  const [reloadTick,setReloadTick]                   = useState(0);
+  const lpFiredRef       = useRef(false);
+  const lpStartRef       = useRef({x:0,y:0});
+  const activeChannelRef = useRef<string|null>(null);
+  const channelIdsRef    = useRef<Set<string>>(new Set());
+  const nonMemberRef     = useRef<Set<string>>(new Set());
+  const mobileShowChatRef = useRef(false);
+  mobileShowChatRef.current = mobileShowChat;
+  const isChatVisible = ()=> document.visibilityState==="visible" && (mobileShowChatRef.current || window.innerWidth>=768);
   const [showArchived,setShowArchived]               = useState(false);
   const [swipedChannel,setSwipedChannel]             = useState<string|null>(null);
   const [channelMenu,setChannelMenu]                 = useState<string|null>(null);
   const [showScrollFab,setShowScrollFab]             = useState(false);
   const [floatingDate,setFloatingDate]               = useState<string|null>(null);
   const floatingDateTimerRef                         = useRef<any>(null);
-  const [editProfileName,setEditProfileName]         = useState("");
-  const [editProfileAr,setEditProfileAr]             = useState("");
-  const [savingProfile,setSavingProfile]             = useState(false);
   const [channelMemberNames,setChannelMemberNames]   = useState<Record<string,string>>({});
 
   // ── Refs ──────────────────────────────────────────────────
@@ -580,8 +605,6 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
   const cameraInputRef   = useRef<HTMLInputElement>(null);   // FIX: camera only
   const audioFileRef     = useRef<HTMLInputElement>(null);   // FIX: audio files
   const avatarInputRef   = useRef<HTMLInputElement>(null);
-  const profileAvatarRef = useRef<HTMLInputElement>(null);
-  const bgImageRef       = useRef<HTMLInputElement>(null);
   const mediaRecRef      = useRef<MediaRecorder|null>(null);
   const chunksRef        = useRef<Blob[]>([]);
   const recTimerRef      = useRef<any>(null);
@@ -697,6 +720,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     anns:   filterChannels(filteredForSidebar.filter(c=>c.type==="announcement"&&!pinnedChannels.has(c.id))),
   };
 
+  const kindLabel=(s:any)=>s?.kind==="admin"?"Admin":s?.kind==="teacher"?"Teacher":(s?.level?String(s.level).charAt(0).toUpperCase()+String(s.level).slice(1):"Student");
   const contactResults = allStudents.filter(s=>sidebarSearch&&((s.full_name||"").toLowerCase().includes(sidebarSearch.toLowerCase())||(s.email||"").toLowerCase().includes(sidebarSearch.toLowerCase())));
   const groupResults   = channels.filter(c=>sidebarSearch&&getCN(c).toLowerCase().includes(sidebarSearch.toLowerCase()));
   const msgResults     = messages.filter(m=>sidebarSearch&&(m.text||"").toLowerCase().includes(sidebarSearch.toLowerCase()));
@@ -708,16 +732,21 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     supabase.storage.getBucket(BUCKET).then(({error})=>{
       if(error) supabase.storage.createBucket(BUCKET,{public:true}).catch(()=>{});
     });
-    supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id")
-      .then(({data})=>{
-        if(data){
-          setAllStudents(data as unknown as UserProfile[]);
-          const map:Record<string,UserProfile>={};
-          (data as any[]).forEach((p:any)=>{map[p.user_id]=p;});
-          setProfiles(prev=>({...prev,...map}));
-        }
-      });
-  },[]);
+    if(!user) return;
+    // Who I'm allowed to see/message: students → classmates in my level + my teachers + admin.
+    // (Teachers/admins get everyone.) Enforced in the database, not just here.
+    supabase.rpc("majlis_directory" as any).then(({data,error})=>{
+      if(error||!Array.isArray(data)) return;
+      const rows=data as unknown as UserProfile[];
+      setAllStudents(rows);
+      const map:Record<string,UserProfile>={};
+      rows.forEach((r:any)=>{map[r.user_id]=r;});
+      setProfiles(prev=>({...prev,...map}));
+    });
+    loadProfiles([user.id]).then(rows=>{
+      if(rows[0]) setProfiles(prev=>({...prev,[rows[0].user_id]:{...(prev[rows[0].user_id]||{}),...rows[0]}}));
+    });
+  },[user?.id]);
 
   // Android back button
   useEffect(()=>{
@@ -731,8 +760,9 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       if(showNewSheet){setShowNewSheet(false);window.history.pushState({layer:"sidebar"},"",window.location.href);return;}
       if(showStudentProfile){setShowStudentProfile(false);window.history.pushState({layer:"chat"},"",window.location.href);return;}
       if(showGroupInfo){setShowGroupInfo(false);window.history.pushState({layer:"chat"},"",window.location.href);return;}
-      if(showSettings){setShowSettings(false);window.history.pushState({layer:mobileShowChat?"chat":"sidebar"},"",window.location.href);return;}
-      if(showHamburger){setShowHamburger(false);window.history.pushState({layer:"sidebar"},"",window.location.href);return;}
+      if(showStarredSheet){setShowStarredSheet(false);window.history.pushState({layer:mobileShowChat?"chat":"sidebar"},"",window.location.href);return;}
+      if(showPeople){setShowPeople(false);window.history.pushState({layer:"sidebar"},"",window.location.href);return;}
+      if(showSidebarMenu){setShowSidebarMenu(false);window.history.pushState({layer:"sidebar"},"",window.location.href);return;}
       if(showForwardSheet){setShowForwardSheet(false);window.history.pushState({layer:"chat"},"",window.location.href);return;}
       if(selectMode){setSelectMode(false);setSelectedIds(new Set());window.history.pushState({layer:"chat"},"",window.location.href);return;}
       if(editingMsg){setEditingMsg(null);setInput("");window.history.pushState({layer:"chat"},"",window.location.href);return;}
@@ -745,7 +775,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     if(window.history.state===null) window.history.pushState({layer:"sidebar"},"",window.location.href);
     window.addEventListener("popstate",onBack);
     return ()=>window.removeEventListener("popstate",onBack);
-  },[showMessageMenu,showDeleteSheet,showAttachSheet,showNewSheet,showStudentProfile,showGroupInfo,showSettings,showHamburger,showForwardSheet,selectMode,editingMsg,replyTo,showChatSearch,showHeaderMenu,mobileShowChat]);
+  },[showMessageMenu,showDeleteSheet,showAttachSheet,showNewSheet,showStudentProfile,showGroupInfo,showStarredSheet,showPeople,showSidebarMenu,showForwardSheet,selectMode,editingMsg,replyTo,showChatSearch,showHeaderMenu,mobileShowChat]);
 
   // Online presence
   //
@@ -797,9 +827,9 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     const load=async()=>{
       const {data:md}=await supabase.from("chat_members" as any).select("channel_id").eq("user_id",user.id);
       const memberIds=(md||[]).map((m:any)=>m.channel_id);
-      if(memberIds.length===0){setChannels([]);return;}
+      if(memberIds.length===0){setChannels([]);channelIdsRef.current=new Set();return;}
       const {data:chData}=await supabase.from("chat_channels" as any).select("*").in("id",memberIds);
-      const all=(chData||[]) as unknown as ChatChannel[];
+      const all=((chData||[]) as unknown as ChatChannel[]).map(normalizeChannel);
 
       const defs=all.filter(c=>(c.type==="group"&&c.name==="General")||c.type==="announcement");
       for(const ch of defs)
@@ -813,9 +843,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
         const partnerRow=((members||[]) as any[]).find((m:any)=>m.user_id!==user!.id);
         if(!partnerRow) return ch;
         const partnerId=partnerRow.user_id;
-        const {data:partnerProf}=await supabase.from("profiles")
-          .select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id")
-          .eq("user_id",partnerId).maybeSingle();
+        const [partnerProf]=await loadProfiles([partnerId]);
         if(partnerProf){
           setProfiles(prev=>({...prev,[partnerId]:partnerProf as unknown as UserProfile}));
           return {...ch, dm_partner_id:partnerId, dm_partner_name:(partnerProf as any).full_name||"DM"};
@@ -823,6 +851,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
         return {...ch, dm_partner_id:partnerId};
       }));
       setChannels(enrichedAll as unknown as ChatChannel[]);
+      channelIdsRef.current=new Set((enrichedAll as any[]).map((c:any)=>c.id));
       const all2=enrichedAll as unknown as ChatChannel[];
 
       const counts:Record<string,number>={};
@@ -832,7 +861,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
         counts[ch.id]=memRows?.length||0;
         if(memRows&&memRows.length>0){
           const uids=(memRows as any[]).map((m:any)=>m.user_id);
-          const {data:pData}=await supabase.from("profiles").select("user_id,full_name").in("user_id",uids);
+          const pData=await loadProfiles(uids);
           if(pData){
             const names=(pData as any[]).map((p:any)=>p.user_id===user!.id?"You":(p.full_name||"").split(" ")[0]).filter(Boolean).slice(0,3);
             memberNames[ch.id]=names.join(", ");
@@ -856,7 +885,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       if(!activeChannelId&&all2.length>0) setActiveChannelId(all2[0].id);
     };
     load();
-  },[user,profile?.level]);
+  },[user,profile?.level,reloadTick]);
 
   // Load messages for active channel
   useEffect(()=>{
@@ -890,7 +919,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       if(cancelled) return;
       if(memData&&memData.length>0){
         const memberUids=[...new Set((memData as any[]).map((m:any)=>m.user_id))];
-        const {data:memberProfs}=await supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id").in("user_id",memberUids);
+        setActiveMemberIds(memberUids as string[]);
+        const memberProfs=await loadProfiles(memberUids as string[]);
         if(cancelled) return;
         if(memberProfs){
           const map:Record<string,UserProfile>={};
@@ -911,16 +941,20 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
 
       const uids=[...new Set(msgs.map(m=>m.user_id))];
       if(uids.length>0){
-        const {data:profs}=await supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id").in("user_id",uids);
+        const profs=await loadProfiles(uids as string[]);
         if(cancelled) return;
         const map:Record<string,UserProfile>={};
         (profs||[]).forEach((p:any)=>{map[p.user_id]=p;});
         setProfiles(prev=>({...prev,...map}));
       }
 
-      await supabase.from("chat_members" as any).update({last_read_at:new Date().toISOString()}).eq("channel_id",activeChannelId).eq("user_id",user!.id);
-      if(cancelled) return;
-      setUnreadCounts(prev=>({...prev,[activeChannelId]:0}));
+      // Members can't UPDATE chat_members directly, so read state is saved through an RPC.
+      // Only mark as read when the chat is really on screen.
+      if(isChatVisible()){
+        await supabase.rpc("majlis_mark_seen" as any,{p_channel:activeChannelId});
+        if(cancelled) return;
+        setUnreadCounts(prev=>({...prev,[activeChannelId]:0}));
+      }
 
       const ids=msgs.map(m=>m.id);
       if(ids.length>0){
@@ -962,11 +996,9 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             if(nm.user_id!==user?.id){
               playSound("receive",settings.notifSound);
               if(navigator.vibrate&&settings.notifVibration) navigator.vibrate(100);
-              setUnreadCounts(prev=>({...prev,[nm.channel_id]:(prev[nm.channel_id]||0)+1}));
             }
             if(!profiles[nm.user_id])
-              supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level").eq("user_id",nm.user_id).maybeSingle()
-                .then(({data})=>{if(data)setProfiles(prev=>({...prev,[(data as any).user_id]:data as unknown as UserProfile}));});
+              loadProfiles([nm.user_id]).then(rows=>{const r=rows[0];if(r)setProfiles(prev=>({...prev,[r.user_id]:r}));});
           } else if(p.eventType==="UPDATE"){
             setMessages(prev=>{
               const updated=prev.map(m=>m.id===(p.new as any).id?p.new as unknown as ChatMessage:m);
@@ -1085,23 +1117,64 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
 
   useEffect(()=>{ if(scrollRef.current) scrollRef.current.scrollTop=scrollRef.current.scrollHeight; },[messages]);
 
-  // Mark messages as seen — FIXED: guard with try-catch
+  // keep a ref of the open chat for the realtime inbox handler
+  useEffect(()=>{ activeChannelRef.current=activeChannelId; },[activeChannelId]);
+
+  // ── Delivery receipts + live sidebar (previews, unread, new DMs) ──────────
+  // One lightweight realtime listener for every chat I'm in. Torn down while the tab is
+  // hidden (same reason as the other sockets in this file) and rebuilt with a catch-up.
+  useEffect(()=>{
+    if(!user) return;
+    let ch: ReturnType<typeof supabase.channel> | null = null;
+    const markDelivered=(id?:string)=>{
+      supabase.rpc("majlis_mark_delivered" as any, id?{p_message:id}:{}).then(()=>{},()=>{});
+    };
+    const build=()=>{
+      if(ch) return;
+      ch=supabase.channel(`majlis-inbox-${user.id}`)
+        .on("postgres_changes" as any,{event:"INSERT",schema:"public",table:"chat_messages"},(payload:any)=>{
+          const nm=payload.new as ChatMessage;
+          if(!nm||!nm.channel_id) return;
+          if(!channelIdsRef.current.has(nm.channel_id)){
+            // a chat I don't have in my list yet — new DM / added to a group? check once, then reload the list
+            if(nm.user_id===user.id||nonMemberRef.current.has(nm.channel_id)) return;
+            supabase.from("chat_members" as any).select("channel_id").eq("channel_id",nm.channel_id).eq("user_id",user.id).maybeSingle()
+              .then(({data})=>{ if(data) setReloadTick(t=>t+1); else nonMemberRef.current.add(nm.channel_id); });
+            return;
+          }
+          const preview=(nm.content_type==="text"||!nm.content_type)?(nm.text||"").slice(0,100):(CONTENT_PREVIEW_ICON[nm.content_type]||`📎 ${nm.content_type}`);
+          setChannels(prev=>prev.map(c=>c.id===nm.channel_id?{...c,last_message:preview,last_message_at:nm.created_at} as any:c));
+          if(nm.user_id===user.id) return;
+          markDelivered(nm.id);
+          const watching = nm.channel_id===activeChannelRef.current && isChatVisible();
+          if(!watching){
+            setUnreadCounts(prev=>({...prev,[nm.channel_id]:(prev[nm.channel_id]||0)+1}));
+            if(!mutedChannels.has(nm.channel_id)) playSound("notification",settings.notifSound);
+          }
+        })
+        .subscribe();
+    };
+    const teardown=()=>{ if(!ch) return; supabase.removeChannel(ch); ch=null; };
+    if(document.visibilityState==="visible"){ build(); markDelivered(); }
+    const onVis=()=>{
+      if(document.visibilityState==="visible"){ build(); markDelivered(); setReloadTick(t=>t+1); }
+      else teardown();
+    };
+    document.addEventListener("visibilitychange",onVis);
+    return ()=>{ document.removeEventListener("visibilitychange",onVis); teardown(); };
+  },[user?.id]);
+
+  // Mark incoming messages as read — only while the chat is actually on screen.
+  // Saved through an RPC (chat_messages has no client UPDATE path for other people's rows).
   useEffect(()=>{
     if(!activeChannelId||!user||messages.length===0) return;
-    const unread=messages.filter(m=>m.user_id!==user.id&&!((m as any).seen_by||[]).includes(user.id));
-    if(unread.length===0) return;
-    const updateSeen=async()=>{
-      for(const m of unread){
-        try{
-          const currentSeen:string[]=(m as any).seen_by||[];
-          if(!currentSeen.includes(user.id)){
-            await supabase.from("chat_messages").update({seen_by:[...currentSeen,user.id]} as any).eq("id",m.id);
-          }
-        }catch{} // Column may not exist — silently skip
-      }
-    };
-    updateSeen();
-  },[activeChannelId,messages.length]);
+    if(!isChatVisible()) return;
+    const needs=(m:any)=>m.user_id!==user.id&&!String(m.id).startsWith("temp-")&&!((m.seen_by||[]) as string[]).includes(user.id);
+    if(!messages.some(needs)) return;
+    supabase.rpc("majlis_mark_seen" as any,{p_channel:activeChannelId}).then(()=>{},()=>{});
+    setUnreadCounts(prev=>prev[activeChannelId]?{...prev,[activeChannelId]:0}:prev);
+    setMessages(prev=>prev.map(m=>needs(m)?({...m,seen_by:[...(((m as any).seen_by)||[]),user.id]} as any):m));
+  },[activeChannelId,messages,mobileShowChat]);
 
   // ── CSS ───────────────────────────────────────────────────
   useEffect(()=>{
@@ -1134,6 +1207,12 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       }
 
       .msg-bubble { animation:msgIn .18s ease; }
+      /* Long-press must open the app's message menu, not the browser's select/copy toolbar.
+         Text only becomes selectable after the person taps the text directly. */
+      .msg-noselect, .msg-noselect * { -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+      .msg-noselect img, .msg-noselect video { -webkit-user-drag:none; pointer-events:auto; }
+      .msg-selectable, .msg-selectable * { -webkit-user-select:text; user-select:text; -webkit-touch-callout:default; }
+      .msg-noselect { -webkit-tap-highlight-color:transparent; }
 
       /* WhatsApp-exact message bubble tails */
       .bubble-tail-me::after {
@@ -1236,13 +1315,20 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     return <div style={{width:sz,height:sz,borderRadius:"50%",background:WA_GREEN,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:sz*0.4,flexShrink:0}}>{emoji}</div>;
   };
 
+  // WhatsApp-style ticks: clock = sending, ✓ = sent, ✓✓ grey = delivered, ✓✓ blue = read.
+  // Direct chats: the other person. Groups: delivered = at least one member got it,
+  // read (blue) = every other member has seen it.
   const renderTicks=(m:ChatMessage)=>{
     if(m.user_id!==user?.id) return null;
-    const seenBy:string[]=(m as any).seen_by||[];
-    const othersSeen=seenBy.filter((id:string)=>id!==user?.id).length>0;
-    if(m.id.startsWith("temp-")) return <Check style={{width:12,height:12,color:"rgba(255,255,255,.6)"}}/>;
-    if(othersSeen) return <CheckCheck style={{width:13,height:13,color:"#53BDEB"}}/>;
-    return <CheckCheck style={{width:13,height:13,color:"rgba(255,255,255,.6)"}}/>;
+    const grey="#8696a0", blue="#53BDEB";
+    if(String(m.id).startsWith("temp-")) return <Clock style={{width:11,height:11,color:grey}}/>;
+    const seenBy:string[]=((m as any).seen_by||[]).filter((id:string)=>id!==user?.id);
+    const deliveredTo:string[]=[...new Set([...(((m as any).delivered_to||[]) as string[]),...seenBy])].filter((id:string)=>id!==user?.id);
+    const others=activeMemberIds.filter(id=>id!==user?.id);
+    const isRead = others.length>0 ? others.every(id=>seenBy.includes(id)) : seenBy.length>0;
+    if(isRead) return <CheckCheck style={{width:15,height:15,color:blue}}/>;
+    if(deliveredTo.length>0) return <CheckCheck style={{width:15,height:15,color:grey}}/>;
+    return <Check style={{width:14,height:14,color:grey}}/>;
   };
 
   // ── Handlers ──────────────────────────────────────────────
@@ -1280,18 +1366,30 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
   };
 
   const startLongPress=(id:string, e?: React.TouchEvent|React.MouseEvent)=>{
+    lpFiredRef.current=false;
+    let sx=window.innerWidth/2, sy=window.innerHeight/2;
+    if(e){
+      if("touches" in e && e.touches.length>0){ sx=e.touches[0].clientX; sy=e.touches[0].clientY; }
+      else if("clientX" in e){ sx=(e as React.MouseEvent).clientX; sy=(e as React.MouseEvent).clientY; }
+    }
+    lpStartRef.current={x:sx,y:sy};
+    if(lpTimerRef.current) clearTimeout(lpTimerRef.current);
     lpTimerRef.current=setTimeout(()=>{
-      let x=window.innerWidth/2, y=window.innerHeight/2;
-      if(e){
-        if("touches" in e && e.touches.length>0){ x=e.touches[0].clientX; y=e.touches[0].clientY; }
-        else if("clientX" in e){ x=(e as React.MouseEvent).clientX; y=(e as React.MouseEvent).clientY; }
-      }
-      setShowMessageMenu({id,x,y}); setShowDeleteSheet(null);
+      lpTimerRef.current=null;
+      lpFiredRef.current=true;
+      setTimeout(()=>{ lpFiredRef.current=false; },800);
+      setSelectableId(null);
+      setShowMessageMenu({id,x:sx,y:sy}); setShowDeleteSheet(null);
       if(navigator.vibrate) navigator.vibrate(50);
       window.history.pushState({layer:"messageMenu"},"",window.location.href);
     },LP_DELAY);
   };
   const cancelLongPress=()=>{ if(lpTimerRef.current){clearTimeout(lpTimerRef.current);lpTimerRef.current=null;} };
+  // scrolling / dragging the finger must not trigger the long-press menu
+  const moveLongPress=(e:React.TouchEvent)=>{
+    const t=e.touches[0]; if(!t||!lpTimerRef.current) return;
+    if(Math.abs(t.clientX-lpStartRef.current.x)>10||Math.abs(t.clientY-lpStartRef.current.y)>10) cancelLongPress();
+  };
 
   const CONTENT_PREVIEW_ICON:Record<string,string>={image:"📷 Photo",video:"🎥 Video",audio:"🎤 Voice message",file:"📄 Document",location:"📍 Location",contact:"👤 Contact",poll:"📊 Poll",sticker:"🌟 Sticker"};
 
@@ -1307,8 +1405,14 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     }
 
     if(editingMsg){
-      await supabase.from("chat_messages").update({text:input.trim(),is_edited:true} as any).eq("id",editingMsg.id);
-      setMessages(prev=>prev.map(m=>m.id===editingMsg.id?{...m,text:input.trim(),is_edited:true} as any:m));
+      const newText=input.trim();
+      const editedAt=new Date().toISOString();
+      const {data:upd,error:upErr}=await supabase.from("chat_messages").update({text:newText,edited_at:editedAt,edited_by:user.id} as any).eq("id",editingMsg.id).select("id");
+      if(upErr||!upd||upd.length===0){
+        toast({title:"Couldn't edit message",description:upErr?.message||"You can only edit your own messages",variant:"destructive"});
+        return;
+      }
+      setMessages(prev=>prev.map(m=>m.id===editingMsg.id?{...m,text:newText,edited_at:editedAt} as any:m));
       setEditingMsg(null); setInput(""); return;
     }
 
@@ -1342,7 +1446,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       toast({title:"Failed to send",description:error.message,variant:"destructive"});
     } else {
       playSound("send",settings.notifSound);
-      setMessages(prev=>prev.map(m=>m.id===tempId?inserted as unknown as ChatMessage:m));
+      setMessages(prev=>prev.some(m=>m.id===(inserted as any).id)?prev.filter(m=>m.id!==tempId):prev.map(m=>m.id===tempId?inserted as unknown as ChatMessage:m));
       const preview=contentType==="text"?(text||"").slice(0,100):(CONTENT_PREVIEW_ICON[contentType]||`📎 ${contentType}`);
       await supabase.from("chat_channels" as any).update({last_message:preview,last_message_at:new Date().toISOString()}).eq("id",activeChannelId);
       setChannels(prev=>prev.map(c=>c.id===activeChannelId?{...c,last_message:preview,last_message_at:new Date().toISOString()} as any:c));
@@ -1409,25 +1513,31 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
   };
 
   // ── Broadcast lists ──────────────────────────────────────────────
-  const findOrCreateDM=async(partnerId:string,partnerName:string):Promise<string|null>=>{
+  // DMs are created by a database function that also enforces who may message whom
+  // (students: classmates in their level, their teachers and admins; staff: anyone).
+  const findOrCreateDM=async(partnerId:string,_partnerName:string):Promise<string|null>=>{
     if(!user) return null;
-    const {data:existingMems}=await supabase.from("chat_members" as any).select("channel_id").eq("user_id",user.id);
-    const myChIds=(existingMems||[]).map((m:any)=>m.channel_id);
-    const {data:theirMems}=await supabase.from("chat_members" as any).select("channel_id").eq("user_id",partnerId);
-    const theirChIds=(theirMems||[]).map((m:any)=>m.channel_id);
-    const sharedIds=myChIds.filter((id:string)=>theirChIds.includes(id));
-    if(sharedIds.length>0){
-      const {data:dmCh}=await supabase.from("chat_channels" as any).select("id").in("id",sharedIds).eq("type","dm").maybeSingle();
-      if(dmCh) return (dmCh as any).id;
+    const {data,error}=await supabase.rpc("majlis_open_dm" as any,{p_partner:partnerId});
+    if(error||!data) return null;
+    return data as unknown as string;
+  };
+
+  const openDirectMessage=async(partner:any)=>{
+    if(!user||!partner?.user_id) return;
+    const {data,error}=await supabase.rpc("majlis_open_dm" as any,{p_partner:partner.user_id});
+    if(error||!data){
+      toast({title:"Can't start this chat",description:error?.message||"Please try again.",variant:"destructive"});
+      return;
     }
-    const {data:newCh,error}=await supabase.from("chat_channels" as any)
-      .insert({name:partnerName,description:user.id,type:"dm",created_by:user.id,is_private:true}).select().single();
-    if(error||!newCh) return null;
-    await supabase.from("chat_members" as any).insert([
-      {channel_id:(newCh as any).id,user_id:user.id,role:"admin"},
-      {channel_id:(newCh as any).id,user_id:partnerId,role:"member"},
-    ]);
-    return (newCh as any).id;
+    const chId=data as unknown as string;
+    const {data:chRow}=await supabase.from("chat_channels" as any).select("*").eq("id",chId).maybeSingle();
+    const enriched:any={...normalizeChannel(chRow||{id:chId,type:"dm",name:partner.full_name||"Direct Message",name_ar:null,description:null,level:null,created_by:user.id,is_private:true,avatar:null,last_message:null,last_message_at:null,member_count:2,created_at:new Date().toISOString()}),dm_partner_id:partner.user_id,dm_partner_name:partner.full_name||"Direct Message"};
+    channelIdsRef.current.add(chId);
+    setChannels(prev=>prev.some(c=>c.id===chId)?prev.map(c=>c.id===chId?{...c,dm_partner_id:partner.user_id,dm_partner_name:partner.full_name||"Direct Message"} as any:c):[enriched as ChatChannel,...prev]);
+    setProfiles(prev=>({...prev,[partner.user_id]:{...(prev[partner.user_id]||{}),...partner}}));
+    setMemberCounts(prev=>({...prev,[chId]:2}));
+    setShowPeople(false); setShowNewSheet(false); setShowStudentProfile(false); setPeopleSearch(""); setSidebarSearch("");
+    selectChannel(chId);
   };
 
   const sendBroadcast=async()=>{
@@ -1480,7 +1590,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
           setMessages(prev=>[...prev,{id:tempId,channel_id:activeChannelId,user_id:user.id,content_type:"image",text:b64,media_path:null,created_at:new Date().toISOString()} as any]);
           const {data:ins,error:insE}=await supabase.from("chat_messages").insert({class_level_id:activeChannelId,channel_id:activeChannelId,user_id:user.id,content_type:"image",text:b64}).select().single();
           if(insE) setMessages(prev=>prev.filter(m=>m.id!==tempId));
-          else setMessages(prev=>prev.map(m=>m.id===tempId?ins as unknown as ChatMessage:m));
+          else setMessages(prev=>prev.some(m=>m.id===(ins as any).id)?prev.filter(m=>m.id!==tempId):prev.map(m=>m.id===tempId?ins as unknown as ChatMessage:m));
         } else {
           toast({title:"Upload failed",description:upErr.message||"Storage unavailable. Check bucket permissions.",variant:"destructive"});
         }
@@ -1635,12 +1745,36 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
   };
   const pinMessage=async(m:ChatMessage)=>{
     const ip=!(m as any).is_pinned;
-    await supabase.from("chat_messages").update({is_pinned:ip} as any).eq("id",m.id);
+    const {data:pinUpd,error:pinErr}=await supabase.from("chat_messages").update({is_pinned:ip} as any).eq("id",m.id).select("id");
+    if(pinErr||!pinUpd||pinUpd.length===0){ setShowMessageMenu(null); toast({title:"Couldn't pin message",description:"Only admins, teachers and the sender can pin it.",variant:"destructive"}); return; }
     setMessages(prev=>prev.map(x=>x.id===m.id?{...x,is_pinned:ip} as any:x));
     setPinnedMessages(prev=>ip?[...prev,m]:prev.filter(x=>x.id!==m.id));
     setShowMessageMenu(null);toast({title:ip?"Pinned":"Unpinned"});
   };
-  const starMsg  =(id:string)=>{ setStarredMessages(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;}); setShowMessageMenu(null); };
+  // Stars are personal — saved on this device per user so they survive a reload.
+  useEffect(()=>{
+    try{ setStarredMessages(new Set(JSON.parse(localStorage.getItem(`majlis-starred-${user?.id||"anon"}`)||"[]"))); }catch{}
+  },[user?.id]);
+  const starMsg  =(id:string)=>{
+    setStarredMessages(prev=>{
+      const n=new Set(prev); n.has(id)?n.delete(id):n.add(id);
+      try{ localStorage.setItem(`majlis-starred-${user?.id||"anon"}`,JSON.stringify([...n])); }catch{}
+      return n;
+    });
+    setShowMessageMenu(null);
+  };
+  const openStarred=async()=>{
+    const ids=[...starredMessages];
+    setShowSidebarMenu(false); setShowHeaderMenu(false);
+    setShowStarredSheet(true);
+    window.history.pushState({layer:"starred"},"",window.location.href);
+    if(ids.length===0){ setStarredList([]); return; }
+    const {data}=await supabase.from("chat_messages").select("*").in("id",ids).order("created_at",{ascending:false});
+    const rows=(data||[]) as unknown as ChatMessage[];
+    setStarredList(rows);
+    const need=rows.map(r=>r.user_id).filter(u=>!profiles[u]);
+    if(need.length){ const ps=await loadProfiles(need); setProfiles(prev=>{const n={...prev}; ps.forEach(pp=>{n[pp.user_id]=pp;}); return n;}); }
+  };
   const copyMsg  =(text:string)=>{ navigator.clipboard?.writeText(text); setShowMessageMenu(null); toast({title:"Copied!"}); };
   const jumpTo   =(id:string)=>{ document.getElementById(`msg-${id}`)?.scrollIntoView({behavior:"smooth",block:"center"}); };
 
@@ -1691,31 +1825,10 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       toast({title:"Photo updated!"});
     }
   };
-  const handleProfileAvatarUpload=async(file:File)=>{
-    if(!user) return;setSavingProfile(true);
-    try{
-      const path=`profiles/${user.id}/${Date.now()}.${file.name.split(".").pop()}`;
-      const {error}=await supabase.storage.from(BUCKET).upload(path,file,{upsert:true});
-      let av="";
-      if(!error){const {data}=supabase.storage.from(BUCKET).getPublicUrl(path);av=data.publicUrl;}
-      else{av=await new Promise(res=>{const r=new FileReader();r.onloadend=()=>res(r.result as string);r.readAsDataURL(file);});}
-      await supabase.from("profiles").update({avatar_url:av}).eq("user_id",user.id);
-      setProfiles(prev=>({...prev,[user.id]:{...prev[user.id],avatar_url:av}}));
-      toast({title:"Photo updated!"});
-    }catch(_){}finally{setSavingProfile(false);}
-  };
-  const saveProfileEdit=async()=>{
-    if(!user) return;setSavingProfile(true);
-    await supabase.from("profiles").update({full_name:editProfileName,full_name_ar:editProfileAr}).eq("user_id",user.id);
-    setProfiles(prev=>({...prev,[user.id]:{...prev[user.id],full_name:editProfileName,full_name_ar:editProfileAr}}));
-    setShowSettings(false);setSavingProfile(false);toast({title:"Profile updated!"});
-  };
-  const handleBgImageUpload=(file:File)=>{
-    const r=new FileReader();r.onloadend=()=>{localStorage.setItem("majlis-custom-bg",r.result as string);saveSetting("wallpaper","custom");};r.readAsDataURL(file);
-  };
   const selectChannel=(id:string)=>{
     setActiveChannelId(id);setMobileShowChat(true);setEditingChannel(false);
     setUnreadCounts(prev=>({...prev,[id]:0}));
+    supabase.rpc("majlis_mark_seen" as any,{p_channel:id}).then(()=>{},()=>{});
     playSound("open",settings.notifSound);
     window.history.pushState({layer:"chat"},"",window.location.href);
   };
@@ -1848,7 +1961,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
 
     return (
       <div id={`msg-${m.id}`} key={m.id} data-msg-date={new Date(m.created_at).toDateString()} className="msg-bubble"
-        style={{display:"flex",flexDirection:isMe?"row-reverse":"row",alignItems:"flex-end",gap:4,padding:"1px 12px",background:isSelected?"rgba(37,211,102,0.12)":"transparent"}}
+        style={{display:"flex",flexDirection:isMe?"row-reverse":"row",alignItems:"flex-end",gap:6,padding:"1px 10px",minWidth:0,background:isSelected?"rgba(37,211,102,0.12)":"transparent"}}
         onClick={()=>{ if(selectMode){setSelectedIds(prev=>{const n=new Set(prev);n.has(m.id)?n.delete(m.id):n.add(m.id);return n;});} }}
       >
         {selectMode&&(
@@ -1875,17 +1988,24 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             {avatarEl(m.user_id,28)}
           </div>
         )}
-        {/* Spacer for "me" bubbles so they don't touch avatar column */}
-        {isMe&&!selectMode&&<div style={{width:28}}/>}
 
         <SwipeBubble disabled={selectMode||!canSend()} onReply={()=>{setReplyTo(m);setTimeout(()=>inputRef.current?.focus(),50);}} isMe={isMe}>
         <div
-          style={{maxWidth:"72%",minWidth:60}}
-          onMouseDown={(e)=>!selectMode&&startLongPress(m.id,e)}
+          className={selectableId===m.id?"msg-selectable":"msg-noselect"}
+          style={{width:"fit-content",maxWidth:"min(calc(100vw - 64px), 560px)",minWidth:60}}
+          onContextMenu={(e)=>{ if(selectableId!==m.id) e.preventDefault(); }}
+          onMouseDown={(e)=>!selectMode&&selectableId!==m.id&&startLongPress(m.id,e)}
           onMouseUp={cancelLongPress}
           onMouseLeave={cancelLongPress}
-          onTouchStart={(e)=>!selectMode&&startLongPress(m.id,e)}
+          onTouchStart={(e)=>!selectMode&&selectableId!==m.id&&startLongPress(m.id,e)}
+          onTouchMove={moveLongPress}
           onTouchEnd={cancelLongPress}
+          onTouchCancel={cancelLongPress}
+          onClick={()=>{
+            // tapping the text directly makes it selectable (so a person can copy part of it)
+            if(selectMode||lpFiredRef.current) return;
+            if(m.content_type==="text"&&!(window.getSelection()?.toString())) setSelectableId(m.id);
+          }}
         >
           <div className={tailClass} style={{background:bubbleBg,borderRadius:isMe?"10px 2px 10px 10px":"2px 10px 10px 10px",padding:"6px 10px 4px 10px",boxShadow:"0 1px 2px rgba(0,0,0,.1)",position:"relative"}}>
             {/* Sender name */}
@@ -1944,7 +2064,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
               </>
             )}
             {(m as any).is_deleted&&<span style={{fontSize:12,color:"#9e9e9e",fontStyle:"italic"}}>🚫 This message was deleted</span>}
-            {(m as any).is_edited&&<span style={{fontSize:10,color:"#9e9e9e",marginLeft:4}}>edited</span>}
+            {((m as any).edited_at||(m as any).is_edited)&&<span style={{fontSize:10,color:"#9e9e9e",marginLeft:4}}>edited</span>}
 
             {/* Time + ticks */}
             <div style={{display:"flex",alignItems:"center",gap:3,justifyContent:"flex-end",marginTop:2}}>
@@ -2010,160 +2130,6 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     );
   };
 
-  // ── Settings panel ────────────────────────────────────────
-  const renderSettings=()=>(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:400,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowSettings(false)}>
-      <div className="settings-panel" style={{width:"100%",maxWidth:480,margin:"0 auto",background:isDark?"#111b21":"#fff",borderRadius:"24px 24px 0 0",maxHeight:"90vh",display:"flex",flexDirection:"column",overflow:"hidden"}} onClick={e=>e.stopPropagation()}>
-        <div style={{display:"flex",alignItems:"center",gap:12,padding:"18px 20px",background:isDark?"#202c33":WA_GREEN,color:"#fff"}}>
-          <button onClick={()=>setShowSettings(false)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer"}}><ArrowLeft size={20}/></button>
-          <span style={{fontSize:17,fontWeight:600}}>Settings</span>
-        </div>
-        <div style={{display:"flex",borderBottom:`1px solid ${divider}`,background:isDark?"#202c33":"#f8f8f8",overflowX:"auto"}}>
-          {["profile","account","privacy","notifications","chats","storage","help"].map(tab=>(
-            <button key={tab} onClick={()=>setSettingsTab(tab)} style={{padding:"12px 16px",background:"none",border:"none",cursor:"pointer",fontSize:12,fontWeight:settingsTab===tab?700:400,color:settingsTab===tab?WA_GREEN:textSub,borderBottom:settingsTab===tab?`2px solid ${WA_GREEN}`:"2px solid transparent",whiteSpace:"nowrap",textTransform:"capitalize"}}>{tab}</button>
-          ))}
-        </div>
-        <div style={{flex:1,overflowY:"auto",padding:20}}>
-          {settingsTab==="profile"&&(
-            <div style={{display:"flex",flexDirection:"column",gap:16}}>
-              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,marginBottom:8}}>
-                <div style={{position:"relative"}}>
-                  {myProfile.avatar_url
-                    ?<img src={myProfile.avatar_url} style={{width:90,height:90,borderRadius:"50%",objectFit:"cover"}} alt=""/>
-                    :<div style={{width:90,height:90,borderRadius:"50%",background:WA_GREEN,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:36,fontWeight:700}}>{myInitial}</div>
-                  }
-                  <input ref={profileAvatarRef} id="majlis-profile-avatar" type="file" accept="image/*" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleProfileAvatarUpload(e.target.files[0])}/>
-                  <label htmlFor="majlis-profile-avatar" style={{position:"absolute",bottom:0,right:0,width:30,height:30,borderRadius:"50%",background:WA_TEAL,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                    <Camera style={{width:14,height:14,color:"#fff"}}/>
-                  </label>
-                </div>
-              </div>
-              {[
-                {label:"Display Name",val:editProfileName||myProfile.full_name||"",set:setEditProfileName,placeholder:"Your name"},
-                {label:"Arabic Name",val:editProfileAr||(myProfile as any).full_name_ar||"",set:setEditProfileAr,placeholder:"اسمك بالعربي"},
-              ].map(f=>(
-                <div key={f.label}>
-                  <div style={{fontSize:12,color:textSub,marginBottom:4}}>{f.label}</div>
-                  <input value={f.val} onChange={e=>f.set(e.target.value)} placeholder={f.placeholder} style={{width:"100%",padding:"10px 14px",borderRadius:10,border:`1px solid ${divider}`,background:inputBg,color:textMain,fontSize:14,boxSizing:"border-box"}}/>
-                </div>
-              ))}
-              <div>
-                <div style={{fontSize:12,color:textSub,marginBottom:4}}>About</div>
-                <input value={settings.about} onChange={e=>saveSetting("about",e.target.value)} style={{width:"100%",padding:"10px 14px",borderRadius:10,border:`1px solid ${divider}`,background:inputBg,color:textMain,fontSize:14,boxSizing:"border-box"}}/>
-              </div>
-              <button onClick={saveProfileEdit} disabled={savingProfile} style={{background:WA_GREEN,color:"#fff",border:"none",borderRadius:10,padding:"13px",fontSize:15,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-                {savingProfile?<Loader2 style={{width:18,height:18,animation:"spin .8s linear infinite"}}/>:<Check size={18}/>} Save Profile
-              </button>
-            </div>
-          )}
-          {settingsTab==="account"&&(
-            <div style={{display:"flex",flexDirection:"column",gap:2}}>
-              {[{label:"Full Name",val:myProfile.full_name||""},{label:"Student ID",val:(profile as any)?.student_id||""},{label:"Email",val:user?.email||""},{label:"Level",val:(profile as any)?.level||""}].map(f=>(
-                <div key={f.label} style={{padding:"14px 0",borderBottom:`1px solid ${divider}`}}>
-                  <div style={{fontSize:12,color:WA_GREEN,marginBottom:3}}>{f.label}</div>
-                  <div style={{fontSize:15,color:textMain}}>{f.val||"—"}</div>
-                </div>
-              ))}
-            </div>
-          )}
-          {settingsTab==="privacy"&&(
-            <div style={{display:"flex",flexDirection:"column",gap:2}}>
-              {[{label:"Last Seen",key:"lastSeen" as const,opts:["everyone","contacts","nobody"]},{label:"Profile Photo",key:"profilePhotoVisibility" as const,opts:["everyone","contacts","nobody"]}].map(s=>(
-                <div key={s.key} style={{padding:"14px 0",borderBottom:`1px solid ${divider}`}}>
-                  <div style={{fontSize:15,color:textMain,marginBottom:8}}>{s.label}</div>
-                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                    {s.opts.map(o=>(
-                      <button key={o} onClick={()=>saveSetting(s.key,o as any)} style={{padding:"6px 14px",borderRadius:20,border:`2px solid ${settings[s.key]===o?WA_GREEN:divider}`,background:settings[s.key]===o?WA_GREEN:"transparent",color:settings[s.key]===o?"#fff":textMain,cursor:"pointer",fontSize:13,textTransform:"capitalize"}}>{o}</button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-              <div style={{padding:"14px 0",borderBottom:`1px solid ${divider}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                <span style={{fontSize:15,color:textMain}}>Read Receipts</span>
-                <div onClick={()=>saveSetting("readReceipts",!settings.readReceipts)} style={{width:44,height:24,borderRadius:12,background:settings.readReceipts?"#25D366":"#ccc",cursor:"pointer",position:"relative",transition:"background .2s"}}>
-                  <div style={{width:20,height:20,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:settings.readReceipts?22:2,transition:"left .2s"}}/>
-                </div>
-              </div>
-            </div>
-          )}
-          {settingsTab==="notifications"&&(
-            <div style={{display:"flex",flexDirection:"column",gap:2}}>
-              {[{label:"Message Notifications",key:"notifications" as const},{label:"Notification Sound",key:"notifSound" as const},{label:"Vibration",key:"notifVibration" as const},{label:"Preview in Notification",key:"notifPreview" as const}].map(item=>(
-                <div key={item.key} style={{padding:"14px 0",borderBottom:`1px solid ${divider}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                  <span style={{fontSize:15,color:textMain}}>{item.label}</span>
-                  <div onClick={()=>saveSetting(item.key,!settings[item.key])} style={{width:44,height:24,borderRadius:12,background:settings[item.key]?"#25D366":"#ccc",cursor:"pointer",position:"relative",transition:"background .2s"}}>
-                    <div style={{width:20,height:20,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:settings[item.key]?22:2,transition:"left .2s"}}/>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          {settingsTab==="chats"&&(
-            <div style={{display:"flex",flexDirection:"column",gap:2}}>
-              <div style={{padding:"14px 0",borderBottom:`1px solid ${divider}`}}>
-                <div style={{fontSize:15,color:textMain,marginBottom:10}}>Chat Wallpaper</div>
-                <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
-                  {WALLPAPERS.map(w=>(
-                    <div key={w.id} onClick={()=>saveSetting("wallpaper",w.id)} style={{width:44,height:44,borderRadius:10,background:w.bg,backgroundImage:w.pattern,border:settings.wallpaper===w.id?`3px solid ${WA_GREEN}`:"3px solid transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#888",boxSizing:"border-box"}}>{settings.wallpaper===w.id&&<Check size={14} color="#fff"/>}</div>
-                  ))}
-                  <input ref={bgImageRef} id="majlis-bg-image" type="file" accept="image/*" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleBgImageUpload(e.target.files[0])}/>
-                  <label htmlFor="majlis-bg-image" style={{width:44,height:44,borderRadius:10,border:`2px dashed ${divider}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
-                    <Camera size={16} color={textSub}/>
-                  </label>
-                </div>
-                <div style={{fontSize:12,color:textSub}}>Selected: {WALLPAPERS.find(w=>w.id===settings.wallpaper)?.label||"Custom"}</div>
-              </div>
-              <div style={{padding:"14px 0",borderBottom:`1px solid ${divider}`}}>
-                <div style={{fontSize:15,color:textMain,marginBottom:8}}>Font Size</div>
-                <div style={{display:"flex",gap:8}}>
-                  {(["small","medium","large"] as const).map(sz=>(
-                    <button key={sz} onClick={()=>saveSetting("fontSize",sz)} style={{flex:1,padding:"8px",borderRadius:10,border:`2px solid ${settings.fontSize===sz?WA_GREEN:divider}`,background:settings.fontSize===sz?WA_GREEN:"transparent",color:settings.fontSize===sz?"#fff":textMain,cursor:"pointer",fontSize:13,textTransform:"capitalize"}}>{sz}</button>
-                  ))}
-                </div>
-              </div>
-              <div style={{padding:"14px 0",borderBottom:`1px solid ${divider}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                <div><div style={{fontSize:15,color:textMain}}>Enter Key Sends</div><div style={{fontSize:12,color:textSub}}>Press Enter to send messages</div></div>
-                <div onClick={()=>saveSetting("enterSends",!settings.enterSends)} style={{width:44,height:24,borderRadius:12,background:settings.enterSends?"#25D366":"#ccc",cursor:"pointer",position:"relative"}}>
-                  <div style={{width:20,height:20,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:settings.enterSends?22:2,transition:"left .2s"}}/>
-                </div>
-              </div>
-              <div style={{padding:"14px 0",borderBottom:`1px solid ${divider}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                <div style={{display:"flex",alignItems:"center",gap:10}}><Moon size={18} color={textSub}/><span style={{fontSize:15,color:textMain}}>Dark Mode</span></div>
-                <div onClick={()=>saveSetting("darkMode",!settings.darkMode)} style={{width:44,height:24,borderRadius:12,background:settings.darkMode?"#25D366":"#ccc",cursor:"pointer",position:"relative"}}>
-                  <div style={{width:20,height:20,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:settings.darkMode?22:2,transition:"left .2s"}}/>
-                </div>
-              </div>
-            </div>
-          )}
-          {settingsTab==="storage"&&(
-            <div style={{display:"flex",flexDirection:"column",gap:4}}>
-              <div style={{padding:16,background:inputBg,borderRadius:12,marginBottom:12}}>
-                <div style={{fontSize:13,color:textSub}}>Messages</div>
-                <div style={{fontSize:18,fontWeight:700,color:textMain}}>{messages.length} messages</div>
-              </div>
-              {[{label:"Export Chat",icon:<Download size={18}/>,fn:exportChat},{label:"Clear Chat History",icon:<Trash2 size={18}/>,fn:clearChat,danger:true}].map(item=>(
-                <button key={item.label} onClick={item.fn} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 0",background:"none",border:"none",cursor:"pointer",color:(item as any).danger?"#E74C3C":textMain,fontSize:15,borderBottom:`1px solid ${divider}`}}>
-                  <span style={{color:(item as any).danger?"#E74C3C":WA_GREEN}}>{item.icon}</span>{item.label}
-                </button>
-              ))}
-            </div>
-          )}
-          {settingsTab==="help"&&(
-            <div style={{textAlign:"center",padding:20}}>
-              <div style={{width:72,height:72,borderRadius:"50%",background:WA_GREEN,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}>
-                <MessageCircle style={{width:36,height:36,color:"#fff"}}/>
-              </div>
-              <div style={{fontSize:20,fontWeight:700,color:textMain}}>Al-Majlis</div>
-              <div style={{fontSize:14,color:textSub,margin:"6px 0 20px"}}>Tahleem Academy Chat</div>
-              <div style={{fontSize:13,color:textSub}}>Version 2.1.0</div>
-              <div style={{fontSize:13,color:textSub,marginTop:4}}>© 2025 Tahleem Academy</div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-
   // ── MAIN RETURN ─────────────────────────────────────────────
   return (
     <div className="majlis-wrap" style={{background:isDark?"#0b141a":"#f0f2f5"}}>
@@ -2182,10 +2148,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             >
               <ArrowLeft size={20}/>
             </button>
-            <button onClick={()=>{setShowHamburger(true);window.history.pushState({layer:"hamburger"},"",window.location.href);}} style={{background:"none",border:"none",cursor:"pointer",color:"#fff",padding:4}}>
-              <Menu size={20}/>
-            </button>
-            <div onClick={()=>{setSettingsTab("profile");setShowSettings(true);window.history.pushState({layer:"settings"},"",window.location.href);}} style={{cursor:"pointer",position:"relative"}}>
+            <div style={{position:"relative"}}>
               {myProfile.avatar_url
                 ?<img src={myProfile.avatar_url} style={{width:36,height:36,borderRadius:"50%",objectFit:"cover"}} alt=""/>
                 :<div style={{width:36,height:36,borderRadius:"50%",background:"rgba(255,255,255,0.3)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:15}}>{myInitial}</div>
@@ -2197,13 +2160,17 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             <button onClick={()=>setShowMajlisLive(true)} title="Majlis Live" style={{background:majlisLive.isLive?"#DC2626":"none",border:"none",color:"#fff",cursor:"pointer",padding:6,borderRadius:8,position:"relative",display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:700}}>
               <Radio size={18}/>{majlisLive.isLive&&<span>LIVE</span>}
             </button>
-            <button onClick={()=>setShowBrowseChannels(true)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6,borderRadius:8}}>
+            {/* Search → people you are allowed to message */}
+            <button onClick={()=>{setShowPeople(true);setPeopleSearch("");window.history.pushState({layer:"people"},"",window.location.href);}} title="Search people" style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6,borderRadius:8}}>
               <Search size={18}/>
             </button>
-            <button onClick={()=>{setShowNewSheet(true);window.history.pushState({layer:"newSheet"},"",window.location.href);}} style={{background:"rgba(255,255,255,0.15)",border:"none",color:"#fff",cursor:"pointer",padding:"6px 10px",borderRadius:8,fontSize:13,fontWeight:600}}>
-              + New
-            </button>
-            <button onClick={()=>{setShowSettings(true);window.history.pushState({layer:"settings"},"",window.location.href);}} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6,borderRadius:8}}>
+            {/* "+ New" is for teachers/admins only — students can't create groups */}
+            {canModerate&&(
+              <button onClick={()=>{setShowNewSheet(true);window.history.pushState({layer:"newSheet"},"",window.location.href);}} style={{background:"rgba(255,255,255,0.15)",border:"none",color:"#fff",cursor:"pointer",padding:"6px 10px",borderRadius:8,fontSize:13,fontWeight:600}}>
+                + New
+              </button>
+            )}
+            <button onClick={()=>{setShowSidebarMenu(true);window.history.pushState({layer:"sidebarMenu"},"",window.location.href);}} title="Menu" style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6,borderRadius:8}}>
               <MoreVertical size={18}/>
             </button>
           </div>
@@ -2225,7 +2192,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
         <div style={{padding:"8px 12px",background:isDark?"#111b21":"#fff"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,background:inputBg,borderRadius:24,padding:"8px 14px"}}>
             <Search style={{width:16,height:16,color:textSub}}/>
-            <input value={sidebarSearch} onChange={e=>setSidebarSearch(e.target.value)} placeholder="Search or start new chat" style={{border:"none",background:"transparent",flex:1,fontSize:14,color:textMain,outline:"none"}}/>
+            <input value={sidebarSearch} onChange={e=>setSidebarSearch(e.target.value)} placeholder="Search chats" style={{border:"none",background:"transparent",flex:1,fontSize:14,color:textMain,outline:"none"}}/>
             {sidebarSearch&&<button onClick={()=>setSidebarSearch("")} style={{background:"none",border:"none",cursor:"pointer",color:textSub,padding:0}}><X size={14}/></button>}
           </div>
         </div>
@@ -2263,11 +2230,11 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
           {sidebarSearch?(
             <>
               {searchTab==="contacts"&&contactResults.map(s=>(
-                <div key={s.user_id} onClick={()=>{setSelectedMember(s);setShowStudentProfile(true);window.history.pushState({layer:"profile"},"",window.location.href);}} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 16px",cursor:"pointer",borderBottom:`1px solid ${divider}`}}>
+                <div key={s.user_id} onClick={()=>openDirectMessage(s)} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 16px",cursor:"pointer",borderBottom:`1px solid ${divider}`}}>
                   {avatarEl(s.user_id,46)}
                   <div>
                     <div style={{fontWeight:600,fontSize:15,color:textMain}}>{s.full_name||"Student"}</div>
-                    <div style={{fontSize:12,color:WA_GREEN}}>{(s as any).level||"Student"}</div>
+                    <div style={{fontSize:12,color:WA_GREEN}}>{kindLabel(s)}</div>
                   </div>
                 </div>
               ))}
@@ -2361,10 +2328,6 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
               </div>
               <div style={{display:"flex",gap:2,alignItems:"center"}}>
                 {loadingMessages&&<div style={{width:8,height:8,borderRadius:"50%",border:"2px solid rgba(255,255,255,.4)",borderTopColor:"#fff",animation:"spin .8s linear infinite",marginRight:4,flexShrink:0}}/>}
-                <button onClick={()=>{setCallChannelId(activeChannel.id);setShowMajlisCall(true);}} title={channelHasLiveCall?"Join Majlis call":(activeChannel.type==="dm"?"Call":"Start Majlis call")} style={{background:channelHasLiveCall?"rgba(76,175,80,.9)":"none",border:"none",color:"#fff",cursor:"pointer",padding:6,borderRadius:8,position:"relative",display:"flex"}}>
-                  <Phone size={18}/>
-                  {channelHasLiveCall&&<span style={{position:"absolute",top:2,right:2,width:7,height:7,borderRadius:"50%",background:"#fff",animation:"pulse 1.5s infinite"}}/>}
-                </button>
                 <button onClick={()=>{setShowChatSearch(p=>!p);setChatSearchQuery("");}} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6}}><Search size={18}/></button>
                 <button onClick={()=>setShowHeaderMenu(p=>!p)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6}}><MoreVertical size={18}/></button>
               </div>
@@ -2375,11 +2338,10 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                   <div style={{position:"absolute",bottom:0,left:0,right:0,maxWidth:480,margin:"0 auto",background:isDark?"#202c33":"#fff",borderRadius:"20px 20px 0 0",overflow:"hidden",animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
                     <div style={{width:36,height:4,borderRadius:2,background:isDark?"#444":"#ddd",margin:"10px auto 14px"}}/>
                     {[
-                      {icon:"ℹ️",label:"Group Info",          fn:()=>{setShowGroupInfo(true);setShowHeaderMenu(false);window.history.pushState({layer:"groupInfo"},"",window.location.href);}},
+                      {icon:"ℹ️",label:activeChannel.type==="dm"?"Contact Info":"Group Info",          fn:()=>{setShowGroupInfo(true);setShowHeaderMenu(false);window.history.pushState({layer:"groupInfo"},"",window.location.href);}},
                       {icon:"🔍",label:"Search Messages",      fn:()=>{setShowChatSearch(true);setShowHeaderMenu(false);}},
-                      {icon:"⭐",label:"Starred Messages",     fn:()=>{setShowHeaderMenu(false);toast({title:`${starredMessages.size} starred`});}},
+                      {icon:"⭐",label:"Starred Messages",     fn:()=>openStarred()},
                       {icon:"🔕",label:mutedChannels.has(activeChannel.id)?"Unmute":"Mute Notifications",fn:()=>{toggleMuteCh(activeChannel.id);setShowHeaderMenu(false);}},
-                      {icon:"🖼️",label:"Wallpaper & Sound",   fn:()=>{setSettingsTab("chats");setShowSettings(true);setShowHeaderMenu(false);}},
                       {icon:"📤",label:"Export Chat",          fn:()=>{exportChat();setShowHeaderMenu(false);}},
                       ...(activeChannel.type==="dm"&&(activeChannel as any).dm_partner_id?[
                         {icon:"🚫",label:blockedByMe.has((activeChannel as any).dm_partner_id)?"Unblock Contact":"Block Contact",
@@ -2387,9 +2349,9 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                       ]:[]),
                       ...(canModerate?[
                         {icon:"🗑️",label:"Clear Chat",        fn:()=>{clearChat();setShowHeaderMenu(false);},danger:true},
-                        {icon:"💥",label:"Delete Group",       fn:()=>{deleteGroup();setShowHeaderMenu(false);},danger:true},
+                        ...(activeChannel.type!=="dm"?[{icon:"💥",label:"Delete Group",       fn:()=>{deleteGroup();setShowHeaderMenu(false);},danger:true}]:[]),
                       ]:[]),
-                      {icon:"🚪",label:"Leave Group",          fn:()=>{leaveChannel(activeChannel.id);setShowHeaderMenu(false);},danger:true},
+                      ...(activeChannel.type!=="dm"?[{icon:"🚪",label:"Leave Group",          fn:()=>{leaveChannel(activeChannel.id);setShowHeaderMenu(false);},danger:true}]:[]),
                     ].map((item,i)=>(
                       <button key={i} onClick={item.fn} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"15px 20px",background:"none",border:"none",cursor:"pointer",textAlign:"left",fontSize:15,color:(item as any).danger?"#E74C3C":textMain,borderBottom:`1px solid ${divider}`}}>
                         <span style={{fontSize:18}}>{item.icon}</span>{item.label}
@@ -2436,7 +2398,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             )}
 
             {/* Message list */}
-            <div ref={scrollRef} onScroll={handleScrollMessages} style={{flex:1,overflowY:"auto",padding:"6px 0 4px",position:"relative"}}>
+            <div ref={scrollRef} onClick={(e)=>{ if(selectableId&&!(e.target as HTMLElement).closest(".msg-selectable")) setSelectableId(null); }} onScroll={handleScrollMessages} style={{flex:1,overflowY:"auto",padding:"6px 0 4px",position:"relative"}}>
               {/* Floating date pill — appears while scrolling through history */}
               {floatingDate&&(
                 <div style={{position:"sticky",top:8,display:"flex",justifyContent:"center",zIndex:20,pointerEvents:"none",marginBottom:-28}}>
@@ -2799,32 +2761,84 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
         </div>
       )}
 
-      {/* Hamburger Drawer */}
-      {showHamburger&&(
-        <div style={{position:"fixed",inset:0,zIndex:500,display:"flex"}} onClick={()=>setShowHamburger(false)}>
-          <div className="hamburger-drawer" style={{width:280,background:isDark?"#111b21":"#fff",height:"100%",boxShadow:"2px 0 20px rgba(0,0,0,.3)",display:"flex",flexDirection:"column"}} onClick={e=>e.stopPropagation()}>
-            <div style={{background:isDark?"#202c33":WA_GREEN,padding:"44px 20px 20px",display:"flex",flexDirection:"column",gap:10}}>
-              {myProfile.avatar_url
-                ?<img src={myProfile.avatar_url} style={{width:64,height:64,borderRadius:"50%",objectFit:"cover",border:"2px solid rgba(255,255,255,.3)"}} alt=""/>
-                :<div style={{width:64,height:64,borderRadius:"50%",background:"rgba(255,255,255,.2)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:28}}>{myInitial}</div>
-              }
-              <div style={{color:"#fff",fontWeight:700,fontSize:16}}>{myProfile.full_name||"Student"}</div>
-              <div style={{color:"rgba(255,255,255,.7)",fontSize:12}}>{settings.about}</div>
+      {/* People sheet — opened by the Search icon. Students only see classmates in their
+          level, their teachers and the admin; tapping a person opens a direct message. */}
+      {showPeople&&(()=>{
+        const q=peopleSearch.trim().toLowerCase();
+        const list=allStudents.filter(u=>u.user_id!==user?.id&&(!q||(u.full_name||"").toLowerCase().includes(q)||((u as any).full_name_ar||"").toLowerCase().includes(q)));
+        const order:Record<string,number>={admin:0,teacher:1,student:2};
+        list.sort((a,b)=>(order[(a as any).kind||"student"]-order[(b as any).kind||"student"])||(a.full_name||"").localeCompare(b.full_name||""));
+        const groups:[string,any[]][]=[["Admin",list.filter(u=>(u as any).kind==="admin")],["Teachers",list.filter(u=>(u as any).kind==="teacher")],[canModerate?"Students":"Classmates",list.filter(u=>((u as any).kind||"student")==="student")]];
+        return (
+        <div style={{position:"fixed",inset:0,zIndex:500,background:isDark?"#0b141a":"#fff",display:"flex",flexDirection:"column"}}>
+          <div style={{background:sidebarHdr,padding:"10px 12px",display:"flex",alignItems:"center",gap:8}}>
+            <button onClick={()=>setShowPeople(false)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6,display:"flex"}}><ArrowLeft size={20}/></button>
+            <div style={{flex:1,display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,.18)",borderRadius:20,padding:"8px 14px"}}>
+              <Search size={16} color="#fff"/>
+              <input autoFocus value={peopleSearch} onChange={e=>setPeopleSearch(e.target.value)} placeholder="Search name…" style={{flex:1,border:"none",background:"transparent",color:"#fff",fontSize:14,outline:"none"}}/>
+              {peopleSearch&&<button onClick={()=>setPeopleSearch("")} style={{background:"none",border:"none",cursor:"pointer",padding:0,display:"flex"}}><X size={14} color="#fff"/></button>}
             </div>
-            {[
-              {icon:<LayoutDashboard size={20}/>,label:"Dashboard",    fn:()=>{setShowHamburger(false);navigate("/student");}},
-              {icon:<MessageCircle size={20}/>, label:"Chats",          fn:()=>setShowHamburger(false)},
-              {icon:<User size={20}/>,          label:"My Profile",     fn:()=>{setSettingsTab("profile");setShowSettings(true);setShowHamburger(false);window.history.pushState({layer:"settings"},"",window.location.href);}},
-              {icon:<Settings size={20}/>,      label:"Settings",       fn:()=>{setShowSettings(true);setShowHamburger(false);window.history.pushState({layer:"settings"},"",window.location.href);}},
-              {icon:<Bell size={20}/>,          label:"Notifications",  fn:()=>{setSettingsTab("notifications");setShowSettings(true);setShowHamburger(false);window.history.pushState({layer:"settings"},"",window.location.href);}},
-              {icon:<Bookmark size={20}/>,      label:"Starred Messages",fn:()=>{toast({title:`${starredMessages.size} starred messages`});setShowHamburger(false);}},
-              {icon:<Archive size={20}/>,       label:"Archived Chats", fn:()=>{setShowArchived(true);setShowHamburger(false);}},
-              {icon:<HelpCircle size={20}/>,    label:"Help",           fn:()=>{setSettingsTab("help");setShowSettings(true);setShowHamburger(false);window.history.pushState({layer:"settings"},"",window.location.href);}},
-            ].map((item,i)=>(
-              <button key={i} onClick={item.fn} style={{display:"flex",alignItems:"center",gap:16,padding:"15px 20px",background:"none",border:"none",cursor:"pointer",color:textMain,fontSize:15,borderBottom:`1px solid ${divider}`,textAlign:"left"}}>
-                <span style={{color:WA_GREEN}}>{item.icon}</span>{item.label}
-              </button>
+          </div>
+          <div style={{flex:1,overflowY:"auto"}}>
+            {groups.map(([label,rows])=>rows.length>0&&(
+              <div key={label}>
+                <div style={{padding:"6px 16px",fontSize:11,fontWeight:700,color:textSub,background:inputBg,textTransform:"uppercase",letterSpacing:1}}>{label}</div>
+                {rows.map((u:any)=>(
+                  <div key={u.user_id} onClick={()=>openDirectMessage(u)} style={{display:"flex",alignItems:"center",gap:14,padding:"11px 16px",cursor:"pointer",borderBottom:`1px solid ${divider}`}}>
+                    {avatarEl(u.user_id,46)}
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:600,fontSize:15,color:textMain,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.full_name||"Student"}</div>
+                      <div style={{fontSize:12,color:WA_GREEN}}>{kindLabel(u)}</div>
+                    </div>
+                    <MessageCircle size={18} color={textSub}/>
+                  </div>
+                ))}
+              </div>
             ))}
+            {list.length===0&&(
+              <div style={{padding:40,textAlign:"center",color:textSub,fontSize:14}}>{q?"No one found":"No one to message yet"}</div>
+            )}
+          </div>
+        </div>
+        );
+      })()}
+
+      {/* Sidebar ⋮ menu */}
+      {showSidebarMenu&&(
+        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.4)"}} onClick={()=>setShowSidebarMenu(false)}>
+          <div style={{position:"absolute",top:52,right:10,minWidth:220,background:isDark?"#233138":"#fff",borderRadius:12,overflow:"hidden",boxShadow:"0 8px 30px rgba(0,0,0,.3)",animation:"popIn .15s ease"}} onClick={e=>e.stopPropagation()}>
+            {[
+              {label:"Starred Messages",fn:()=>openStarred()},
+              {label:showArchived?"Hide Archived Chats":`Archived Chats${archivedChannels.size?` (${archivedChannels.size})`:""}`,fn:()=>{setShowArchived(p=>!p);setShowSidebarMenu(false);}},
+              {label:"Browse Channels",fn:()=>{setShowSidebarMenu(false);setShowBrowseChannels(true);}},
+              ...(canModerate?[
+                {label:"New Group",fn:()=>{setShowSidebarMenu(false);setShowCreateDialog(true);}},
+                {label:"New Broadcast List",fn:()=>{setShowSidebarMenu(false);setBroadcastStep("pick");setBroadcastSelected(new Set());setBroadcastName("");setBroadcastPool(allStudents.length>0?allStudents:Object.values(profiles));setShowBroadcastComposer(true);}},
+              ]:[]),
+            ].map((item,i)=>(
+              <button key={i} onClick={item.fn} style={{width:"100%",textAlign:"left",padding:"14px 18px",background:"none",border:"none",cursor:"pointer",fontSize:15,color:textMain,borderBottom:`1px solid ${divider}`}}>{item.label}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Starred messages */}
+      {showStarredSheet&&(
+        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.5)"}} onClick={()=>setShowStarredSheet(false)}>
+          <div style={{position:"absolute",bottom:0,left:0,right:0,maxWidth:480,margin:"0 auto",background:isDark?"#111b21":"#fff",borderRadius:"20px 20px 0 0",maxHeight:"80vh",display:"flex",flexDirection:"column",overflow:"hidden",animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
+            <div style={{background:WA_GREEN,padding:"14px 18px",display:"flex",alignItems:"center",gap:12,color:"#fff"}}>
+              <button onClick={()=>setShowStarredSheet(false)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",display:"flex"}}><ArrowLeft size={20}/></button>
+              <span style={{fontWeight:700,fontSize:17}}>Starred Messages</span>
+            </div>
+            <div style={{overflowY:"auto"}}>
+              {starredList.length===0&&<div style={{padding:36,textAlign:"center",color:textSub,fontSize:14}}>No starred messages yet</div>}
+              {starredList.map(m=>(
+                <div key={m.id} onClick={()=>{setShowStarredSheet(false);selectChannel(m.channel_id||"");setTimeout(()=>jumpTo(m.id),500);}} style={{padding:"12px 18px",borderBottom:`1px solid ${divider}`,cursor:"pointer"}}>
+                  <div style={{fontSize:12,fontWeight:700,color:WA_GREEN}}>{profiles[m.user_id]?.full_name||"Message"} · <span style={{color:textSub,fontWeight:400}}>{new Date(m.created_at).toLocaleDateString()}</span></div>
+                  <div style={{fontSize:14,color:textMain,marginTop:2,wordBreak:"break-word"}}>{m.content_type==="text"?m.text:(CONTENT_PREVIEW_ICON[m.content_type]||"Media")}</div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -2878,7 +2892,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                 ?allStudents.filter(s=>s.user_id!==user?.id&&(s.full_name||"").toLowerCase().includes(newDmSearch.toLowerCase()))
                 :allStudents.filter(s=>s.user_id!==user?.id).slice(0,20)
               ).map(s=>(
-                <div key={s.user_id} onClick={()=>{setSelectedMember(s);setShowStudentProfile(true);setShowNewSheet(false);window.history.pushState({layer:"profile"},"",window.location.href);playSound("open",settings.notifSound);}} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 20px",cursor:"pointer",borderBottom:`1px solid ${divider}`}}>
+                <div key={s.user_id} onClick={()=>{playSound("open",settings.notifSound);openDirectMessage(s);}} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 20px",cursor:"pointer",borderBottom:`1px solid ${divider}`}}>
                   {avatarEl(s.user_id,46)}
                   <div style={{flex:1}}>
                     <div style={{fontWeight:600,fontSize:15,color:textMain}}>{s.full_name||"Student"}</div>
@@ -2943,7 +2957,6 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       {channelMenu&&<div style={{position:"fixed",inset:0,zIndex:199}} onClick={()=>setChannelMenu(null)}/>}
 
       {/* Settings Panel */}
-      {showSettings&&renderSettings()}
 
       {/* Group Info */}
       {showGroupInfo&&activeChannel&&(
@@ -2992,51 +3005,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
               </div>
               <div style={{padding:"14px 20px",display:"flex",gap:12}}>
                 {selectedMember.user_id!==user?.id&&(
-                  <button onClick={async()=>{
-                    if(!user||!selectedMember?.user_id) return;
-                    // Find or create DM channel
-                    const {data:existingMems}=await supabase.from("chat_members" as any)
-                      .select("channel_id").eq("user_id",user.id);
-                    const myChIds=(existingMems||[]).map((m:any)=>m.channel_id);
-                    const {data:theirMems}=await supabase.from("chat_members" as any)
-                      .select("channel_id").eq("user_id",selectedMember.user_id);
-                    const theirChIds=(theirMems||[]).map((m:any)=>m.channel_id);
-                    const sharedIds=myChIds.filter((id:string)=>theirChIds.includes(id));
-                    if(sharedIds.length>0){
-                      const {data:dmCh}=await supabase.from("chat_channels" as any)
-                        .select("*").in("id",sharedIds).eq("type","dm").maybeSingle();
-                      if(dmCh){
-                        setShowStudentProfile(false);
-                        selectChannel((dmCh as any).id);
-                        setChannels(prev=>prev.find(c=>c.id===(dmCh as any).id)?prev:[dmCh as unknown as ChatChannel,...prev]);
-                        return;
-                      }
-                    }
-                    // Create new DM channel — store partner info for display
-                    const partnerName = selectedMember.full_name || "Student";
-                    const {data:newCh,error}=await supabase.from("chat_channels" as any)
-                      .insert({
-                        name: partnerName,
-                        description: user.id, // store creator id for partner resolution
-                        type:"dm",
-                        created_by:user.id,
-                        is_private:true,
-                      }).select().single();
-                    if(!error&&newCh){
-                      await supabase.from("chat_members" as any).insert([
-                        {channel_id:(newCh as any).id,user_id:user.id,role:"admin"},
-                        {channel_id:(newCh as any).id,user_id:selectedMember.user_id,role:"member"},
-                      ]);
-                      // Attach partner id locally for avatar resolution
-                      const enriched = {...(newCh as any), dm_partner_id: selectedMember.user_id, dm_partner_name: partnerName};
-                      setShowStudentProfile(false);
-                      setChannels(prev=>[enriched as unknown as ChatChannel,...prev]);
-                      // Ensure partner is in profiles map
-                      setProfiles(prev=>({...prev,[selectedMember.user_id]:{...selectedMember}}));
-                      selectChannel((newCh as any).id);
-                      toast({title:`Chat started with ${partnerName}!`});
-                    }
-                  }} style={{flex:1,padding:"12px",borderRadius:12,background:WA_GREEN,border:"none",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                  <button onClick={()=>openDirectMessage(selectedMember)} style={{flex:1,padding:"12px",borderRadius:12,background:WA_GREEN,border:"none",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
                     <MessageCircle size={16}/> Message
                   </button>
                 )}
