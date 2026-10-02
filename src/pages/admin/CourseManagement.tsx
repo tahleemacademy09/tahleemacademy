@@ -24,6 +24,7 @@ import {
   Loader2, EyeOff, Save, Image, Search, Layers, FolderOpen,
   FileText, Video, Music, ExternalLink, Type, FileSpreadsheet,
   Upload, Download, File, Check, Calendar, ChevronDown, ChevronUp, X, AlertCircle, Lock, Copy,
+  GraduationCap, ArrowLeft,
 } from "lucide-react";
 
 const G    = "#064E3B";
@@ -625,81 +626,47 @@ const SubjectsTabView = React.memo(({ fSubjects, search, sLoad, unlinked, selCou
           <p style={{ fontSize: 12, margin: 0 }}>Use + Add Subject to create one</p>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: 14, marginBottom: 20, animation: "fadeUp .3s ease" }}>
           {ab.items.map((s: any) => {
-            // Resolve the actual level slugs for this subject
             const subjectLevels: string[] = getLevels(s);
-            // Use the first matching level for card border/bg colour (primary)
-            const primarySlug = subjectLevels[0] || null;
-            const lv = safeLvl(primarySlug);
+            const lv = safeLvl(subjectLevels[0] || null);
+            const openIt = () => { setSelSubject(s); setView("content"); setTab("syllabus"); };
             return (
-              <div key={s.id} className="chov" style={{ background: "#fff", borderRadius: 16, border: `1px solid ${lv.border}`, overflow: "hidden", display: "flex", height: 116, boxShadow: "0 1px 6px rgba(0,0,0,0.06)", transition: "box-shadow .2s, border-color .2s" }}
-                onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = "0 4px 18px rgba(6,78,59,0.13)"; (e.currentTarget as HTMLDivElement).style.borderColor = `${G}55`; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = "0 1px 6px rgba(0,0,0,0.06)"; (e.currentTarget as HTMLDivElement).style.borderColor = lv.border; }}
-              >
-                {/* ── Image panel ── */}
-                <div style={{ position: "relative", width: 118, flexShrink: 0, overflow: "hidden", background: lv.bg }}>
-                  <SubjThumb url={s.image_url} title={s.title} bg={lv.bg} />
-                  {/* gradient fade into content */}
-                  <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to right, transparent 55%, rgba(255,255,255,0.85))", pointerEvents: "none" }} />
-                  {/* inactive overlay */}
+              <div key={s.id} className="chov" onClick={openIt}
+                style={{ background: "#fff", borderRadius: 16, border: "1px solid #e5e7eb", overflow: "hidden", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,.05)", display: "flex", flexDirection: "column" }}>
+                <div style={{ position: "relative", height: 110, overflow: "hidden", background: "linear-gradient(135deg,#0f2d1f,#1a4731)", flexShrink: 0 }}>
+                  <SubjThumb url={s.image_url} title={s.title} bg="linear-gradient(135deg,#0f2d1f,#1a4731)" />
                   {!s.is_active && (
-                    <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.38)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <EyeOff size={18} color="#fff" />
+                    <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.45)", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, color: "#fff", fontSize: 11, fontWeight: 700 }}>
+                      <EyeOff size={16} color="#fff" /> Inactive
                     </div>
                   )}
-                  {/* visibility badge bottom-left */}
-                  {s.visibility === "private" && (
-                    <div style={{ position: "absolute", bottom: 6, left: 5, padding: "2px 6px", borderRadius: 20, background: "#F3E8FF", color: "#7C3AED", fontSize: 8, fontWeight: 700, border: "1px solid #D8B4FE" }}>🔒 Private</div>
-                  )}
-                  {s.visibility === "general" && (
-                    <div style={{ position: "absolute", bottom: 6, left: 5, padding: "2px 6px", borderRadius: 20, background: "#eff6ff", color: "#3b82f6", fontSize: 8, fontWeight: 700, border: "1px solid #bfdbfe" }}>👥 Class</div>
-                  )}
-                </div>
-
-                {/* ── Content panel ── */}
-                <div style={{ flex: 1, minWidth: 0, padding: "11px 12px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-                  {/* Top: title + level badge */}
-                  <div>
-                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6, marginBottom: 2 }}>
-                      <p style={{ fontWeight: 800, fontSize: 13, color: "#111", margin: 0, lineHeight: 1.25, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</p>
-                      <span style={{ flexShrink: 0, display: "flex", gap: 3, flexWrap: "nowrap" as const, alignItems: "center" }}>
-                        {subjectLevels.length === 0 ? (
-                          <span style={{ padding: "2px 8px", borderRadius: 20, fontSize: 9, fontWeight: 700, background: lv.bg, color: lv.text, border: `1px solid ${lv.border}`, whiteSpace: "nowrap" }}>All Levels</span>
-                        ) : subjectLevels.map((slug: string) => {
-                          const slv = safeLvl(slug);
-                          return <span key={slug} style={{ padding: "2px 7px", borderRadius: 20, fontSize: 9, fontWeight: 700, background: slv.bg, color: slv.text, border: `1px solid ${slv.border}`, whiteSpace: "nowrap" }}>{slv.label}</span>;
-                        })}
-                      </span>
-                    </div>
-                    {s.title_ar && (
-                      <p style={{ fontWeight: 600, fontSize: 11, color: GOLD, margin: "0 0 4px", direction: "rtl", fontFamily: "'Amiri',serif", lineHeight: 1.3 }}>{s.title_ar}</p>
-                    )}
-                    {s.description && (
-                      <p style={{ fontSize: 11, color: "#6B7280", margin: 0, lineHeight: 1.45, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as any, overflow: "hidden" }}>
-                        {s.description}
-                      </p>
-                    )}
+                  <div style={{ position: "absolute", top: 8, left: 8, display: "flex", gap: 4 }}>
+                    {s.visibility === "private" && <span style={{ padding: "2px 8px", borderRadius: 20, background: "#F3E8FF", color: "#7C3AED", fontSize: 9, fontWeight: 700, border: "1px solid #D8B4FE" }}>🔒 Private</span>}
+                    {s.visibility === "general" && <span style={{ padding: "2px 8px", borderRadius: 20, background: "#eff6ff", color: "#3b82f6", fontSize: 9, fontWeight: 700, border: "1px solid #bfdbfe" }}>👥 Class</span>}
                   </div>
-
-                  {/* Bottom: action buttons */}
-                  <div style={{ display: "flex", gap: 5, marginTop: 8 }}>
-                    <button type="button" onClick={() => { setSelSubject(s); setView("content"); setTab("syllabus"); }}
-                      style={{ flex: 1, padding: "6px 8px", borderRadius: 8, border: "none", background: `linear-gradient(135deg,${G},#075E54)`, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                </div>
+                <div style={{ padding: "10px 12px 12px", display: "flex", flexDirection: "column", flex: 1 }}>
+                  <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginBottom: 6 }}>
+                    {subjectLevels.length === 0
+                      ? <span style={{ padding: "2px 7px", borderRadius: 9, fontSize: 9, fontWeight: 700, background: lv.bg, color: lv.text, border: `1px solid ${lv.border}` }}>All Levels</span>
+                      : subjectLevels.map((slug: string) => { const slv = safeLvl(slug); return <span key={slug} style={{ padding: "2px 7px", borderRadius: 9, fontSize: 9, fontWeight: 700, background: slv.bg, color: slv.text, border: `1px solid ${slv.border}` }}>{slv.label}</span>; })}
+                  </div>
+                  <h3 style={{ fontSize: 13, fontWeight: 800, color: G, margin: "0 0 3px", lineHeight: 1.4 }}>{s.title}</h3>
+                  {s.title_ar && <p style={{ fontSize: 11, color: GOLD, margin: "0 0 4px", direction: "rtl", fontFamily: "'Amiri',serif" }}>{s.title_ar}</p>}
+                  {s.description && <p style={{ fontSize: 11, color: "#9ca3af", margin: "0 0 8px", lineHeight: 1.5, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as any, overflow: "hidden" }}>{s.description}</p>}
+                  <div style={{ flex: 1 }} />
+                  <div style={{ display: "flex", gap: 5, marginTop: 6 }} onClick={e => e.stopPropagation()}>
+                    <button type="button" onClick={openIt}
+                      style={{ flex: 1, padding: "7px 8px", borderRadius: 9, border: "none", background: G, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontFamily: "inherit" }}>
                       <ChevronRight size={12} /> Open
                     </button>
-                    <button type="button" onClick={() => { setEdSubject(s); setShowSubject(true); }}
-                      style={{ padding: "6px 9px", borderRadius: 8, border: `1px solid ${G}22`, background: "#F0FDF4", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} title="Edit">
-                      <Edit2 size={13} color={G} />
-                    </button>
-                    <button type="button" onClick={() => dupSubject(s)}
-                      style={{ padding: "6px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} title="Duplicate">
-                      <Copy size={13} color="#6B7280" />
-                    </button>
-                    <button type="button" onClick={() => delSubject(s.id)}
-                      style={{ padding: "6px 9px", borderRadius: 8, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} title="Delete">
-                      <Trash2 size={13} color="#DC2626" />
-                    </button>
+                    <button type="button" onClick={() => { setEdSubject(s); setShowSubject(true); }} title="Edit"
+                      style={{ padding: "7px 9px", borderRadius: 9, border: `1px solid ${G}22`, background: "#F0FDF4", cursor: "pointer", display: "flex", alignItems: "center" }}><Edit2 size={13} color={G} /></button>
+                    <button type="button" onClick={() => dupSubject(s)} title="Duplicate"
+                      style={{ padding: "7px 9px", borderRadius: 9, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center" }}><Copy size={13} color="#6B7280" /></button>
+                    <button type="button" onClick={() => delSubject(s.id)} title="Delete"
+                      style={{ padding: "7px 9px", borderRadius: 9, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer", display: "flex", alignItems: "center" }}><Trash2 size={13} color="#DC2626" /></button>
                   </div>
                 </div>
               </div>
@@ -1328,36 +1295,47 @@ export default function CourseManagement() {
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: "100vh", background: "#F3F4F6", fontFamily: "system-ui,sans-serif" }}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}} .chov:hover{box-shadow:0 4px 14px rgba(0,0,0,.09);transform:translateY(-1px)} .chov{transition:all .18s}`}</style>
+    <div style={{ minHeight: "100vh", background: "#f8fafb", fontFamily: "'Cairo',system-ui,sans-serif" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');@keyframes spin{to{transform:rotate(360deg)}} @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}} .chov:hover{box-shadow:0 8px 28px rgba(15,45,31,.13)!important;transform:translateY(-2px)} .chov{transition:box-shadow .2s, transform .2s}`}</style>
 
-      {/* Header */}
-      <div style={{ background: "#fff", borderBottom: "1px solid #E5E7EB", padding: "14px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+      {/* Header — Learning Hub style */}
+      <div style={{ background: view !== "courses" && selCourse?.image_url ? `linear-gradient(rgba(0,0,0,.5),rgba(0,0,0,.65)),url("${selCourse.image_url}") center/cover, linear-gradient(135deg,${G} 0%,${GM} 100%)` : `linear-gradient(135deg,${G} 0%,${GM} 100%)`, padding: "18px 16px 20px" }}>
         {view !== "courses" && (
           <button type="button" onClick={() => { if (view === "content") { setView("subjects"); setSelSubject(null); } else { setView("courses"); setSelCourse(null); } }}
-            style={{ width: 34, height: 34, borderRadius: 8, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <ChevronLeft size={16} color="#6B7280" />
+            style={{ display: "flex", alignItems: "center", gap: 6, color: "rgba(255,255,255,.85)", background: "rgba(255,255,255,.12)", border: "none", borderRadius: 20, padding: "6px 14px", cursor: "pointer", fontSize: 12, marginBottom: 12, fontFamily: "inherit" }}>
+            <ArrowLeft size={13} /> Back
           </button>
         )}
-        <div style={{ flex: 1 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "#9CA3AF", flexWrap: "wrap" }}>
-            <span style={{ cursor: "pointer" }} onClick={() => { setView("courses"); setSelCourse(null); setSelSubject(null); }}>Courses</span>
-            {selCourse && <><ChevronRight size={11} /><span style={{ cursor: "pointer", color: view === "subjects" ? "#111" : "#9CA3AF" }} onClick={() => { setView("subjects"); setSelSubject(null); }}>{selCourse.title}</span></>}
-            {selSubject && <><ChevronRight size={11} /><span style={{ color: "#111" }}>{selSubject.title}</span></>}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            {view === "courses" ? (
+              <>
+                <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 5 }}>
+                  <GraduationCap size={22} color={GOLD} />
+                  <h1 style={{ fontSize: 22, fontWeight: 900, color: "#fff", margin: 0 }}>Courses &amp; Subjects</h1>
+                </div>
+                <p style={{ fontSize: 12, color: "rgba(255,255,255,.55)", margin: 0 }}>Manage courses, subjects, syllabus, materials &amp; sessions</p>
+              </>
+            ) : (
+              <>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "rgba(255,255,255,.6)", flexWrap: "wrap", marginBottom: 4 }}>
+                  <span style={{ cursor: "pointer" }} onClick={() => { setView("courses"); setSelCourse(null); setSelSubject(null); }}>Courses</span>
+                  {selCourse && <><ChevronRight size={11} /><span style={{ cursor: "pointer", color: view === "subjects" ? "#fff" : "rgba(255,255,255,.6)" }} onClick={() => { setView("subjects"); setSelSubject(null); }}>{selCourse.title}</span></>}
+                  {selSubject && <><ChevronRight size={11} /><span style={{ color: "#fff" }}>{selSubject.title}</span></>}
+                </div>
+                <h1 style={{ fontSize: 20, fontWeight: 900, color: "#fff", margin: 0 }}>
+                  {view === "subjects"
+                    ? selCourse ? selCourse.title : "Loading…"
+                    : selSubject?.title ?? "Loading…"}
+                </h1>
+                {view === "subjects" && selCourse?.title_ar && <p style={{ fontSize: 13, color: GOLD, margin: "2px 0 0", fontFamily: "'Amiri',serif" }} dir="rtl">{selCourse.title_ar}</p>}
+              </>
+            )}
           </div>
-          <h1 style={{ fontSize: 16, fontWeight: 800, color: "#111", margin: 0 }}>
-            {view === "courses"
-              ? "Courses"
-              : view === "subjects"
-                ? selCourse
-                  ? `${selCourse.title} — Subjects`
-                  : "Loading…"
-                : selSubject?.title ?? "Loading…"}
-          </h1>
+          <button type="button" onClick={doAdd} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 11, border: "none", background: GOLD, color: G, fontSize: 13, fontWeight: 800, cursor: "pointer", flexShrink: 0, fontFamily: "inherit" }}>
+            <Plus size={14} /> {addLabel}
+          </button>
         </div>
-        <button type="button" onClick={doAdd} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: G, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-          <Plus size={14} /> {addLabel}
-        </button>
       </div>
 
       {/* Content tabs (only in content view) */}
@@ -1407,44 +1385,41 @@ export default function CourseManagement() {
         {view === "courses" && (
           cLoad ? <div style={{ textAlign: "center", padding: 40 }}><Loader2 size={28} style={{ animation: "spin .8s linear infinite", color: G }} /></div>
             : fCourses.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: "#9CA3AF" }}><FolderOpen size={48} style={{ margin: "0 auto 12px", display: "block" }} /><p>No courses yet. Create your first course above.</p></div>
-              : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 20 }}>
+              : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 14, animation: "fadeUp .3s ease" }}>
                 {fCourses.map((c: any) => {
-                  const lv = lvlCfg[(c.level as Level) || "all"];
+                  const lv = lvlCfg[(c.level as Level) || "all"] ?? lvlCfg["all"];
                   return (
-                    <div key={c.id} className="chov" style={{ background: "#fff", borderRadius: 20, border: "1px solid #F0F0F0", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", transition: "box-shadow .2s, transform .2s" }}
-                      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = "0 8px 32px rgba(6,78,59,0.14)"; (e.currentTarget as HTMLDivElement).style.transform = "translateY(-2px)"; }}
-                      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = "0 2px 12px rgba(0,0,0,0.06)"; (e.currentTarget as HTMLDivElement).style.transform = "translateY(0)"; }}
-                    >
-                      {/* Image area */}
-                      <div style={{ position: "relative", width: "100%", height: 164, flexShrink: 0, overflow: "hidden", background: lv.bg, cursor: "pointer" }} onClick={() => openSubjectsView(c)}>
-                        <SubjThumb url={c.image_url} title={c.title} bg={lv.bg} />
-                        {/* gradient overlay for readability */}
-                        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,0.45) 0%, transparent 55%)", pointerEvents: "none" }} />
-                        {/* badges top-left */}
-                        <div style={{ position: "absolute", top: 10, left: 10, display: "flex", gap: 5 }}>
-                          {!c.is_published && <span style={{ padding: "3px 9px", borderRadius: 20, background: "rgba(254,242,242,0.95)", color: "#DC2626", fontSize: 9, fontWeight: 700, border: "1px solid #FECACA" }}>Draft</span>}
-                          {c.visibility === "private" && <span style={{ padding: "3px 9px", borderRadius: 20, background: "rgba(243,232,255,0.95)", color: "#7C3AED", fontSize: 9, fontWeight: 700, border: "1px solid #D8B4FE" }}>🔒 Private</span>}
-                          {c.visibility === "general" && <span style={{ padding: "3px 9px", borderRadius: 20, background: "rgba(239,246,255,0.95)", color: "#3b82f6", fontSize: 9, fontWeight: 700, border: "1px solid #bfdbfe" }}>👥 Class</span>}
+                    <div key={c.id} className="chov" onClick={() => openSubjectsView(c)}
+                      style={{ background: "#fff", borderRadius: 18, border: "1px solid #e5e7eb", overflow: "hidden", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,.05)", display: "flex", flexDirection: "column" }}>
+                      {/* Image */}
+                      <div style={{ position: "relative", height: 120, overflow: "hidden", background: `linear-gradient(135deg,${G},${GM})`, flexShrink: 0 }}>
+                        <SubjThumb url={c.image_url} title={c.title} bg={`linear-gradient(135deg,${G},${GM})`} />
+                        {/* status badges */}
+                        <div style={{ position: "absolute", top: 8, left: 8, display: "flex", gap: 4, flexWrap: "wrap" }}>
+                          {!c.is_published && <span style={{ padding: "2px 8px", borderRadius: 20, background: "rgba(254,242,242,.95)", color: "#DC2626", fontSize: 9, fontWeight: 700, border: "1px solid #FECACA" }}>Draft</span>}
+                          {c.visibility === "private" && <span style={{ padding: "2px 8px", borderRadius: 20, background: "rgba(243,232,255,.95)", color: "#7C3AED", fontSize: 9, fontWeight: 700, border: "1px solid #D8B4FE" }}>🔒 Private</span>}
+                          {c.visibility === "general" && <span style={{ padding: "2px 8px", borderRadius: 20, background: "rgba(239,246,255,.95)", color: "#3b82f6", fontSize: 9, fontWeight: 700, border: "1px solid #bfdbfe" }}>👥 Class</span>}
                         </div>
-                        {/* level badge bottom-right */}
-                        <span style={{ position: "absolute", bottom: 10, right: 10, padding: "3px 10px", borderRadius: 20, fontSize: 9, fontWeight: 700, background: "rgba(255,255,255,0.93)", color: lv.text, border: `1px solid ${lv.border}`, backdropFilter: "blur(4px)" }}>{lv.label}</span>
+                        {/* admin quick actions */}
+                        <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 5 }}>
+                          <button type="button" title="Edit" onClick={e => { e.stopPropagation(); setEdCourse(c); setShowCourse(true); }}
+                            style={{ width: 28, height: 28, borderRadius: 8, border: "none", background: "rgba(255,255,255,.93)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Edit2 size={13} color={G} /></button>
+                          <button type="button" title="Delete" onClick={e => { e.stopPropagation(); delCourse(c.id); }}
+                            style={{ width: 28, height: 28, borderRadius: 8, border: "none", background: "rgba(255,255,255,.93)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Trash2 size={13} color="#DC2626" /></button>
+                        </div>
                       </div>
-
                       {/* Body */}
-                      <div style={{ flex: 1, padding: "16px 18px 18px", display: "flex", flexDirection: "column", gap: 0 }}>
-                        {c.title_ar && <p style={{ fontWeight: 600, fontSize: 12, color: GOLD, margin: "0 0 4px", direction: "rtl", fontFamily: "'Amiri',serif", lineHeight: 1.4 }}>{c.title_ar}</p>}
-                        <p style={{ fontWeight: 800, fontSize: 15, color: "#111", margin: "0 0 7px", lineHeight: 1.3, cursor: "pointer" }} onClick={() => openSubjectsView(c)}>{c.title}</p>
-                        {c.description && <p style={{ fontSize: 12, color: "#6B7280", margin: "0 0 16px", lineHeight: 1.6, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" as any, overflow: "hidden", flex: 1 }}>{c.description}</p>}
-                        {!c.description && <div style={{ flex: 1 }} />}
-
-                        {/* Action row */}
-                        <div style={{ display: "flex", gap: 6, paddingTop: 12, borderTop: "1px solid #F3F4F6" }}>
-                          <button type="button" onClick={() => openSubjectsView(c)} style={{ flex: 1, padding: "9px 8px", borderRadius: 10, border: "none", background: `linear-gradient(135deg,${G},#075E54)`, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
-                            <Layers size={13} /> Manage
-                          </button>
-                          <button type="button" onClick={() => { setEdCourse(c); setShowCourse(true); }} style={{ padding: "9px 12px", borderRadius: 10, border: `1.5px solid ${G}22`, background: "#F0FDF4", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} title="Edit"><Edit2 size={14} color={G} /></button>
-                          <button type="button" onClick={() => delCourse(c.id)} style={{ padding: "9px 12px", borderRadius: 10, border: "1.5px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} title="Delete"><Trash2 size={14} color="#DC2626" /></button>
-                        </div>
+                      <div style={{ padding: "10px 12px 14px", display: "flex", flexDirection: "column", flex: 1 }}>
+                        {c.level && c.level !== "all" && (
+                          <span style={{ fontSize: 9, padding: "2px 7px", borderRadius: 9, fontWeight: 700, background: lv.bg, color: lv.text, border: `1px solid ${lv.border}`, display: "inline-block", marginBottom: 6, alignSelf: "flex-start" }}>{lv.label}</span>
+                        )}
+                        <h3 style={{ fontSize: 13, fontWeight: 800, color: G, margin: "0 0 3px", lineHeight: 1.4 }}>{c.title}</h3>
+                        {c.title_ar && <p style={{ fontSize: 11, color: GOLD, margin: "0 0 6px", fontFamily: "'Amiri',serif" }} dir="rtl">{c.title_ar}</p>}
+                        {c.description && <p style={{ fontSize: 11, color: "#9ca3af", margin: "0 0 10px", lineHeight: 1.5, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as any, overflow: "hidden" }}>{c.description}</p>}
+                        <div style={{ flex: 1 }} />
+                        <button type="button" style={{ width: "100%", padding: 8, borderRadius: 9, background: G, border: "none", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontFamily: "inherit" }}>
+                          <Layers size={11} /> View Subjects
+                        </button>
                       </div>
                     </div>
                   );
