@@ -535,22 +535,19 @@ ${pagesHtml}
           </span>
         </div>
       )}
-      {/* Header bar — title on the left, calligraphy logo (magnified) on the right */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", direction: "ltr", gap: 10, padding: "12px clamp(12px, 4vw, 24px)", borderBottom: `2px solid ${G}`, background: "#fdfcf8", overflow: "hidden" }}>
-        <div style={{ direction: "rtl", textAlign: "right" }}>
-          <div style={{ fontFamily: "'Aref Ruqaa',serif", fontWeight: 700, fontSize: "clamp(19px, 5.6vw, 26px)", color: G, whiteSpace: "nowrap" }}>كشف الدرجات الفصلي</div>
-          <div style={{ fontWeight: 700, fontSize: 12, color: "#8a7434", letterSpacing: 1, textTransform: "uppercase", marginTop: 3, whiteSpace: "nowrap" }}>Term Report Card</div>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
-          <img src={tahleemHeaderArt} alt="Tahleem Academy" style={{ height: "clamp(52px, 16vw, 88px)", width: "auto", flexShrink: 0 }} />
-          <div style={{ fontWeight: 700, fontSize: 11, color: "#8a7434", letterSpacing: 1.5, whiteSpace: "nowrap" }}>TAHLEEM ACADEMY</div>
-        </div>
+      {/* Header bar — centred: calligraphy logo, then the report title */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 6, padding: "14px clamp(12px, 4vw, 24px) 12px", borderBottom: `2px solid ${G}`, background: "#fdfcf8" }}>
+        <img src={tahleemHeaderArt} alt="Tahleem Academy" style={{ height: "auto", width: "auto", maxWidth: "min(100%, 300px)", maxHeight: 84, objectFit: "contain" }} />
+        <div style={{ fontWeight: 700, fontSize: 11, color: "#8a7434", letterSpacing: 1.5, whiteSpace: "nowrap" }}>TAHLEEM ACADEMY</div>
+        <div style={{ width: 48, height: 2, background: GOLD, borderRadius: 2, margin: "2px 0" }} />
+        <div style={{ fontFamily: "'Aref Ruqaa',serif", fontWeight: 700, fontSize: "clamp(20px, 6vw, 26px)", color: G, lineHeight: 1.2 }}>كشف الدرجات الفصلي</div>
+        <div style={{ fontWeight: 700, fontSize: 11, color: "#8a7434", letterSpacing: 1, textTransform: "uppercase" }}>Term Report Card</div>
       </div>
 
       <div className="container mx-auto px-4 py-6 max-w-4xl">
       {/* Header */}
-      <div className="mb-4 flex flex-wrap items-center justify-end gap-3">
-        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+      <div className="mb-4 flex flex-wrap items-center justify-center gap-3">
+        <div className="flex flex-wrap justify-center gap-2 w-full sm:w-auto">
           <Button onClick={() => downloadPDF("current")} className="gap-2" style={{ background: G }}>
             <Download className="h-4 w-4" />تحميل الفترة الحالية
           </Button>
@@ -566,7 +563,7 @@ ${pagesHtml}
           results spanning more than one academic session, so an old
           session's results don't silently blend into the current one. */}
       {sessions.length > 1 && (
-        <div className="flex gap-2 mb-2">
+        <div className="flex flex-wrap justify-center gap-2 mb-2">
           {sessions.map(s => (
             <button key={s} onClick={() => setSession(s)}
               style={{
@@ -581,7 +578,7 @@ ${pagesHtml}
       )}
 
       {/* Term selector */}
-      <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
+      <div className="flex flex-wrap justify-center gap-2 mb-4">
         {TERMS.map(tm => (
           <button key={tm.key} onClick={() => setTerm(tm.key)}
             style={{

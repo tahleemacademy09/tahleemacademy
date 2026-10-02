@@ -1,7 +1,7 @@
 /*  src/pages/student/Transcripts.tsx
     ENHANCED — ordered subjects, course grouping, rich analytics, clean PDF
 */
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -29,7 +29,7 @@ interface GradedExam {
   score: number; total_points: number; percentage: number;
   passed: boolean; submitted_at: string;
   course_title?: string; course_id?: string;
-  term: string; type: string;
+  term: string; type: string; session: string;
 }
 
 interface SubjectRow {
@@ -116,7 +116,18 @@ const TermTable = ({ exams, termLabel, language }: { exams:GradedExam[]; termLab
   );
 
   return (
-    <div style={{ overflowX:"auto" }}>
+    <div style={{ overflow:"hidden" }}>
+      <style>{`
+        .tt-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:13px}
+        .tt-table th,.tt-table td{padding:9px 4px}
+        @media (max-width:520px){
+          .tt-table{font-size:12px}
+          .tt-table th{font-size:10px!important;padding:8px 2px}
+          .tt-table td{padding:8px 2px}
+          .tt-subj{font-size:13px!important;line-height:1.25;word-break:break-word}
+          .tt-pill{padding:2px 5px!important}
+        }
+      `}</style>
       {/* Term header */}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 16px",
         background:"linear-gradient(90deg,#0f2d1f,#1a4731)", color:"#fff" }}>
@@ -130,56 +141,56 @@ const TermTable = ({ exams, termLabel, language }: { exams:GradedExam[]; termLab
         </div>
       </div>
 
-      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+      <table className="tt-table">
+        <colgroup>
+          <col style={{ width:"8%" }} />
+          <col style={{ width:"34%" }} />
+          <col style={{ width:"15%" }} />
+          <col style={{ width:"15%" }} />
+          <col style={{ width:"13%" }} />
+          <col style={{ width:"15%" }} />
+        </colgroup>
         <thead>
           <tr style={{ background:"#f8fafb" }}>
-            {["#","Subject","Course","Test (30)","Exam (70)","Total","Grade","Result"].map(h => (
-              <th key={h} style={{ padding:"9px 10px", textAlign:"center", fontSize:11, fontWeight:700,
-                color:"#6b7280", borderBottom:"1px solid #e5e7eb", whiteSpace:"nowrap" }}>{h}</th>
+            {["#","Subject","Test (30)","Exam (70)","Total","Grade"].map(h => (
+              <th key={h} style={{ textAlign:"center", fontSize:11, fontWeight:700,
+                color:"#6b7280", borderBottom:"1px solid #e5e7eb" }}>{h}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {rows.map((row, i) => (
             <tr key={i} style={{ borderBottom:"1px solid #f0f4f8", background: i%2===0 ? "#fff" : "#fafafa" }}>
-              <td style={{ padding:"10px 10px", textAlign:"center", fontSize:12, color:"#9ca3af", fontWeight:600 }}>{i+1}</td>
-              <td style={{ padding:"10px 14px", fontWeight:600, color:G }}>
-                <div style={{ fontFamily:"'Amiri',serif", fontSize:15 }}>
+              <td style={{ textAlign:"center", fontSize:12, color:"#9ca3af", fontWeight:600 }}>{i+1}</td>
+              <td style={{ padding:"10px 8px", fontWeight:600, color:G }}>
+                <div className="tt-subj" style={{ fontFamily:"'Amiri',serif", fontSize:15 }}>
                   {language==="ar" ? row.title_ar : row.title}
                 </div>
               </td>
-              <td style={{ padding:"10px 10px", textAlign:"center", fontSize:11, color:"#9ca3af" }}>
-                {row.course || "—"}
-              </td>
-              <td style={{ padding:"10px 10px", textAlign:"center", color:"#374151" }}>
-                <div style={{ display:"inline-block", padding:"2px 8px", borderRadius:6,
+              <td style={{ textAlign:"center", color:"#374151" }}>
+                <div className="tt-pill" style={{ display:"inline-block", padding:"2px 8px", borderRadius:6,
                   background: row.test > 0 ? "#f0fff4" : "#f8fafb",
                   color: row.test > 0 ? "#276749" : "#9ca3af", fontWeight:600 }}>
                   {row.test > 0 ? row.test : "—"}
                 </div>
               </td>
-              <td style={{ padding:"10px 10px", textAlign:"center", color:"#374151" }}>
-                <div style={{ display:"inline-block", padding:"2px 8px", borderRadius:6,
+              <td style={{ textAlign:"center", color:"#374151" }}>
+                <div className="tt-pill" style={{ display:"inline-block", padding:"2px 8px", borderRadius:6,
                   background: row.exam > 0 ? "#eff6ff" : "#f8fafb",
                   color: row.exam > 0 ? "#1d4ed8" : "#9ca3af", fontWeight:600 }}>
                   {row.exam > 0 ? row.exam : "—"}
                 </div>
               </td>
-              <td style={{ padding:"10px 10px", textAlign:"center" }}>
+              <td style={{ textAlign:"center" }}>
                 <div style={{ fontSize:18, fontWeight:900, color:row.grade.color }}>{row.total}</div>
                 <div style={{ fontSize:10, color:"#9ca3af" }}>/100</div>
               </td>
-              <td style={{ padding:"10px 10px", textAlign:"center" }}>
-                <span style={{ padding:"4px 12px", borderRadius:20, background:row.grade.bg, color:row.grade.color,
+              <td style={{ textAlign:"center" }}>
+                <span className="tt-pill" style={{ padding:"4px 12px", borderRadius:20, background:row.grade.bg, color:row.grade.color,
                   fontWeight:800, fontSize:13, display:"inline-block" }}>
                   {row.grade.letter}
                 </span>
                 <div style={{ fontSize:9, color:"#9ca3af", marginTop:2 }}>{row.grade.label}</div>
-              </td>
-              <td style={{ padding:"10px 10px", textAlign:"center" }}>
-                {row.passed
-                  ? <span style={{ color:"#22c55e", fontWeight:700, display:"flex", alignItems:"center", gap:3, justifyContent:"center" }}><CheckCircle style={{ width:14, height:14 }} />Pass</span>
-                  : <span style={{ color:"#ef4444", fontWeight:700, display:"flex", alignItems:"center", gap:3, justifyContent:"center" }}><XCircle style={{ width:14, height:14 }} />Fail</span>}
               </td>
             </tr>
           ))}
@@ -187,18 +198,15 @@ const TermTable = ({ exams, termLabel, language }: { exams:GradedExam[]; termLab
         {/* Summary row */}
         <tfoot>
           <tr style={{ background:"#f0f4f8", borderTop:"2px solid #e5e7eb" }}>
-            <td colSpan={3} style={{ padding:"10px 14px", fontWeight:700, color:G, fontSize:13 }}>Term Summary</td>
-            <td colSpan={2} style={{ textAlign:"center", padding:"10px", fontSize:12, color:"#6b7280" }}>
+            <td colSpan={2} style={{ padding:"10px 8px", fontWeight:700, color:G, fontSize:12 }}>Term Summary</td>
+            <td colSpan={2} style={{ textAlign:"center", fontSize:12, color:"#6b7280" }}>
               {rows.reduce((s,r) => s + r.test, 0)} + {rows.reduce((s,r) => s + r.exam, 0)}
             </td>
-            <td style={{ textAlign:"center", padding:"10px", fontSize:16, fontWeight:900, color:G }}>
+            <td style={{ textAlign:"center", fontSize:15, fontWeight:900, color:G }}>
               {rows.reduce((s,r) => s + r.total, 0)}
             </td>
-            <td style={{ textAlign:"center", padding:"10px" }}>
-              <div style={{ fontSize:13, fontWeight:800, color:GOLD }}>GPA {termGPA.toFixed(2)}</div>
-            </td>
-            <td style={{ textAlign:"center", padding:"10px", fontSize:12, fontWeight:700, color: passed === rows.length ? "#22c55e" : "#ea580c" }}>
-              {passed}/{rows.length} passed
+            <td style={{ textAlign:"center", fontSize:12, fontWeight:800, color:GOLD }}>
+              GPA {termGPA.toFixed(2)}
             </td>
           </tr>
         </tfoot>
@@ -212,7 +220,8 @@ const Transcripts = () => {
   const { t, language } = useLanguage();
   const { user, profile } = useAuth();
   const { toast }        = useToast();
-  const [exams, setExams]   = useState<GradedExam[]>([]);
+  const [allExams, setAllExams] = useState<GradedExam[]>([]);
+  const [session, setSession]   = useState<string>("all");
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("overview");
 
@@ -220,12 +229,12 @@ const Transcripts = () => {
     if (!user) return;
     supabase
       .from("exam_attempts")
-      .select("id, exam_id, score, total_points, percentage, passed, submitted_at, exams(title, title_ar, type, term, subject_id, subjects(title))")
+      .select("id, exam_id, score, total_points, percentage, passed, submitted_at, exams(title, title_ar, type, term, session, subject_id, subjects(title))")
       .eq("user_id", user.id)
       .eq("status", "released")
       .order("submitted_at", { ascending: true })
       .then(({ data }) => {
-        setExams((data||[]).map((a:any) => ({
+        const rows = (data||[]).map((a:any) => ({
           exam_id:a.exam_id, attempt_id:a.id,
           title:a.exams?.title||"Exam", title_ar:a.exams?.title_ar,
           score:Number(a.score)||0, total_points:Number(a.total_points)||0,
@@ -234,10 +243,27 @@ const Transcripts = () => {
           course_title:a.exams?.subjects?.title,
           course_id:a.exams?.subject_id,
           term:a.exams?.term||"first", type:a.exams?.type||"exam",
-        })));
+          session:a.exams?.session||"",
+        }));
+        setAllExams(rows);
+        // Default to the most recent academic year so last year's terms
+        // never blend into the current one.
+        const ys = Array.from(new Set(rows.map(r => r.session).filter(Boolean))).sort();
+        if (ys.length) setSession(ys[ys.length - 1]);
         setLoading(false);
       });
   }, [user]);
+
+  // Academic years this student has results in (oldest → newest)
+  const sessions = useMemo(
+    () => Array.from(new Set(allExams.map(e => e.session).filter(Boolean))).sort(),
+    [allExams],
+  );
+  // Everything below (stats, terms, analytics, PDF) uses the selected year
+  const exams = useMemo(
+    () => session === "all" ? allExams : allExams.filter(e => e.session === session),
+    [allExams, session],
+  );
 
   // Derived stats
   const totalGP   = exams.reduce((s,e) => s + gradePoint(e.percentage), 0);
@@ -308,7 +334,6 @@ const Transcripts = () => {
               <th>امتحان (70) / Exam</th>
               <th>المجموع / Total</th>
               <th>الدرجة / Grade</th>
-              <th>النتيجة / Result</th>
             </tr></thead>
             <tbody>
               ${rows.map((r,i) => `
@@ -319,14 +344,13 @@ const Transcripts = () => {
                   <td>${r.exam||"—"}</td>
                   <td style="font-weight:800;font-size:15px">${r.total}</td>
                   <td style="font-weight:800;color:${r.grade.color}">${r.grade.letter}</td>
-                  <td style="color:${r.passed?"#22c55e":"#ef4444"};font-weight:700">${r.passed?"Pass ✓":"Fail ✗"}</td>
                 </tr>`).join("")}
             </tbody>
             <tfoot>
               <tr style="background:#f0f4f0;font-weight:800">
                 <td colspan="4" style="text-align:right">Term GPA / معدل الفترة</td>
                 <td>${rows.reduce((s,r)=>s+r.total,0)}</td>
-                <td colspan="2">${gpa.toFixed(2)}</td>
+                <td>${gpa.toFixed(2)}</td>
               </tr>
             </tfoot>
           </table>
@@ -379,7 +403,7 @@ table.summary .lbl{font-weight:700;background:#f8fafb;width:20%}
 <div class="info-grid">
   <div class="info-row">
     <div class="info-field"><label>اسم الطالب(ة)</label><span class="val">${profile?.full_name||"—"}</span></div>
-    <div class="info-field"><label>العام الدراسي</label><span class="val">${hijriYear} هـ / ${currentYear} م</span></div>
+    <div class="info-field"><label>العام الدراسي</label><span class="val">${session !== "all" ? session : `${hijriYear} هـ / ${currentYear} م`}</span></div>
   </div>
   <div class="info-row">
     <div class="info-field"><label>المرحلة</label><span class="val">${levelText}</span></div>
@@ -428,7 +452,7 @@ ${term3.length>0 ? buildTermSection(term3,"الفترة الثالثة","Third T
     </div>
   );
 
-  if (exams.length === 0) return (
+  if (allExams.length === 0) return (
     <div className="container mx-auto px-4 py-16 max-w-5xl">
       <div className="flex flex-col items-center justify-center py-24 text-muted-foreground">
         <GraduationCap className="h-20 w-20 mb-6 opacity-20" />
@@ -457,13 +481,34 @@ ${term3.length>0 ? buildTermSection(term3,"الفترة الثالثة","Third T
         </Button>
       </div>
 
+      {/* Academic-year selector */}
+      {sessions.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2" role="tablist" aria-label={t("Academic year","العام الدراسي")}>
+          <span className="text-[11px] font-bold text-muted-foreground">{t("Year","العام")}:</span>
+          {[...sessions].reverse().map(y => (
+            <button key={y} role="tab" aria-selected={session === y} onClick={() => setSession(y)}
+              className="px-3.5 min-h-[36px] rounded-full text-xs font-bold border transition-colors"
+              style={{ background: session === y ? GOLD : "#fff", color: session === y ? "#fff" : "#6b7280", borderColor: session === y ? GOLD : "#e5e7eb" }}>
+              {y}
+            </button>
+          ))}
+          {sessions.length > 1 && (
+            <button role="tab" aria-selected={session === "all"} onClick={() => setSession("all")}
+              className="px-3.5 min-h-[36px] rounded-full text-xs font-bold border transition-colors"
+              style={{ background: session === "all" ? G : "#fff", color: session === "all" ? "#fff" : "#6b7280", borderColor: session === "all" ? G : "#e5e7eb" }}>
+              {t("All years","كل الأعوام")}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Summary Cards */}
       <div className="grid gap-2 md:grid-cols-4 mb-3" style={{ animation:"fadeUp .4s ease" }}>
         {/* CGPA Ring */}
         <div className="bg-white rounded-2xl shadow-sm border p-3 flex flex-row md:flex-col items-center gap-3 md:gap-2 md:col-span-1">
           <CGPARing cgpa={cgpa} size={84} />
           <div className="text-center">
-            <div className="font-bold text-xs" style={{ color: G }}>{t("Cumulative GPA","المعدل التراكمي")}</div>
+            <div className="font-bold text-xs" style={{ color: G }}>{session === "all" ? t("Cumulative GPA","المعدل التراكمي") : t("Year GPA","معدل العام")}</div>
             <span className="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
               style={{ background: cgpaGrade.bg, color: cgpaGrade.color }}>
               {language==="ar" ? statusAr : status}
@@ -513,6 +558,12 @@ ${term3.length>0 ? buildTermSection(term3,"الفترة الثالثة","Third T
               <div className="text-[10px] text-muted-foreground">{worstSubject.grade.label}</div>
             </div>
           )}
+        </div>
+      )}
+
+      {exams.length === 0 && (
+        <div className="mb-3 rounded-2xl border bg-white p-6 text-center text-sm text-muted-foreground">
+          {t("No released results for this year yet.","لا توجد نتائج معلنة لهذا العام بعد.")}
         </div>
       )}
 
