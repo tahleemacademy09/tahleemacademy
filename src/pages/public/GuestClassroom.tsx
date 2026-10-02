@@ -23,7 +23,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
-  LiveKitRoom, VideoConference, RoomAudioRenderer, useRoomContext,
+  LiveKitRoom, RoomAudioRenderer, useRoomContext,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { Track, ConnectionState, RoomEvent, Participant, ConnectionQuality } from "livekit-client";
@@ -38,6 +38,8 @@ import ClassChatPanel    from "@/components/classroom/ClassChatPanel";
 import ClassPolls        from "@/components/classroom/ClassPolls";
 import ClassParticipants from "@/components/classroom/ClassParticipants";
 import ClassControls     from "@/components/classroom/ClassControls";
+import ParticipantDrawer from "@/components/classroom/ParticipantDrawer";
+import { VideoGrid, ClassroomAdminContext } from "@/components/classroom/classroomComponents";
 import LiveQuizOverlay   from "@/components/classroom/LiveQuizOverlay";
 import { useIsMobile }   from "@/hooks/use-mobile";
 import { startBackgroundAudio, stopBackgroundAudio, setWakeLockActive } from "@/hooks/useBackgroundAudio";
@@ -676,6 +678,11 @@ const GuestClassroom = () => {
   // Side panels
   const [chatOpen, setChatOpen]           = useState(!isMobile);
   const [partOpen, setPartOpen]           = useState(false);
+  const [uiHidden, setUiHidden]           = useState(false);
+  const onStageTap = (e: any) => {
+    if (e?.target?.closest?.("button,a,input,textarea,select,[data-tile-control]")) return;
+    setUiHidden(v => !v);
+  };
   const [sideTab, setSideTab]             = useState<"chat"|"polls">("chat");
   const [chatUnread, setChatUnread]       = useState(0);
   const [showQuiz, setShowQuiz]           = useState(false);
@@ -801,6 +808,7 @@ const GuestClassroom = () => {
       try {
         const lkRoot = document.querySelector("[data-lk-theme]") ?? document.body;
         lkRoot.querySelectorAll<HTMLVideoElement>("video").forEach(vid => {
+          if (vid.closest("[data-ta-stage]")) return;
           const carrier = vid.closest("[data-lk-local-participant]") as HTMLElement | null;
           const attr = carrier
             ? carrier.getAttribute("data-lk-local-participant")
@@ -1202,11 +1210,16 @@ const GuestClassroom = () => {
 
         {/* ════ TOP BAR ════ */}
         <div style={{
-          height:48, flexShrink:0,
-          background:"rgba(32,33,36,.97)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)",
+          position:"fixed", top:0, left:0, right:0, zIndex:60,
+          height:56, boxSizing:"content-box",
+          transform: uiHidden ? "translateY(-100%)" : "translateY(0)",
+          opacity: uiHidden ? 0 : 1,
+          pointerEvents: uiHidden ? "none" : "auto",
+          transition:"transform .28s cubic-bezier(.4,0,.2,1), opacity .22s ease",
+          willChange:"transform",
+          background:"linear-gradient(to bottom, rgba(0,0,0,.78) 0%, rgba(0,0,0,.45) 70%, rgba(0,0,0,0) 100%)",
           display:"flex", alignItems:"center",
-          padding:"0 10px", gap:6,
-          borderBottom:"1px solid rgba(255,255,255,.06)",
+          padding:"env(safe-area-inset-top, 0px) 14px 0 16px", gap:6,
           overflow:"hidden",
         }}>
           {/* LEFT GROUP */}
@@ -1275,7 +1288,14 @@ const GuestClassroom = () => {
 
           {/* Video + LK control bar — wrapped so we can overlay Leave icon */}
           <div style={{ flex:1, position:"relative", minWidth:0, display:"flex", flexDirection:"column" }}>
-            <VideoConference />
+            <ClassroomAdminContext.Provider value={{ isPrivileged: !!isHost, sessionId: sessionId || null }}>
+              <div data-ta-stage style={{ position:"absolute", inset:0 }} onClick={onStageTap}>
+                <div style={{ width:"100%", height:"100%", overflow:"hidden", background:"#000" }}>
+                  <VideoGrid layout="grid" isMobile={isMobile} spotlightId={null} />
+                </div>
+              </div>
+              <ParticipantDrawer isMobile={isMobile} dim={uiHidden} />
+            </ClassroomAdminContext.Provider>
             <RoomAudioRenderer />
 
           {/* ── Floating emoji layer ── */}
@@ -1462,6 +1482,7 @@ const GuestClassroom = () => {
           <ClassControls
             sessionId={sessionId}
             isHostOverride={!!isHost}
+            collapsed={uiHidden}
             onToggleChat={()=>{ setChatOpen(v=>!v); if(!chatOpen) setChatUnread(0); }}
             onToggleParticipants={()=>setPartOpen(v=>!v)}
             onEndClass={isHost?()=>setShowEndConfirm(true):undefined}
