@@ -12,7 +12,7 @@
   resets with the new civil day and is stored client-side only, per
   device.
 */
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -22,6 +22,7 @@ import {
 import { useLanguage } from "@/contexts/LanguageContext";
 import { MORNING_ADHKAAR, EVENING_ADHKAAR, type Dhikr } from "@/data/adhkaarData";
 import { DUA_CATEGORIES, DUAS_BY_CATEGORY } from "@/data/duaData";
+import { adhkaarAudioUrls, currentWordIndex, ADHKAAR_WORD_TIMINGS, ADHKAAR_LEAD_WORDS } from "@/data/adhkaarAudio";
 
 const G          = "#0f2d1f";   // deep emerald
 const G_MID      = "#153a27";
@@ -61,6 +62,9 @@ const FAMILIES: Family[] = [
 // since we don't bundle/host per-dua reciter files in the app itself.
 const EXTERNAL_AUDIO_URL = "https://falah.io/en/hisnul-muslim/";
 
+// Characters removed before the phone's voice reads the text (same as before)
+const STRIP_RE = /[﴿﴾]/g;
+
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const storageKey = (familyId: string) => `tahleem_adhkaar_${familyId}_${todayKey()}`;
 
@@ -93,6 +97,20 @@ export default function AdhkaarPage() {
   const [direction, setDirection] = useState(0);
   const [speaking, setSpeaking] = useState(false);
   const utterRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [activeWord, setActiveWord] = useState(-1);   // word being recited (highlight)
+
+  // Stop whatever is playing — recorded audio or the phone's voice
+  const stopAudio = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.onended = null; audioRef.current.onerror = null; audioRef.current.ontimeupdate = null;
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    window.speechSynthesis?.cancel();
+    setSpeaking(false);
+    setActiveWord(-1);
+  }, []);
 
   // Picker (dropdown) state — which family is expanded while choosing.
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -100,8 +118,7 @@ export default function AdhkaarPage() {
 
   useEffect(() => {
     setProgress(loadProgress(familyId));
-    window.speechSynthesis?.cancel();
-    setSpeaking(false);
+    stopAudio();
   }, [familyId]);
 
   const current: Dhikr | undefined = list[index];
@@ -130,33 +147,66 @@ export default function AdhkaarPage() {
   }, [current, familyId]);
 
   const go = (delta: number) => {
-    window.speechSynthesis?.cancel();
-    setSpeaking(false);
+    stopAudio();
     setDirection(delta);
     setIndex(i => Math.max(0, Math.min(list.length - 1, i + delta)));
   };
 
+  // Plays the recorded mp3 for this dhikr if one exists (see
+  // src/data/adhkaarAudio.ts), highlighting each word as it is recited;
+  // otherwise falls back to the phone's built-in Arabic voice.
   const toggleListen = () => {
-    if (!current || !("speechSynthesis" in window)) return;
-    if (speaking) {
-      window.speechSynthesis.cancel();
-      setSpeaking(false);
-      return;
-    }
-    const utter = new SpeechSynthesisUtterance(current.arabic.replace(/[﴿﴾]/g, ""));
-    utter.lang = "ar-SA";
-    utter.rate = 0.85;
-    const voices = window.speechSynthesis.getVoices();
-    const arVoice = voices.find(v => v.lang?.startsWith("ar"));
-    if (arVoice) utter.voice = arVoice;
-    utter.onend = () => setSpeaking(false);
-    utter.onerror = () => setSpeaking(false);
-    utterRef.current = utter;
-    window.speechSynthesis.speak(utter);
-    setSpeaking(true);
+    if (!current) return;
+    if (speaking) { stopAudio(); return; }
+
+    const words = current.arabic.split(/\s+/).filter(Boolean);
+    const timings = ADHKAAR_WORD_TIMINGS[current.id];
+    let fellBack = false;
+
+    const speakWithVoice = () => {
+      if (fellBack) return;
+      fellBack = true;
+      audioRef.current = null;
+      if (!("speechSynthesis" in window)) { setSpeaking(false); return; }
+      const spoken = current.arabic.replace(STRIP_RE, "");
+      const utter = new SpeechSynthesisUtterance(spoken);
+      utter.lang = "ar-SA";
+      utter.rate = 0.85;
+      const voices = window.speechSynthesis.getVoices();
+      const arVoice = voices.find(v => v.lang?.startsWith("ar"));
+      if (arVoice) utter.voice = arVoice;
+      // Some voices report the position of each word as they speak
+      utter.onboundary = (e) => {
+        const before = spoken.slice(0, e.charIndex).split(/\s+/).filter(Boolean).length;
+        setActiveWord(Math.min(before, words.length - 1));
+      };
+      utter.onend = () => { setSpeaking(false); setActiveWord(-1); };
+      utter.onerror = () => { setSpeaking(false); setActiveWord(-1); };
+      utterRef.current = utter;
+      window.speechSynthesis.speak(utter);
+      setSpeaking(true);
+    };
+
+    const urls = adhkaarAudioUrls(current.id);
+    const lead = ADHKAAR_LEAD_WORDS[current.id] ?? 0;
+    const audio = new Audio();           // one element, reused for each part
+    audio.preload = "auto";
+    let part = 0;
+    const playPart = () => { audio.src = urls[part]; return audio.play(); };
+    audioRef.current = audio;
+    audio.ontimeupdate = () => {
+      // word highlight follows a single file; multi-part lists play without it
+      if (urls.length === 1) setActiveWord(currentWordIndex(audio.currentTime, audio.duration, words, timings, lead));
+    };
+    audio.onended = () => {
+      if (part < urls.length - 1) { part++; playPart().catch(speakWithVoice); return; }
+      setSpeaking(false); setActiveWord(-1); audioRef.current = null;
+    };
+    audio.onerror = speakWithVoice;      // offline or no recording → phone voice
+    playPart().then(() => { if (!fellBack) setSpeaking(true); }).catch(speakWithVoice);
   };
 
-  useEffect(() => () => window.speechSynthesis?.cancel(), []);
+  useEffect(() => () => { audioRef.current?.pause(); window.speechSynthesis?.cancel(); }, []);
 
   const openPicker = () => {
     setExpandedFamilyId(familyId);
@@ -164,8 +214,7 @@ export default function AdhkaarPage() {
   };
 
   const chooseDua = (fId: string, i: number) => {
-    window.speechSynthesis?.cancel();
-    setSpeaking(false);
+    stopAudio();
     setDirection(0);
     if (fId !== familyId) setFamilyId(fId);
     setIndex(i);
@@ -322,8 +371,18 @@ export default function AdhkaarPage() {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: direction >= 0 ? -40 : 40 }}
                 transition={{ duration: 0.22, ease: "easeOut" }}
+                drag="x"
+                dragDirectionLock
+                dragConstraints={{ left: 0, right: 0 }}
+                dragElastic={0.35}
+                onDragEnd={(_, info) => {
+                  // swipe left → next, swipe right → previous
+                  if ((info.offset.x < -60 || info.velocity.x < -500) && index < list.length - 1) go(1);
+                  else if ((info.offset.x > 60 || info.velocity.x > 500) && index > 0) go(-1);
+                }}
                 className="flex-1 rounded-3xl px-6 py-7 flex flex-col"
                 style={{
+                  touchAction: "pan-y",
                   background: PAPER,
                   border: `1px solid ${GOLD}66`,
                   boxShadow: `0 20px 60px -20px ${G}`,
@@ -372,7 +431,15 @@ export default function AdhkaarPage() {
                     className="text-center leading-[2.1] px-1"
                     style={{ fontFamily: "'Amiri', serif", fontSize: "1.65rem", color: INK }}
                   >
-                    {current.arabic}
+                    {current.arabic.split(/\s+/).filter(Boolean).map((w, i) => (
+                      <Fragment key={i}>
+                        {i > 0 && " "}
+                        <span style={{
+                          background: i === activeWord ? `${GOLD}66` : "transparent",
+                          borderRadius: 8, padding: "0 3px", transition: "background .15s",
+                        }}>{w}</span>
+                      </Fragment>
+                    ))}
                   </p>
                 </div>
 
@@ -436,6 +503,7 @@ export default function AdhkaarPage() {
 
         {/* Session summary footer */}
         <div className="mt-4 text-center text-[11px]" style={{ color: `${CREAM}66` }}>
+          <div className="mb-0.5">{t("Swipe left or right to move between adhkaar", "اسحب يمينًا أو يسارًا للتنقل")}</div>
           {completedCount}/{list.length} {t("completed today", "أُنجزت اليوم")}
         </div>
         </>
