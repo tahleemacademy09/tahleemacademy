@@ -31,7 +31,7 @@ import SubjectAnnouncements from "@/components/classroom/SubjectAnnouncements";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
-import { useViewingTermId } from "@/hooks/useCurrentTermId";
+import { useViewingTermId, useStaffTermId } from "@/hooks/useCurrentTermId";
 
 const G    = "#0f2d1f";
 const GM   = "#1a4731";
@@ -124,10 +124,12 @@ const renderLessonContent = (md: string, lang: "en" | "ar") => {
   return blocks;
 };
 
-interface Props { defaultTab?: "courses" | "live"; }
+// scope="teacher" → same student-style UI, but limited to the courses/subjects
+// the signed-in teacher actually teaches (owned or via the timetable).
+interface Props { defaultTab?: "courses" | "live"; scope?: "teacher"; }
 
 // ─────────────────────────────────────────────────────────────────────────────
-const LearningHub = ({ defaultTab = "courses" }: Props) => {
+const LearningHub = ({ defaultTab = "courses", scope }: Props) => {
   const { courseId }               = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const { t, language }            = useLanguage();
@@ -138,6 +140,10 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   const isPrivileged               = hasRole("admin") || hasRole("teacher");
   const { joinClass }              = useLiveClass();
   const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
+  const isTeacherScope = scope === "teacher";
+  const HUB_COURSE_KEY  = isTeacherScope ? "hub_teacher_selCourse"  : "hub_selCourse";
+  const HUB_SUBJECT_KEY = isTeacherScope ? "hub_teacher_selSubject" : "hub_selSubject";
+  const staffTermId = useStaffTermId();
 
   // ── Private student: load assigned subjects FIRST (used in filters below) ──
   const [privateSubjectIds, setPrivateSubjectIds] = useState<Set<string> | null>(null);
@@ -169,19 +175,19 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   const setSelCourse = (course: any | null) => {
     setSelCourseRaw(course);
     if (course) {
-      sessionStorage.setItem("hub_selCourse", course.id);
-      sessionStorage.removeItem("hub_selSubject");
+      sessionStorage.setItem(HUB_COURSE_KEY, course.id);
+      sessionStorage.removeItem(HUB_SUBJECT_KEY);
     } else {
-      sessionStorage.removeItem("hub_selCourse");
-      sessionStorage.removeItem("hub_selSubject");
+      sessionStorage.removeItem(HUB_COURSE_KEY);
+      sessionStorage.removeItem(HUB_SUBJECT_KEY);
     }
   };
   const setSelectedSubject = (subject: any | null) => {
     setSelectedSubjectRaw(subject);
     if (subject) {
-      sessionStorage.setItem("hub_selSubject", subject.id);
+      sessionStorage.setItem(HUB_SUBJECT_KEY, subject.id);
     } else {
-      sessionStorage.removeItem("hub_selSubject");
+      sessionStorage.removeItem(HUB_SUBJECT_KEY);
     }
   };
 
@@ -275,8 +281,35 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     }
   };
 
+  // ── Teacher scope: the subjects (and their courses) this teacher teaches ──
+  // Owned subjects (subjects.teacher_id) plus co-teaching slots from
+  // subject_timetable (teacher_id / teacher_ids[]) — same rule the old
+  // My Subjects page used.
+  const { data: teacherScopeData } = useQuery({
+    queryKey: ["teacher-scope", user?.id, staffTermId],
+    enabled: isTeacherScope && !!user?.id,
+    queryFn: async () => {
+      const ids = new Set<string>();
+      const { data: owned } = await supabase.from("subjects").select("id").eq("teacher_id", user!.id);
+      (owned || []).forEach((r: any) => ids.add(r.id));
+      let tt = supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids");
+      if (staffTermId) tt = tt.eq("term_id", staffTermId);
+      const { data: slots } = await tt;
+      (slots || []).forEach((r: any) => {
+        if (r.subject_id && (r.teacher_id === user!.id || (Array.isArray(r.teacher_ids) && r.teacher_ids.includes(user!.id)))) ids.add(r.subject_id);
+      });
+      const courseIds = new Set<string>();
+      if (ids.size > 0) {
+        const { data: subs } = await supabase.from("subjects").select("id, course_id").in("id", [...ids]);
+        (subs || []).forEach((r: any) => { if (r.course_id) courseIds.add(r.course_id); });
+      }
+      return { subjectIds: ids, courseIds };
+    },
+  });
+  const inTeacherScope = (subjectId: string) => !isTeacherScope || !!teacherScopeData?.subjectIds.has(subjectId);
+
   const courses = isPrivileged
-    ? (allCourses || [])
+    ? (allCourses || []).filter((c: any) => !isTeacherScope || !!teacherScopeData?.courseIds.has(c.id))
     : (allCourses || []).filter((c: any) => levelMatch(c.level, studentLevel) && isCourseVisible(c.id));
 
   const { data: allCourseSubjects, isLoading: loadSubs } = useQuery({
@@ -307,7 +340,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   const isSubjectInTerm = (s: any) => s.term_mode !== "specific" || visibleTermSubjectIds?.has(s.id);
 
   const courseSubjects = isPrivileged
-    ? (allCourseSubjects || [])
+    ? (allCourseSubjects || []).filter((s: any) => inTeacherScope(s.id))
     : (allCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && isSubjectEnrolled(s.id) && isSubjectInTerm(s));
   // Optional subjects the student disenrolled from — kept out of the main
   // grid (their lessons/materials/assignments are hidden) but still listed
@@ -380,8 +413,8 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
 
   // ── Restore navigation state after refresh / Android minimize ────────────────
   useEffect(() => {
-    const savedCourseId  = sessionStorage.getItem("hub_selCourse");
-    const savedSubjectId = sessionStorage.getItem("hub_selSubject");
+    const savedCourseId  = sessionStorage.getItem(HUB_COURSE_KEY);
+    const savedSubjectId = sessionStorage.getItem(HUB_SUBJECT_KEY);
     if (!savedCourseId && !savedSubjectId) return;
 
     if (savedCourseId && allCourses?.length && !selCourse) {
@@ -444,7 +477,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   });
 
   const urlCourseSubjects = isPrivileged
-    ? (allUrlCourseSubjects || [])
+    ? (allUrlCourseSubjects || []).filter((s: any) => inTeacherScope(s.id))
     : (allUrlCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && isSubjectEnrolled(s.id));
   const disenrolledUrlCourseSubjects = isPrivileged ? [] : (allUrlCourseSubjects || []).filter(
     (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && !isSubjectEnrolled(s.id)
@@ -931,10 +964,10 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
           <div>
             <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:5 }}>
               <GraduationCap style={{ width:22, height:22, color:GOLD }} />
-              <h1 style={{ fontSize:22, fontWeight:900, color:"#fff", margin:0 }}>{t("Learning Hub","مركز التعلم")}</h1>
+              <h1 style={{ fontSize:22, fontWeight:900, color:"#fff", margin:0 }}>{isTeacherScope ? t("My Courses","دوراتي") : t("Learning Hub","مركز التعلم")}</h1>
             </div>
             <p style={{ fontSize:12, color:"rgba(255,255,255,.5)", margin:"0 0 14px" }}>
-              {t("Courses & subjects","الدورات والمواد")}
+              {isTeacherScope ? t("Courses you teach","الدورات التي تدرّسها") : t("Courses & subjects","الدورات والمواد")}
             </p>
             <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
               {!isPrivileged && (
@@ -945,7 +978,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                   </span>
                 </>
               )}
-              {isPrivileged && (
+              {isPrivileged && !isTeacherScope && (
                 <span style={{ fontSize:11, padding:"3px 12px", borderRadius:20, fontWeight:700, background:"rgba(255,255,255,.15)", color:"#fff" }}>
                   {t("All Levels (Admin/Teacher)","جميع المستويات")}
                 </span>
@@ -1064,7 +1097,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
             <GraduationCap style={{ width:52, height:52, color:"#d1d5db", margin:"0 auto 14px" }} />
             <div style={{ fontSize:17, color:G, fontWeight:700, marginBottom:6 }}>
               {isPrivileged
-                ? t("No courses yet", "لا توجد دورات بعد")
+                ? (isTeacherScope ? t("No courses assigned to you yet", "لا توجد دورات مسندة إليك بعد") : t("No courses yet", "لا توجد دورات بعد"))
                 : t("No courses available for your level yet", "لا توجد دورات لمستواك بعد")}
             </div>
             {!isPrivileged && (
