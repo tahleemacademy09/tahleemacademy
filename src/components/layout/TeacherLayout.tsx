@@ -6,6 +6,7 @@
 import { useState, useEffect, useRef, Suspense } from "react";
 import PageFallback from "@/components/layout/PageFallback";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { useStaffTermId, useStaffTermRow, useIsViewingPastTerm } from "@/hooks/useCurrentTermId";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -125,6 +126,9 @@ const buildNav = (t: (a: string, b: string) => string, badges: Record<string, nu
 const TeacherLayout = () => {
   const { t, language, setLanguage, dir } = useLanguage();
   const { signOut, profile, user } = useAuth();
+  const staffTermId = useStaffTermId();
+  const staffTermRow = useStaffTermRow();
+  const viewingPastTerm = useIsViewingPastTerm();
   const location = useLocation();
 
   const [sidebarOpen,   setSidebarOpen]   = useState(false);
@@ -170,10 +174,10 @@ const TeacherLayout = () => {
   // ── Grading badge ───────────────────────────────────────────────
   const teacherSubjectIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!user) return;
+    if (!user || !staffTermId) return;
     (async () => {
       const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
-      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id").eq("term_id", staffTermId!).eq("teacher_id", user.id);
       const subIds = [...new Set([
         ...((subs || []).map((s: any) => s.id)),
         ...((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean)),
@@ -192,7 +196,7 @@ const TeacherLayout = () => {
         .eq("status", "submitted");
       setGradingBadge(count || 0);
     })();
-  }, [user]);
+  }, [user, staffTermId]);
 
   // ── Notifications ───────────────────────────────────────────────
   const extractSubjectId = (link?: string | null): string | null => {
@@ -565,6 +569,12 @@ const TeacherLayout = () => {
 
         <main className="flex-1 overflow-auto">
           <NotificationPermissionBanner />
+          {viewingPastTerm && (
+            <div style={{ background: "#FFFBEB", borderBottom: "1px solid #FDE68A", padding: "8px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12, color: "#92400E", fontWeight: 600 }}>
+              <span>You're working in {staffTermRow?.name || "another term"} — not the live term. Everything you see and add here belongs to that term.</span>
+              <Link to="/teacher/settings" style={{ color: "#064E3B", fontWeight: 800, whiteSpace: "nowrap" }}>Change term</Link>
+            </div>
+          )}
           <Suspense fallback={<PageFallback />}><Outlet /></Suspense>
         </main>
       </div>
