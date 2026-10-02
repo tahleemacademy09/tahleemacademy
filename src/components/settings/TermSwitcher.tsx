@@ -1,6 +1,9 @@
 /* src/components/settings/TermSwitcher.tsx
    ────────────────────────────────────────────────────────────────────
-   Lets a student switch which academic term they're viewing.
+   Lets a student OR teacher switch which academic term they're working in.
+   (Teachers: materials, assignments, syllabus, recordings, timetable,
+   subjects, exams and results all follow this choice. Admins can also set it
+   per teacher from Admin > People > Teachers.)
 
    How it works with the rest of the schema:
    - `academic_terms` holds Term 1 / 2 / 3 with real start/end dates.
@@ -20,6 +23,7 @@
    ────────────────────────────────────────────────────────────────────
 */
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -88,8 +92,10 @@ const styles = {
 };
 
 export default function TermSwitcher() {
-  const { user } = useAuth();
+  const { user, roles, refreshProfile } = useAuth() as any;
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const isTeacher = Array.isArray(roles) && roles.includes("teacher") && !roles.includes("student");
   const [terms, setTerms] = useState<TermRow[]>([]);
   const [activeTermId, setActiveTermId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -123,7 +129,24 @@ export default function TermSwitcher() {
     }
     setActiveTermId(pendingTerm.id);
     setPendingTerm(null);
-    toast({ title: `Switched to ${pendingTerm.name}`, description: "You'll now see this term's subjects and schedule." });
+    // Pull the new active_term_id into the auth profile and drop every cached
+    // term-scoped query so all pages re-read for the new term immediately.
+    try { await refreshProfile?.(); } catch { /* non-fatal */ }
+    queryClient.invalidateQueries();
+    toast({ title: `Switched to ${pendingTerm.name}`, description: isTeacher ? "Your subjects, timetable, materials, assignments, recordings and exams now follow this term." : "You'll now see this term's subjects and schedule." });
+  };
+
+  // Clear the override so this account simply follows whichever term is live.
+  const followLiveTerm = async () => {
+    if (!user?.id) return;
+    setSwitching(true);
+    const { error } = await supabase.from("profiles").update({ active_term_id: null }).eq("user_id", user.id);
+    setSwitching(false);
+    if (error) { toast({ title: "Couldn't reset term", description: error.message, variant: "destructive" }); return; }
+    setActiveTermId(null);
+    try { await refreshProfile?.(); } catch { /* non-fatal */ }
+    queryClient.invalidateQueries();
+    toast({ title: "Following the live term", description: "You'll move with the academy's current term automatically." });
   };
 
   if (loading) {
@@ -143,7 +166,7 @@ export default function TermSwitcher() {
       </div>
       <div style={styles.body}>
         {terms.map((term) => {
-          const isActive = term.id === activeTermId;
+          const isActive = activeTermId ? term.id === activeTermId : term.is_current;
           return (
             <div key={term.id} style={styles.row}>
               <div>
@@ -166,6 +189,11 @@ export default function TermSwitcher() {
             </div>
           );
         })}
+        {activeTermId && (
+          <button style={{ ...styles.switchBtn, marginTop: 10, width: "100%" }} onClick={followLiveTerm} disabled={switching}>
+            Follow the live term automatically
+          </button>
+        )}
       </div>
 
       <Dialog open={!!pendingTerm} onOpenChange={(open) => !open && setPendingTerm(null)}>
@@ -175,7 +203,7 @@ export default function TermSwitcher() {
               <AlertTriangle size={18} color="#b45309" /> Switch to {pendingTerm?.name}?
             </p>
             <p style={{ fontSize: 13, color: "#4b5563", marginBottom: 16 }}>
-              You'll see {pendingTerm?.name}'s subjects, names, and schedule from now on. You will
+              You'll {isTeacher ? "work in" : "see"} {pendingTerm?.name}'s subjects, names, and schedule from now on. You will
               no longer see your current term's version — this can be switched back, but it isn't
               automatic. Only do this once you're ready to move on.
             </p>
