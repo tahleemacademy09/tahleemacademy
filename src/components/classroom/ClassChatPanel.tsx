@@ -39,6 +39,8 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
   const recChunks   = useRef<Blob[]>([]);
   const recTimer    = useRef<any>(null);
   const scrollRef   = useRef<HTMLDivElement>(null);
+  const listRef     = useRef<HTMLDivElement>(null);
+  const inputRef    = useRef<HTMLInputElement>(null);
   const fileRef     = useRef<HTMLInputElement>(null);
   const fetchingIds   = useRef(new Set<string>());
   const optimisticIds = useRef(new Set<string>());
@@ -120,17 +122,28 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
     return () => { supabase.removeChannel(ch); };
   }, [sessionId, sessionStartedAt]);
 
-  useEffect(() => { const el = scrollRef.current; if (el?.parentElement) el.parentElement.scrollTo({ top: el.parentElement.scrollHeight, behavior: "smooth" }); }, [messages.length, target?.id, privThread?.messages.length]);
+  // Scroll only the message list (scrollIntoView could also scroll the whole page)
+  useEffect(() => {
+    const el = listRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [messages.length, target?.id, privThread?.messages.length]);
 
   /* ── send text — optimistic UI so messages appear instantly ── */
   const sendMessage = async (text?: string, type = "text", attachmentUrl?: string, attachmentName?: string) => {
-    const msg = text || input.trim();
-    if (!user) { toast({ title: "Sign in to chat", variant: "destructive" }); return; }
-    if (!sessionId) { toast({ title: "Class chat isn't ready yet", variant: "destructive" }); return; }
-    if (!msg && !attachmentUrl) return;
+    const msg = (text || input).trim();
+    if (!msg && !attachmentUrl) return false;
+    if (!user) {
+      toast({ title: t("Please sign in again to chat", "يرجى تسجيل الدخول مجددًا للمحادثة"), variant: "destructive" });
+      return false;
+    }
+    if (!sessionId) {
+      toast({ title: t("Class chat isn't ready yet — try again in a moment", "المحادثة غير جاهزة بعد، حاول بعد لحظات"), variant: "destructive" });
+      return false;
+    }
+    const typed = !text && !attachmentUrl;      // came from the text box
 
-    // Clear input immediately — feels instant
-    if (!text && !attachmentUrl) setInput("");
+    // Clear the box straight away so sending feels instant
+    if (typed) setInput("");
     setShowEmoji(false);
 
     // Show message locally right away with a temp id
@@ -157,14 +170,18 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
       ...(attachmentUrl ? { attachment_url: attachmentUrl, attachment_name: attachmentName || "" } : {}),
     }).select().single();
 
-    optimisticIds.current.delete(tempId);
-    if (error || !data) {
+    if (error) {
+      // Rollback, give the text back to the sender, and say why it failed
+      optimisticIds.current.delete(tempId);
       setMessages(prev => prev.filter(m => m.id !== tempId));
-      if (!text && !attachmentUrl) setInput(msg);
-      toast({ title: "Message not sent", description: error?.message || "Please try again", variant: "destructive" });
+      if (typed) setInput(msg);
+      toast({ title: t("Message not sent", "لم تُرسل الرسالة"), description: error.message, variant: "destructive" });
       return false;
+    } else if (data) {
+      // Swap temp message for the real DB row (has correct id & created_at)
+      optimisticIds.current.delete(tempId);
+      setMessages(prev => prev.map(m => m.id === tempId ? data : m));
     }
-    setMessages(prev => prev.some(m => m.id === data.id) ? prev.filter(m => m.id !== tempId) : prev.map(m => m.id === tempId ? data : m));
     return true;
   };
 
@@ -177,38 +194,58 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
   };
 
   /* ── file / image upload ── */
+  const MAX_UPLOAD_MB = 25;
+  const uploadErrorText = (err: any) => {
+    const msg = String(err?.message || err || "");
+    if (/bucket not found/i.test(msg)) return t("Chat uploads aren't set up on the server yet.", "رفع الملفات غير مفعّل على الخادم بعد.");
+    if (/row-level security|not authorized|unauthorized/i.test(msg)) return t("You don't have permission to upload here.", "لا تملك صلاحية الرفع هنا.");
+    return msg || t("Upload failed", "فشل الرفع");
+  };
+
   const uploadFile = async (file: File) => {
-    if (!user || !sessionId) return;
+    if (!user || !sessionId) {
+      toast({ title: t("Class chat isn't ready yet", "المحادثة غير جاهزة بعد"), variant: "destructive" });
+      return;
+    }
+    if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+      toast({ title: t(`File is too large (max ${MAX_UPLOAD_MB} MB)`, `الملف كبير جدًا (الحد ${MAX_UPLOAD_MB} ميجابايت)`), variant: "destructive" });
+      return;
+    }
     setUploading(true);
     try {
       const ext  = (file.name.split(".").pop() || "bin").replace(/[^a-zA-Z0-9]/g, "").slice(0, 8) || "bin";
       const path = `chat/${sessionId}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
-      const { error: upErr } = await supabase.storage.from(UPLOAD_BUCKET).upload(path, file, { upsert: false, contentType: file.type || "application/octet-stream" });
+      const { error: upErr } = await supabase.storage.from(UPLOAD_BUCKET).upload(path, file, { upsert: false, contentType: file.type || undefined });
       if (upErr) throw upErr;
       const { data: pub } = supabase.storage.from(UPLOAD_BUCKET).getPublicUrl(path);
-      const url = pub.publicUrl;
       const type = file.type.startsWith("image/") ? "image" : "file";
-      await sendMessage(file.name, type, url, file.name);
-    } catch (e: any) {
-      toast({ title: "Upload failed", description: e?.message || "Could not upload the file", variant: "destructive" });
+      await sendMessage(file.name, type, pub.publicUrl, file.name);
+    } catch (err) {
+      toast({ title: t("Upload failed", "فشل الرفع"), description: uploadErrorText(err), variant: "destructive" });
     } finally { setUploading(false); }
   };
 
   const onFilePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; e.target.value = "";
-    if (!f) return;
-    if (f.size > 25 * 1024 * 1024) { toast({ title: "File too large", description: "Maximum size is 25 MB", variant: "destructive" }); return; }
-    await uploadFile(f);
+    if (f) await uploadFile(f);
   };
 
   /* ── voice recording ── */
-  const recMime = useRef("audio/webm");
+  const recMime = () => {
+    const MR: any = (window as any).MediaRecorder;
+    if (!MR?.isTypeSupported) return "";
+    return ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find(m => MR.isTypeSupported(m)) || "";
+  };
+
   const startRecording = async () => {
+    if (!(window as any).MediaRecorder || !navigator.mediaDevices?.getUserMedia) {
+      toast({ title: t("Voice messages aren't supported on this browser", "الرسائل الصوتية غير مدعومة في هذا المتصفح"), variant: "destructive" });
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"].find(m => (window as any).MediaRecorder?.isTypeSupported?.(m)) || "";
+      const mime = recMime();
       const mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
-      recMime.current = mr.mimeType || mime || "audio/webm";
       recChunks.current = [];
       mr.ondataavailable = e => { if (e.data.size > 0) recChunks.current.push(e.data); };
       mr.start(500);
@@ -217,7 +254,7 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
       setRecSeconds(0);
       recTimer.current = setInterval(() => setRecSeconds(s => s + 1), 1000);
     } catch {
-      toast({ title: "Microphone unavailable", description: "Allow microphone access to send voice messages", variant: "destructive" });
+      toast({ title: t("Microphone access is blocked", "الوصول إلى الميكروفون محظور"), description: t("Allow the microphone in your browser's site settings.", "اسمح بالميكروفون من إعدادات الموقع في المتصفح."), variant: "destructive" });
     }
   };
 
@@ -229,21 +266,20 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
     const stopped = new Promise<void>(res => { mr.onstop = () => res(); });
     if (mr.state !== "inactive") mr.stop();
     await stopped;
-    mr.stream.getTracks().forEach(t => t.stop());
-    mrRef.current = null;
-    const mime = recMime.current.split(";")[0];
-    const ext = mime.includes("mp4") ? "m4a" : mime.includes("ogg") ? "ogg" : "webm";
-    const blob = new Blob(recChunks.current, { type: mime });
+    mr.stream.getTracks().forEach(tr => tr.stop());           // release the mic
+    const mimeType = mr.mimeType || "audio/webm";
+    const blob = new Blob(recChunks.current, { type: mimeType });
     if (blob.size < 500 || !user || !sessionId) return;
+    const ext = mimeType.includes("mp4") ? "m4a" : "webm";
     setUploading(true);
     try {
       const path = `chat/${sessionId}/voice-${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage.from(UPLOAD_BUCKET).upload(path, blob, { upsert: false, contentType: mime });
+      const { error: upErr } = await supabase.storage.from(UPLOAD_BUCKET).upload(path, blob, { upsert: false, contentType: mimeType });
       if (upErr) throw upErr;
       const { data: pub } = supabase.storage.from(UPLOAD_BUCKET).getPublicUrl(path);
       await sendMessage("🎤 Voice message", "voice", pub.publicUrl, `voice.${ext}`);
-    } catch (e: any) {
-      toast({ title: "Voice message failed", description: e?.message || "Could not upload", variant: "destructive" });
+    } catch (err) {
+      toast({ title: t("Voice message failed", "فشلت الرسالة الصوتية"), description: uploadErrorText(err), variant: "destructive" });
     } finally { setUploading(false); }
   };
 
@@ -332,7 +368,7 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
       )}
 
       {/* Pinned */}
-      {!inPrivate && messages.filter(m => m.is_pinned).map(m => (
+      {!inPrivate && messages.filter(m => m.is_pinned).slice(-1).map(m => (
         <div key={`pin-${m.id}`} style={{ background: "rgba(201,168,76,.12)", borderBottom: `1px solid ${T.border}`, padding: "6px 12px", display: "flex", alignItems: "center", gap: 6 }}>
           <Pin style={{ width: 10, height: 10, color: T.gold, flexShrink: 0 }} />
           <p style={{ fontSize: 11, color: T.gold, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", margin: 0 }}>{m.message}</p>
@@ -340,7 +376,13 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
       ))}
 
       {/* Messages */}
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+      <div ref={listRef} style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+        {!inPrivate && messages.length === 0 && (
+          <div style={{ margin: "auto", textAlign: "center", color: T.muted, fontSize: 13, padding: 24 }}>
+            <div style={{ fontSize: 30, marginBottom: 6 }}>💬</div>
+            {t("No messages yet — say salaam!", "لا رسائل بعد — ابدأ بالسلام!")}
+          </div>
+        )}
         {inPrivate && target ? (
           <>
             <div style={{ textAlign: "center", margin: "2px 0 6px" }}>
@@ -454,9 +496,10 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
 
       {/* Emoji bar */}
       {showEmoji && (
-        <div style={{ borderTop: `1px solid ${T.border}`, padding: "8px 12px", display: "flex", gap: 8, justifyContent: "center", background: T.surface }}>
+        <div style={{ borderTop: `1px solid ${T.border}`, padding: "6px 8px", display: "flex", flexWrap: "wrap", gap: 4, justifyContent: "center", background: T.surface, flexShrink: 0 }}>
           {EMOJI_LIST.map(e => (
-            <button key={e} onClick={() => submit(e)} style={{ fontSize: 22, background: "none", border: "none", cursor: "pointer" }}>{e}</button>
+            <button key={e} onMouseDown={ev => ev.preventDefault()} onClick={() => submit(e)}
+              style={{ width: 44, height: 44, fontSize: 24, background: "none", border: "none", borderRadius: 12, cursor: "pointer" }}>{e}</button>
           ))}
         </div>
       )}
@@ -476,40 +519,55 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
         </div>
       )}
 
-      {/* Input row */}
-      {!recording && (
-        <div style={{ padding: "8px 10px calc(8px + env(safe-area-inset-bottom, 0px))", borderTop: `1px solid ${T.border}`, display: "flex", gap: 6, alignItems: "center", background: T.surface, flexShrink: 0 }}>
-          <input ref={fileRef} type="file" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx" style={{ display: "none" }} onChange={onFilePick} />
+      {/* Input row — pinned to the bottom of the panel */}
+      {!recording && (() => {
+        const hasText = !!input.trim();
+        const round = (bg: string, color: string): React.CSSProperties => ({
+          width: 40, height: 40, borderRadius: "50%", background: bg, border: "none", color,
+          display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer",
+        });
+        const soft = round("rgba(255,255,255,.08)", T.muted);
+        const keepFocus = (e: React.MouseEvent) => e.preventDefault();   // don't drop the keyboard
+        return (
+          <div style={{ padding: "8px 10px calc(8px + env(safe-area-inset-bottom, 0px))", borderTop: `1px solid ${T.border}`, display: "flex", gap: 6, alignItems: "center", background: T.surface, flexShrink: 0 }}>
+            <input ref={fileRef} type="file" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx" style={{ display: "none" }} onChange={onFilePick} />
 
-          <button onClick={() => setShowEmoji(!showEmoji)} style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,.08)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, flexShrink: 0 }}>
-            <Smile style={{ width: 15, height: 15 }} />
-          </button>
+            <button type="button" aria-label="Emoji" onMouseDown={keepFocus} onClick={() => setShowEmoji(v => !v)}
+              style={{ ...soft, background: showEmoji ? "rgba(10,124,104,.35)" : "rgba(255,255,255,.08)" }}>
+              <Smile style={{ width: 19, height: 19 }} />
+            </button>
 
-          {!inPrivate && (<>
-          <button onClick={() => fileRef.current?.click()} disabled={uploading} style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,.08)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, flexShrink: 0 }}>
-            <Paperclip style={{ width: 15, height: 15 }} />
-          </button>
+            {!inPrivate && (
+              <button type="button" aria-label="Attach file" onClick={() => fileRef.current?.click()} disabled={uploading} style={{ ...soft, opacity: uploading ? 0.5 : 1 }}>
+                <Paperclip style={{ width: 19, height: 19 }} />
+              </button>
+            )}
 
-          <button onClick={startRecording} disabled={uploading} style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,.08)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, flexShrink: 0 }}>
-            <Mic style={{ width: 15, height: 15 }} />
-          </button>
-          </>)}
+            <input
+              ref={inputRef}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onPaste={handlePaste}
+              enterKeyHint="send"
+              autoComplete="off"
+              placeholder={inPrivate ? `Private message to ${target?.name}...` : uploading ? t("Uploading…", "جارٍ الرفع…") : t("Message the class...", "اكتب رسالة للصف...")}
+              style={{ flex: 1, minWidth: 0, background: "rgba(255,255,255,.06)", border: `1px solid ${T.border}`, borderRadius: 22, padding: "10px 14px", fontSize: 16, color: T.text, outline: "none", fontFamily: "inherit" }}
+              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !(e.nativeEvent as any).isComposing) { e.preventDefault(); submit(); } }}
+            />
 
-          <input
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onPaste={handlePaste}
-            placeholder={inPrivate ? `Private message to ${target?.name}...` : uploading ? "Uploading…" : t("Message the class...", "أرسل رسالة...")}
-            style={{ flex: 1, background: "rgba(255,255,255,.06)", border: `1px solid ${T.border}`, borderRadius: 20, padding: "7px 14px", fontSize: 13, color: T.text, outline: "none", fontFamily: "inherit" }}
-            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !(e.nativeEvent as any).isComposing) { e.preventDefault(); submit(); } }}
-            enterKeyHint="send"
-          />
-
-          <button onClick={() => submit()} disabled={!input.trim() || uploading} style={{ width: 32, height: 32, borderRadius: "50%", background: input.trim() ? "#0a7c68" : "rgba(255,255,255,.06)", border: "none", cursor: input.trim() ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", flexShrink: 0 }}>
-            <Send style={{ width: 14, height: 14 }} />
-          </button>
-        </div>
-      )}
+            {hasText || inPrivate ? (
+              <button type="button" aria-label="Send" onMouseDown={keepFocus} onClick={() => submit()} disabled={!hasText || uploading}
+                style={{ ...round(hasText ? "#0a7c68" : "rgba(255,255,255,.06)", "#fff"), cursor: hasText ? "pointer" : "default" }}>
+                <Send style={{ width: 18, height: 18 }} />
+              </button>
+            ) : (
+              <button type="button" aria-label="Record voice message" onClick={startRecording} disabled={uploading} style={{ ...round("#0a7c68", "#fff"), opacity: uploading ? 0.5 : 1 }}>
+                <Mic style={{ width: 18, height: 18 }} />
+              </button>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 };
