@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffTermId, useStaffTermKey } from "@/hooks/useCurrentTermId";
 import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -63,6 +64,8 @@ function Loader() {
 //  EXAMS / TESTS LIST
 // ═══════════════════════════════════════════════════════════════
 function ExamsList({ user, t, type }: { user: any; t: any; type: "exam" | "test" }) {
+  const staffTermId = useStaffTermId();
+  const staffTermKey = useStaffTermKey();
   const { toast } = useToast();
   const [exams,   setExams]   = useState<any[]>([]);
   const [term,    setTerm]    = useState("all");
@@ -71,11 +74,10 @@ function ExamsList({ user, t, type }: { user: any; t: any; type: "exam" | "test"
   // hub (overview + exams tab), live.
   const { settings: academySettings } = useAcademySettings();
   useEffect(() => {
-    if (academySettings.current_term) {
-      setTerm(academySettings.current_term);
-      setTermFilter(academySettings.current_term);
+    if ((staffTermKey || academySettings.current_term)) {
+      setTerm((staffTermKey || academySettings.current_term));
     }
-  }, [academySettings.current_term]);
+  }, [staffTermKey, academySettings.current_term]);
   const [status,  setStatus]  = useState("all");
   const [loading, setLoading] = useState(true);
 
@@ -83,13 +85,13 @@ function ExamsList({ user, t, type }: { user: any; t: any; type: "exam" | "test"
   const typeLabel = isTest ? t("Test", "تمرين") : t("Exam", "امتحان");
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !staffTermId) return;
     const fetch = async () => {
       // A subject is theirs whether they own it directly (subjects.teacher_id)
       // or the admin assigned them to it via the timetable
       // (subject_timetable.teacher_id) — either way its exams are theirs too.
       const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
-      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id").eq("term_id", staffTermId!).eq("teacher_id", user.id);
       const subjectIds = [...new Set([
         ...((subs || []).map((s: any) => s.id)),
         ...((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean)),
@@ -104,7 +106,7 @@ function ExamsList({ user, t, type }: { user: any; t: any; type: "exam" | "test"
       setLoading(false);
     };
     fetch();
-  }, [user, type]);
+  }, [user, type, staffTermId]);
 
   const togglePublish = async (id: string, current: boolean) => {
     await supabase.from("exams").update({ is_published: !current }).eq("id", id);
@@ -201,6 +203,8 @@ function ExamsList({ user, t, type }: { user: any; t: any; type: "exam" | "test"
 //  RESULTS TAB
 // ═══════════════════════════════════════════════════════════════
 function ResultsTab({ user, t }: any) {
+  const staffTermId = useStaffTermId();
+  const staffTermKey = useStaffTermKey();
   const [results,  setResults]  = useState<any[]>([]);
   const [subjects, setSubjects] = useState<any[]>([]);
   const [subFilter,setSubFilter]= useState("all");
@@ -209,10 +213,10 @@ function ResultsTab({ user, t }: any) {
   const [loading,  setLoading]  = useState(true);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !staffTermId) return;
     const fetch = async () => {
       const { data: subs } = await supabase.from("subjects").select("id, title").eq("teacher_id", user.id);
-      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id, subjects(id, title)").eq("teacher_id", user.id);
+      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id, subjects(id, title)").eq("term_id", staffTermId!).eq("teacher_id", user.id);
       const ttSubjects = ((ttSlots || []) as any[]).map(s => s.subjects).filter(Boolean);
       const subjects = [...new Map([...(subs || []), ...ttSubjects].map((s: any) => [s.id, s])).values()];
       setSubjects(subjects);
@@ -241,7 +245,7 @@ function ResultsTab({ user, t }: any) {
       setLoading(false);
     };
     fetch();
-  }, [user]);
+  }, [user, staffTermId]);
 
   const filtered = results.filter(r => {
     if (subFilter !== "all") {
@@ -348,14 +352,16 @@ function ResultsTab({ user, t }: any) {
 export default function TeacherAssessmentsHub() {
   const { t, language } = useLanguage();
   const { user } = useAuth();
+  const staffTermId = useStaffTermId(); // the term this teacher is working in
+  const staffTermKey = useStaffTermKey(); // "first" | "second" | "third"
   const [tab, setTab] = useState<HubTab>("exams");
 
   const [pendingCount, setPendingCount] = useState(0);
   useEffect(() => {
-    if (!user) return;
+    if (!user || !staffTermId) return;
     (async () => {
       const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
-      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id").eq("term_id", staffTermId!).eq("teacher_id", user.id);
       const subIds = [...new Set([
         ...((subs || []).map((s: any) => s.id)),
         ...((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean)),
@@ -367,7 +373,7 @@ export default function TeacherAssessmentsHub() {
       const { count } = await supabase.from("exam_attempts").select("id", { count: "exact", head: true }).in("exam_id", eIds).eq("status", "submitted");
       setPendingCount(count || 0);
     })();
-  }, [user]);
+  }, [user, staffTermId]);
 
   const isFullPage = ["grading", "transcripts"].includes(tab);
 

@@ -5,6 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffTermId, useStaffTermKey } from "@/hooks/useCurrentTermId";
 import { supabase } from "@/integrations/supabase/client";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { BarChart2 } from "lucide-react";
@@ -13,6 +14,8 @@ import { useAcademySettings } from "@/hooks/useAcademySettings";
 const TeacherResults = () => {
   const { t } = useLanguage();
   const { user } = useAuth();
+  const staffTermId = useStaffTermId(); // the term this teacher is working in
+  const staffTermKey = useStaffTermKey(); // "first" | "second" | "third"
   const [results, setResults] = useState<any[]>([]);
   const [subjects, setSubjects] = useState<any[]>([]);
   const [subjectFilter, setSubjectFilter] = useState("all");
@@ -21,12 +24,12 @@ const TeacherResults = () => {
   // Follow the academy's Current Term setting (Admin Settings > Academy).
   const { settings: academySettings } = useAcademySettings();
   useEffect(() => {
-    if (academySettings.current_term) setTermFilter(academySettings.current_term);
-  }, [academySettings.current_term]);
+    if ((staffTermKey || academySettings.current_term)) setTermFilter((staffTermKey || academySettings.current_term));
+  }, [staffTermKey, academySettings.current_term]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !staffTermId) return;
     const fetch = async () => {
       // Include subjects assigned via the admin timetable (subject_timetable
       // .teacher_id), not just direct ownership (subjects.teacher_id) — a
@@ -36,7 +39,7 @@ const TeacherResults = () => {
       // slot — co-teachers live in teacher_ids[]. Fetch every slot and union
       // both, same pattern as TeacherGrading / TeacherOralExams.
       const { data: subs } = await supabase.from("subjects").select("id, title").eq("teacher_id", user.id);
-      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids, subjects(id, title)");
+      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids, subjects(id, title)").eq("term_id", staffTermId!);
       const ttSubjects = ((ttSlots || []) as any[])
         .filter(s => s.teacher_id === user.id || (Array.isArray(s.teacher_ids) && s.teacher_ids.includes(user.id)))
         .map(s => s.subjects)

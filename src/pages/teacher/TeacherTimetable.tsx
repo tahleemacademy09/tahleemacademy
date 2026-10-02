@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffTermId } from "@/hooks/useCurrentTermId";
 import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { format } from "date-fns";
@@ -72,6 +73,7 @@ const EXAM_TYPE_LABEL_TT: Record<string, { en: string; ar: string }> = {
 
 export default function TeacherTimetable() {
   const { user }        = useAuth();
+  const termId          = useStaffTermId(); // the teacher's selected academic term
   const { t, language } = useLanguage();
   const { data: academicLevels = [] } = useAcademicLevels();
   
@@ -93,24 +95,24 @@ export default function TeacherTimetable() {
   }, []);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !termId) return;
     const fetchIds = async () => {
       // Subject visibility comes ONLY from the admin timetable
       // (subject_timetable.teacher_id) — not from subjects.teacher_id, which
       // can be stale or set independently of what the admin has actually
       // assigned. Only active assignments count.
       const { data: ttSlots } = await supabase
-        .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id).eq("is_active", true);
+        .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id).eq("is_active", true).eq("term_id", termId);
       const ttIds = (ttSlots || []).map((s: any) => s.subject_id).filter(Boolean);
 
       setSubjectIds([...new Set(ttIds)]);
     };
     fetchIds();
-  }, [user]);
+  }, [user, termId]);
 
   const { data: timetableSlots, isLoading: ttLoading } = useQuery({
-    queryKey: ["teacher-timetable", subjectIds],
-    enabled: !!user,
+    queryKey: ["teacher-timetable", subjectIds, termId],
+    enabled: !!user && !!termId,
     queryFn: async () => {
       try {
         // subjectIds is already derived solely from subject_timetable rows
@@ -123,6 +125,7 @@ export default function TeacherTimetable() {
           .select("*, subjects(id, title, title_ar, image_url)")
           .eq("teacher_id", user!.id)
           .eq("is_active", true)
+          .eq("term_id", termId!)
           .order("day_of_week").order("start_time");
         return byTeacher || [];
       } catch { return []; }

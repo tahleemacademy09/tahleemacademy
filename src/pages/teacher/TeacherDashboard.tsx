@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffTermId, useStaffTermKey } from "@/hooks/useCurrentTermId";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
@@ -109,6 +110,8 @@ function ScheduleCard({ session, onJoin, t }: { session: any; onJoin: () => void
 const TeacherDashboard = () => {
   const { t, language } = useLanguage();
   const { user, profile } = useAuth();
+  const staffTermId = useStaffTermId(); // the term this teacher is working in
+  const staffTermKey = useStaffTermKey(); // "first" | "second" | "third"
   const navigate = useNavigate();
   const { joinClass } = useLiveClass();
 
@@ -122,13 +125,13 @@ const TeacherDashboard = () => {
   const hijri    = toHijri(today);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !staffTermId) return;
     (async () => {
       // A subject counts as "theirs" whether they're the primary timetable
       // teacher_id or listed as a co-teacher in teacher_ids[] — matches the
       // scoping used in TeacherGrading.tsx so a co-teacher's stats/pending/
       // graded counts here aren't silently missing subjects they do teach.
-      const { data: ttAll } = await supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids").eq("is_active", true);
+      const { data: ttAll } = await supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids").eq("term_id", staffTermId!).eq("is_active", true);
       const myTtSlots = (ttAll || []).filter((s: any) =>
         s.teacher_id === user.id || (Array.isArray(s.teacher_ids) && s.teacher_ids.includes(user.id))
       );
@@ -180,7 +183,7 @@ const TeacherDashboard = () => {
       for (const s of (hostSess || [])) { if (!seenLive.has(s.id)) { seenLive.add(s.id); liveSessions.push(s); } }
 
       const todayIndex = today.getDay();
-      const { data: tt } = await supabase.from("subject_timetable" as any).select("id,subject_id,start_time,end_time,subjects(title,title_ar)").eq("day_of_week", todayIndex).eq("is_active", true).eq("teacher_id", user.id);
+      const { data: tt } = await supabase.from("subject_timetable" as any).select("id,subject_id,start_time,end_time,subjects(title,title_ar)").eq("term_id", staffTermId!).eq("day_of_week", todayIndex).eq("is_active", true).eq("teacher_id", user.id);
       const liveSubIds = new Set(liveSessions.map(s => s.subject_id));
       let virtualToday = (tt || [])
         .filter((slot: any) => !liveSubIds.has(slot.subject_id))
@@ -263,7 +266,7 @@ const TeacherDashboard = () => {
       setRecentResults(recent || []);
       setLoading(false);
     })();
-  }, [user]);
+  }, [user, staffTermId]);
 
   if (loading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 400 }}>

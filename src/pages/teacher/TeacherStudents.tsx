@@ -8,6 +8,7 @@ import { useEffect, useState, useMemo } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffTermId, useStaffTermKey } from "@/hooks/useCurrentTermId";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
@@ -43,6 +44,8 @@ const levelColors: Record<string, { bg: string; fg: string; border: string }> = 
 const TeacherStudents = () => {
   const { t, language } = useLanguage();
   const { user } = useAuth();
+  const staffTermId = useStaffTermId(); // the term this teacher is working in
+  const staffTermKey = useStaffTermKey(); // "first" | "second" | "third"
   const { toast } = useToast();
   const navigate = useNavigate();
   const [students, setStudents] = useState<any[]>([]);
@@ -67,13 +70,13 @@ const TeacherStudents = () => {
   const [teacherExamIds, setTeacherExamIds] = useState<string[]>([]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !staffTermId) return;
     const fetch = async () => {
       try {
       // Teacher's subjects (owned + timetable assigned)
       const { data: subs } = await supabase.from("subjects").select("id, title, title_ar, level, levels").eq("teacher_id", user.id);
       const { data: ttSlots } = await supabase
-        .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+        .from("subject_timetable" as any).select("subject_id").eq("term_id", staffTermId!).eq("teacher_id", user.id);
       const ttIds = [...new Set((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean))];
       let extraSubs: any[] = [];
       if (ttIds.length > 0) {
@@ -225,7 +228,7 @@ const TeacherStudents = () => {
       }
     };
     fetch();
-  }, [user]);
+  }, [user, staffTermId]);
 
   const filtered = useMemo(() => students.filter(s => {
     if (filter === "group" && s.student_type === "private") return false;

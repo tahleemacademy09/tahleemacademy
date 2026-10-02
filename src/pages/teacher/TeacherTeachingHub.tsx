@@ -10,6 +10,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffTermId } from "@/hooks/useCurrentTermId";
 import { supabase } from "@/integrations/supabase/client";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { useToast } from "@/hooks/use-toast";
@@ -71,8 +72,10 @@ function Loader() { return <div style={{display:"flex",alignItems:"center",justi
 // ── Fetch subjects for teacher: ONLY from the admin timetable
 //    (subject_timetable.teacher_id) — not subjects.teacher_id, which can be
 //    stale or set independently of what the admin has actually assigned.
-async function fetchTeacherSubjects(userId: string): Promise<any[]> {
-  const { data: ttSlots } = await (supabase as any).from("subject_timetable").select("subject_id").eq("teacher_id", userId).eq("is_active", true);
+async function fetchTeacherSubjects(userId: string, termId?: string | null): Promise<any[]> {
+  let ttq = (supabase as any).from("subject_timetable").select("subject_id").eq("teacher_id", userId).eq("is_active", true);
+  if (termId) ttq = ttq.eq("term_id", termId); // only the term the teacher is working in
+  const { data: ttSlots } = await ttq;
   const ttIds = [...new Set((ttSlots||[]).map((s:any)=>s.subject_id).filter(Boolean))];
   if (!ttIds.length) return [];
   const { data } = await supabase.from("subjects").select("*").in("id", ttIds as string[]).order("title");
@@ -80,8 +83,10 @@ async function fetchTeacherSubjects(userId: string): Promise<any[]> {
 }
 
 // ── Fetch all timetable slots for teacher — single authoritative query ──
-async function fetchTimetableSlots(userId: string, _subjectIds: string[]): Promise<any[]> {
-  const {data} = await (supabase as any).from("subject_timetable").select("*, subjects(id,title,title_ar)").eq("teacher_id",userId).eq("is_active",true);
+async function fetchTimetableSlots(userId: string, _subjectIds: string[], termId?: string | null): Promise<any[]> {
+  let q = (supabase as any).from("subject_timetable").select("*, subjects(id,title,title_ar)").eq("teacher_id",userId).eq("is_active",true);
+  if (termId) q = q.eq("term_id", termId);
+  const {data} = await q;
   return data || [];
 }
 
@@ -92,6 +97,7 @@ function mins2(ts:string){const[h,m]=ts.split(":").map(Number);const tgt=new Dat
 // LIVE CLASSES TAB
 // ═══════════════════════════════════════════════════════════════════
 function LiveClassesTab({user,t}:any){
+  const termId=useStaffTermId();
   const {joinClass}=useLiveClass();
   const {toast}=useToast();
   const today=new Date().getDay();
@@ -105,11 +111,11 @@ function LiveClassesTab({user,t}:any){
   const [saving,setSaving]=useState(false);
 
   const load=useCallback(async()=>{
-    if(!user)return;
-    const subs=await fetchTeacherSubjects(user.id);
+    if(!user||!termId)return;
+    const subs=await fetchTeacherSubjects(user.id,termId);
     setSubjects(subs);
     const ids=subs.map((s:any)=>s.id);
-    const slots=await fetchTimetableSlots(user.id,ids);
+    const slots=await fetchTimetableSlots(user.id,ids,termId);
     const todayRaw=slots.filter((s:any)=>s.day_of_week===today).sort((a:any,b:any)=>a.start_time.localeCompare(b.start_time));
     // Quick-glance "Today's Schedule" shows one card per subject (the
     // soonest slot) even if the admin timetable has several entries for
@@ -308,6 +314,7 @@ function LiveClassesTab({user,t}:any){
 // TIMETABLE TAB — with working Join/Start (was navigate(), now joinClass)
 // ═══════════════════════════════════════════════════════════════════
 function TimetableTab({user,t,language}:any){
+  const termId=useStaffTermId();
   const {joinClass}=useLiveClass();
   const {toast}=useToast();
   const today=new Date().getDay();
@@ -318,17 +325,17 @@ function TimetableTab({user,t,language}:any){
   const [starting,setStarting]=useState<string|null>(null);
 
   const load=useCallback(async()=>{
-    if(!user)return;
-    const subs=await fetchTeacherSubjects(user.id);
+    if(!user||!termId)return;
+    const subs=await fetchTeacherSubjects(user.id,termId);
     const ids=subs.map((s:any)=>s.id);
-    const all=await fetchTimetableSlots(user.id,ids);
+    const all=await fetchTimetableSlots(user.id,ids,termId);
     setSlots(all);
     if(ids.length){
       const {data}=await supabase.from("live_sessions").select("*, subjects(id,title)").in("subject_id",ids).in("status",["live","scheduled"]);
       setSessions(data||[]);
     }
     setLoading(false);
-  },[user]);
+  },[user,termId]);
 
   useEffect(()=>{load();},[load]);
 
@@ -448,6 +455,7 @@ const SUB_TABS:{id:SubjectTab2;icon:any;en:string;ar:string}[]=[
 ];
 
 function SubjectsTab({user,t,language}:any){
+  const termId=useStaffTermId();
   const {joinClass}=useLiveClass();
   const [subjects,setSubjects]=useState<any[]>([]);
   const [counts,setCounts]=useState<Record<string,any>>({});
@@ -458,13 +466,13 @@ function SubjectsTab({user,t,language}:any){
   const [search,setSearch]=useState("");
 
   useEffect(()=>{
-    if(!user)return;
+    if(!user||!termId)return;
     const load=async()=>{
-      const subs=await fetchTeacherSubjects(user.id);
+      const subs=await fetchTeacherSubjects(user.id,termId);
       setSubjects(subs);
       const cMap:Record<string,any>={};
       await Promise.all(subs.map(async(sub:any)=>{
-        const {count:mc}=await supabase.from("subject_materials").select("id",{count:"exact",head:true}).eq("subject_id",sub.id);
+        const {count:mc}=await supabase.from("subject_materials").select("id",{count:"exact",head:true}).eq("subject_id",sub.id).eq("term_id",termId);
         const {data:courses}=await supabase.from("courses").select("id").eq("subject_id",sub.id);
         const cids=(courses||[]).map((c:any)=>c.id);
         let sc=0;
@@ -475,7 +483,7 @@ function SubjectsTab({user,t,language}:any){
       setLoading(false);
     };
     load();
-  },[user]);
+  },[user,termId]);
 
   const openSub=async(sub:any)=>{
     setSelected(sub);setActiveTab("students");setStudents([]);
@@ -579,22 +587,23 @@ function SubjectsTab({user,t,language}:any){
 // RECORDINGS TAB
 // ═══════════════════════════════════════════════════════════════════
 function RecordingsTab({user,t}:any){
+  const termId=useStaffTermId();
   const [recs,setRecs]=useState<any[]>([]);
   const [filter,setFilter]=useState("all");
   const [subjects,setSubjects]=useState<any[]>([]);
   const [loading,setLoading]=useState(true);
 
   useEffect(()=>{
-    if(!user)return;
+    if(!user||!termId)return;
     const load=async()=>{
-      const subs=await fetchTeacherSubjects(user.id);
+      const subs=await fetchTeacherSubjects(user.id,termId);
       setSubjects(subs);
       const ids=subs.map((s:any)=>s.id);
-      if(ids.length){const{data}=await supabase.from("session_recordings").select("*, subjects(title)").in("subject_id",ids).order("created_at",{ascending:false});setRecs(data||[]);}
+      if(ids.length){const{data}=await supabase.from("session_recordings").select("*, subjects(title)").in("subject_id",ids).eq("term_id",termId).order("created_at",{ascending:false});setRecs(data||[]);}
       setLoading(false);
     };
     load();
-  },[user]);
+  },[user,termId]);
 
   const filtered=filter==="all"?recs:recs.filter(r=>r.subject_id===filter);
   const fmtSz=(b?:number)=>!b?"":b<1048576?`${(b/1024).toFixed(0)} KB`:`${(b/1048576).toFixed(1)} MB`;

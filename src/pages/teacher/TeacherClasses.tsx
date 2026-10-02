@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffTermId, useStaffTermKey } from "@/hooks/useCurrentTermId";
 import { supabase } from "@/integrations/supabase/client";
 import { Video, Plus, Calendar, Clock, Bell, BellOff, BellRing } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -102,6 +103,8 @@ const TeacherClasses = () => {
   const { joinClass } = useLiveClass();
   const { t } = useLanguage();
   const { user } = useAuth();
+  const staffTermId = useStaffTermId(); // the term this teacher is working in
+  const staffTermKey = useStaffTermKey(); // "first" | "second" | "third"
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const deepLinkHandled = useRef(false);
@@ -122,7 +125,7 @@ const TeacherClasses = () => {
 
   // ── Fetch sessions ──────────────────────────────────────────────────────────
   const fetchSessions = useCallback(async () => {
-    if (!user) return;
+    if (!user || !staffTermId) return;
 
     // 1. Subjects the teacher OWNS
     const { data: ownedSubs } = await supabase
@@ -130,7 +133,7 @@ const TeacherClasses = () => {
 
     // 2. Subjects from timetable slots assigned to this teacher
     const { data: ttSlots } = await supabase
-      .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+      .from("subject_timetable" as any).select("subject_id").eq("term_id", staffTermId!).eq("teacher_id", user.id);
     const ttSubjectIds = [...new Set((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean))];
 
     let extraSubs: any[] = [];
@@ -186,7 +189,7 @@ const TeacherClasses = () => {
     if (subjectIds.length > 0) {
       const { data: tt } = await supabase
         .from("subject_timetable" as any)
-        .select("id, subject_id, day_of_week, start_time, end_time, live_url, subjects(title, title_ar)")
+        .select("id, subject_id, day_of_week, start_time, end_time, live_url, subjects(title, title_ar)").eq("term_id", staffTermId!)
         .eq("is_active", true)
         .in("subject_id", subjectIds);
       timetableSlots = tt || [];
@@ -194,7 +197,7 @@ const TeacherClasses = () => {
     // Also fetch timetable where teacher_id = user.id directly
     const { data: ttDirect } = await supabase
       .from("subject_timetable" as any)
-      .select("id, subject_id, day_of_week, start_time, end_time, live_url, subjects(title, title_ar)")
+      .select("id, subject_id, day_of_week, start_time, end_time, live_url, subjects(title, title_ar)").eq("term_id", staffTermId!)
       .eq("is_active", true)
       .eq("teacher_id", user.id);
     const seenTT = new Set(timetableSlots.map((s: any) => s.id));
@@ -250,7 +253,7 @@ const TeacherClasses = () => {
     const allSessions = [...merged, ...virtualSessions];
     setSessions(allSessions);
     setLoading(false);
-  }, [user]);
+  }, [user, staffTermId]);
 
   useEffect(() => { fetchSessions(); }, [fetchSessions]);
 

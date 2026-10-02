@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffTermId, useStaffTermKey } from "@/hooks/useCurrentTermId";
 import { useAcademicLevels } from "@/hooks/useAcademicLevels";
 import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { supabase } from "@/integrations/supabase/client";
@@ -42,6 +43,8 @@ interface TeacherExamsPageProps {
 const TeacherExamsPage = ({ type: fixedType }: TeacherExamsPageProps) => {
   const { t } = useLanguage();
   const { user } = useAuth();
+  const staffTermId = useStaffTermId(); // the term this teacher is working in
+  const staffTermKey = useStaffTermKey(); // "first" | "second" | "third"
   const navigate = useNavigate();
   const { toast } = useToast();
   const { data: academicLevels = [] } = useAcademicLevels();
@@ -52,8 +55,8 @@ const TeacherExamsPage = ({ type: fixedType }: TeacherExamsPageProps) => {
   // Follow the academy's Current Term setting (Admin Settings > Academy).
   const { settings: academySettings } = useAcademySettings();
   useEffect(() => {
-    if (academySettings.current_term) setTermFilter(academySettings.current_term);
-  }, [academySettings.current_term]);
+    if ((staffTermKey || academySettings.current_term)) setTermFilter((staffTermKey || academySettings.current_term));
+  }, [staffTermKey, academySettings.current_term]);
   const [statusFilter, setStatusFilter] = useState("all");
   const [levelFilter, setLevelFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -93,7 +96,7 @@ const TeacherExamsPage = ({ type: fixedType }: TeacherExamsPageProps) => {
   const singularLabel = isTest ? t("Test", "تمرين") : t("Exam", "امتحان");
 
   const fetchExams = async () => {
-    if (!user) return;
+    if (!user || !staffTermId) return;
     setLoading(true);
     // A teacher can be tied to a subject two ways: they own it directly
     // (subjects.teacher_id), or the admin assigned them to teach it via
@@ -101,7 +104,7 @@ const TeacherExamsPage = ({ type: fixedType }: TeacherExamsPageProps) => {
     // subject — and any exam on it, including ones the admin built the
     // questions for — is theirs to see and grade, so both are merged here.
     const { data: subs } = await supabase.from("subjects").select("id, level, levels").eq("teacher_id", user.id);
-    const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+    const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id").eq("term_id", staffTermId!).eq("teacher_id", user.id);
     const ttIds = [...new Set((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean))];
     let extraSubs: any[] = [];
     if (ttIds.length > 0) {

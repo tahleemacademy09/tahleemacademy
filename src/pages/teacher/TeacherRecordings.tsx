@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffTermId } from "@/hooks/useCurrentTermId";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { Search, Trash2, Play, Edit, Upload, Mic, Headphones } from "lucide-react";
@@ -18,6 +19,7 @@ const GOLD = "#c9a84c";
 const TeacherRecordings = () => {
   const { t } = useLanguage();
   const { user } = useAuth();
+  const termId = useStaffTermId(); // the teacher's selected academic term
   const { toast } = useToast();
   const [recordings, setRecordings] = useState<any[]>([]);
   const [subjects, setSubjects] = useState<any[]>([]);
@@ -30,18 +32,18 @@ const TeacherRecordings = () => {
   const [uploadForm, setUploadForm] = useState({ subject_id: "", teacher_name: "", file: null as File | null });
 
   const fetchData = async () => {
-    if (!user) return;
+    if (!user || !termId) return;
     const { data: subs } = await supabase.from("subjects").select("id, title, title_ar").eq("teacher_id", user.id);
     setSubjects(subs || []);
     const subjectIds = (subs || []).map(s => s.id);
     if (subjectIds.length > 0) {
-      const { data } = await supabase.from("session_recordings").select("*, subjects(title, title_ar)").in("subject_id", subjectIds).order("created_at", { ascending: false });
+      const { data } = await supabase.from("session_recordings").select("*, subjects(title, title_ar)").in("subject_id", subjectIds).eq("term_id", termId).order("created_at", { ascending: false });
       setRecordings(data || []);
     }
     setLoading(false);
   };
 
-  useEffect(() => { fetchData(); }, [user]);
+  useEffect(() => { fetchData(); }, [user, termId]);
 
   const filtered = recordings.filter(r => {
     if (subjectFilter !== "all" && r.subject_id !== subjectFilter) return false;
@@ -78,7 +80,8 @@ const TeacherRecordings = () => {
     await supabase.from("session_recordings").insert({
       session_id: sess?.id || "", subject_id: uploadForm.subject_id,
       file_url: publicUrl, teacher_name: uploadForm.teacher_name, file_size: uploadForm.file.size,
-    });
+      term_id: termId,
+    } as any);
 
     setUploadDialog(false);
     setUploadForm({ subject_id: "", teacher_name: "", file: null });

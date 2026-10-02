@@ -30,6 +30,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffTermId, useStaffTermKey } from "@/hooks/useCurrentTermId";
 import { supabase } from "@/integrations/supabase/client";
 import { Plus, Trash2, Megaphone, Pin } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -40,6 +41,8 @@ const GOLD = "#c9a84c";
 const TeacherAnnouncements = () => {
   const { t, language } = useLanguage();
   const { user } = useAuth();
+  const staffTermId = useStaffTermId(); // the term this teacher is working in
+  const staffTermKey = useStaffTermKey(); // "first" | "second" | "third"
   const { toast } = useToast();
 
   const [subjects, setSubjects]           = useState<any[]>([]);
@@ -56,13 +59,13 @@ const TeacherAnnouncements = () => {
 
   // ── Fetch teacher's subjects + all their subject_announcements ────────────
   const fetchData = async () => {
-    if (!user) return;
+    if (!user || !staffTermId) return;
 
     // Subjects this teacher owns OR is assigned via timetable
     const { data: owned } = await supabase
       .from("subjects").select("id, title, title_ar").eq("teacher_id", user.id);
     const { data: ttSlots } = await supabase
-      .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+      .from("subject_timetable" as any).select("subject_id").eq("term_id", staffTermId!).eq("teacher_id", user.id);
     const ttIds = [...new Set((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean))];
     let extra: any[] = [];
     if (ttIds.length > 0) {
@@ -96,7 +99,7 @@ const TeacherAnnouncements = () => {
     setLoading(false);
   };
 
-  useEffect(() => { fetchData(); }, [user]);
+  useEffect(() => { fetchData(); }, [user, staffTermId]);
 
   // ── Post ──────────────────────────────────────────────────────────────────
   const handleCreate = async () => {

@@ -13,6 +13,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffTermId, useStaffTermKey } from "@/hooks/useCurrentTermId";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -34,6 +35,8 @@ type StatusKey = keyof typeof STATUS_CONFIG;
 const TeacherAttendance = () => {
   const { t } = useLanguage();
   const { user } = useAuth();
+  const staffTermId = useStaffTermId(); // the term this teacher is working in
+  const staffTermKey = useStaffTermKey(); // "first" | "second" | "third"
   const { toast } = useToast();
   const [searchParams] = useSearchParams();
 
@@ -65,7 +68,7 @@ const TeacherAttendance = () => {
 
   // ── 1. Load teacher's subjects ────────────────────────────────────────────
   useEffect(() => {
-    if (!user) return;
+    if (!user || !staffTermId) return;
     (async () => {
       setLoading(true);
       try {
@@ -76,7 +79,7 @@ const TeacherAttendance = () => {
 
         // Subjects via timetable assignment
         const { data: ttSlots } = await supabase
-          .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+          .from("subject_timetable" as any).select("subject_id").eq("term_id", staffTermId!).eq("teacher_id", user.id);
         const ttIds = [...new Set((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean))];
         let extra: any[] = [];
         if (ttIds.length > 0) {
@@ -93,11 +96,11 @@ const TeacherAttendance = () => {
         setLoading(false);
       }
     })();
-  }, [user]);
+  }, [user, staffTermId]);
 
   // ── 2. When a subject is selected, fetch its students + sessions ──────────
   const loadSubjectData = useCallback(async (subject: any) => {
-    if (!user) return;
+    if (!user || !staffTermId) return;
     setStudentsLoading(true);
     setStudents([]);
     setAttendance({});

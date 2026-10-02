@@ -4,6 +4,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffTermId, useStaffTermKey } from "@/hooks/useCurrentTermId";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { sanitizeHtml } from "@/lib/sanitize";
@@ -24,6 +25,8 @@ const TeacherGrading = () => {
   const { t, language } = useLanguage();
   const { toast }       = useToast();
   const { user }        = useAuth();
+  const staffTermId = useStaffTermId(); // the term this teacher is working in
+  const staffTermKey = useStaffTermKey(); // "first" | "second" | "third"
 
   const [allAttempts,    setAllAttempts]    = useState<any[]>([]);
   const [selectedAttempt,setSelectedAttempt]= useState<any>(null);
@@ -49,7 +52,7 @@ const TeacherGrading = () => {
 
   // ── Load teacher's exam IDs ────────────────────────────────────
   useEffect(() => {
-    if (!user) return;
+    if (!user || !staffTermId) return;
     const load = async () => {
       // A subject counts as "theirs" whether they own it directly
       // (subjects.teacher_id) or the admin assigned them to it via the
@@ -61,7 +64,7 @@ const TeacherGrading = () => {
       // admin picked (see TimetableManagement.tsx), so a second/co-teacher
       // must be matched via the array too — otherwise their subjects (and
       // every exam/attempt under them) are invisible on this page.
-      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids");
+      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids").eq("term_id", staffTermId!);
       const myTtSlots = (ttSlots || []).filter((s: any) =>
         s.teacher_id === user.id || (Array.isArray(s.teacher_ids) && s.teacher_ids.includes(user.id))
       );

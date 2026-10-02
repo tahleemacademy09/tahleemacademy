@@ -17,6 +17,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffTermId, useStaffTermKey } from "@/hooks/useCurrentTermId";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { lockReload, unlockReload } from "@/lib/reloadGuard";
@@ -77,6 +78,8 @@ const fmtTime = (iso: string) =>
 
 const TeacherOralExams = () => {
   const { user } = useAuth();
+  const staffTermId = useStaffTermId(); // the term this teacher is working in
+  const staffTermKey = useStaffTermKey(); // "first" | "second" | "third"
   const { toast } = useToast();
   const { data: academicLevels = [] } = useAcademicLevels();
   const location = useLocation();
@@ -107,7 +110,7 @@ const TeacherOralExams = () => {
   const selectedExam = exams.find(e => e.id === selectedExamId);
 
   const loadExams = useCallback(async () => {
-    if (!user) return;
+    if (!user || !staffTermId) return;
 
     let subjectsList: any[] = [];
     let examsData: any[] = [];
@@ -129,7 +132,7 @@ const TeacherOralExams = () => {
       // TeacherSubjects for the same pattern). Union both so nothing is missed.
       const [{ data: owned }, { data: ttSlots }, { data: ex }] = await Promise.all([
         supabase.from("subjects").select("id, title, title_ar").eq("teacher_id", user.id),
-        supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids"),
+        supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids").eq("term_id", staffTermId!),
         supabase.from("exams").select("id, title, title_ar, subject_id, passing_score, exam_mode, type, is_published, oral_assignment_mode, level, created_by" as any).eq("exam_mode" as any, "oral").eq("created_by", user.id).order("created_at", { ascending: false }),
       ]);
 

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffTermId, useStaffTermKey } from "@/hooks/useCurrentTermId";
 import { supabase } from "@/integrations/supabase/client";
 import SubjectRecordings    from "@/components/classroom/SubjectRecordings";
 import SubjectMaterials     from "@/components/classroom/SubjectMaterials";
@@ -47,6 +48,8 @@ const safeLevel = (lv: string | undefined | null) =>
 export default function TeacherSubjects() {
   const { t, language } = useLanguage();
   const { user, profile } = useAuth();
+  const staffTermId = useStaffTermId(); // the term this teacher is working in
+  const staffTermKey = useStaffTermKey(); // "first" | "second" | "third"
   const navigate = useNavigate();
   const { toast } = useToast();
   const { joinClass } = useLiveClass();
@@ -63,7 +66,7 @@ export default function TeacherSubjects() {
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !staffTermId) return;
     const fetchSubjects = async () => {
       const { data: owned } = await supabase
         .from("subjects").select("*").eq("teacher_id", user.id).order("title");
@@ -72,7 +75,7 @@ export default function TeacherSubjects() {
       // teacher_id column is only the primary/first teacher — matches the
       // same pattern used in TeacherDashboard / TeacherGrading / TeacherOralExams.
       const { data: ttSlots } = await supabase
-        .from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids");
+        .from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids").eq("term_id", staffTermId!);
       const ttMineSlots = (ttSlots || []).filter((s: any) =>
         s.teacher_id === user.id || (Array.isArray(s.teacher_ids) && s.teacher_ids.includes(user.id))
       );
@@ -129,7 +132,7 @@ export default function TeacherSubjects() {
       setLoading(false);
     };
     fetchSubjects();
-  }, [user, profile?.active_term_id]);
+  }, [user, staffTermId]);
 
   const loadSubjectDetails = async (sub: any) => {
     setSelectedSubject(sub);
