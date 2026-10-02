@@ -24,7 +24,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import MaterialsViewer from "./MaterialsViewer";
-import { useCurrentTermId, useViewingTermId } from "@/hooks/useCurrentTermId";
+import { useStaffTermId, useViewingTermId } from "@/hooks/useCurrentTermId";
 import {
   FileText, Video, Music, Image as ImageIcon, File as FileIcon,
   Upload, Plus, X, Trash2, Pencil,
@@ -98,9 +98,9 @@ const emptyForm = {
 function MaterialManager({ subjectId }: { subjectId?: string }) {
   const { user } = useAuth();
   const { t } = useLanguage();
-  // Admin/teacher always manage the currently-live academic term -- past
-  // terms' materials stay untouched but aren't shown here to be edited.
-  const currentTermId = useCurrentTermId();
+  // Admins manage the live academic term; teachers work in the term they
+  // picked in Settings (falls back to live).
+  const currentTermId = useStaffTermId();
 
   const [materials, setMaterials] = useState<any[]>([]);
   const [loading, setLoading]     = useState(true);
@@ -213,7 +213,7 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
             uploaded_by: user.id,
             sort_order: materials.length + ok,
           };
-          const { error } = await supabase.from("subject_materials").insert([payload]);
+          const { error } = await supabase.from("subject_materials").insert([{ ...payload, term_id: currentTermId }]);
           if (!error) ok++;
         }
         setFeedback({
@@ -260,7 +260,7 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
 
       const { error } = editing
         ? await supabase.from("subject_materials").update(payload).eq("id", editing.id)
-        : await supabase.from("subject_materials").insert([payload]);
+        : await supabase.from("subject_materials").insert([{ ...payload, term_id: currentTermId }]);
       if (error) throw error;
 
       setFeedback({ type: "success", message: editing ? t("Material updated!", "تم التحديث!") : t("Material uploaded!", "تم الرفع!") });

@@ -48,7 +48,8 @@ const SubjectSyllabus = ({ subjectId }: { subjectId: string }) => {
         title: form.title,
         description: form.description || null,
         objectives: form.objectives ? form.objectives.split("\n").filter(Boolean) : null,
-      });
+        term_id: viewingTermId ?? null, // stamp with the term being worked in
+      } as any);
       if (error) throw error;
     },
     onSuccess: () => {

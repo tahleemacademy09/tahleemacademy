@@ -21,7 +21,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { useCurrentTermId, useViewingTermId } from "@/hooks/useCurrentTermId";
+import { useStaffTermId, useViewingTermId } from "@/hooks/useCurrentTermId";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { uploadStorageFile, getSignedUrl } from "@/integrations/supabase/storageClient";
 import {
@@ -124,7 +124,7 @@ export default function SubjectAssignments({ subjectId }: { subjectId?: string }
    ═══════════════════════════════════════════════════════════════ */
 function AssignmentManager({ subjectId }: { subjectId?: string }) {
   const { user } = useAuth();
-  const liveTermId = useCurrentTermId(); // staff manage the live term only (plus legacy rows with no term)
+  const liveTermId = useStaffTermId(); // admins: live term; teachers: the term chosen in their settings (plus legacy rows with no term)
   const { t, language } = useLanguage();
 
   const [assignments, setAssignments] = useState<any[]>([]);
@@ -346,6 +346,7 @@ export function AssignmentFormModal({
   subjectId, assignment, userId, onClose, onSaved,
 }: { subjectId: string; assignment: any | null; userId: string; onClose: () => void; onSaved: () => void }) {
   const { t } = useLanguage();
+  const staffTermId = useStaffTermId();
   const isEdit = !!assignment;
   const [title, setTitle]           = useState(assignment?.title || "");
   const [titleAr, setTitleAr]       = useState(assignment?.title_ar || "");
@@ -416,7 +417,7 @@ export function AssignmentFormModal({
           .maybeSingle();
         const { error: inErr } = await supabase
           .from("subject_assignments")
-          .insert({ ...payload, term_id: currentTerm?.id ?? null, created_by: userId, status: "open" });
+          .insert({ ...payload, term_id: staffTermId ?? currentTerm?.id ?? null, created_by: userId, status: "open" });
         if (inErr) throw inErr;
       }
       onSaved();
