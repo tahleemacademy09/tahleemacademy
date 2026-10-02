@@ -294,6 +294,39 @@ export default function StudentManagement() {
   const [createDialog,  setCreateDialog]  = useState(false);
   const [newUserData,   setNewUserData]   = useState<any | null>(null);
 
+  // Academic terms -- admins can set which term each teacher works in
+  // (profiles.active_term_id; null = follows the live term).
+  const [terms,        setTerms]        = useState<any[]>([]);
+  const [termBusy,     setTermBusy]     = useState<string | null>(null);
+  const [bulkTermId,   setBulkTermId]   = useState<string>("");
+  const liveTerm = terms.find(t => t.is_current);
+  const termName = (id?: string | null) => (id ? terms.find(t => t.id === id)?.name : liveTerm?.name) || "Live term";
+  useEffect(() => {
+    supabase.from("academic_terms").select("id, term_number, name, is_current").order("term_number", { ascending: true })
+      .then(({ data }) => setTerms(data || []));
+  }, []);
+
+  // Set one teacher's working term (null = follow the live term).
+  const setTeacherTerm = async (uid: string, termId: string | null) => {
+    setTermBusy(uid);
+    const { error } = await supabase.from("profiles").update({ active_term_id: termId } as any).eq("user_id", uid);
+    setTermBusy(null);
+    if (error) { toast({ title: "Couldn't update term", description: error.message, variant: "destructive" }); return; }
+    setUsers(prev => prev.map(x => x.user_id === uid ? { ...x, active_term_id: termId } : x));
+    toast({ title: termId ? `Teacher moved to ${termName(termId)}` : "Teacher now follows the live term" });
+  };
+  // Apply one term to every teacher at once.
+  const setAllTeachersTerm = async (termId: string | null) => {
+    const ids = users.filter(x => (x.roles || []).includes("teacher")).map(x => x.user_id);
+    if (!ids.length) return;
+    setTermBusy("__all__");
+    const { error } = await supabase.from("profiles").update({ active_term_id: termId } as any).in("user_id", ids);
+    setTermBusy(null);
+    if (error) { toast({ title: "Couldn't update teachers", description: error.message, variant: "destructive" }); return; }
+    setUsers(prev => prev.map(x => ids.includes(x.user_id) ? { ...x, active_term_id: termId } : x));
+    toast({ title: termId ? `All ${ids.length} teachers moved to ${termName(termId)}` : `All ${ids.length} teachers now follow the live term` });
+  };
+
   // ── Load users ──────────────────────────────────────────────────────────
   const loadUsers = async () => {
     setLoading(true);
@@ -541,6 +574,25 @@ export default function StudentManagement() {
         </select>
       </div>
 
+      {roleFilter === "teacher" && (
+        <div style={{ background: "#fff", border: `1px solid ${BRD}`, borderRadius: 14, padding: "10px 12px", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 800, color: G2 }}>Teachers' term</span>
+          <span style={{ fontSize: 11, color: "#6B7280" }}>Live: {liveTerm?.name || "—"}</span>
+          <select value={bulkTermId} onChange={e => setBulkTermId(e.target.value)} style={{ ...sel, flex: "1 1 120px" }}>
+            <option value="">Choose term…</option>
+            {terms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+          <button disabled={!bulkTermId || termBusy === "__all__"} onClick={() => setAllTeachersTerm(bulkTermId)}
+            style={{ padding: "8px 12px", borderRadius: 10, border: "none", background: bulkTermId ? G2 : "#D1D5DB", color: "#fff", fontWeight: 800, fontSize: 12, cursor: bulkTermId ? "pointer" : "not-allowed" }}>
+            Apply to all teachers
+          </button>
+          <button disabled={termBusy === "__all__"} onClick={() => setAllTeachersTerm(null)}
+            style={{ padding: "8px 12px", borderRadius: 10, border: `1px solid ${G2}`, background: "#fff", color: G2, fontWeight: 800, fontSize: 12, cursor: "pointer" }}>
+            Follow live term
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <div style={{ textAlign: "center", padding: 50 }}><Loader2 size={28} style={{ animation: "spin .8s linear infinite", color: G2 }} /></div>
       ) : filtered.length === 0 ? (
@@ -596,6 +648,18 @@ export default function StudentManagement() {
                       {u.last_sign_in_at ? formatLastSeen(u.last_sign_in_at).replace(/\s+\(.*\)$/, "") : "Never logged in"}
                     </span>
                   </div>
+
+                  {(u.roles || []).includes("teacher") && (
+                    <div onClick={e => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, padding: "8px 10px", background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 10 }}>
+                      <span style={{ fontSize: 11, fontWeight: 800, color: "#166534", whiteSpace: "nowrap" }}>Term</span>
+                      <select value={u.active_term_id || ""} disabled={termBusy === u.user_id || termBusy === "__all__"}
+                        onChange={e => setTeacherTerm(u.user_id, e.target.value || null)}
+                        style={{ ...sel, flex: 1, minWidth: 0, padding: "6px 8px", fontSize: 12 }}>
+                        <option value="">Follow live term{liveTerm ? ` (${liveTerm.name})` : ""}</option>
+                        {terms.map(t => <option key={t.id} value={t.id}>{t.name}{t.is_current ? " · live" : ""}</option>)}
+                      </select>
+                    </div>
+                  )}
 
                   {/* Registration pipeline strip (students that went through registration) */}
                   {isStudent && pg && cfg && (
