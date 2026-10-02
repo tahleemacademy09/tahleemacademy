@@ -24,7 +24,7 @@ import {
   Star, CheckCircle, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
   Flame, Target, TrendingUp, Play, RefreshCcw, Heart, Loader2,
   BookMarked, BarChart2, Lock, ShieldCheck, Bell, Eye,
-  SkipBack, SkipForward, Timer as TimerIcon, Camera,
+  SkipBack, SkipForward, Timer as TimerIcon, Camera, Maximize2, X as XIcon,
 } from "lucide-react";
 // Per-surah CDN audio (everyayah.com) — keyed by (surahNum, verseNumInSurah), NOT the
 // global 1-6236 ayah id. Using this avoids the "wrong page audio" bug where the old
@@ -1346,6 +1346,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [pageAyahs,    setPageAyahs]   = useState<Ayah[]>([]);
   const [fetchingPage, setFetchingPage] = useState(false);
   const [printedBg, setPrintedBg] = useState("#fffdf6");
+  const [showFull, setShowFull] = useState(false);
+  const [winH, setWinH] = useState(typeof window !== "undefined" ? window.innerHeight : 800);
+  useEffect(() => {
+    const onR = () => setWinH(window.innerHeight);
+    window.addEventListener("resize", onR);
+    return () => window.removeEventListener("resize", onR);
+  }, []);
   // PageResults saved to DB have stripped ayah data (text, numberInSurah, surahName, surahNum).
   // buildQuestions() needs full Ayah objects with surah.number / surah.englishName.
   // Reconstruct them here so .text and .surah.* don't crash when building quiz questions.
@@ -2770,9 +2777,34 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 </span>
               </div>
             )}
-            {/* Printed Madinah Mushaf page — the only view, fitted so Start Reciting stays visible beneath it */}
+            {/* Printed Madinah Mushaf page — fills the screen like the Quran reader; Start Reciting stays visible below */}
             {!isRecording && todayPages[pageIdx] && (
-              <MushafPageView page={todayPages[pageIdx]} seamless fitHeight={300} onBackground={setPrintedBg}/>
+              <div style={{position:"relative",margin:"0 -16px"}}>
+                <button onClick={()=>setShowFull(true)} aria-label="Full page"
+                  style={{position:"absolute",top:6,right:22,zIndex:5,width:34,height:34,borderRadius:99,border:"1px solid #C9A84C",background:"rgba(255,255,255,.92)",color:"#78350F",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
+                  <Maximize2 size={16}/>
+                </button>
+                <MushafPageView page={todayPages[pageIdx]} seamless pureWhite availableHeight={Math.max(300, winH-215)} maxStretch={1.4} onBackground={setPrintedBg}/>
+              </div>
+            )}
+            {showFull && todayPages[pageIdx] && (
+              <div style={{position:"fixed",inset:0,zIndex:500,background:"#fff",display:"flex",flexDirection:"column"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",paddingTop:"calc(8px + env(safe-area-inset-top, 0px))",borderBottom:"1px solid rgba(0,0,0,.06)",flexShrink:0}}>
+                  <button onClick={()=>setShowFull(false)} style={{display:"inline-flex",alignItems:"center",gap:6,border:"1px solid #e3e9e5",background:"#fff",borderRadius:99,padding:"6px 14px",fontSize:12,fontWeight:800,cursor:"pointer"}}><XIcon size={14}/> Close</button>
+                  <span style={{fontSize:13,fontWeight:800,color:"#1a1a2e"}}>Page {todayPages[pageIdx]}</span>
+                </div>
+                <div style={{flex:1,minHeight:0,overflowY:"auto",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <div style={{width:"100%"}}>
+                    <MushafPageView page={todayPages[pageIdx]} seamless pureWhite availableHeight={Math.max(300, winH-125)} maxStretch={1.4}/>
+                  </div>
+                </div>
+                <div style={{padding:"10px 16px",paddingBottom:"calc(10px + env(safe-area-inset-bottom, 0px))",borderTop:`1px solid ${BRD}`,flexShrink:0}}>
+                  <button onClick={()=>{setShowFull(false);startRecording();}}
+                    style={{width:"100%",padding:"14px",borderRadius:14,border:"none",cursor:"pointer",background:`linear-gradient(135deg,${G2},${G3})`,color:W,fontWeight:900,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"inherit"}}>
+                    <Mic size={17}/> Start Reciting
+                  </button>
+                </div>
+              </div>
             )}
           </div>
 
