@@ -17,12 +17,14 @@
 // lines, used by every other subject) — a standalone screen is safer to
 // ship and iterate on without risking regressions elsewhere.
 // ─────────────────────────────────────────────────────────────────────────
-import { useEffect, useState, useCallback, useRef } from "react";
-import { LiveKitRoom, RoomAudioRenderer, useTracks, VideoTrack } from "@livekit/components-react";
+import { useEffect, useState, useCallback, useRef, type CSSProperties } from "react";
+import { LiveKitRoom, RoomAudioRenderer, useRoomContext } from "@livekit/components-react";
+import { VideoGrid, queueMediaOp } from "@/components/classroom/classroomComponents";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Track } from "livekit-client";
 import "@livekit/components-styles";
 import { supabase } from "@/integrations/supabase/client";
-import { Mic, MicOff, Users, PlayCircle, CheckCircle2, XCircle, Radio, Loader2 } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, Users, PlayCircle, CheckCircle2, XCircle, Radio, Loader2 } from "lucide-react";
 import { H_GOLD as GOLD, H_GM as GREEN } from "@/components/hifdh/hifdhTokens";
 
 type Tier = "sabaq" | "sabqi" | "manzil";
@@ -233,22 +235,52 @@ export default function HifdhLiveClass({ userId, studentName, isTeacher }: Props
   );
 }
 
-// Minimal video stage — shows the currently-publishing camera track(s).
-// (Kept separate/small deliberately: full grid/mic-toggle UX from the main
-// classroom can be ported in later if this needs to look identical to the
-// other live classes; the queue mechanic is the actual new capability.)
 function ActiveSpeakerStage() {
-  const tracks = useTracks([Track.Source.Camera]);
+  const isMobile = useIsMobile();
+  const room = useRoomContext();
+  const [mic, setMic] = useState(false);
+  const [cam, setCam] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!room) return;
+    const sync = () => {
+      setMic(!!room.localParticipant?.isMicrophoneEnabled);
+      setCam(!!room.localParticipant?.isCameraEnabled);
+    };
+    sync();
+    const evs = ["localTrackPublished", "localTrackUnpublished", "trackMuted", "trackUnmuted", "connected"] as const;
+    evs.forEach(e => room.on(e as any, sync));
+    return () => { evs.forEach(e => room.off(e as any, sync)); };
+  }, [room]);
+
+  const toggle = async (kind: "mic" | "cam") => {
+    if (!room?.localParticipant || busy) return;
+    setBusy(true);
+    try {
+      await queueMediaOp(room, () =>
+        kind === "mic"
+          ? room.localParticipant.setMicrophoneEnabled(!room.localParticipant.isMicrophoneEnabled)
+          : room.localParticipant.setCameraEnabled(!room.localParticipant.isCameraEnabled)
+      );
+    } catch { /* ignore */ } finally { setBusy(false); }
+  };
+
+  const btn = (on: boolean): CSSProperties => ({
+    width: 44, height: 44, borderRadius: "50%", border: "none", cursor: "pointer",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    background: on ? "rgba(255,255,255,.14)" : "#ea4335", color: "#fff",
+  });
+
   return (
-    <div className="flex-1 grid grid-cols-2 gap-2 p-2 overflow-y-auto bg-black/90">
-      {tracks.map(t => (
-        <div key={t.publication.trackSid} className="aspect-video rounded-lg overflow-hidden bg-black">
-          <VideoTrack trackRef={t} className="w-full h-full object-cover" />
-        </div>
-      ))}
-      {tracks.length === 0 && (
-        <div className="col-span-2 flex items-center justify-center text-white/50 text-xs">Waiting for video…</div>
-      )}
+    <div className="flex-1 flex flex-col overflow-hidden" style={{ background: "#000", minHeight: 240, position: "relative" }}>
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+        <VideoGrid layout="grid" isMobile={isMobile} spotlightId={null} />
+      </div>
+      <div style={{ display: "flex", justifyContent: "center", gap: 12, padding: "10px 0 calc(10px + env(safe-area-inset-bottom, 0px))", background: "linear-gradient(to top, rgba(0,0,0,.85), rgba(0,0,0,.4))" }}>
+        <button onClick={() => toggle("mic")} style={btn(mic)} aria-label="Toggle microphone">{mic ? <Mic size={18} /> : <MicOff size={18} />}</button>
+        <button onClick={() => toggle("cam")} style={btn(cam)} aria-label="Toggle camera">{cam ? <Video size={18} /> : <VideoOff size={18} />}</button>
+      </div>
     </div>
   );
 }
