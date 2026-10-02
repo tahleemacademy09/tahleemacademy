@@ -257,7 +257,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     // 3 ── Academic ─────────────────────────────────────────────
     { type:"group", key:"academic", icon:BookOpen, label:t("Academic","الأكاديمي"), children:[
       { to:"/admin/courses",          icon:Layers,      label:t("Courses & Subjects","الدورات والمواد") },
-      { to:"/admin/learning",         icon:BookOpen,    label:t("Learning Hub","مركز التعلم") },
       { to:"/admin/timetable",        icon:Clock,       label:t("Timetable","الجدول الدراسي") },
       { to:"/admin/material-manager", icon:FolderOpen,  label:t("Materials","المواد التعليمية") },
       { to:"/admin/level-subject-mapping", icon:BookMarked,  label:t("Level–Subject Map","ربط المستويات") },
