@@ -185,7 +185,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     }
   };
 
-  const studentLevel = (profile?.level || profile?.course_level || "beginner") as string;
+  const studentLevel = (profile?.level || profile?.course_level || "") as string;
 
   // ── Queries ───────────────────────────────────────────────────────────────
 

@@ -113,7 +113,7 @@ export default function LiveNow() {
   const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
 
   const isPrivileged = hasRole("admin") || hasRole("teacher");
-  const studentLevel = (profile as any)?.level || (profile as any)?.course_level || "beginner";
+  const studentLevel = (profile as any)?.level || (profile as any)?.course_level || "";
   const needsSubjectRestriction = isPrivateStudent && !allowGeneralAccess && !isPrivileged;
 
   // ── 1. Live sessions — ground truth, polled every 5s ──────────────────────

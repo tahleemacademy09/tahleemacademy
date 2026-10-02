@@ -352,7 +352,7 @@ const CourseCard = ({
 const StudentCourses = () => {
   const { language } = useLanguage();
   const { user, profile } = useAuth();
-  const studentLevel = profile?.level || "beginner";
+  const studentLevel = profile?.level || "";
   const { isPrivateStudent } = usePrivateStudent();
   const { isEffectivelyOpen: subjectRegistrationOpen } = useSubjectRegistrationSettings();
   const navigate = useNavigate();

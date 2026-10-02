@@ -599,7 +599,7 @@ function PrivateTimetable({ profile, navigate }: any) {
 function GeneralTimetable({ profile, hasRole, t, language, navigate, showBanner }: any) {
   const viewingTermId = useViewingTermId(profile);
   const todayIndex   = new Date().getDay();
-  const studentLevel = (profile as any)?.level || (profile as any)?.course_level || "beginner";
+  const studentLevel = (profile as any)?.level || (profile as any)?.course_level || "";
   const isPrivileged = hasRole("admin") || hasRole("teacher");
   const [selectedDay, setSelectedDay] = useState(todayIndex);
 
@@ -786,7 +786,7 @@ export default function StudentTimetable() {
   const navigate             = useNavigate();
   const { isPrivateStudent } = usePrivateStudent();
   const isPrivileged = hasRole("admin") || hasRole("teacher");
-  const studentLevel = (profile as any)?.level || (profile as any)?.course_level || "beginner";
+  const studentLevel = (profile as any)?.level || (profile as any)?.course_level || "";
   // Admin/teacher can flip this off outside test/exam or term-schedule
   // periods. Guards direct URL access too, not just the nav link — admins
   // and teachers themselves are never blocked since they're the ones who

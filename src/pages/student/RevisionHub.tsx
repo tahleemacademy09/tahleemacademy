@@ -22,7 +22,7 @@ const RevisionHub = () => {
 
   // ✅ Use only 'level' since 'course_level' doesn't exist in your DB
   const { data: academicLevels = [] } = useAcademicLevels();
-  const studentLevel = (profile?.level || "beginner").toLowerCase();
+  const studentLevel = (profile?.level || "").toLowerCase();
   const isLevelAssigned = !!profile?.level;
 
   // ✅ Filter subjects directly by student level using the levels TEXT[] column
