@@ -13,7 +13,6 @@ export const routeLoaders: Record<string, () => Promise<unknown>> = {
   "/admin/attendance": () => import("@/pages/admin/StudentsHub"),
   "/admin/calendar": () => import("@/pages/admin/AcademicCalendar"),
   "/admin/courses": () => import("@/pages/admin/CourseManagement"),
-  "/admin/learning": () => import("@/pages/student/LearningHub"),
   "/admin/entrance-exam": () => import("@/pages/admin/EntranceExamAdmin"),
   "/admin/exam-timetable": () => import("@/pages/admin/ExamTimetableManagement"),
   "/admin/exams": () => import("@/pages/admin/ExamManager"),
