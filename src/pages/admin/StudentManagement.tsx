@@ -319,7 +319,7 @@ export default function StudentManagement() {
     const q = search.toLowerCase();
     const matchSearch = !q || u.full_name?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q) || u.student_id?.includes(q);
     const matchRole   = roleFilter  === "all" || u.roles.includes(roleFilter);
-    const matchLevel  = levelFilter === "all" || u.level === levelFilter || u.course_level === levelFilter;
+    const matchLevel  = levelFilter === "all" || (levelFilter === "unassigned" ? (u.roles.includes("student") && !(u.level || u.course_level)) : (u.level === levelFilter || u.course_level === levelFilter));
     const studentTypeVal = u.student_type || "general";
     const matchType   = typeFilter === "all" || studentTypeVal === typeFilter;
     return matchSearch && matchRole && matchLevel && matchType;
@@ -531,6 +531,7 @@ export default function StudentManagement() {
       <div style={{ display: "flex", gap: 8 }}>
         <select value={levelFilter} onChange={e => setLevelFilter(e.target.value)} style={sel}>
           <option value="all">All Levels</option>
+          <option value="unassigned">⏳ No level yet</option>
           {academicLevels.map(l => <option key={l.slug} value={l.slug}>{l.name_en}</option>)}
         </select>
         <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={sel}>
@@ -601,7 +602,7 @@ export default function StudentManagement() {
                     <>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
                         <span style={{ padding: "3px 10px", borderRadius: 20, background: cfg.bg, color: cfg.color, fontSize: 11, fontWeight: 700, border: `1px solid ${cfg.color}33` }}>{cfg.icon} {cfg.label}</span>
-                        {lvl && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#FFFBEB", color: "#92400E", border: "1px solid #FDE68A", fontWeight: 700 }}>🎓 {lvl}</span>}
+                        {lvl ? <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#FFFBEB", color: "#92400E", border: "1px solid #FDE68A", fontWeight: 700 }}>🎓 {lvl}</span> : (isStudent && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#F3F4F6", color: "#6B7280", border: "1px solid #E5E7EB", fontWeight: 700 }}>⏳ No level yet</span>)}
                       </div>
                       <div style={{ display: "flex", gap: 3, marginTop: 8 }}>
                         {TIMELINE.map(sid => {

@@ -73,7 +73,7 @@ const AttendanceManagement = () => {
     setLoading(true);
     try {
       const [{ data: studs }, { data: subs }, { data: att }] = await Promise.all([
-        supabase.from("profiles").select("user_id, full_name, level, email").order("full_name"),
+        supabase.from("profiles").select("user_id, full_name, level, email").eq("role", "student").not("level", "is", null).order("full_name"),
         supabase.from("subjects").select("id, title"),
         supabase.from("manual_attendance")
           .select("*, subjects(title), profiles:student_id(full_name, level)")
