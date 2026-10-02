@@ -1010,11 +1010,17 @@ class MirrorCorrectProcessor {
     this.canvas.width = w; this.canvas.height = h;
     this.ctx = this.canvas.getContext("2d");
 
+    const fm = (settings as any).facingMode;
+    const isBack = fm === "environment" || fm === "back";
     const draw = () => {
       if(this.ctx && this.sourceEl && this.sourceEl.readyState >= 2){
         this.ctx.save();
-        this.ctx.scale(-1, 1);
-        this.ctx.drawImage(this.sourceEl, -w, 0, w, h);
+        if(!isBack){
+          this.ctx.scale(-1, 1);
+          this.ctx.drawImage(this.sourceEl, -w, 0, w, h);
+        }else{
+          this.ctx.drawImage(this.sourceEl, 0, 0, w, h);
+        }
         this.ctx.restore();
       }
       this.rafId = requestAnimationFrame(draw);
@@ -5496,6 +5502,7 @@ export const ClassroomAdminContext = createContext<{isPrivileged:boolean;session
 export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{participant:any;isLocal:boolean;size?:"normal"|"large"|"small";pip?:boolean})=>{
   const videoRef=useRef<HTMLVideoElement>(null);
   const[hasVideo,setHasVideo]=useState(false);
+  const[backCam,setBackCam]=useState(false);
   const[isSpeaking,setIsSpeaking]=useState(false);
   const[micEnabled,setMicEnabled]=useState(true);
   const room=useRoomContext();
@@ -5618,6 +5625,7 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
         videoRef.current.srcObject=new MediaStream([mst]);
       }
       if(isLocal)videoRef.current.muted=true;
+      if(isLocal){let fm:any;try{fm=(mst.getSettings?.() as any)?.facingMode;}catch{}setBackCam(fm==="environment"||fm==="back");}
       videoRef.current.play().catch(()=>{});setHasVideo(true);
     }else{if(videoRef.current&&videoRef.current.srcObject)videoRef.current.srcObject=null;setHasVideo(false);}
     let micPub=participant.getTrackPublication?.(Track.Source.Microphone);
@@ -5724,7 +5732,7 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
           gets sent, this transform only fixes how the local tile displays
           it. */}
       <video ref={videoRef} autoPlay playsInline muted={isLocal}
-        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal?"scaleX(-1)":"none"}}
+        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal&&!backCam?"scaleX(-1)":"none"}}
       />
 
       {/* Camera-off profile: full-bleed photo filling all four corners of the tile */}
