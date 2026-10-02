@@ -3,7 +3,7 @@
    Routing configuration with lazy-loaded pages
 ═══════════════════════════════════════════════════════════════════════════════*/
 import { lazy, Suspense, useEffect } from "react";
-import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/toaster";
@@ -103,7 +103,6 @@ const GeneralMusabaqahExamRoom    = lazy(() => import("./pages/GeneralMusabaqahE
 const AdminDashboard        = lazy(() => import("./pages/admin/AdminDashboard"));
 const SubjectManagement     = lazy(() => import("./pages/admin/SubjectManagement"));
 const CourseManagement      = lazy(() => import("./pages/admin/CourseManagement"));
-const AdminLearningHub       = lazy(() => import("./pages/student/LearningHub"));
 const SyllabusManager       = lazy(() => import("./pages/admin/SyllabusManager"));
 const TimetableManagement   = lazy(() => import("./pages/admin/TimetableManagement"));
 const ExamTimetableManagement = lazy(() => import("./pages/admin/ExamTimetableManagement"));
@@ -351,7 +350,7 @@ const App = () => (
                     <Route path="/admin/subjects"                    element={<CourseManagement />} />
                     <Route path="/admin/subjects/:subjectId"         element={<CourseManagement />} />
                     <Route path="/admin/courses"                     element={<CourseManagement />} />
-                    <Route path="/admin/learning"                    element={<AdminLearningHub />} />
+                    <Route path="/admin/learning"                    element={<Navigate to="/admin/courses" replace />} />
                     <Route path="/admin/syllabus"                    element={<SyllabusManager />} />
                     <Route path="/admin/level-subject-mapping"       element={<LevelSubjectMapping />} />
                     <Route path="/admin/timetable"                   element={<TimetableManagement />} />
