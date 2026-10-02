@@ -138,7 +138,7 @@ const TeacherAttendance = () => {
 
       const { data: profiles } = await supabase
         .from("profiles").select("user_id, full_name, level, email, avatar_url")
-        .in("user_id", allIds).order("full_name");
+        .in("user_id", allIds).eq("role", "student").order("full_name");
       setStudents(profiles || []);
 
       // ── Past sessions for this subject (for reference) ─────────────────
