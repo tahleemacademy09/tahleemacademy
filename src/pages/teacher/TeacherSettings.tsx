@@ -19,6 +19,7 @@ import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAcademySettings } from "@/hooks/useAcademySettings";
 import PushBlockedHelp from "@/components/settings/PushBlockedHelp";
+import TermSwitcher from "@/components/settings/TermSwitcher";
 import { enablePushNotifications, hardResetPushNotifications } from "@/components/NotificationPermissionBanner";
 import { applyDark, isDarkModeEnabled, DM_KEY } from "@/lib/theme";
 import {
@@ -776,6 +777,8 @@ export default function TeacherSettings() {
             TEACHING
         ════════════════════════════════════════════════════════ */}
         {tab === "teaching" && <>
+          {/* Academic term — everything on the teacher side follows this */}
+          <TermSwitcher />
           <Sec title="Specialisations">
             <p style={{ fontSize: 12, color: "#6B7280", margin: "0 0 10px" }}>Select all subjects you teach</p>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
