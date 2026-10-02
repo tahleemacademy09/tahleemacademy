@@ -440,6 +440,7 @@ const StudentDashboard = () => {
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [selectedCalDay, setSelectedCalDay] = useState<number | null>(null);
   const [showAllNotifs, setShowAllNotifs] = useState(false);
+  const [dashTab, setDashTab] = useState<"timetable"|"assignments"|"notifications">("timetable");
   const [greetingSpoken, setGreetingSpoken] = useState(false);
   const [impersonatedProfile, setImpersonatedProfile] = useState<any>(null);
   const [nowTick, setNowTick] = useState(new Date());
@@ -938,8 +939,8 @@ const StudentDashboard = () => {
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:16, rowGap:18 }}>
             {([
-              { to:"/student/hifdh-daily",  icon:Mic,           label:t("Daily Hifdh","الحفظ اليومي"),  grad:`linear-gradient(135deg, ${MID_GREEN}, ${DARK_GREEN})`,  iconColor:"#fff", show: true, live:false },
-              { to:"/student/live-classes", icon:Video,         label:t("Live Classes","الفصول الحية"), grad:"linear-gradient(135deg,#4299e1,#2b6cb0)",               iconColor:"#fff", show: !isPrivateStudent || allowGeneralAccess, live: hasLiveClassNow },
+              { to:"/student/hifdh-program", icon:Mic,           label:t("Hifdh","الحفظ"),  grad:`linear-gradient(135deg, ${MID_GREEN}, ${DARK_GREEN})`,  iconColor:"#fff", show: true, live:false },
+              { to:"/student/live-now",     icon:Video,         label:t("Live Classes","الفصول الحية"), grad:"linear-gradient(135deg,#4299e1,#2b6cb0)",               iconColor:"#fff", show: !isPrivateStudent || allowGeneralAccess, live: hasLiveClassNow },
               { to:"/student/exams",        icon:ClipboardList, label:t("My Exams","امتحاناتي"),        grad:"linear-gradient(135deg,#48bb78,#276749)",               iconColor:"#fff", show: true, live:false },
               { to:"/student/transcripts",  icon:GraduationCap, label:t("Transcripts","السجلات"),       grad:`linear-gradient(135deg, ${GOLD_LIGHT}, ${GOLD})`,       iconColor:DARK_GREEN, show: true, live:false },
               { to:"/student/majlis",       icon:MessageCircle, label:t("Al-Majlis","المجلس"),          grad:"linear-gradient(135deg,#9f7aea,#6b46c1)",               iconColor:"#fff", show: true, live:false },
@@ -970,6 +971,28 @@ const StudentDashboard = () => {
           </div>
         </div>
 
+        {/* ── Timetable / Assignments / Notifications — one panel, switch with tabs ── */}
+        <div style={{ display:"flex", background:"#fff", borderRadius:14, border:"1px solid #eadfc8", overflow:"hidden" }}>
+          {([
+            { id:"timetable",     label:t("Timetable","الجدول"),       badge:0 },
+            { id:"assignments",   label:t("Assignments","الواجبات"),   badge:0 },
+            { id:"notifications", label:t("Notifications","الإشعارات"), badge:unreadCount },
+          ] as const).map(tab => {
+            const on = dashTab === tab.id;
+            return (
+              <button key={tab.id} onClick={() => setDashTab(tab.id)}
+                style={{ flex:1, padding:"12px 4px", border:"none", background:"transparent", cursor:"pointer", fontFamily:"inherit",
+                  fontSize:13, fontWeight:on ? 800 : 600, color:on ? TEXT_DARK : TEXT_LIGHT,
+                  borderBottom:`3px solid ${on ? DARK_GREEN : "transparent"}`, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+                {tab.label}
+                {tab.badge > 0 && <span style={{ background:"#ef4444", color:"#fff", fontSize:10, fontWeight:800, borderRadius:20, padding:"1px 6px" }}>{tab.badge}</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        {dashTab === "timetable" && (
+          <>
         {/* ── Timetable (right after quick actions · follows the viewing term) ── */}
         <DashboardTimetable
           slots={schedule.slots} sessions={schedule.privateSessions} loading={schedule.isLoading || !viewingTermId}
@@ -977,18 +1000,26 @@ const StudentDashboard = () => {
           blocked={!isPrivileged && !isTimetableModuleEnabled}
           blockedMessage={(language === "ar" ? settings.timetable_module_message_ar : settings.timetable_module_message) || t("The timetable isn't available right now.", "الجدول الدراسي غير متاح حالياً.")}
           isPrivate={isPrivateStudent} t={t} language={language} navigate={navigate} onJoin={handleJoinClass} />
-
+          </>
+        )}
+        {dashTab === "assignments" && (
+          <>
         {/* ── Assignments ── */}
         <AssignmentPreview items={assignments.list} subs={assignments.subs} loading={false} t={t} language={language} navigate={navigate} />
+          </>
+        )}
+        {dashTab === "notifications" && (
+          <>
+        {/* ── Notifications ── */}
+        <NotificationsCard items={notifications} unread={unreadCount} expanded={showAllNotifs} onToggle={() => setShowAllNotifs(v => !v)}
+          onRead={markAsRead} onReadAll={markAllAsRead} t={t} language={language} />
+          </>
+        )}
 
         {/* ── Upcoming exams ── */}
         {(isExamsModuleEnabled || isPrivileged) && (
           <ExamsPreview exams={upcomingExams} t={t} language={language} navigate={navigate} />
         )}
-
-        {/* ── Notifications ── */}
-        <NotificationsCard items={notifications} unread={unreadCount} expanded={showAllNotifs} onToggle={() => setShowAllNotifs(v => !v)}
-          onRead={markAsRead} onReadAll={markAllAsRead} t={t} language={language} />
 
         {/* ── Islamic Daily Feed (Quran · Hadith · Tawheed · Seerah · Events · News) ── */}
         <IslamicDailyFeed language={language} />

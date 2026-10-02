@@ -1345,7 +1345,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [pageIdx,      setPageIdx]     = useState(0);
   const [pageAyahs,    setPageAyahs]   = useState<Ayah[]>([]);
   const [fetchingPage, setFetchingPage] = useState(false);
-  const [showPrinted, setShowPrinted] = useState(false); // read the real printed Madinah Mushaf page before reciting
   const [printedBg, setPrintedBg] = useState("#fffdf6");
   // PageResults saved to DB have stripped ayah data (text, numberInSurah, surahName, surahNum).
   // buildQuestions() needs full Ayah objects with surah.number / surah.englishName.
@@ -2771,26 +2770,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 </span>
               </div>
             )}
-            {!isRecording && (
-              <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
-                <button onClick={()=>setShowPrinted(true)} style={{display:"inline-flex",alignItems:"center",gap:6,border:"1px solid #C9A84C",background:"#fff",color:"#78350F",borderRadius:99,padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
-                  📖 Printed page
-                </button>
-              </div>
-            )}
-            {!isRecording && <QuranPage/>}
-            {showPrinted && todayPages[pageIdx] && (
-              <div style={{position:"fixed",inset:0,zIndex:500,background:printedBg,display:"flex",flexDirection:"column"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",paddingTop:"calc(10px + env(safe-area-inset-top, 0px))",borderBottom:"1px solid rgba(0,0,0,.06)"}}>
-                  <button onClick={()=>setShowPrinted(false)} style={{border:"1px solid #e3e9e5",background:"#fff",borderRadius:99,padding:"6px 14px",fontSize:12,fontWeight:800,cursor:"pointer"}}>✕ Close</button>
-                  <span style={{fontSize:13,fontWeight:800,color:"#1a1a2e"}}>Page {todayPages[pageIdx]}</span>
-                </div>
-                <div style={{flex:1,overflowY:"auto",padding:"6px 6px 14px",display:"flex",flexDirection:"column"}}>
-                  <div style={{margin:"auto 0",width:"100%"}}>
-                    <MushafPageView page={todayPages[pageIdx]} seamless fitHeight={72} onBackground={setPrintedBg}/>
-                  </div>
-                </div>
-              </div>
+            {/* Printed Madinah Mushaf page — the only view, fitted so Start Reciting stays visible beneath it */}
+            {!isRecording && todayPages[pageIdx] && (
+              <MushafPageView page={todayPages[pageIdx]} seamless fitHeight={300} onBackground={setPrintedBg}/>
             )}
           </div>
 
