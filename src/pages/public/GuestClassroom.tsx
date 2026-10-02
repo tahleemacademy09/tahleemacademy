@@ -814,7 +814,15 @@ const GuestClassroom = () => {
           // viewers still see the guest's video exactly as their camera
           // published it. This used to force "none" for local too, which
           // made a guest's own camera preview feel mirror-reversed.
-          const wantedTransform = isLocal ? "scaleX(-1)" : "none";
+          let backCam = false;
+          if (isLocal) {
+            try {
+              const ms = vid.srcObject as MediaStream | null;
+              const fm = (ms?.getVideoTracks?.()[0]?.getSettings?.() as any)?.facingMode;
+              backCam = fm === "environment" || fm === "back";
+            } catch {}
+          }
+          const wantedTransform = isLocal && !backCam ? "scaleX(-1)" : "none";
           const curTransform = vid.style.getPropertyValue("transform");
           const curPriority  = vid.style.getPropertyPriority("transform");
           const curObjFit    = vid.style.getPropertyValue("object-fit");
