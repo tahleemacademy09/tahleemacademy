@@ -2,7 +2,7 @@ import AcademyStatusBanner from "@/components/shared/AcademyStatusBanner";
 import NotificationPermissionBanner from "@/components/NotificationPermissionBanner";
 import BackgroundRunBanner from "@/components/shared/BackgroundRunBanner";
 import { useImpersonation } from "@/hooks/useImpersonation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import IslamicDailyFeed from "@/components/dashboard/IslamicDailyFeed";
 import { DeadlineCountdown } from "@/components/dashboard/DeadlineCountdown";
@@ -16,10 +16,14 @@ import { useAuth } from "@/contexts/AuthContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { useVisibleRealtime } from "@/hooks/useVisibleRealtime";
 import { supabase } from "@/integrations/supabase/client";
+import { useQueryClient } from "@tanstack/react-query";
+import { useAcademySettings } from "@/hooks/useAcademySettings";
+import { useViewingTermId } from "@/hooks/useCurrentTermId";
+import { useStudentSchedule, useTermInfo, type TermInfo } from "@/hooks/useStudentSchedule";
 import {
   Clock, BookOpen, ClipboardList, Bell, TrendingUp, Calendar,
   GraduationCap, MessageCircle, ArrowRight, Video, Star, ChevronLeft,
-  ChevronRight, AlertTriangle, Mic, Lock, ClipboardCheck
+  ChevronRight, AlertTriangle, Mic, Lock, ClipboardCheck, CheckCheck
 } from "lucide-react";
 
 const toHijri = (date: Date) => {
@@ -70,129 +74,377 @@ const TEXT_MED    = "#4a7c59";
 const TEXT_LIGHT  = "#7a9e88";
 const BORDER      = "rgba(15,45,31,0.1)";
 
-/* ── Assignment Preview Widget ─────────────────────────────────────────── */
-const AssignmentPreview = ({ userId, t, language, navigate }: { userId: string; t: any; language: string; navigate: any }) => {
-  const [items, setItems] = useState<any[]>([]);
-  const [subs, setSubs]   = useState<Record<string, any>>({});
-  const [loading, setLoading] = useState(true);
+/* ── Shared building blocks ────────────────────────────────────────────── */
+const SectionCard = ({ icon: Icon, title, right, children, noPad, accent }: {
+  icon: any; title: string; right?: React.ReactNode; children: React.ReactNode; noPad?: boolean; accent?: string;
+}) => (
+  <section style={{ background:"#fff", border:`1px solid ${BORDER}`, borderRadius:18, boxShadow:"0 2px 12px rgba(0,0,0,.06)", overflow:"hidden" }}>
+    <div style={{ padding:"14px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, minWidth:0 }}>
+        <Icon style={{ width:16, height:16, color: accent || MID_GREEN, flexShrink:0 }} />
+        <h2 style={{ margin:0, fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>{title}</h2>
+      </div>
+      {right}
+    </div>
+    <div style={noPad ? undefined : { padding:"12px 14px" }}>{children}</div>
+  </section>
+);
 
-  useEffect(() => {
-    if (!userId) return;
-    const fetch = async () => {
-      // Get student level first
-      const { data: profileData } = await supabase.from("profiles").select("level, active_term_id").eq("user_id", userId).single();
-      const studentLevel: string | null = (profileData as any)?.level || null;
-      let activeTermId: string | null = (profileData as any)?.active_term_id || null;
-      if (!activeTermId) {
-        // No term chosen -> follow the live term (else every term's tasks showed).
-        const { data: ct } = await supabase.from("academic_terms").select("id").eq("is_current", true).maybeSingle();
-        activeTermId = (ct as any)?.id || null;
-      }
+const LinkButton = ({ onClick, children }: { onClick: () => void; children: React.ReactNode }) => (
+  <button onClick={onClick} style={{ fontSize:11, fontWeight:700, color:GOLD, background:"none", border:"none", cursor:"pointer", display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
+    {children}
+  </button>
+);
 
-      // NOTE: enrollments.course_id (not subject_id) is the real column —
-      // every other query against this table filters/selects by course_id.
-      // The subject_id version was returning a 400 from PostgREST every time.
-      const { data: enrollments } = await supabase.from("enrollments").select("course_id").eq("user_id", userId);
-      const { data: ttSlots }     = await supabase.from("subject_timetable" as any).select("subject_id, levels").eq("is_active", true);
-      const ttIds = (ttSlots||[]).filter((s:any) => {
-        if (!s.levels || s.levels.length === 0) return true;
-        if (!studentLevel) return false;
-        return s.levels.includes(studentLevel);
-      }).map((s:any)=>s.subject_id);
-      const ids = [...new Set([...(enrollments||[]).map((e:any)=>e.course_id), ...ttIds])].filter(Boolean);
-      if (!ids.length) { setLoading(false); return; }
-      // Only this term's assignments (plus legacy ones with no term_id yet) —
-      // otherwise a switch to a new term kept showing the previous term's
-      // assignments here, same bug as the subjects list used to have.
-      let asgnQ = supabase.from("subject_assignments").select("*, subjects(id,title,title_ar,level,levels)").in("subject_id", ids).neq("status", "draft");
-      if (activeTermId) asgnQ = asgnQ.or(`term_id.eq.${activeTermId},term_id.is.null`);
-      const { data: asgn } = await asgnQ.order("deadline",{ascending:true}).limit(10);
-      const list = (asgn || []).filter((a:any) => {
-        const subj = a.subjects;
-        if (!subj) return true;
-        const sl: string[] = subj.levels || (subj.level ? [subj.level] : []);
-        if (sl.length === 0) return true;
-        if (!studentLevel) return false;
-        return sl.includes(studentLevel);
-      }).slice(0, 5);
-      setItems(list);
-      if (list.length) {
-        const { data: s } = await supabase.from("assignment_submissions").select("*").eq("user_id", userId).in("assignment_id", list.map((a:any)=>a.id));
-        const m: Record<string,any> = {};
-        (s||[]).forEach((sub:any) => { m[sub.assignment_id] = sub; });
-        setSubs(m);
-      }
-      setLoading(false);
-    };
-    fetch();
-  }, [userId]);
+const EmptyState = ({ icon: Icon, text }: { icon: any; text: string }) => (
+  <div style={{ padding:"22px 12px", textAlign:"center" }}>
+    <Icon style={{ width:26, height:26, color:"#cbd5d0", margin:"0 auto 8px", display:"block" }} />
+    <p style={{ margin:0, fontSize:12, color:TEXT_LIGHT, fontWeight:600 }}>{text}</p>
+  </div>
+);
 
-  const pending = items.filter(a => !subs[a.id] && new Date(a.deadline||"9999") > new Date());
-  const overdue = items.filter(a => !subs[a.id] && a.deadline && new Date(a.deadline) < new Date());
-  if (!loading && items.length === 0) return null;
+const RowSkeleton = ({ rows = 2 }: { rows?: number }) => (
+  <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+    {Array.from({ length: rows }).map((_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}
+  </div>
+);
+
+const timeAgo = (iso: string, ar: boolean) => {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 1) return ar ? "الآن" : "now";
+  if (mins < 60) return ar ? `منذ ${mins} د` : `${mins}m ago`;
+  if (mins < 1440) return ar ? `منذ ${Math.floor(mins / 60)} س` : `${Math.floor(mins / 60)}h ago`;
+  return new Date(iso).toLocaleDateString(ar ? "ar-SA" : "en-GB", { day:"numeric", month:"short" });
+};
+
+/* ── Assignment data (single loader shared by the widget + the calendar) ── */
+async function loadAssignments(uid: string, level: string | null, termId: string | null) {
+  const { data: enrollments } = await supabase.from("enrollments").select("course_id").eq("user_id", uid);
+  const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id, levels").eq("is_active", true);
+  const ttIds = (ttSlots || []).filter((s: any) => {
+    if (!s.levels || s.levels.length === 0) return true;
+    return !!level && s.levels.includes(level);
+  }).map((s: any) => s.subject_id);
+  const ids = [...new Set([...(enrollments || []).map((e: any) => e.course_id), ...ttIds])].filter(Boolean);
+  if (!ids.length) return { list: [] as any[], subs: {} as Record<string, any> };
+
+  // This term's assignments plus legacy rows with no term_id yet — same rule as the Assignments page.
+  let q = supabase.from("subject_assignments").select("*, subjects(id,title,title_ar,level,levels)").in("subject_id", ids).neq("status", "draft");
+  if (termId) q = q.or(`term_id.eq.${termId},term_id.is.null`);
+  const { data: asgn } = await q.order("deadline", { ascending: true });
+  const list = (asgn || []).filter((a: any) => {
+    const subj = a.subjects;
+    if (!subj) return true;
+    const sl: string[] = subj.levels || (subj.level ? [subj.level] : []);
+    if (sl.length === 0) return true;
+    return !!level && sl.includes(level);
+  });
+  const subs: Record<string, any> = {};
+  if (list.length) {
+    const { data: s } = await supabase.from("assignment_submissions").select("*").eq("user_id", uid).in("assignment_id", list.map((a: any) => a.id));
+    (s || []).forEach((sub: any) => { subs[sub.assignment_id] = sub; });
+  }
+  return { list, subs };
+}
+
+/* ── Assignments widget ────────────────────────────────────────────────── */
+const AssignmentPreview = ({ items, subs, loading, t, language, navigate }: {
+  items: any[]; subs: Record<string, any>; loading: boolean; t: any; language: string; navigate: any;
+}) => {
+  const now = new Date();
+  const open = items.filter(a => !subs[a.id]);
+  const overdue = open.filter(a => a.deadline && new Date(a.deadline) < now);
+  const pending = open.filter(a => !a.deadline || new Date(a.deadline) >= now);
+  // Needs-attention first: overdue, then due soonest, then submitted/graded.
+  const shown = [...overdue, ...pending, ...items.filter(a => subs[a.id])].slice(0, 4);
 
   return (
-    <div style={{ background:"#fff", border:`1px solid ${BORDER}`, borderRadius:18, boxShadow:"0 2px 12px rgba(0,0,0,.06)", overflow:"hidden" }}>
-      <div style={{ padding:"14px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-          <ClipboardCheck style={{ width:16, height:16, color:MID_GREEN }} />
-          <span style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>{t("Assignments","الواجبات")}</span>
-          {overdue.length > 0 && <span style={{ background:"#c0392b", color:"#fff", fontSize:10, fontWeight:800, padding:"2px 7px", borderRadius:20 }}>{overdue.length} {t("overdue","متأخر")}</span>}
-          {pending.length > 0 && <span style={{ background:GOLD+"22", color:GOLD, fontSize:10, fontWeight:800, padding:"2px 7px", borderRadius:20, border:`1px solid ${GOLD}44` }}>{pending.length} {t("due","قادم")}</span>}
-        </div>
-        <button onClick={()=>navigate("/student/assignments")} style={{ fontSize:11, fontWeight:700, color:GOLD, background:"none", border:"none", cursor:"pointer", display:"flex", alignItems:"center", gap:4 }}>
-          {t("View all","عرض الكل")} <ArrowRight style={{ width:12, height:12 }} />
-        </button>
-      </div>
-      <div style={{ padding:"10px 14px", display:"flex", flexDirection:"column", gap:8 }}>
-        {loading ? (
-          <div style={{ height:60, display:"flex", alignItems:"center", justifyContent:"center" }}>
-            <div style={{ width:24, height:24, borderRadius:"50%", border:`3px solid ${MID_GREEN}`, borderTopColor:"transparent", animation:"spin .7s linear infinite" }} />
+    <SectionCard icon={ClipboardCheck} title={t("Assignments", "الواجبات")}
+      right={<LinkButton onClick={() => navigate("/student/assignments")}>{t("View all", "عرض الكل")} <ArrowRight style={{ width:12, height:12 }} /></LinkButton>}>
+      {loading ? <RowSkeleton /> : shown.length === 0 ? (
+        <EmptyState icon={ClipboardCheck} text={t("No assignments this term", "لا توجد واجبات لهذا الفصل")} />
+      ) : (
+        <>
+          {(overdue.length > 0 || pending.length > 0) && (
+            <div style={{ display:"flex", gap:6, marginBottom:10 }}>
+              {overdue.length > 0 && <span style={{ background:"#c0392b", color:"#fff", fontSize:10, fontWeight:800, padding:"2px 8px", borderRadius:20 }}>{overdue.length} {t("overdue","متأخر")}</span>}
+              {pending.length > 0 && <span style={{ background:GOLD+"22", color:"#8a6d1d", fontSize:10, fontWeight:800, padding:"2px 8px", borderRadius:20, border:`1px solid ${GOLD}44` }}>{pending.length} {t("due","قادم")}</span>}
+            </div>
+          )}
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {shown.map((a: any) => {
+              const sub  = subs[a.id];
+              const late = !sub && a.deadline && new Date(a.deadline) < now;
+              const done = sub?.status === "graded";
+              const sent = !!sub && !done;
+              const title = language === "ar" ? (a.title_ar || a.title) : a.title;
+              const subject = language === "ar" ? (a.subjects?.title_ar || a.subjects?.title) : a.subjects?.title;
+              return (
+                <div key={a.id} onClick={() => navigate("/student/assignments")} className="qa-tile"
+                  style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 10px", borderRadius:12, cursor:"pointer",
+                    background: late ? "#fff5f5" : done ? "#f0fdf4" : sent ? "#eff6ff" : "#f8fafb",
+                    border:`1px solid ${late ? "#fca5a5" : done ? "#86efac" : sent ? "#93c5fd" : BORDER}` }}>
+                  <div style={{ width:8, height:8, borderRadius:"50%", flexShrink:0, background: late ? "#c0392b" : done ? "#276749" : sent ? "#1d4ed8" : GOLD }} />
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:TEXT_DARK, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</div>
+                    {subject && <div style={{ fontSize:10, color:TEXT_LIGHT, marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{subject}</div>}
+                  </div>
+                  {late && <span style={{ fontSize:10, fontWeight:800, color:"#c0392b" }}>{t("Late","متأخر")}</span>}
+                  {done && <span style={{ fontSize:10, fontWeight:800, color:"#276749" }}>{sub.grade ?? "✓"}</span>}
+                  {sent && <span style={{ fontSize:10, fontWeight:800, color:"#1d4ed8" }}>{t("Sent","أُرسل")}</span>}
+                  {!sub && !late && a.deadline && <DeadlineCountdown deadline={a.deadline} t={t} compact />}
+                </div>
+              );
+            })}
           </div>
-        ) : items.slice(0,4).map((a:any) => {
-          const sub  = subs[a.id];
-          const late = !sub && a.deadline && new Date(a.deadline) < new Date();
-          const done = sub?.status === "graded";
-          const sent = !!sub && !done;
-          const title = language === "ar" ? (a.title_ar||a.title) : a.title;
+        </>
+      )}
+    </SectionCard>
+  );
+};
+
+/* ── Timetable widget (follows the term the student is viewing) ────────── */
+const DAY_LABELS = [
+  { en:"Sun", ar:"أحد" }, { en:"Mon", ar:"إثنين" }, { en:"Tue", ar:"ثلاثاء" }, { en:"Wed", ar:"أربعاء" },
+  { en:"Thu", ar:"خميس" }, { en:"Fri", ar:"جمعة" }, { en:"Sat", ar:"سبت" },
+];
+const localISODate = (d: Date) => d.toLocaleDateString("en-CA"); // yyyy-mm-dd in the student's timezone
+
+const DashboardTimetable = ({ slots, sessions, loading, term, isCurrentTerm, blocked, blockedMessage, isPrivate, t, language, navigate, onJoin }: {
+  slots: any[]; sessions: any[]; loading: boolean; term: TermInfo | null | undefined; isCurrentTerm: boolean;
+  blocked: boolean; blockedMessage: string; isPrivate: boolean; t: any; language: string; navigate: any; onJoin: (slot: any) => void;
+}) => {
+  const todayIdx = new Date().getDay();
+  const [sel, setSel] = useState(todayIdx);
+  const [, tick] = useState(0);
+  useEffect(() => { const iv = setInterval(() => tick(n => n + 1), 30_000); return () => clearInterval(iv); }, []);
+
+  const ar = language === "ar";
+  const termName = term ? (ar ? term.name_ar || term.name : term.name) : t("Current term", "الفصل الحالي");
+  const fmt = (d: string) => new Date(d).toLocaleDateString(ar ? "ar-SA" : "en-GB", { day:"numeric", month:"short" });
+
+  const title = t("My Timetable", "جدول دراستي");
+  const fullLink = <LinkButton onClick={() => navigate("/student/timetable")}>{t("Full schedule", "الجدول الكامل")} <ArrowRight style={{ width:12, height:12 }} /></LinkButton>;
+
+  if (blocked) {
+    return (
+      <SectionCard icon={Calendar} title={title}>
+        <EmptyState icon={Calendar} text={blockedMessage} />
+      </SectionCard>
+    );
+  }
+
+  const daySlots = slots.filter(s => s.day_of_week === sel);
+  const offset = (sel - todayIdx + 7) % 7;
+  const selDate = new Date(); selDate.setDate(selDate.getDate() + offset);
+  const daySessions = sessions.filter(s => s.session_date === localISODate(selDate));
+  const isToday = sel === todayIdx;
+  const total = daySlots.length + daySessions.length;
+
+  return (
+    <SectionCard icon={Calendar} title={title} right={fullLink} noPad>
+      {/* Term strip — makes it obvious which term this schedule belongs to */}
+      <div style={{ padding:"10px 14px", display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", borderBottom:`1px solid ${BORDER}`, background:"#fbfaf6" }}>
+        <span style={{ fontSize:11, fontWeight:800, color:MID_GREEN, background:"#e8f3ec", border:"1px solid #bcd9c5", padding:"3px 10px", borderRadius:20 }}>{termName}</span>
+        {term?.start_date && term?.end_date && (
+          <span style={{ fontSize:10, color:TEXT_LIGHT, fontWeight:600 }}>{fmt(term.start_date)} – {fmt(term.end_date)}</span>
+        )}
+        {!isCurrentTerm && term && (
+          <button onClick={() => navigate("/student/profile")} style={{ marginInlineStart:"auto", fontSize:10, fontWeight:800, color:"#92400e", background:"#fffbeb", border:"1px solid #f6d860", borderRadius:20, padding:"3px 10px", cursor:"pointer" }}>
+            {t("Past term · switch", "فصل سابق · تبديل")}
+          </button>
+        )}
+        {isPrivate && (
+          <span style={{ display:"inline-flex", alignItems:"center", gap:3, marginInlineStart: isCurrentTerm ? "auto" : 0, fontSize:10, fontWeight:700, color:"#6d28d9" }}>
+            <Lock style={{ width:10, height:10 }} /> {t("Private", "خاص")}
+          </span>
+        )}
+      </div>
+
+      {/* Day tabs */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:4, padding:"10px 10px 4px" }}>
+        {DAY_LABELS.map((d, i) => {
+          const has = slots.some(s => s.day_of_week === i);
+          const active = i === sel;
           return (
-            <div key={a.id} onClick={()=>navigate("/student/assignments")} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 10px", borderRadius:12, background: late?"#fff5f5": done?"#f0fdf4": sent?"#eff6ff":"#f8fafb", border:`1px solid ${late?"#fca5a5": done?"#86efac": sent?"#93c5fd":BORDER}`, cursor:"pointer" }}>
-              <div style={{ width:8, height:8, borderRadius:"50%", background: late?"#c0392b": done?"#276749": sent?"#1d4ed8":GOLD, flexShrink:0 }} />
-              <span style={{ fontSize:13, fontWeight:700, color:TEXT_DARK, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</span>
-              {late  && <span style={{ fontSize:10, fontWeight:800, color:"#c0392b" }}>{t("Late","متأخر")}</span>}
-              {done  && <span style={{ fontSize:10, fontWeight:800, color:"#276749" }}>{sub.grade ?? "✓"}</span>}
-              {sent  && <span style={{ fontSize:10, fontWeight:800, color:"#1d4ed8" }}>{t("Sent","أُرسل")}</span>}
-              {!sub && !late && a.deadline && <DeadlineCountdown deadline={a.deadline} t={t} compact />}
+            <button key={i} onClick={() => setSel(i)} aria-pressed={active}
+              style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:3, padding:"7px 0 6px", borderRadius:12, cursor:"pointer",
+                border: i === todayIdx && !active ? `1px solid ${GOLD}` : "1px solid transparent",
+                background: active ? `linear-gradient(135deg, ${MID_GREEN}, ${DARK_GREEN})` : "transparent" }}>
+              <span style={{ fontSize:10, fontWeight: i === todayIdx ? 800 : 600, color: active ? "#fff" : i === todayIdx ? "#8a6d1d" : TEXT_LIGHT }}>{ar ? d.ar : d.en}</span>
+              <span style={{ width:5, height:5, borderRadius:"50%", background: has ? (active ? GOLD_LIGHT : GOLD) : "transparent" }} />
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ padding:"6px 14px 14px", display:"flex", flexDirection:"column", gap:8 }}>
+        {loading ? <RowSkeleton /> : total === 0 ? (
+          <EmptyState icon={Calendar} text={
+            slots.length === 0 && sessions.length === 0
+              ? t("No classes scheduled for this term yet", "لا توجد حصص مجدولة لهذا الفصل بعد")
+              : t("No classes on this day", "لا توجد حصص في هذا اليوم")
+          } />
+        ) : (
+          <>
+            <div style={{ fontSize:10, fontWeight:700, color:TEXT_LIGHT }}>
+              {isToday ? t("Today", "اليوم") : ar ? DAY_LABELS[sel].ar : DAY_LABELS[sel].en} · {total} {t(total === 1 ? "class" : "classes", "حصص")}
+            </div>
+            {daySlots.map((slot: any) => {
+              const ml = isToday ? minsUntilTime(slot.start_time) : Infinity;
+              const me = isToday ? minsUntilTime(slot.end_time) : Infinity;
+              const isNow = isToday && ml <= 0 && me > 0;
+              const isSoon = isToday && ml > 0 && ml <= 15;
+              const isPast = isToday && me <= 0;
+              const canJoin = isNow || isSoon;
+              const name = ar ? slot.subjects?.title_ar || slot.subjects?.title : slot.subjects?.title;
+              const mins = Math.round(Math.abs(ml));
+              return (
+                <div key={slot.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 12px", borderRadius:12, opacity: isPast ? 0.55 : 1,
+                  background: isNow ? "#f0fff4" : isSoon ? "#fffbeb" : "#f8fafb", border:`1px solid ${isNow ? "#9ae6b4" : isSoon ? "#f6d860" : BORDER}` }}>
+                  <div style={{ flexShrink:0, textAlign:"center", minWidth:54 }}>
+                    <div style={{ fontSize:13, fontWeight:900, color: isNow ? MID_GREEN : TEXT_DARK }}>{to12hr(slot.start_time)}</div>
+                    {isNow && (
+                      <span style={{ display:"inline-flex", alignItems:"center", gap:3, fontSize:9, fontWeight:800, color:"#16a34a" }}>
+                        <span style={{ width:6, height:6, borderRadius:"50%", background:"#22c55e", animation:"livePulse 1.6s infinite" }} />{t("LIVE","مباشر")}
+                      </span>
+                    )}
+                    {isSoon && <span style={{ fontSize:9, fontWeight:700, color:"#b7791f" }}>{t(`in ${mins}m`, `بعد ${mins} د`)}</span>}
+                    {isPast && <span style={{ fontSize:9, color:TEXT_LIGHT }}>{t("Ended","انتهى")}</span>}
+                  </div>
+                  <div onClick={() => slot.subject_id && navigate(`/student/subjects/${slot.subject_id}`)} style={{ flex:1, minWidth:0, cursor: slot.subject_id ? "pointer" : "default" }}>
+                    <p style={{ fontSize:13, fontWeight:700, color:TEXT_DARK, margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{name}</p>
+                    <p style={{ fontSize:11, color:TEXT_LIGHT, margin:"2px 0 0", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                      {to12hr(slot.start_time)} – {to12hr(slot.end_time)}
+                      {slot.teacher?.full_name ? ` · ${slot.teacher.full_name}` : ""}
+                    </p>
+                  </div>
+                  {canJoin && (
+                    <button onClick={() => onJoin(slot)} style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 14px", borderRadius:10, border:"none", flexShrink:0, cursor:"pointer", fontSize:11, fontWeight:800,
+                      background: isNow ? `linear-gradient(135deg, ${MID_GREEN}, ${DARK_GREEN})` : `linear-gradient(135deg, ${GOLD_LIGHT}, ${GOLD})`, color: isNow ? "#fff" : DARK_GREEN }}>
+                      <Video style={{ width:11, height:11 }} />{t("Join","انضمام")}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+            {daySessions.map((s: any) => {
+              const name = ar ? s.subjects?.title_ar || s.subjects?.title : s.subjects?.title;
+              return (
+                <div key={s.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 12px", borderRadius:12, background:"#faf5ff", border:"1px solid #e9d5ff" }}>
+                  <div style={{ flexShrink:0, textAlign:"center", minWidth:54 }}>
+                    <div style={{ fontSize:13, fontWeight:900, color:"#6d28d9" }}>{to12hr(s.start_time)}</div>
+                    <Lock style={{ width:9, height:9, color:"#7c3aed" }} />
+                  </div>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <p style={{ fontSize:13, fontWeight:700, color:TEXT_DARK, margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{name || t("Private session","جلسة خاصة")}</p>
+                    <p style={{ fontSize:11, color:TEXT_LIGHT, margin:"2px 0 0" }}>{to12hr(s.start_time)} – {to12hr(s.end_time)} · {t("Private session","جلسة خاصة")}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
+      </div>
+    </SectionCard>
+  );
+};
+
+/* ── Upcoming exams (same eligibility rules as the Exams page) ─────────── */
+const ExamsPreview = ({ exams, t, language, navigate }: { exams: any[]; t: any; language: string; navigate: any }) => (
+  <SectionCard icon={ClipboardList} title={t("Upcoming Exams", "الامتحانات القادمة")}
+    right={<LinkButton onClick={() => navigate("/student/exams")}>{t("All exams", "كل الامتحانات")} <ArrowRight style={{ width:12, height:12 }} /></LinkButton>}>
+    {exams.length === 0 ? <EmptyState icon={ClipboardList} text={t("No exams waiting for you", "لا توجد امتحانات بانتظارك")} /> : (
+      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+        {exams.map((e: any) => {
+          const title = language === "ar" ? (e.title_ar || e.title) : e.title;
+          const end = e._extendedUntil || e.end_date;
+          const st = e._status as "in_progress" | "not_started" | "available";
+          return (
+            <div key={e.id} onClick={() => navigate("/student/exams")} className="qa-tile"
+              style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:12, cursor:"pointer",
+                background: st === "available" ? "#fff7f5" : "#f8fafb", border:`1px solid ${st === "available" ? "#fbc4b8" : BORDER}` }}>
+              <div style={{ width:8, height:8, borderRadius:"50%", flexShrink:0, background: st === "available" ? "#c0392b" : st === "in_progress" ? "#1d4ed8" : GOLD }} />
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:13, fontWeight:700, color:TEXT_DARK, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</div>
+                <div style={{ fontSize:10, color:TEXT_LIGHT, marginTop:1 }}>
+                  {st === "not_started" && e.start_date
+                    ? t("Opens ", "يفتح ") + new Date(e.start_date).toLocaleString(language === "ar" ? "ar-SA" : "en-GB", { day:"numeric", month:"short", hour:"numeric", minute:"2-digit" })
+                    : st === "in_progress" ? t("In progress — resume", "قيد التنفيذ — تابع")
+                    : t("Open now", "متاح الآن")}
+                </div>
+              </div>
+              {st !== "not_started" && end && <DeadlineCountdown deadline={end} t={t} compact />}
             </div>
           );
         })}
       </div>
-    </div>
+    )}
+  </SectionCard>
+);
+
+/* ── Notifications ─────────────────────────────────────────────────────── */
+const NotificationsCard = ({ items, unread, expanded, onToggle, onRead, onReadAll, t, language }: {
+  items: any[]; unread: number; expanded: boolean; onToggle: () => void; onRead: (id: string) => void; onReadAll: () => void; t: any; language: string;
+}) => {
+  if (items.length === 0) return null;
+  const shown = expanded ? items : items.slice(0, 3);
+  return (
+    <SectionCard icon={Bell} title={t("Notifications", "الإشعارات")}
+      right={
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          {unread > 0 && <span style={{ background:"#c0392b", color:"#fff", fontSize:10, fontWeight:800, padding:"2px 8px", borderRadius:20 }}>{unread}</span>}
+          {unread > 0 && <LinkButton onClick={onReadAll}><CheckCheck style={{ width:12, height:12 }} /> {t("Mark all read", "تعليم الكل كمقروء")}</LinkButton>}
+        </div>
+      }>
+      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+        {shown.map((n: any) => (
+          <div key={n.id} onClick={() => !n.is_read && onRead(n.id)} style={{ display:"flex", gap:10, padding:"9px 10px", borderRadius:12, cursor: n.is_read ? "default" : "pointer",
+            background: n.is_read ? "#fafafa" : "#fffdf5", border:`1px solid ${n.is_read ? BORDER : GOLD + "55"}` }}>
+            <div style={{ width:8, height:8, borderRadius:"50%", marginTop:5, flexShrink:0, background: n.is_read ? "#d1d5db" : GOLD }} />
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", gap:8 }}>
+                <span style={{ fontSize:12, fontWeight: n.is_read ? 600 : 800, color:TEXT_DARK }}>{n.title}</span>
+                <span style={{ fontSize:10, color:TEXT_LIGHT, flexShrink:0 }}>{n.created_at ? timeAgo(n.created_at, language === "ar") : ""}</span>
+              </div>
+              {n.message && <p style={{ margin:"2px 0 0", fontSize:11, color:TEXT_MED, lineHeight:1.45, display:"-webkit-box", WebkitLineClamp: expanded ? 4 : 2, WebkitBoxOrient:"vertical", overflow:"hidden" }}>{n.message}</p>}
+            </div>
+          </div>
+        ))}
+      </div>
+      {items.length > 3 && (
+        <button onClick={onToggle} style={{ width:"100%", marginTop:10, fontSize:11, fontWeight:700, color:MID_GREEN, background:"none", border:"none", cursor:"pointer" }}>
+          {expanded ? t("Show less", "عرض أقل") : t(`Show ${items.length - 3} more`, `عرض ${items.length - 3} إضافية`)}
+        </button>
+      )}
+    </SectionCard>
   );
 };
 
 const StudentDashboard = () => {
   const { t, language } = useLanguage();
-  const { user, profile, refreshProfile } = useAuth();
+  const { user, profile, refreshProfile, hasRole } = useAuth();
   const { effectiveUserId, isImpersonating } = useImpersonation();
-  const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
+  const { isPrivateStudent: hookPrivate, allowGeneralAccess: hookGeneral } = usePrivateStudent();
+  const { settings, isExamsModuleEnabled, isTimetableModuleEnabled } = useAcademySettings();
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [stats, setStats] = useState({ enrollments: 0, attemptsDone: 0, avgScore: 0, pendingGrading: 0, cgpa: 0 });
-  const [upcomingExams, setUpcomingExams] = useState<any[]>([]);
-  const [recentResults, setRecentResults] = useState<any[]>([]);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [attempts, setAttempts] = useState<any[]>([]);
+  const [eligibleExams, setEligibleExams] = useState<any[]>([]);
+  const [enrollmentCount, setEnrollmentCount] = useState(0);
   const [notifications, setNotifications] = useState<any[]>([]);
-  const [liveSubjects, setLiveSubjects] = useState<any[]>([]);
-  const [allExamsForCalendar, setAllExamsForCalendar] = useState<any[]>([]);
-  const [subjectAssignments, setSubjectAssignments] = useState<any[]>([]);
+  const [assignments, setAssignments] = useState<{ list: any[]; subs: Record<string, any> }>({ list: [], subs: {} });
   const [calendarMonth, setCalendarMonth] = useState(new Date());
+  const [selectedCalDay, setSelectedCalDay] = useState<number | null>(null);
   const [showAllNotifs, setShowAllNotifs] = useState(false);
   const [greetingSpoken, setGreetingSpoken] = useState(false);
   const [impersonatedProfile, setImpersonatedProfile] = useState<any>(null);
-  const [todayClasses, setTodayClasses] = useState<any[]>([]);
   const [nowTick, setNowTick] = useState(new Date());
-  const [privateSubjectIds, setPrivateSubjectIds] = useState<Set<string>>(new Set());
+  const firstLoad = useRef(true);
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Tick every 30s so countdowns stay fresh
   useEffect(() => {
@@ -208,6 +460,25 @@ const StudentDashboard = () => {
   }, [isImpersonating, effectiveUserId]);
 
   const displayProfile = isImpersonating ? impersonatedProfile : profile;
+
+  // Private/general access follows the student being viewed (not the admin viewing as them).
+  const isPrivileged = hasRole("admin") || hasRole("teacher");
+  const isPrivateStudent = isImpersonating ? (impersonatedProfile as any)?.student_type === "private" : hookPrivate;
+  const allowGeneralAccess = isImpersonating
+    ? (!isPrivateStudent || (impersonatedProfile as any)?.allow_general_access === true)
+    : hookGeneral;
+
+  // The term this student is viewing: their own switch (Settings) or the live term.
+  // Everything term-scoped on this page (timetable, assignments) keys off this one id.
+  const viewingTermId = useViewingTermId(displayProfile);
+  const { data: termInfo } = useTermInfo(viewingTermId);
+  const schedule = useStudentSchedule({
+    userId: effectiveUserId,
+    termId: viewingTermId,
+    level: (displayProfile as any)?.level || (displayProfile as any)?.course_level || null,
+    isPrivateStudent,
+    enabled: !isImpersonating || !!impersonatedProfile,
+  });
 
   // ── Voice greeting — short, simple, works everywhere ─────────
   useEffect(() => {
@@ -290,116 +561,85 @@ const StudentDashboard = () => {
   const hijri = toHijri(new Date());
   const today = new Date();
 
-  // Is any of today's scheduled classes happening right now?
-  const hasLiveClassNow = todayClasses.some((slot: any) => {
-    const startMins = minsUntilTime(slot.start_time);
-    const endMins   = minsUntilTime(slot.end_time);
-    return startMins <= 0 && endMins > 0;
-  });
+  // Is any of today's scheduled classes happening right now? (same window the timetable uses)
+  const hasLiveClassNow = schedule.slots.some((slot: any) =>
+    slot.day_of_week === today.getDay() && minsUntilTime(slot.start_time) <= 0 && minsUntilTime(slot.end_time) > 0);
+
+  const handleJoinClass = async (slot: any) => {
+    if (slot.live_url) { window.open(slot.live_url, "_blank", "noopener"); return; }
+    if (!slot.subject_id || isImpersonating) return;
+    const todayStr = localISODate(new Date());
+    const { data: existing } = await supabase.from("live_sessions").select("id").eq("subject_id", slot.subject_id).in("status", ["live","scheduled","active"]).limit(1).maybeSingle();
+    if (!existing) await supabase.from("live_sessions").insert({ subject_id: slot.subject_id, scheduled_at: `${todayStr}T${slot.start_time}`, duration_minutes: slot.duration_minutes||60, status: "scheduled", chat_enabled: true, hand_raise_enabled: true, recording_enabled: true, whiteboard_enabled: false, waiting_room_enabled: false } as any);
+    navigate(`/student/live-classes?subject=${slot.subject_id}&autoJoin=true`);
+  };
 
   useEffect(() => {
-    if (!effectiveUserId) return;
+    if (!effectiveUserId || (isImpersonating && !impersonatedProfile)) return;
+    let cancelled = false;
     const fetchData = async () => {
       setFetchError(null);
-      if (!isImpersonating) await refreshProfile().catch(() => {});
+      // Fresh profile once per visit so a level / term change made elsewhere is picked up.
+      if (firstLoad.current && !isImpersonating) { firstLoad.current = false; await refreshProfile().catch(() => {}); }
       try {
         const uid = effectiveUserId;
 
-        // ── iOS-safe timeout: 13 simultaneous queries can hang on slow
-        // cellular. Race the whole batch against a 12-second deadline so
-        // the spinner never freezes forever on iPhone.
+        // iOS-safe timeout: race the whole batch so the spinner never freezes on slow cellular.
         const withTimeout = <T,>(p: Promise<T>, ms = 12000): Promise<T> =>
           Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
 
-        const [enrollRes, gradedAttemptsRes, pendingAttemptsRes, notifsRes, assignmentsRes,
-          recentRes, allAttemptsRes, subjectsRes, calendarExamsRes, subAssignmentsRes, ttRes,
-          privateSubjectsRes, studentProfileRes] = await withTimeout(Promise.all([
+        const [enrollRes, attemptsRes, notifsRes, assignedRes, studentProfileRes, yearRes, regsRes] = await withTimeout(Promise.all([
           supabase.from("enrollments").select("id").eq("user_id", uid),
-          supabase.from("exam_attempts").select("percentage").eq("user_id", uid).eq("status", "graded"),
-          supabase.from("exam_attempts").select("id").eq("user_id", uid).eq("status", "submitted"),
+          supabase.from("exam_attempts").select("id, exam_id, status, score, total_points, percentage, passed, submitted_at, exams(title, title_ar, type, term, session)").eq("user_id", uid).order("submitted_at", { ascending: false }),
           supabase.from("notifications").select("*").eq("user_id", uid).order("created_at", { ascending: false }).limit(20),
-          supabase.from("exam_assignments").select("exam_id, exams(*)").eq("user_id", uid),
-          supabase.from("exam_attempts").select("*, exams(title, title_ar)").eq("user_id", uid).in("status", ["graded", "submitted"]).order("submitted_at", { ascending: false }).limit(5),
-          supabase.from("exam_attempts").select("exam_id, status, percentage").eq("user_id", uid),
-          supabase.from("subjects").select("*").eq("is_active", true).limit(4),
-          supabase.from("exams").select("id, title, title_ar, start_date, end_date, time_limit_minutes").eq("is_published", true),
-          supabase.from("subject_assignments").select("id, title, deadline, subject_id, term_id, subjects(title, title_ar, level, levels)").neq("status", "draft"),
-          supabase.from("subject_timetable" as any).select("*, subjects(id, title, title_ar, levels, level, visibility)").eq("day_of_week", new Date().getDay()).eq("is_active", true).order("start_time"),
-          (supabase as any).from("private_student_subjects").select("subject_id").eq("student_id", uid),
-          supabase.from("profiles").select("level, student_type, assigned_teacher_id, active_term_id").eq("user_id", uid).maybeSingle(),
+          supabase.from("exam_assignments").select("exam_id, extended_until, exams(*)").eq("user_id", uid),
+          supabase.from("profiles").select("level, student_type, active_term_id").eq("user_id", uid).maybeSingle(),
+          supabase.from("academic_years" as any).select("label").eq("is_current", true).maybeSingle(),
+          supabase.from("subject_registrations").select("subject_id").eq("user_id", uid),
         ]));
-      const gradedAttempts = gradedAttemptsRes.data || [];
-      const avg = gradedAttempts.length > 0 ? gradedAttempts.reduce((s, a) => s + (Number(a.percentage) || 0), 0) / gradedAttempts.length : 0;
-      const totalGP = gradedAttempts.reduce((sum, a) => sum + gradePoint(Number(a.percentage) || 0), 0);
-      const cgpa = gradedAttempts.length > 0 ? totalGP / gradedAttempts.length : 0;
-      const attemptCounts: Record<string, number> = {};
-      (allAttemptsRes.data || []).forEach((a: any) => { if (a.status !== "in_progress") attemptCounts[a.exam_id] = (attemptCounts[a.exam_id] || 0) + 1; });
-      const allAssigned = (assignmentsRes.data || []).map((a: any) => a.exams).filter((e: any) => e && e.is_published);      const upcoming = allAssigned.filter((e: any) => (attemptCounts[e.id] || 0) < (e.max_attempts || 1));
-      setStats({ enrollments: enrollRes.data?.length || 0, attemptsDone: gradedAttempts.length, avgScore: Math.round(avg), pendingGrading: pendingAttemptsRes.data?.length || 0, cgpa });
-      setUpcomingExams(upcoming.slice(0, 5));
-      setRecentResults(recentRes.data || []);
-      setNotifications(notifsRes.data || []);
-      setLiveSubjects(subjectsRes.data || []);
-      setAllExamsForCalendar(calendarExamsRes.data || []);
-      const studentProfileData = studentProfileRes?.data ?? null;
-      const studentLevelForCalendar = (studentProfileData as any)?.level || (displayProfile as any)?.level || null;
-      let activeTermIdForCalendar: string | null = (studentProfileData as any)?.active_term_id || null;
-      if (!activeTermIdForCalendar) {
-        const { data: ctc } = await supabase.from("academic_terms").select("id").eq("is_current", true).maybeSingle();
-        activeTermIdForCalendar = (ctc as any)?.id || null;
-      }
-      const filteredSubjAsgn = (subAssignmentsRes.data || []).filter((a: any) => {
-        // Same term_id.eq/null rule as the Assignments preview widget and
-        // the Assignments page — legacy (term_id-less) rows still show
-        // everywhere, but a new term's assignments won't leak into the
-        // calendar for a student still viewing an older term.
-        if (activeTermIdForCalendar && a.term_id && a.term_id !== activeTermIdForCalendar) return false;
-        const subj = a.subjects;
-        if (!subj) return true;
-        const sl: string[] = subj.levels || (subj.level ? [subj.level] : []);
-        if (sl.length === 0) return true;
-        if (!studentLevelForCalendar) return false;
-        return sl.includes(studentLevelForCalendar);
-      });
-      setSubjectAssignments(filteredSubjAsgn);
 
-      // ── Filter timetable slots to only what this student should see ────
-      // Get student's level and private subject IDs first
-      const privateIds = new Set<string>((privateSubjectsRes?.data || []).map((r: any) => String(r.subject_id)));
-      setPrivateSubjectIds(privateIds);
-
-      const studentLevel     = (studentProfileData as any)?.level || (displayProfile as any)?.level || null;
-      const studentType      = (studentProfileData as any)?.student_type || "group";
-
-      const allTtSlots: any[] = ttRes.data || [];
-      const filteredSlots = allTtSlots.filter(slot => {
-        const subj = slot.subjects as any;
-
-        // Private student: show only their assigned private subjects
-        // (plus general-access subjects if allowGeneralAccess is true)
-        if (studentType === "private") {
-          const isPrivateSubject = privateIds.has(slot.subject_id);
-          if (isPrivateSubject) return true;
-          // If private student doesn't have general access, hide all group slots
-          if (!allowGeneralAccess) return false;
+        const sp: any = studentProfileRes?.data ?? null;
+        const level: string | null = sp?.level || (displayProfile as any)?.level || null;
+        let termId: string | null = viewingTermId || sp?.active_term_id || null;
+        if (!termId) {
+          const { data: ct } = await supabase.from("academic_terms").select("id").eq("is_current", true).maybeSingle();
+          termId = (ct as any)?.id || null;
         }
 
-        // Slot has explicit level restrictions — check student's level matches
-        const slotLevels: string[] = slot.levels || [];
-        const subjLevels: string[] = subj?.levels || (subj?.level ? [subj.level] : []);
-        const allLevels = [...new Set([...slotLevels, ...subjLevels])];
-
-        if (allLevels.length > 0 && studentLevel) {
-          return allLevels.includes(studentLevel);
+        // ── Exam eligibility — identical rules to the Exams page ──
+        const sessionLabel = (yearRes?.data as any)?.label as string | undefined;
+        const asn: any[] = assignedRes.data || [];
+        const subjectIds = [...new Set(asn.map(a => a.exams?.subject_id).filter(Boolean))] as string[];
+        let privateSubjects = new Set<string>();
+        if (subjectIds.length) {
+          const { data: rows } = await supabase.from("subjects").select("id, visibility").in("id", subjectIds);
+          privateSubjects = new Set((rows || []).filter((s: any) => s.visibility === "private").map((s: any) => s.id));
         }
+        const registered = new Set((regsRes.data || []).map((r: any) => r.subject_id));
+        const seen = new Set<string>();
+        const eligible = asn
+          .map(a => (a.exams ? { ...a.exams, _extendedUntil: a.extended_until } : null))
+          .filter((e: any) => {
+            if (!e?.id || seen.has(e.id) || !e.is_published || e.is_entrance) return false;
+            if (sessionLabel && e.session && e.session !== sessionLabel) return false;
+            if (e.subject_id && privateSubjects.has(e.subject_id) && !registered.has(e.subject_id)) return false;
+            const levels = (e.level || "").split(",").map((l: string) => l.trim()).filter(Boolean);
+            if (levels.length && level && !levels.includes(level)) return false;
+            seen.add(e.id);
+            return true;
+          });
 
-        // No level restriction → visible to all group students
-        return true;
-      });
+        const asg = await withTimeout(loadAssignments(uid, level, termId));
+        if (cancelled) return;
 
-      setTodayClasses(filteredSlots);
+        setEnrollmentCount(enrollRes.data?.length || 0);
+        setAttempts(attemptsRes.data || []);
+        setNotifications(notifsRes.data || []);
+        setEligibleExams(eligible);
+        setAssignments(asg);
         setLoading(false);
       } catch (err) {
+        if (cancelled) return;
         console.error("Dashboard data fetch error:", err);
         setFetchError(t(
           "Unable to load your dashboard. Please check your connection and try again.",
@@ -409,7 +649,9 @@ const StudentDashboard = () => {
       }
     };
     fetchData();
-  }, [effectiveUserId]);
+    return () => { cancelled = true; };
+    // Re-runs when the viewed term changes, so term-scoped data never goes stale.
+  }, [effectiveUserId, viewingTermId, reloadKey, impersonatedProfile?.user_id]);
 
   // ── Realtime notifications — live updates ─────────
   // Realtime socket kept open ONLY while the tab is visible. A backgrounded tab
@@ -451,6 +693,80 @@ const StudentDashboard = () => {
     }
   }, [effectiveUserId]);
 
+  // ── Live sync: admin edits to the timetable / terms / assignments / exams show up without a refresh ──
+  const softReload = () => {
+    if (reloadTimer.current) clearTimeout(reloadTimer.current);
+    reloadTimer.current = setTimeout(() => setReloadKey(k => k + 1), 800);
+  };
+  useVisibleRealtime(
+    () => {
+      if (!effectiveUserId) return null;
+      const refreshSchedule = () => queryClient.invalidateQueries({ queryKey: ["student-schedule"] });
+      const refreshTerm = () => {
+        queryClient.invalidateQueries({ queryKey: ["current-term-id"] });
+        queryClient.invalidateQueries({ queryKey: ["academic-term"] });
+        refreshSchedule(); softReload();
+      };
+      const pg = (table: string, cb: () => void, filter?: string) =>
+        ({ table, cb, filter });
+      let ch = supabase.channel("student-dashboard-sync");
+      [
+        pg("subject_timetable", refreshSchedule),
+        pg("private_student_timetable", refreshSchedule),
+        pg("private_sessions", refreshSchedule),
+        pg("academic_terms", refreshTerm),
+        pg("subject_assignments", softReload),
+        pg("exams", softReload),
+        pg("exam_assignments", softReload, `user_id=eq.${effectiveUserId}`),
+        pg("exam_attempts", softReload, `user_id=eq.${effectiveUserId}`),
+      ].forEach(({ table, cb, filter }) => {
+        ch = ch.on("postgres_changes" as any, { event: "*", schema: "public", table, ...(filter ? { filter } : {}) }, cb);
+      });
+      return ch.subscribe();
+    },
+    [effectiveUserId],
+    () => { queryClient.invalidateQueries({ queryKey: ["student-schedule"] }); queryClient.invalidateQueries({ queryKey: ["current-term-id"] }); softReload(); },
+  );
+
+  // ── Stats / upcoming exams — same definitions as Transcripts + Exams pages ──
+  const { stats, upcomingExams, recentResults } = useMemo(() => {
+    const now = Date.now();
+    const pct = (a: any) => Number(a.percentage) || 0;
+    // Only RELEASED attempts count (students never see unreleased scores), scoped to the latest session like Transcripts.
+    const released = attempts.filter(a => a.status === "released");
+    const sessions = [...new Set(released.map(a => a.exams?.session).filter(Boolean))].sort() as string[];
+    const latest = sessions[sessions.length - 1] || null;
+    const scoped = latest ? released.filter(a => a.exams?.session === latest) : released;
+    const avg = scoped.length ? scoped.reduce((s, a) => s + pct(a), 0) / scoped.length : 0;
+    const cgpa = scoped.length ? scoped.reduce((s, a) => s + gradePoint(pct(a)), 0) / scoped.length : 0;
+
+    const counts: Record<string, number> = {};
+    const inProgress = new Set<string>();
+    attempts.forEach(a => { if (a.status === "in_progress") inProgress.add(a.exam_id); else counts[a.exam_id] = (counts[a.exam_id] || 0) + 1; });
+    const rank: Record<string, number> = { in_progress: 0, available: 1, not_started: 2 };
+    const upcoming = eligibleExams
+      .filter(e => {
+        if (inProgress.has(e.id)) return true;
+        if (settings.current_term && (e.term || "first") !== settings.current_term) return false;
+        if ((counts[e.id] || 0) >= (e.max_attempts || 1)) return false;
+        const end = e._extendedUntil || e.end_date;
+        return !(end && new Date(end).getTime() < now);
+      })
+      .map(e => ({ ...e, _status: inProgress.has(e.id) ? "in_progress" : e.start_date && new Date(e.start_date).getTime() > now ? "not_started" : "available" }))
+      .sort((a, b) => (rank[a._status] - rank[b._status]) || (new Date(a.end_date || a.start_date || 8.64e15).getTime() - new Date(b.end_date || b.start_date || 8.64e15).getTime()))
+      .slice(0, 4);
+
+    return {
+      stats: {
+        enrollments: enrollmentCount, attemptsDone: scoped.length, avgScore: Math.round(avg), cgpa, session: latest,
+        // submitted OR graded-but-not-yet-released: the student is still waiting on a result
+        pendingGrading: attempts.filter(a => a.status === "submitted" || a.status === "graded").length,
+      },
+      upcomingExams: upcoming,
+      recentResults: scoped.slice(0, 3),
+    };
+  }, [attempts, eligibleExams, enrollmentCount, settings.current_term]);
+
   const calendarYear = calendarMonth.getFullYear();
   const calendarMonthIdx = calendarMonth.getMonth();
   const daysInMonth = new Date(calendarYear, calendarMonthIdx + 1, 0).getDate();
@@ -458,29 +774,26 @@ const StudentDashboard = () => {
   const getEventsForDay = (day: number) => {
     const dateStr = `${calendarYear}-${String(calendarMonthIdx + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const events: { type: string; title: string; color: string }[] = [];
-    allExamsForCalendar.forEach(e => { if (e.start_date?.startsWith(dateStr)) events.push({ type: 'exam', title: e.title_ar || e.title, color: '#c0392b' }); });
-    subjectAssignments.forEach(a => { if (a.deadline?.startsWith(dateStr)) events.push({ type: 'assignment', title: a.title, color: GOLD }); });
+    eligibleExams.forEach(e => { if (e.start_date && localISODate(new Date(e.start_date)) === dateStr) events.push({ type: 'exam', title: (language === "ar" ? e.title_ar : null) || e.title, color: '#c0392b' }); });
+    assignments.list.forEach(a => { if (a.deadline && localISODate(new Date(a.deadline)) === dateStr) events.push({ type: 'assignment', title: (language === "ar" ? a.title_ar : null) || a.title, color: GOLD }); });
     return events;
   };
-  const prevMonth = () => setCalendarMonth(new Date(calendarYear, calendarMonthIdx - 1, 1));
-  const nextMonth = () => setCalendarMonth(new Date(calendarYear, calendarMonthIdx + 1, 1));
+  const prevMonth = () => { setSelectedCalDay(null); setCalendarMonth(new Date(calendarYear, calendarMonthIdx - 1, 1)); };
+  const nextMonth = () => { setSelectedCalDay(null); setCalendarMonth(new Date(calendarYear, calendarMonthIdx + 1, 1)); };
+  // An admin viewing-as-student must never mark the student's notifications as read.
   const markAsRead = async (id: string) => {
-    await supabase.from("notifications").update({ is_read: true }).eq("id", id);
+    if (isImpersonating) return;
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+    await supabase.from("notifications").update({ is_read: true }).eq("id", id);
+  };
+  const markAllAsRead = async () => {
+    if (isImpersonating) return;
+    setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+    await supabase.from("notifications").update({ is_read: true }).eq("user_id", effectiveUserId).eq("is_read", false);
   };
   const unreadCount = notifications.filter(n => !n.is_read).length;
   const circumference = 2 * Math.PI * 45;
   const strokeDashoffset = circumference - ((stats.cgpa / 4.0) * circumference);
-
-  const card: React.CSSProperties = {
-    background: "#fff", border: `1px solid ${BORDER}`,
-    borderRadius: 18, boxShadow: "0 2px 12px rgba(0,0,0,.06)", overflow: "hidden",
-  };
-
-  const sectionTitle = (en: string, ar: string) => (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 16, fontWeight: 800, color: TEXT_DARK, fontFamily: "'Playfair Display', serif" }}>{t(en, ar)}</div>    </div>
-  );
 
   // ── Loading / Pending State ─────────
   if (loading) return (
@@ -495,7 +808,7 @@ const StudentDashboard = () => {
       <AlertTriangle className="mb-4 h-12 w-12 text-destructive" aria-hidden="true" />
       <h2 className="mb-2 text-xl font-bold">{t("Something went wrong", "حدث خطأ ما")}</h2>
       <p className="mb-6 max-w-sm text-muted-foreground">{fetchError}</p>
-      <Button onClick={() => { setLoading(true); setFetchError(null); }}>
+      <Button onClick={() => { setLoading(true); setFetchError(null); setReloadKey(k => k + 1); }}>
         {t("Try Again", "حاول مجدداً")}
       </Button>
     </div>
@@ -657,91 +970,32 @@ const StudentDashboard = () => {
           </div>
         </div>
 
-        {/* ── Assignments Preview ── */}
-        <AssignmentPreview userId={effectiveUserId} t={t} language={language} navigate={navigate} />
+        {/* ── Timetable (right after quick actions · follows the viewing term) ── */}
+        <DashboardTimetable
+          slots={schedule.slots} sessions={schedule.privateSessions} loading={schedule.isLoading || !viewingTermId}
+          term={termInfo} isCurrentTerm={termInfo ? termInfo.is_current : true}
+          blocked={!isPrivileged && !isTimetableModuleEnabled}
+          blockedMessage={(language === "ar" ? settings.timetable_module_message_ar : settings.timetable_module_message) || t("The timetable isn't available right now.", "الجدول الدراسي غير متاح حالياً.")}
+          isPrivate={isPrivateStudent} t={t} language={language} navigate={navigate} onJoin={handleJoinClass} />
+
+        {/* ── Assignments ── */}
+        <AssignmentPreview items={assignments.list} subs={assignments.subs} loading={false} t={t} language={language} navigate={navigate} />
+
+        {/* ── Upcoming exams ── */}
+        {(isExamsModuleEnabled || isPrivileged) && (
+          <ExamsPreview exams={upcomingExams} t={t} language={language} navigate={navigate} />
+        )}
+
+        {/* ── Notifications ── */}
+        <NotificationsCard items={notifications} unread={unreadCount} expanded={showAllNotifs} onToggle={() => setShowAllNotifs(v => !v)}
+          onRead={markAsRead} onReadAll={markAllAsRead} t={t} language={language} />
 
         {/* ── Islamic Daily Feed (Quran · Hadith · Tawheed · Seerah · Events · News) ── */}
         <IslamicDailyFeed language={language} />
 
-        {/* ── Today's Classes ── */}
-        {todayClasses.length > 0 && (!isPrivateStudent || allowGeneralAccess) && (() => {
-          const handleJoinClass = async (slot: any) => {
-            if (slot.live_url) { window.open(slot.live_url, "_blank", "noopener"); return; }
-            if (!slot.subject_id) return;
-            const todayStr = new Date().toISOString().split("T")[0];
-            const { data: existing } = await supabase.from("live_sessions").select("id").eq("subject_id", slot.subject_id).in("status", ["live","scheduled","active"]).limit(1).maybeSingle();
-            if (!existing) await supabase.from("live_sessions").insert({ subject_id: slot.subject_id, scheduled_at: `${todayStr}T${slot.start_time}`, duration_minutes: slot.duration_minutes||60, status: "scheduled", chat_enabled: true, hand_raise_enabled: true, recording_enabled: true, whiteboard_enabled: false, waiting_room_enabled: false } as any);
-            navigate(`/student/live-classes?subject=${slot.subject_id}&autoJoin=true`);
-          };
-          return (
-          <div style={card}>
-            <div style={{ padding:"16px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <Video style={{ width:16, height:16, color:MID_GREEN }} />
-                <span style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>{t("Today's Classes","حصص اليوم")}</span>
-              </div>
-              <button onClick={() => navigate("/student/timetable")} style={{ fontSize:11, fontWeight:600, color:GOLD, background:"none", border:"none", cursor:"pointer" }}>
-                {t("Full schedule","الجدول الكامل")}
-              </button>
-            </div>
-            <div style={{ padding:"12px 16px", display:"flex", flexDirection:"column", gap:8 }}>
-              {todayClasses.map((slot: any) => {
-                const mins    = minsUntilTime(slot.start_time);
-                const isNow   = mins >= -30 && mins <= 0;
-                const isSoon  = mins > 0 && mins <= 15;
-                const isPast  = mins < -30;
-                const canJoin = isNow || isSoon;
-                const title   = language === "ar" ? slot.subjects?.title_ar || slot.subjects?.title : slot.subjects?.title;
-                const minsRnd = Math.round(Math.abs(mins));
-                return (
-                  <div key={slot.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 12px", borderRadius:12, background: isNow ? "#f0fff4" : isSoon ? "#fffbeb" : "#f8fafb", border:`1px solid ${isNow ? "#9ae6b4" : isSoon ? "#f6d860" : BORDER}`, opacity: isPast ? .5 : 1 }}>
-                    <div style={{ flexShrink:0, textAlign:"center", minWidth:52 }}>
-                      <div style={{ fontSize:13, fontWeight:900, color: isNow ? MID_GREEN : TEXT_DARK }}>{to12hr(slot.start_time)}</div>
-                      {isNow  && (
-                        <span style={{ display:"inline-flex", alignItems:"center", gap:3, fontSize:9, fontWeight:800, color:"#16a34a" }}>
-                          <span style={{ width:6, height:6, borderRadius:"50%", background:"#22c55e", animation:"livePulse 1.6s infinite" }} />
-                          {t("LIVE","مباشر")}
-                        </span>
-                      )}
-                      {isSoon && <span style={{ fontSize:9, fontWeight:700, color:"#b7791f" }}>{minsRnd}m</span>}
-                      {isPast && <span style={{ fontSize:9, color:TEXT_LIGHT }}>{t("Ended","انتهى")}</span>}
-                    </div>
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <p style={{ fontSize:13, fontWeight:700, color:TEXT_DARK, margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</p>
-                      <p style={{ fontSize:11, color:TEXT_LIGHT, margin:"2px 0 0" }}>
-                        {to12hr(slot.start_time)} – {to12hr(slot.end_time)}
-                        {slot.duration_minutes ? ` · ${slot.duration_minutes}m` : ""}
-                      </p>
-                    </div>
-                    {!isPast && (
-                      canJoin ? (
-                        <button onClick={() => handleJoinClass(slot)} style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 14px", borderRadius:10, border:"none", background: isNow ? `linear-gradient(135deg, ${MID_GREEN}, ${DARK_GREEN})` : `linear-gradient(135deg, ${GOLD_LIGHT}, ${GOLD})`, color: isNow ? "#fff" : DARK_GREEN, fontSize:11, fontWeight:800, cursor:"pointer", flexShrink:0, boxShadow: isNow ? "0 4px 12px rgba(15,45,31,0.25)" : `0 4px 12px ${GOLD}55` }}>
-                          <Video style={{ width:11, height:11 }} />
-                          {t("Join","انضمام")}
-                        </button>
-                      ) : (
-                        <div style={{ fontSize:9, color:TEXT_LIGHT, flexShrink:0, textAlign:"center" }}>
-                          <Clock style={{ width:10, height:10, display:"block", margin:"0 auto 2px" }} />
-                          {minsRnd > 60 ? `${Math.floor(minsRnd/60)}h` : `${minsRnd}m`}
-                        </div>
-                      )
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          );
-        })()}
-
-        {/* ── Academic Snapshot ── */}
-        <div style={card}>
-          <div style={{ padding:"16px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", gap:8 }}>
-            <TrendingUp style={{ width:16, height:16, color:MID_GREEN }} />
-            <span style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>
-              {t("Academic Snapshot", "نظرة أكاديمية")}
-            </span>
-          </div>
+        {/* ── Academic Snapshot (released results only — matches Transcripts) ── */}
+        <SectionCard icon={TrendingUp} title={t("Academic Snapshot", "نظرة أكاديمية")} noPad
+          right={stats.session ? <span style={{ fontSize:10, fontWeight:800, color:MID_GREEN, background:"#e8f3ec", border:"1px solid #bcd9c5", padding:"3px 10px", borderRadius:20 }}>{stats.session}</span> : undefined}>
           <div style={{ padding:"18px 16px" }}>
             <div style={{ display:"flex", alignItems:"center", gap:18, flexWrap:"wrap" as const }}>
               <div style={{ position:"relative", flexShrink:0 }}>
@@ -756,13 +1010,13 @@ const StudentDashboard = () => {
                   <span style={{ fontSize:10, fontWeight:600, color:TEXT_LIGHT }}>CGPA</span>
                 </div>
               </div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, flex:1 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, flex:1, minWidth:200 }}>
                 {[
                   { icon:BookOpen, label:t("Enrollments","التسجيلات"), value:stats.enrollments, color:"#276749", grad:"linear-gradient(135deg,#48bb78,#276749)", link:"/student/courses" },
-                  { icon:ClipboardList, label:t("Graded Exams","اختبارات مصححة"), value:stats.attemptsDone, color:"#b7791f", grad:`linear-gradient(135deg, ${GOLD_LIGHT}, ${GOLD})`, link:"/student/exams" },
+                  { icon:ClipboardList, label:t("Graded Exams","اختبارات مصححة"), value:stats.attemptsDone, color:"#b7791f", grad:`linear-gradient(135deg, ${GOLD_LIGHT}, ${GOLD})`, link:"/student/transcripts" },
                   { icon:TrendingUp, label:t("Avg Score","متوسط الدرجات"), value:`${stats.avgScore}%`, color:"#2b6cb0", grad:"linear-gradient(135deg,#4299e1,#2b6cb0)", link:"/student/transcripts" },
                   { icon:Bell, label:t("Pending","بانتظار المراجعة"), value:stats.pendingGrading, color:"#c0392b", grad:"linear-gradient(135deg,#f56565,#c0392b)", link:"/student/exams" },
-                ].map((s,i) => (
+                ].map((s, i) => (
                   <div key={i} onClick={() => navigate(s.link)} className="qa-tile"
                     style={{ textAlign:"center", borderRadius:14, background:"#fff", padding:"12px 8px", cursor:"pointer", border:`1px solid ${BORDER}`, boxShadow:"0 2px 8px rgba(0,0,0,.04)" }}>
                     <div style={{ width:34, height:34, borderRadius:10, background:s.grad, display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 7px", boxShadow:`0 3px 10px ${s.color}33` }}>
@@ -774,54 +1028,72 @@ const StudentDashboard = () => {
                 ))}
               </div>
             </div>
-          </div>        </div>
+
+            {recentResults.length > 0 && (
+              <div style={{ marginTop:16, paddingTop:14, borderTop:`1px solid ${BORDER}` }}>
+                <div style={{ fontSize:11, fontWeight:800, color:TEXT_MED, marginBottom:8 }}>{t("Recent results", "أحدث النتائج")}</div>
+                <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                  {recentResults.map((r: any) => {
+                    const pct = Math.round(Number(r.percentage) || 0);
+                    const title = language === "ar" ? (r.exams?.title_ar || r.exams?.title) : r.exams?.title;
+                    return (
+                      <div key={r.id} onClick={() => navigate(`/student/results/${r.id}`)} className="qa-tile"
+                        style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 10px", borderRadius:10, cursor:"pointer", background:"#f8fafb", border:`1px solid ${BORDER}` }}>
+                        <span style={{ flex:1, minWidth:0, fontSize:12, fontWeight:700, color:TEXT_DARK, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</span>
+                        <span style={{ fontSize:12, fontWeight:900, color: r.passed ? "#276749" : "#c0392b" }}>{pct}%</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </SectionCard>
 
         {/* ── Academic Calendar ── */}
-        <div style={card}>
-          <div style={{ padding:"16px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-              <Calendar style={{ width:16, height:16, color:MID_GREEN }} />
-              <span style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>{t("Academic Calendar","التقويم الأكاديمي")}</span>
-            </div>
+        <SectionCard icon={Calendar} title={t("Academic Calendar","التقويم الأكاديمي")} noPad
+          right={
             <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-              <button onClick={prevMonth} style={{ width:28, height:28, borderRadius:8, border:`1px solid ${BORDER}`, background:"#f8fafb", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <button onClick={prevMonth} aria-label="Previous month" style={{ width:28, height:28, borderRadius:8, border:`1px solid ${BORDER}`, background:"#f8fafb", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
                 <ChevronLeft style={{ width:14, height:14, color:TEXT_MED }} />
               </button>
               <div style={{ textAlign:"center", minWidth:100 }}>
                 <div style={{ fontSize:12, fontWeight:700, color:TEXT_DARK }}>
                   {calendarMonth.toLocaleDateString(language==="ar"?"ar-SA":"en-US", { month:"long", year:"numeric" })}
                 </div>
-                <div style={{ fontSize:9, color:TEXT_LIGHT }} dir="rtl">                  {(() => { const h=toHijri(new Date(calendarYear,calendarMonthIdx,15)); return `${h.month} ${h.year} هـ`; })()}
+                <div style={{ fontSize:9, color:TEXT_LIGHT }} dir="rtl">
+                  {(() => { const h = toHijri(new Date(calendarYear, calendarMonthIdx, 15)); return `${h.month} ${h.year} هـ`; })()}
                 </div>
               </div>
-              <button onClick={nextMonth} style={{ width:28, height:28, borderRadius:8, border:`1px solid ${BORDER}`, background:"#f8fafb", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <button onClick={nextMonth} aria-label="Next month" style={{ width:28, height:28, borderRadius:8, border:`1px solid ${BORDER}`, background:"#f8fafb", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
                 <ChevronRight style={{ width:14, height:14, color:TEXT_MED }} />
               </button>
             </div>
-          </div>
+          }>
           <div style={{ padding:"14px 14px" }}>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:4, marginBottom:6 }}>
-              {(language==="ar" ? ["أحد","إثن","ثلا","أرب","خمي","جمع","سبت"] : ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]).map(d=>(
+              {(language==="ar" ? ["أحد","إثن","ثلا","أرب","خمي","جمع","سبت"] : ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]).map(d => (
                 <div key={d} style={{ textAlign:"center", fontSize:10, fontWeight:600, color:TEXT_LIGHT, padding:"4px 0" }}>{d}</div>
               ))}
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:4 }}>
-              {Array.from({length:firstDayOfWeek}).map((_,i)=><div key={`e${i}`} style={{ height:40 }} />)}
-              {Array.from({length:daysInMonth}).map((_,i)=>{
-                const day=i+1; const events=getEventsForDay(day);
-                const isToday=day===today.getDate()&&calendarMonthIdx===today.getMonth()&&calendarYear===today.getFullYear();
-                const hijriDay=toHijri(new Date(calendarYear,calendarMonthIdx,day));
+              {Array.from({ length: firstDayOfWeek }).map((_, i) => <div key={`e${i}`} style={{ height:40 }} />)}
+              {Array.from({ length: daysInMonth }).map((_, i) => {
+                const day = i + 1; const events = getEventsForDay(day);
+                const isToday = day === today.getDate() && calendarMonthIdx === today.getMonth() && calendarYear === today.getFullYear();
+                const hijriDay = toHijri(new Date(calendarYear, calendarMonthIdx, day));
                 return (
-                  <div key={day} title={events.map(e=>e.title).join(", ")}
-                    style={{ height:40, borderRadius:8, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", position:"relative",
-                      background:isToday?DARK_GREEN:events.length>0?"#f0fff4":"transparent",
-                      border: isToday?`1px solid ${DARK_GREEN}`:events.length>0?`1px solid #9ae6b4`:`1px solid transparent`,
+                  <div key={day} onClick={() => setSelectedCalDay(day === selectedCalDay ? null : day)}
+                    style={{ height:40, borderRadius:8, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", position:"relative", cursor:"pointer",
+                      background: isToday ? DARK_GREEN : events.length > 0 ? "#f0fff4" : "transparent",
+                      border: isToday ? `1px solid ${DARK_GREEN}` : events.length > 0 ? "1px solid #9ae6b4" : "1px solid transparent",
+                      outline: selectedCalDay === day ? `2px solid ${GOLD}` : "none", outlineOffset:1,
                     }}>
-                    <span style={{ fontSize:12, fontWeight:isToday||events.length>0?700:400, color:isToday?"#fff":TEXT_DARK, lineHeight:1 }}>{day}</span>
-                    <span style={{ fontSize:8, color:isToday?"rgba(255,255,255,0.6)":TEXT_LIGHT, lineHeight:1, marginTop:1 }} dir="rtl">{hijriDay.day}</span>
-                    {events.length>0 && (
+                    <span style={{ fontSize:12, fontWeight: isToday || events.length > 0 ? 700 : 400, color: isToday ? "#fff" : TEXT_DARK, lineHeight:1 }}>{day}</span>
+                    <span style={{ fontSize:8, color: isToday ? "rgba(255,255,255,0.6)" : TEXT_LIGHT, lineHeight:1, marginTop:1 }} dir="rtl">{hijriDay.day}</span>
+                    {events.length > 0 && (
                       <div style={{ display:"flex", gap:2, position:"absolute", bottom:3 }}>
-                        {events.slice(0,3).map((e,ei)=><div key={ei} style={{ width:4, height:4, borderRadius:"50%", background:e.color }} />)}
+                        {events.slice(0, 3).map((e, ei) => <div key={ei} style={{ width:4, height:4, borderRadius:"50%", background:e.color }} />)}
                       </div>
                     )}
                   </div>
@@ -829,15 +1101,34 @@ const StudentDashboard = () => {
               })}
             </div>
             <div style={{ display:"flex", gap:14, marginTop:12, flexWrap:"wrap" as const }}>
-              {[["#c0392b","Exam","امتحان"],[GOLD,"Assignment","واجب"],[DARK_GREEN,"Today","اليوم"]].map(([col,en,ar],i)=>(
+              {[["#c0392b","Exam","امتحان"],[GOLD,"Assignment","واجب"],[DARK_GREEN,"Today","اليوم"]].map(([col,en,ar], i) => (
                 <div key={i} style={{ display:"flex", alignItems:"center", gap:4, fontSize:10, color:TEXT_LIGHT }}>
                   <div style={{ width:8, height:8, borderRadius:"50%", background:col }} />
-                  <span style={{ fontWeight:600, color:TEXT_DARK }}>{t(en,ar)}</span>
+                  <span style={{ fontWeight:600, color:TEXT_DARK }}>{t(en, ar)}</span>
                 </div>
               ))}
             </div>
+            {selectedCalDay && (() => {
+              const evs = getEventsForDay(selectedCalDay);
+              return (
+                <div style={{ marginTop:12, padding:"10px 12px", borderRadius:12, background:"#f8fafb", border:`1px solid ${BORDER}` }}>
+                  <div style={{ fontSize:11, fontWeight:800, color:TEXT_DARK, marginBottom: evs.length ? 6 : 0 }}>
+                    {new Date(calendarYear, calendarMonthIdx, selectedCalDay).toLocaleDateString(language==="ar"?"ar-SA":"en-GB", { weekday:"long", day:"numeric", month:"long" })}
+                  </div>
+                  {evs.length === 0
+                    ? <div style={{ fontSize:11, color:TEXT_LIGHT, marginTop:4 }}>{t("Nothing scheduled", "لا يوجد شيء مجدول")}</div>
+                    : evs.map((e, i) => (
+                        <div key={i} style={{ display:"flex", alignItems:"center", gap:8, fontSize:12, color:TEXT_DARK, padding:"3px 0" }}>
+                          <div style={{ width:7, height:7, borderRadius:"50%", background:e.color, flexShrink:0 }} />
+                          <span style={{ flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.title}</span>
+                          <span style={{ fontSize:10, color:TEXT_LIGHT }}>{e.type === "exam" ? t("Exam","امتحان") : t("Assignment","واجب")}</span>
+                        </div>
+                      ))}
+                </div>
+              );
+            })()}
           </div>
-        </div>
+        </SectionCard>
       </div>
     </div>
   );

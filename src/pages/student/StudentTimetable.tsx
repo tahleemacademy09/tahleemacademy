@@ -417,6 +417,7 @@ function AssignedSlotCard({ slot, isSelectedToday, navigate }: { slot: any; isSe
 
 // ─── Private View ─────────────────────────────────────────────────────────────
 function PrivateTimetable({ profile, navigate }: any) {
+  const viewingTermId = useViewingTermId(profile);
   const today      = new Date().toISOString().split("T")[0];
   const todayIndex = new Date().getDay();
   const [selectedDay, setSelectedDay] = useState(todayIndex);
@@ -471,7 +472,7 @@ function PrivateTimetable({ profile, navigate }: any) {
         return { ...s, teacher: names.length ? { full_name: names.join(", ") } : null };
       });
     },
-    enabled: !!profile?.user_id,
+    enabled: !!profile?.user_id && !!viewingTermId,
   });
 
   // ── 2. One-off private sessions ──────────────────────────────────────────
@@ -596,6 +597,7 @@ function PrivateTimetable({ profile, navigate }: any) {
 
 // ─── General View ─────────────────────────────────────────────────────────────
 function GeneralTimetable({ profile, hasRole, t, language, navigate, showBanner }: any) {
+  const viewingTermId = useViewingTermId(profile);
   const todayIndex   = new Date().getDay();
   const studentLevel = (profile as any)?.level || (profile as any)?.course_level || "beginner";
   const isPrivileged = hasRole("admin") || hasRole("teacher");
