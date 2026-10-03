@@ -14,6 +14,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRoomContext } from "@livekit/components-react";
 import { Track, createLocalScreenTracks, RoomEvent } from "livekit-client";
 import { useAuth } from "@/contexts/AuthContext";
+import { canNativeScreenShare, startNativeScreenShare, stopNativeScreenShare, onNativeScreenShareStopped, isScreenBot } from "@/lib/nativeScreenShare";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { Capacitor } from "@capacitor/core";
@@ -551,8 +552,8 @@ const ClassControls = ({
   // played separately in ClassroomView right when THEY connect/disconnect.)
   useEffect(() => {
     if (!room) return;
-    const onJoin = () => { try { playJoinSound(); } catch {} };
-    const onLeave = () => { try { playLeaveSound(); } catch {} };
+    const onJoin = (p?: any) => { if (isScreenBot(p?.identity)) return; try { playJoinSound(); } catch {} };
+    const onLeave = (p?: any) => { if (isScreenBot(p?.identity)) return; try { playLeaveSound(); } catch {} };
     room.on(RoomEvent.ParticipantConnected, onJoin);
     room.on(RoomEvent.ParticipantDisconnected, onLeave);
     return () => {
@@ -604,7 +605,33 @@ const ClassControls = ({
   }, [toggleMic, toggleCam, toggleMicFnRef, toggleCamFnRef]);
 
   // ── Screen share ──────────────────────────────────────────────────────
+  // Android app: stop/start through the native plugin instead of getDisplayMedia
+  useEffect(() => {
+    if (!canNativeScreenShare()) return;
+    return onNativeScreenShareStopped(() => setScreenSharing(false));
+  }, []);
+
   const toggleScreenShare = useCallback(async () => {
+    if (canNativeScreenShare()) {
+      try {
+        if (screenSharing) {
+          await stopNativeScreenShare();
+          setScreenSharing(false);
+        } else {
+          await startNativeScreenShare({ sessionId });
+          setScreenSharing(true);
+        }
+      } catch (err: any) {
+        setScreenSharing(false);
+        const cancelled = err?.code === "DENIED" || /denied|cancel/i.test(err?.message || "");
+        toast({
+          title: cancelled ? t("Screen share cancelled", "تم إلغاء المشاركة") : t("Screen share failed", "فشلت مشاركة الشاشة"),
+          description: cancelled ? undefined : err?.message,
+          variant: "destructive",
+        });
+      }
+      return;
+    }
     if (screenSharing) {
       const pubs = Array.from(room.localParticipant.trackPublications.values())
         .filter((pub: any) => pub.track?.source === Track.Source.ScreenShare || pub.track?.source === Track.Source.ScreenShareAudio);
@@ -634,7 +661,7 @@ const ClassControls = ({
           toast({ title: t("Screen share failed", "فشل مشاركة الشاشة"), variant: "destructive" });
       }
     }
-  }, [room, screenSharing, t]);
+  }, [room, screenSharing, t, sessionId]);
 
   // ── Raise Hand ────────────────────────────────────────────────────────
   const toggleHand = useCallback(async () => {

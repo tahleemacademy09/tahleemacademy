@@ -23,6 +23,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Capacitor } from "@capacitor/core";
+import { canNativeScreenShare, startNativeScreenShare, stopNativeScreenShare, onNativeScreenShareStopped, isScreenBot } from "@/lib/nativeScreenShare";
 import { StatusBar } from "@capacitor/status-bar";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { getSignedUrl } from "../../integrations/supabase/storageClient";
@@ -164,7 +165,7 @@ export * from "./classroomComponents";
 // here gives it a stable identity across renders — normal prop changes no
 // longer force a remount.
 const ParticipantCountBadge=({participantCountRef,onOpen}:{participantCountRef:{current:number};onOpen:()=>void})=>{
-  const all=useParticipants();
+  const all=useParticipants().filter(p=>!isScreenBot(p.identity));   // hide phone screen-share helpers
   useEffect(()=>{if(all.length>participantCountRef.current)participantCountRef.current=all.length;},[all.length,participantCountRef]);
   if(all.length===0)return null;
   return(
@@ -986,9 +987,34 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   };
 
   // ══ Feature 1: Screen Share ══
+  // Android app: the WebView can't capture the screen, so a native plugin does it
+  useEffect(()=>{
+    if(!canNativeScreenShare())return;
+    const off=onNativeScreenShareStopped(()=>{setScreenSharing(false);toast({title:"Screen share stopped"});});
+    return()=>{off();stopNativeScreenShare();};
+  },[]);
+
   const toggleScreenShare=async()=>{
     const room=roomRef.current;
     if(!room?.localParticipant)return;
+    if(canNativeScreenShare()){
+      try{
+        if(screenSharing){
+          await stopNativeScreenShare();
+          setScreenSharing(false);
+          toast({title:"Screen share stopped"});
+        }else{
+          await startNativeScreenShare({subjectId:subject?.id,sessionId});
+          setScreenSharing(true);
+          toast({title:"Screen sharing started",description:"The class can now see your whole screen"});
+        }
+      }catch(e:any){
+        setScreenSharing(false);
+        const cancelled=e?.code==="DENIED"||/denied|cancel/i.test(e?.message||"");
+        toast({title:cancelled?"Screen share cancelled":"Screen share failed",description:cancelled?"Tap Share again and allow screen capture":(e?.message||"Could not start screen share"),variant:"destructive"});
+      }
+      return;
+    }
     try{
       if(screenSharing){
         await room.localParticipant.setScreenShareEnabled(false);

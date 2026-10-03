@@ -27,6 +27,7 @@ import {
 } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { Track, ConnectionState, RoomEvent, Participant, ConnectionQuality } from "livekit-client";
+import { isScreenBot } from "@/lib/nativeScreenShare";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import {
@@ -385,7 +386,11 @@ const ParticipantCountBadge = ({ onClick }: { onClick?: () => void }) => {
   const [count, setCount] = useState(room.numParticipants || 1);
 
   useEffect(() => {
-    const update = () => setCount(room.numParticipants || 1);
+    const update = () => {
+      let n = room.numParticipants || 1;
+      room.remoteParticipants.forEach(p => { if (isScreenBot(p.identity)) n--; });
+      setCount(Math.max(1, n));
+    };
     room.on(RoomEvent.ParticipantConnected, update);
     room.on(RoomEvent.ParticipantDisconnected, update);
     room.on(RoomEvent.ConnectionStateChanged, update);
@@ -469,12 +474,14 @@ const ParticipantEventHandler = ({
 
   useEffect(() => {
     const onJoin = (p: Participant) => {
+      if (isScreenBot(p.identity)) return;
       if (seenRef.current.has(p.identity)) return; // reconnect echo — skip
       seenRef.current.add(p.identity);
       if (soundEnabled) playChime("join");
       onToast({ id: ++toastId.current, name: p.name || p.identity || "Someone", type: "join" });
     };
     const onLeave = (p: Participant) => {
+      if (isScreenBot(p.identity)) return;
       seenRef.current.delete(p.identity);
       onToast({ id: ++toastId.current, name: p.name || p.identity || "Someone", type: "leave" });
     };

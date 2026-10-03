@@ -14,6 +14,7 @@ import {
 // @ts-ignore
 import "@livekit/components-styles";
 import { Track, RoomEvent, ConnectionState, ConnectionQuality, RemoteTrackPublication, RemoteParticipant } from "livekit-client";
+import { canNativeScreenShare, startNativeScreenShare, stopNativeScreenShare, onNativeScreenShareStopped, isScreenBot } from "@/lib/nativeScreenShare";
 import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
@@ -5909,7 +5910,10 @@ export const ScreenShareTile=({participant,isLocal}:{participant:any;isLocal:boo
 export const VideoGrid=({layout="grid",isMobile=false,spotlightId=null}:{layout?:LayoutMode;isMobile?:boolean;spotlightId?:string|null})=>{
   const{localParticipant}=useLocalParticipant();
   const allParticipants=useParticipants();
-  const remotes=allParticipants.filter(p=>p.identity!==localParticipant?.identity);
+  // Phones sharing their screen join as a hidden "<id>::screen" helper: never draw it as a person,
+  // and never show a sharer their OWN screen back at them (it would mirror forever).
+  const screenBots=allParticipants.filter(p=>isScreenBot(p.identity)&&p.identity!==`${localParticipant?.identity}::screen`);
+  const remotes=allParticipants.filter(p=>p.identity!==localParticipant?.identity&&!isScreenBot(p.identity));
   // If spotlight is set, move that participant to front
   const all=localParticipant?[localParticipant,...remotes]:remotes;
   const orderedAll = spotlightId
@@ -5918,7 +5922,7 @@ export const VideoGrid=({layout="grid",isMobile=false,spotlightId=null}:{layout?
   const n=orderedAll.length;
 
   // Screen share always takes main slot
-  const screensharer=all.find(p=>{
+  const screensharer=[...all,...screenBots].find(p=>{
     const pub=p.getTrackPublication?.(Track.Source.ScreenShare)||p.trackPublications?.get(Track.Source.ScreenShare);
     return pub?.track&&!pub.isMuted;
   });
@@ -6156,10 +6160,10 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
 
   useEffect(()=>{
     if(!room)return;
-    const update=()=>setLiveCount(room.numParticipants||0);
+    const update=()=>{let n=room.numParticipants||0;room.remoteParticipants?.forEach?.((p:any)=>{if(isScreenBot(p.identity))n--;});setLiveCount(Math.max(0,n));};
     update();
-    const onJoin=()=>{update();try{playJoinSound();}catch{}};
-    const onLeave=()=>{update();try{playLeaveSound();}catch{}};
+    const onJoin=(p?:any)=>{update();if(isScreenBot(p?.identity))return;try{playJoinSound();}catch{}};
+    const onLeave=(p?:any)=>{update();if(isScreenBot(p?.identity))return;try{playLeaveSound();}catch{}};
     room.on(RoomEvent.ParticipantConnected,onJoin);room.on(RoomEvent.ParticipantDisconnected,onLeave);
     return()=>{room.off(RoomEvent.ParticipantConnected,onJoin);room.off(RoomEvent.ParticipantDisconnected,onLeave);};
   },[room]);
