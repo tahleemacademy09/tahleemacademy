@@ -5883,7 +5883,7 @@ export const ScreenShareTile=({participant,isLocal}:{participant:any;isLocal:boo
     };
   },[participant,isLocal]);
   return(
-    <div style={{position:"relative",width:"100%",height:"100%",background:"#000",display:"flex",alignItems:"center",justifyContent:"center"}}>
+    <div style={{position:"absolute",inset:0,width:"100%",height:"100%",background:"#000",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
       {isLocal?(
         <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:14,padding:24,textAlign:"center"}}>
           <div style={{width:72,height:72,borderRadius:22,background:"rgba(138,180,248,.14)",display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -5892,7 +5892,7 @@ export const ScreenShareTile=({participant,isLocal}:{participant:any;isLocal:boo
           <p style={{margin:0,fontSize:16,fontWeight:600,color:"#e8eaed",fontFamily:"system-ui,sans-serif"}}>{"You're presenting your screen"}</p>
         </div>
       ):(
-        <video ref={videoRef} autoPlay playsInline muted style={{width:"100%",height:"100%",objectFit:"contain",background:"#000"}}/>
+        <video ref={videoRef} autoPlay playsInline muted style={{position:"absolute",top:0,left:0,right:0,bottom:0,width:"100%",height:"100%",minWidth:"100%",minHeight:"100%",maxWidth:"none",maxHeight:"none",objectFit:"contain",background:"#000"}}/>
       )}
       <div style={{position:"absolute",bottom:14,left:"50%",transform:"translateX(-50%)",maxWidth:"86%",padding:"9px 20px",borderRadius:12,background:"rgba(60,64,67,.92)",color:"#fff",fontSize:14,fontWeight:500,fontFamily:"system-ui,sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",pointerEvents:"none"}}>
         {isLocal?"You're presenting":`${name}'s screen`}
