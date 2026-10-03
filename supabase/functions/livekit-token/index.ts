@@ -1,17 +1,3 @@
-// moderate-participant — Tahleem Academy
-//
-// Backs every host moderation action in the live classroom: Admit/Deny (the
-// Waiting Room prompt in JoinRequestBanner) and Remove/Ban/Unban (the
-// Participants panel in ClassParticipants.tsx). All five already called this
-// exact function name from the client — it just didn't exist yet, so every
-// one of those buttons failed silently. This is that function.
-//
-// "remove" and "ban" also force-disconnect the person from the live LiveKit
-// room right now, via LiveKit's server-side RoomService API (the only way to
-// drop someone else's connection — the client SDK can only manage your own).
-// That's a plain HTTPS call signed with a short-lived admin JWT built the
-// same way livekit-token already builds participant JWTs, just with a
-// `roomAdmin` grant instead of `roomJoin`.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -20,137 +6,277 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-
-// ── LiveKit RoomService admin call (same raw-JWT approach livekit-token uses,
-// just with roomAdmin instead of roomJoin, and no participant identity). ────
-async function removeParticipantFromRoom(livekitUrl: string, apiKey: string, apiSecret: string, room: string, identity: string) {
-  const enc = new TextEncoder();
-  const b64url = (buf: ArrayBuffer) => {
-    const bytes = new Uint8Array(buf);
-    let binary = '';
-    for (const b of bytes) binary += String.fromCharCode(b);
-    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  };
-  const b64urlStr = (str: string) => {
-    const bytes = enc.encode(str);
-    let binary = '';
-    for (const b of bytes) binary += String.fromCharCode(b);
-    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  };
-
-  const now = Math.floor(Date.now() / 1000);
-  const header = { alg: 'HS256', typ: 'JWT' };
-  const claims = { iss: apiKey, sub: apiKey, nbf: now, exp: now + 600, video: { roomAdmin: true, room } };
-  const headerB64 = b64urlStr(JSON.stringify(header));
-  const claimsB64 = b64urlStr(JSON.stringify(claims));
-  const sigInput = `${headerB64}.${claimsB64}`;
-  const key = await crypto.subtle.importKey('raw', enc.encode(apiSecret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(sigInput));
-  const adminToken = `${sigInput}.${b64url(sig)}`;
-
-  const httpUrl = livekitUrl.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
-  try {
-    const res = await fetch(`${httpUrl}/twirp/livekit.RoomService/RemoveParticipant`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ room, identity }),
-    });
-    // Not fatal if this fails (e.g. they'd already left) — the DB side below
-    // still records the ban/removal either way, so moderation never gets
-    // stuck waiting on LiveKit's own connection state.
-    if (!res.ok) {
-      const t = await res.text().catch(() => '');
-      console.warn('[moderate-participant] RemoveParticipant failed:', res.status, t);
-    }
-  } catch (e) {
-    console.warn('[moderate-participant] RemoveParticipant request failed:', e);
-  }
-}
-
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
 
   try {
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) return json({ error: 'Not authenticated' }, 401);
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_ANON_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey, { global: { headers: { Authorization: authHeader } } });
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
 
     const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) return json({ error: 'Invalid token' }, 401);
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: 'Invalid token' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     const body = await req.json();
-    const { session_id, student_id, action, identity: identityFromClient } = body;
-    if (!session_id || !student_id || !action) return json({ error: 'session_id, student_id and action are required' }, 400);
-    if (!['admit', 'deny', 'remove', 'ban', 'unban'].includes(action)) return json({ error: 'Unknown action' }, 400);
+    const { subject_id, action, room_name, screen_share } = body;
 
+    // Exam proctoring rooms use a SEPARATE LiveKit project/credentials from
+    // the classroom + Musabaqah, so proctoring traffic is isolated and can
+    // be scaled/monitored/billed independently. Any room named
+    // "exam-proctor-*" (see ExamLiveMonitor.tsx / useProctoring.ts) routes
+    // to LIVEKIT_EXAM_*; everything else keeps using the original LIVEKIT_*
+    // credentials, unchanged.
+    const isExamProctoring = typeof room_name === 'string' && room_name.startsWith('exam-proctor-');
+
+    const LIVEKIT_API_KEY    = isExamProctoring
+      ? Deno.env.get('LIVEKIT_EXAM_API_KEY')
+      : Deno.env.get('LIVEKIT_API_KEY');
+    const LIVEKIT_API_SECRET = isExamProctoring
+      ? Deno.env.get('LIVEKIT_EXAM_API_SECRET')
+      : Deno.env.get('LIVEKIT_API_SECRET');
+    const LIVEKIT_URL        = isExamProctoring
+      ? Deno.env.get('LIVEKIT_EXAM_URL')
+      : Deno.env.get('LIVEKIT_URL');
+
+    if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET || !LIVEKIT_URL) {
+      const which = isExamProctoring ? 'exam proctoring' : 'classroom';
+      return new Response(JSON.stringify({ error: `LiveKit not configured (${which})` }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // ── PERF FIX ("takes ~16s before my details show up"): these three lookups
+    // (my roles, my profile, the subject) don't depend on each other at all, but
+    // were being awaited one after another — three full network round trips to
+    // Postgres, stacked, before the token was ever returned. The client doesn't
+    // show ANYTHING (video, name, avatar) until this function responds, because
+    // ClassroomView.connect() only flips to the "live" phase after it has the
+    // token. Cold Deno-edge + Postgres round trips are commonly 1-5s+ each on a
+    // slower connection, so three in a row easily adds up to the 16s being seen.
+    // Running them together with Promise.all cuts that to the cost of the single
+    // slowest query instead of the sum of all three.
     const serviceClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const [{ data: roles }, { data: profile }, subjectResult] = await Promise.all([
+      serviceClient.from('user_roles').select('role').eq('user_id', user.id),
+      serviceClient.from('profiles').select('full_name, avatar_url').eq('user_id', user.id).single(),
+      subject_id
+        ? serviceClient.from('subjects').select('*').eq('id', subject_id).single()
+        : Promise.resolve({ data: null, error: null } as any),
+    ]);
+    const userRoles    = roles?.map((r: any) => r.role) || [];
+    const isPrivileged = userRoles.includes('admin') || userRoles.includes('teacher');
+    const participantName = profile?.full_name || user.email || 'Anonymous';
 
-    // Only an admin/teacher may moderate anyone — self-service students never
-    // reach this far usefully since the client only exposes these buttons to
-    // a privileged host, but the check is enforced here regardless of what
-    // the client sends.
-    const { data: roles } = await serviceClient.from('user_roles').select('role').eq('user_id', user.id);
-    const isPrivileged = (roles || []).some((r: any) => r.role === 'admin' || r.role === 'teacher');
-    if (!isPrivileged) return json({ error: 'Not authorized' }, 403);
+    let finalRoomName: string;
+    let roleLabel: string;
 
-    const { data: session, error: sessErr } = await serviceClient
-      .from('live_sessions').select('id, subject_id').eq('id', session_id).single();
-    if (sessErr || !session) return json({ error: 'Session not found' }, 404);
+    // ── MODE A: Musabaqah room (room_name provided directly) ──────────────
+    if (room_name) {
+      finalRoomName = room_name;
+      roleLabel     = isPrivileged ? 'judge' : 'participant';
 
-    // Force-disconnect right now for the two actions that end someone's
-    // current connection outright — resolved via the same subject →
-    // livekit_room_name mapping livekit-token itself uses.
-    if (action === 'remove' || action === 'ban') {
-      const LIVEKIT_API_KEY    = Deno.env.get('LIVEKIT_API_KEY');
-      const LIVEKIT_API_SECRET = Deno.env.get('LIVEKIT_API_SECRET');
-      const LIVEKIT_URL        = Deno.env.get('LIVEKIT_URL');
-      if (LIVEKIT_API_KEY && LIVEKIT_API_SECRET && LIVEKIT_URL) {
-        const { data: subject } = await serviceClient
-          .from('subjects').select('livekit_room_name').eq('id', session.subject_id).single();
-        const roomName = subject?.livekit_room_name || `subject-${session.subject_id}`;
-        await removeParticipantFromRoom(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, roomName, identityFromClient || student_id);
+    // ── MODE B: Live class (subject_id — existing behaviour) ──────────────
+    } else if (subject_id) {
+      const { data: subject, error: subjectError } = subjectResult;
+
+      if (subjectError || !subject) {
+        return new Response(JSON.stringify({ error: 'Subject not found' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
+      if (!subject.is_active && !isPrivileged) {
+        return new Response(JSON.stringify({ error: 'Subject is not active' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      finalRoomName = subject.livekit_room_name || `subject-${subject.id}`;
+      roleLabel     = isPrivileged ? 'teacher' : 'student';
+
+      // Handle start_session action
+      //
+      // FIX: this used to ONLY check for a row already marked "live" — if none
+      // existed it always INSERTed a brand-new live_sessions row, even when a
+      // "scheduled" placeholder for this exact class already existed (created
+      // ahead of time via the admin's Schedule form, or by the recurring
+      // timetable). That left two disconnected rows behind: the original
+      // "scheduled" row (which some views later flip to "completed"/"done"
+      // purely because its time passed, without it ever actually being used)
+      // and a brand-new row that the real attendance_logs/manual_attendance
+      // rows for the class actually pointed to. Whoever opened the OLD
+      // scheduled row afterwards to check attendance saw "No students found"
+      // even though people genuinely attended — their data was just sitting
+      // under the other, hidden row.
+      //
+      // Now: reuse the nearest not-yet-started scheduled session for this
+      // subject (if one exists) by flipping IT to live, so the row the admin
+      // already sees in their Sessions list is the same row attendance gets
+      // recorded against. Only create a new row if no scheduled placeholder
+      // exists at all. Also set actual_start_time here (previously only set
+      // by the client-side "instant class" path) so every code path that
+      // creates/starts a session sorts consistently by the same column.
+      if (action === 'start_session' && isPrivileged) {
+        const { data: existingLive } = await serviceClient
+          .from('live_sessions').select('id')
+          .eq('subject_id', subject_id).eq('status', 'live').maybeSingle();
+
+        if (!existingLive) {
+          const nowIso = new Date().toISOString();
+          const { data: existingScheduled } = await serviceClient
+            .from('live_sessions').select('id')
+            .eq('subject_id', subject_id).eq('status', 'scheduled')
+            .order('scheduled_at', { ascending: true })
+            .limit(1).maybeSingle();
+
+          if (existingScheduled) {
+            await serviceClient.from('live_sessions')
+              .update({ status: 'live', started_at: nowIso, actual_start_time: nowIso })
+              .eq('id', existingScheduled.id);
+          } else {
+            await serviceClient.from('live_sessions').insert({
+              subject_id,
+              host_id:           user.id,
+              status:            'live',
+              started_at:        nowIso,
+              actual_start_time: nowIso,
+            });
+          }
+        }
+      }
+
+      // Log activity — fire-and-forget. This is pure bookkeeping and was
+      // previously `await`ed, adding a 4th sequential round trip before the
+      // token (and therefore the student's video/name/avatar) could appear.
+      serviceClient.from('activity_logs').insert({
+        user_id:     user.id,
+        action:      action === 'start_session' ? 'start_live_class' : 'join_live_class',
+        entity_type: 'subject',
+        entity_id:   subject_id,
+        metadata:    { room: finalRoomName, role: roleLabel },
+      }).then(({ error }) => { if (error) console.warn('[livekit-token] activity log failed:', error); });
+
+    } else {
+      return new Response(JSON.stringify({ error: 'subject_id or room_name required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    const nowIso = new Date().toISOString();
-    switch (action) {
-      case 'remove':
-        // Free to rejoin right away — clear any pending/ban flags so a fresh
-        // livekit-token call issues a token normally instead of re-queuing them.
-        await serviceClient.from('class_participants')
-          .update({ is_banned: false, join_request_status: null })
-          .eq('session_id', session_id).eq('student_id', student_id);
-        break;
-      case 'ban':
-        await serviceClient.from('class_participants')
-          .upsert({ session_id, student_id, is_banned: true, banned_at: nowIso, banned_by: user.id, join_request_status: null },
-                  { onConflict: 'session_id,student_id' });
-        break;
-      case 'unban':
-        await serviceClient.from('class_participants')
-          .update({ is_banned: false, join_request_status: null, banned_at: null, banned_by: null })
-          .eq('session_id', session_id).eq('student_id', student_id);
-        break;
-      case 'admit':
-        await serviceClient.from('class_participants')
-          .update({ is_banned: false, join_request_status: 'admitted' })
-          .eq('session_id', session_id).eq('student_id', student_id);
-        break;
-      case 'deny':
-        await serviceClient.from('class_participants')
-          .update({ join_request_status: 'denied' })
-          .eq('session_id', session_id).eq('student_id', student_id);
-        break;
+    // ── Screen-share bot identity ────────────────────────────────────────
+    // A second, publish-only participant joining the SAME room as the
+    // caller's own separate identity — required because a native Android
+    // MediaProjection capture has to connect to LiveKit as its own
+    // participant (it can't share the WebView's existing JS SDK connection).
+    // Only allowed once the caller already resolved a valid room above
+    // (screen_share is only meaningful for the live-class flow, i.e.
+    // subject_id was provided, not the Musabaqah room_name flow).
+    let screenShareIdentity: string | null = null;
+    let screenShareName: string | null = null;
+    if (screen_share) {
+      if (!subject_id) {
+        return new Response(JSON.stringify({ error: 'screen_share requires subject_id' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      screenShareIdentity = `${user.id}::screen`;
+      screenShareName = `${participantName} (Screen)`;
     }
 
-    return json({ success: true });
+    // ── Build JWT ─────────────────────────────────────────────────────────
+    const enc = new TextEncoder();
+
+    // FIX: b64url for binary (signature) — unchanged
+    const b64url = (buf: ArrayBuffer) => {
+      const bytes = new Uint8Array(buf);
+      let binary = '';
+      for (const b of bytes) binary += String.fromCharCode(b);
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    };
+
+    // FIX: b64urlStr now uses TextEncoder so Arabic/Unicode names are handled
+    // correctly. The old btoa(str) would throw a DOMException for any character
+    // outside Latin-1 (e.g. Arabic full_name values), silently returning a 500
+    // and leaving the client stuck in the "Reconnecting..." loop.
+    const b64urlStr = (str: string) => {
+      const bytes = enc.encode(str);           // UTF-8 encode
+      let binary = '';
+      for (const b of bytes) binary += String.fromCharCode(b);
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    };
+
+    const now    = Math.floor(Date.now() / 1000);
+    const exp    = now + 28800; // 8 hours
+
+    const header = { alg: 'HS256', typ: 'JWT' };
+    const claims: any = screen_share
+      ? {
+          iss:  LIVEKIT_API_KEY,
+          sub:  screenShareIdentity,
+          nbf:  now,
+          exp,
+          jti:  `${screenShareIdentity}-${now}-${Math.random().toString(36).slice(2, 9)}`,
+          name: screenShareName,
+          video: {
+            roomJoin:       true,
+            room:           finalRoomName,
+            canPublish:     true,
+            canSubscribe:   false,
+            canPublishData: false,
+            canUpdateOwnMetadata: false,
+          },
+          metadata: JSON.stringify({ screen_share_identity: true, owner_user_id: user.id, name: screenShareName }),
+        }
+      : {
+          iss:  LIVEKIT_API_KEY,
+          sub:  user.id,
+          nbf:  now,
+          exp,
+          // FIX: jti must always be globally unique. Using user.id + timestamp +
+          // random suffix ensures no two tokens share the same jti, preventing
+          // potential replay-rejection by the LiveKit server.
+          jti:  `${user.id}-${now}-${Math.random().toString(36).slice(2, 9)}`,
+          name: participantName,
+          video: {
+            roomJoin:       true,
+            room:           finalRoomName,
+            canPublish:     true,
+            canSubscribe:   true,
+            canPublishData: true,
+            // Lets a participant push a fresh metadata JSON (name/avatar_url) for
+            // themselves mid-call — e.g. changing their profile picture — without
+            // needing to reconnect. Everyone else's client already listens for
+            // participantMetadataChanged and re-renders that tile automatically.
+            canUpdateOwnMetadata: true,
+          },
+          metadata: JSON.stringify({ role: roleLabel, user_id: user.id, name: participantName, avatar_url: profile?.avatar_url || null }),
+        };
+
+    if (!screen_share && isPrivileged) {
+      claims.video.roomAdmin  = true;
+      claims.video.roomRecord = true;
+    }
+
+    const headerB64 = b64urlStr(JSON.stringify(header));
+    const claimsB64 = b64urlStr(JSON.stringify(claims));
+    const sigInput  = `${headerB64}.${claimsB64}`;
+
+    const key = await crypto.subtle.importKey(
+      'raw', enc.encode(LIVEKIT_API_SECRET),
+      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+    );
+    const sig   = await crypto.subtle.sign('HMAC', key, enc.encode(sigInput));
+    const token = `${sigInput}.${b64url(sig)}`;
+
+    return new Response(JSON.stringify({
+      token,
+      url:              LIVEKIT_URL,
+      room:             finalRoomName,
+      role:             roleLabel,
+      participant_name: participantName,
+    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    return json({ error: message }, 500);
+    return new Response(JSON.stringify({ error: message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });
