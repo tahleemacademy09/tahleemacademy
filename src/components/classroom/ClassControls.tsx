@@ -671,6 +671,12 @@ const ClassControls = ({
     await supabase.from("class_participants")
       .update({ hand_raised: next, hand_raised_at: next ? new Date().toISOString() : null })
       .eq("session_id", sessionId).eq("student_id", user.id);
+    try {
+      room?.localParticipant?.publishData(
+        new TextEncoder().encode(JSON.stringify({ type: "hand_raise", identity: room.localParticipant.identity, name: room.localParticipant.name || (user as any).user_metadata?.full_name || "Student", raised: next })),
+        { reliable: true }
+      );
+    } catch {}
     if (next) {
       // Show a floating notification with the user's name
       const displayName = (user as any).user_metadata?.full_name || (user as any).email?.split("@")[0] || "You";
@@ -678,7 +684,7 @@ const ClassControls = ({
       toast({ title: `✋ ${displayName} is raising their hand` });
       setTimeout(() => setRaisedHandName(null), 4000);
     }
-  }, [handRaised, user, sessionId]);
+  }, [handRaised, user, sessionId, room]);
 
   // ── Reactions ─────────────────────────────────────────────────────────
   const sendReaction = (emoji: string) => {

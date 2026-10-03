@@ -14,12 +14,13 @@ import io.livekit.android.LiveKit
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
-import io.livekit.android.room.track.screencapture.ScreenCaptureParams
+import io.livekit.android.room.track.Track
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -80,7 +81,7 @@ class ScreenSharePlugin : Plugin() {
             val newRoom = LiveKit.create(context.applicationContext)
             try {
                 newRoom.connect(url, token)
-                newRoom.localParticipant.setScreenShareEnabled(true, ScreenCaptureParams(data))
+                newRoom.localParticipant.setScreenShareEnabled(true, data)
                 room = newRoom
                 watch(newRoom)
                 call.resolve()
@@ -97,9 +98,19 @@ class ScreenSharePlugin : Plugin() {
     /** Tell the web page when sharing ends without the user tapping Stop in the app. */
     private fun watch(r: Room) {
         watcher = scope.launch {
-            r.events.collect { event ->
-                if (event is RoomEvent.LocalTrackUnpublished || event is RoomEvent.Disconnected) {
-                    onEnded()
+            launch {
+                r.events.collect { event ->
+                    if (event is RoomEvent.Disconnected) onEnded()
+                }
+            }
+            launch {
+                delay(3000)
+                while (true) {
+                    delay(1000)
+                    if (r.localParticipant.getTrackPublication(Track.Source.SCREEN_SHARE) == null) {
+                        onEnded()
+                        break
+                    }
                 }
             }
         }
