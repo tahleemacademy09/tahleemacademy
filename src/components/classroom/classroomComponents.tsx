@@ -3157,6 +3157,19 @@ export const InClassQuranReader=({onClose}:any)=>{
   /* mushaf text (page-based) */
   const[mushafAyahs,setMushafAyahs]=useState<any[]>([]);
   const[mushafLoading,setMushafLoading]=useState(false);
+  const[chromeHidden,setChromeHidden]=useState(()=>{try{return document.body.dataset.classUi==="hidden";}catch{return false;}});
+  const lastTapRef=useRef(0);
+  useEffect(()=>{
+    const h=(e:any)=>setChromeHidden(!!e?.detail?.hidden);
+    window.addEventListener("classroom:ui-state",h);
+    return()=>window.removeEventListener("classroom:ui-state",h);
+  },[]);
+  const onReaderTap=(e:any)=>{
+    if(e?.target?.closest?.("button,a,input,textarea,select"))return;
+    const now=Date.now();
+    if(now-lastTapRef.current<350){lastTapRef.current=0;window.dispatchEvent(new Event("classroom:toggle-ui"));}
+    else lastTapRef.current=now;
+  };
   const mushafBoxRef=useRef<HTMLDivElement>(null);
   const[mushafBoxH,setMushafBoxH]=useState(0);
   const[printedBg,setPrintedBg]=useState<string|null>(null);
@@ -3432,7 +3445,7 @@ export const InClassQuranReader=({onClose}:any)=>{
   ];
 
   /* ── single-line nav bar: prev | page | next | Surah | reciters (scrollable) ── */
-  const PageNav=()=>(
+  const PageNav=()=>chromeHidden?null:(
     <div style={{display:"flex",alignItems:"center",gap:3,padding:"4px 6px",borderBottom:"1px solid #e8dfc8",background:"#fff",flexShrink:0,overflowX:"auto",WebkitOverflowScrolling:"touch" as any}}>
       {/* Prev */}
       <button onClick={()=>changePage(-1)} disabled={page<=1}
@@ -3556,7 +3569,7 @@ export const InClassQuranReader=({onClose}:any)=>{
       <div onClick={e=>e.stopPropagation()} style={panelStyle}>
 
         {/* ── Single-line compact header ── */}
-        <div style={{background:"linear-gradient(135deg,#1a3d24,#276749)",padding:"7px 10px",flexShrink:0,display:"flex",alignItems:"center",gap:6}}>
+        <div style={{background:"linear-gradient(135deg,#1a3d24,#276749)",padding:"7px 10px",flexShrink:0,display:chromeHidden?"none":"flex",alignItems:"center",gap:6}}>
           {/* Title */}
           <span style={{fontFamily:"'Amiri',serif",fontSize:14,fontWeight:800,color:"#fff",whiteSpace:"nowrap"}}>📖 القرآن</span>
           {/* Mode tabs */}
@@ -3583,6 +3596,9 @@ export const InClassQuranReader=({onClose}:any)=>{
           </button>
         </div>
 
+        {chromeHidden&&mode==="quran"&&(
+          <button onClick={()=>window.dispatchEvent(new Event("classroom:toggle-ui"))} style={{position:"absolute",top:8,right:8,zIndex:5,padding:"6px 10px",borderRadius:999,border:"none",background:"rgba(26,61,36,.6)",color:"#fff",fontSize:11,fontWeight:700,opacity:.85}}>Show controls</button>
+        )}
         {/* ══ MODE: MUSHAF — authentic line-by-line Quran layout ══ */}
         {mode==="quran"&&(
           <>
@@ -3590,9 +3606,10 @@ export const InClassQuranReader=({onClose}:any)=>{
             <ReciterStrip/>
             <div
               ref={mushafBoxRef}
-              style={{flex:1,overflowY:"auto",background:printedBg||"linear-gradient(180deg,#f5f0e8 0%,#ede8da 100%)"}}
+              style={{flex:1,overflowY:"auto",touchAction:"manipulation",background:printedBg||"linear-gradient(180deg,#f5f0e8 0%,#ede8da 100%)"}}
               onTouchStart={onTouchStart}
               onTouchEnd={onTouchEnd}
+              onClick={onReaderTap}
             >
               {/* ── Printed Madinah Mushaf page — tap an ayah to hear it, playing ayah is highlighted ── */}
               {!printedFail&&(
@@ -3600,7 +3617,7 @@ export const InClassQuranReader=({onClose}:any)=>{
                   <MushafPageView
                     page={page}
                     seamless
-                    availableHeight={Math.max(300,mushafBoxH-64)}
+                    availableHeight={Math.max(300,mushafBoxH-(chromeHidden?8:64))}
                     maxStretch={1.4}
                     onBackground={setPrintedBg}
                     highlight={playingVerse?(()=>{const[ps,pv]=playingVerse.split(":").map(Number);return{surah:ps,ayah:pv};})():null}

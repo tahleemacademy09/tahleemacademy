@@ -342,6 +342,15 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     if(e?.target?.closest?.("button,a,input,textarea,select,[data-tile-control]"))return;
     setUiHidden(v=>!v);
   };
+  useEffect(()=>{
+    const h=()=>setUiHidden(v=>!v);
+    window.addEventListener("classroom:toggle-ui",h);
+    return()=>window.removeEventListener("classroom:toggle-ui",h);
+  },[]);
+  useEffect(()=>{
+    try{document.body.dataset.classUi=uiHidden?"hidden":"shown";}catch{}
+    window.dispatchEvent(new CustomEvent("classroom:ui-state",{detail:{hidden:uiHidden}}));
+  },[uiHidden]);
   const openChatFrom=(peer?:{id:string;name:string})=>{
     setChatOpen(true);setSideTab("chat");setChatUnread(0);
     if(peer)chatStore.requestOpen(peer);
