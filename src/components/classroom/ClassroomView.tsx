@@ -1212,10 +1212,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     // roughly halves worst-case upload versus the PC profile, while the
     // top layer (480p@30fps/500kbps) is still clearly sharp for a phone
     // screen or a name-pill-sized tile on someone else's grid.
-    videoEncoding:{maxBitrate:500_000,maxFramerate:24},
+    videoEncoding:{maxBitrate:450_000,maxFramerate:20},
     simulcastLayers:[
       {width:180,height:180,resolution:{width:180,height:180,frameRate:15},encoding:{maxBitrate:90_000,maxFramerate:15}},
-      {width:480,height:480,resolution:{width:480,height:480,frameRate:24},encoding:{maxBitrate:350_000,maxFramerate:24}},
+      {width:480,height:480,resolution:{width:480,height:480,frameRate:20},encoding:{maxBitrate:320_000,maxFramerate:20}},
     ],
   } : {
     // PC/laptop: unchanged from before — full 3-layer stack, sharp 720p top.
@@ -1295,7 +1295,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         // key={roomKey} forces a full remount whenever autoReconnect bumps the key,
         // ensuring LiveKit starts with a fresh connection and token.
         <LiveKitRoom key={roomKey} serverUrl={wsUrl} token={token} connect={phase==="live"} audio={false} video={false} options={{
-            adaptiveStream:{pixelDensity:"screen"},
+            adaptiveStream:{pixelDensity:isMobile?1:"screen"},
             dynacast:true,
             disconnectOnPageLeave:false,
             // BUG FIX — "reconnects too much on low network":
@@ -1368,7 +1368,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               // (960×540) since its top published layer is 480p anyway —
               // capturing far above what's ever actually encoded just burns
               // CPU/battery on the phone for no visible or data benefit.
-              resolution:isMobile?{width:960,height:540,frameRate:24}:{width:1280,height:720,frameRate:30},
+              resolution:isMobile?{width:640,height:360,frameRate:20}:{width:1280,height:720,frameRate:30},
               facingMode:"user",
               // Explicit ideal aspect ratio — without this, a phone's front
               // camera (which is very often natively 3:4 / 4:3, not 16:9)

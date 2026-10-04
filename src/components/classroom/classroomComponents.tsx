@@ -5536,6 +5536,7 @@ export const ClassroomAdminContext = createContext<{isPrivileged:boolean;session
 
 export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{participant:any;isLocal:boolean;size?:"normal"|"large"|"small";pip?:boolean})=>{
   const videoRef=useRef<HTMLVideoElement>(null);
+  const attachedTrackRef=useRef<any>(null);
   const[hasVideo,setHasVideo]=useState(false);
   const[backCam,setBackCam]=useState(false);
   const[isSpeaking,setIsSpeaking]=useState(false);
@@ -5656,13 +5657,35 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
     if(!pub){participant.trackPublications?.forEach?.((p:any)=>{if(p.source===Track.Source.Camera||p.kind==="video")pub=pub||p;});}
     const track=pub?.videoTrack||pub?.track;const mst=track?.mediaStreamTrack;
     if(mst&&mst.readyState==="live"&&!pub?.isMuted&&videoRef.current){
-      if(!(videoRef.current.srcObject instanceof MediaStream)||(videoRef.current.srcObject as MediaStream).getTracks()[0]?.id!==mst.id){
-        videoRef.current.srcObject=new MediaStream([mst]);
+      const el=videoRef.current;
+      if(!isLocal&&typeof track?.attach==="function"){
+        // BATTERY/HEAT FIX: remote video must go through track.attach(el), not a
+        // hand-made MediaStream. attach() is what lets LiveKit's adaptiveStream
+        // see this element's real size and visibility, so it asks the server for
+        // a small layer for a small tile and pauses video for hidden tiles.
+        // With a raw srcObject LiveKit never knew a tile existed, so every
+        // remote camera was received and decoded at full quality.
+        if(attachedTrackRef.current!==track){
+          if(attachedTrackRef.current){try{attachedTrackRef.current.detach(el);}catch{}}
+          try{track.attach(el);attachedTrackRef.current=track;}catch{
+            el.srcObject=new MediaStream([mst]);attachedTrackRef.current=null;
+          }
+        }
+      }else{
+        if(!(el.srcObject instanceof MediaStream)||(el.srcObject as MediaStream).getTracks()[0]?.id!==mst.id){
+          el.srcObject=new MediaStream([mst]);
+        }
+        if(isLocal)el.muted=true;
+        if(isLocal){let fm:any;try{fm=(mst.getSettings?.() as any)?.facingMode;}catch{}setBackCam(fm==="environment"||fm==="back");}
       }
-      if(isLocal)videoRef.current.muted=true;
-      if(isLocal){let fm:any;try{fm=(mst.getSettings?.() as any)?.facingMode;}catch{}setBackCam(fm==="environment"||fm==="back");}
-      videoRef.current.play().catch(()=>{});setHasVideo(true);
-    }else{if(videoRef.current&&videoRef.current.srcObject)videoRef.current.srcObject=null;setHasVideo(false);}
+      // Only nudge playback when it actually stopped (was called on every poll before).
+      if(el.paused)el.play().catch(()=>{});
+      setHasVideo(true);
+    }else{
+      if(attachedTrackRef.current&&videoRef.current){try{attachedTrackRef.current.detach(videoRef.current);}catch{}attachedTrackRef.current=null;}
+      if(videoRef.current&&videoRef.current.srcObject)videoRef.current.srcObject=null;
+      setHasVideo(false);
+    }
     let micPub=participant.getTrackPublication?.(Track.Source.Microphone);
     if(!micPub)participant.trackPublications?.forEach?.((p:any)=>{if(p.source===Track.Source.Microphone)micPub=micPub||p;});
     setMicEnabled(!(micPub?.isMuted??false));
@@ -5678,7 +5701,7 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
     participant.on?.("participantMetadataChanged",forceMetaTick);
     participant.on?.("participantNameChanged",forceMetaTick);
     if(isLocal){room.on(RoomEvent.LocalTrackPublished,attachVideo);room.on(RoomEvent.LocalTrackUnpublished,attachVideo);room.on(RoomEvent.TrackMuted,attachVideo);room.on(RoomEvent.TrackUnmuted,attachVideo);}
-    const poll=setInterval(attachVideo,1500);
+    const poll=setInterval(attachVideo,4000); // safety net only; events above do the real work
     // Catch-up poll: metadata can arrive a beat after the participant object
     // itself is first constructed (e.g. right as someone joins). A few quick
     // re-renders just after mount make sure it's picked up the moment it's
@@ -5689,6 +5712,7 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
     return()=>{
       clearInterval(poll);
       metaCatchUp.forEach(clearTimeout);
+      if(attachedTrackRef.current&&videoRef.current){try{attachedTrackRef.current.detach(videoRef.current);}catch{}attachedTrackRef.current=null;}
       participant.off?.("trackSubscribed",attachVideo);participant.off?.("trackUnsubscribed",attachVideo);
       participant.off?.("trackMuted",attachVideo);participant.off?.("trackUnmuted",attachVideo);
       participant.off?.("trackPublished",attachVideo);participant.off?.("trackUnpublished",attachVideo);
