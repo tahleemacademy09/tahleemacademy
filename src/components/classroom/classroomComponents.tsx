@@ -5860,6 +5860,7 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
 
 export const ScreenShareTile=({participant,isLocal}:{participant:any;isLocal:boolean})=>{
   const videoRef=useRef<HTMLVideoElement>(null);
+  const [fitWidth,setFitWidth]=useState(false);
   const name=participant.name||participant.identity||"User";
   useEffect(()=>{
     const el=videoRef.current;
@@ -5882,21 +5883,27 @@ export const ScreenShareTile=({participant,isLocal}:{participant:any;isLocal:boo
       if(attached){try{attached.detach(el);}catch{}}
     };
   },[participant,isLocal]);
+  const pill={position:"absolute" as const,bottom:14,left:"50%",transform:"translateX(-50%)",maxWidth:"86%",padding:"9px 20px",borderRadius:12,background:"rgba(60,64,67,.92)",color:"#fff",fontSize:14,fontWeight:500,fontFamily:"system-ui,sans-serif",whiteSpace:"nowrap" as const,overflow:"hidden",textOverflow:"ellipsis",pointerEvents:"none" as const};
   return(
-    <div style={{position:"absolute",inset:0,width:"100%",height:"100%",background:"#000",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
-      {isLocal?(
-        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:14,padding:24,textAlign:"center"}}>
-          <div style={{width:72,height:72,borderRadius:22,background:"rgba(138,180,248,.14)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-            <Monitor style={{width:34,height:34,color:"#8ab4f8"}}/>
+    <div style={{position:"absolute",inset:0,width:"100%",height:"100%",background:"#000",overflow:"hidden"}}>
+      <div style={{position:"absolute",inset:0,overflowX:"hidden",overflowY:fitWidth?"auto":"hidden",display:"flex",alignItems:fitWidth?"flex-start":"center",justifyContent:"center"}}>
+        {isLocal?(
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:14,padding:24,textAlign:"center"}}>
+            <div style={{width:72,height:72,borderRadius:22,background:"rgba(138,180,248,.14)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <Monitor style={{width:34,height:34,color:"#8ab4f8"}}/>
+            </div>
+            <p style={{margin:0,fontSize:16,fontWeight:600,color:"#e8eaed",fontFamily:"system-ui,sans-serif"}}>{"You're presenting your screen"}</p>
           </div>
-          <p style={{margin:0,fontSize:16,fontWeight:600,color:"#e8eaed",fontFamily:"system-ui,sans-serif"}}>{"You're presenting your screen"}</p>
-        </div>
-      ):(
-        <video ref={videoRef} autoPlay playsInline muted style={{position:"absolute",top:0,left:0,right:0,bottom:0,width:"100%",height:"100%",minWidth:"100%",minHeight:"100%",maxWidth:"none",maxHeight:"none",objectFit:"contain",background:"#000"}}/>
-      )}
-      <div style={{position:"absolute",bottom:14,left:"50%",transform:"translateX(-50%)",maxWidth:"86%",padding:"9px 20px",borderRadius:12,background:"rgba(60,64,67,.92)",color:"#fff",fontSize:14,fontWeight:500,fontFamily:"system-ui,sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",pointerEvents:"none"}}>
-        {isLocal?"You're presenting":`${name}'s screen`}
+        ):(
+          <video ref={videoRef} autoPlay playsInline muted onClick={()=>setFitWidth(v=>!v)} style={fitWidth?{display:"block",width:"100%",height:"auto",flexShrink:0,background:"#000"}:{width:"100%",height:"100%",objectFit:"contain",background:"#000"}}/>
+        )}
       </div>
+      {!isLocal&&(
+        <button onClick={()=>setFitWidth(v=>!v)} style={{position:"absolute",top:"50%",right:8,transform:"translateY(-50%)",padding:"10px 12px",borderRadius:12,border:"none",background:"rgba(60,64,67,.85)",color:"#fff",fontSize:13,fontWeight:600,fontFamily:"system-ui,sans-serif"}}>
+          {fitWidth?"Fit screen":"Full width"}
+        </button>
+      )}
+      <div style={pill}>{isLocal?"You're presenting":`${name}'s screen`}</div>
     </div>
   );
 };
