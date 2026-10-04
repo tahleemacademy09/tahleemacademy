@@ -3157,6 +3157,18 @@ export const InClassQuranReader=({onClose}:any)=>{
   /* mushaf text (page-based) */
   const[mushafAyahs,setMushafAyahs]=useState<any[]>([]);
   const[mushafLoading,setMushafLoading]=useState(false);
+  const mushafBoxRef=useRef<HTMLDivElement>(null);
+  const[mushafBoxH,setMushafBoxH]=useState(0);
+  const[printedBg,setPrintedBg]=useState<string|null>(null);
+  useEffect(()=>{
+    const el=mushafBoxRef.current;
+    if(!el)return;
+    const upd=()=>setMushafBoxH(el.clientHeight);
+    upd();
+    const ro=new ResizeObserver(upd);
+    ro.observe(el);
+    return()=>ro.disconnect();
+  },[mode,fullscreen]);
   /* translation panel data (page-based) */
   const[transAyahs,setTransAyahs]=useState<any[]>([]);
   const[transLoading,setTransLoading]=useState(false);
@@ -3577,15 +3589,20 @@ export const InClassQuranReader=({onClose}:any)=>{
             <PageNav/>
             <ReciterStrip/>
             <div
-              style={{flex:1,overflowY:"auto",background:"linear-gradient(180deg,#f5f0e8 0%,#ede8da 100%)"}}
+              ref={mushafBoxRef}
+              style={{flex:1,overflowY:"auto",background:printedBg||"linear-gradient(180deg,#f5f0e8 0%,#ede8da 100%)"}}
               onTouchStart={onTouchStart}
               onTouchEnd={onTouchEnd}
             >
               {/* ── Printed Madinah Mushaf page — tap an ayah to hear it, playing ayah is highlighted ── */}
               {!printedFail&&(
-                <div style={{padding:"8px 6px 16px",maxWidth:460,margin:"0 auto"}}>
+                <div style={{margin:"0 auto"}}>
                   <MushafPageView
                     page={page}
+                    seamless
+                    availableHeight={Math.max(300,mushafBoxH-64)}
+                    maxStretch={1.4}
+                    onBackground={setPrintedBg}
                     highlight={playingVerse?(()=>{const[ps,pv]=playingVerse.split(":").map(Number);return{surah:ps,ayah:pv};})():null}
                     onAyahClick={(sn,an)=>playVerse(sn,an)}
                     onUnavailable={()=>setPrintedFail(true)}
