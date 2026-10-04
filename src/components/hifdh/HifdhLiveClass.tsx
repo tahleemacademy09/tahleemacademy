@@ -26,6 +26,7 @@ import "@livekit/components-styles";
 import { supabase } from "@/integrations/supabase/client";
 import { Mic, MicOff, Video, VideoOff, Users, PlayCircle, CheckCircle2, XCircle, Radio, Loader2 } from "lucide-react";
 import { H_GOLD as GOLD, H_GM as GREEN } from "@/components/hifdh/hifdhTokens";
+import { getLiveKitRoomOptions } from "@/lib/livekitOptions";
 
 type Tier = "sabaq" | "sabqi" | "manzil";
 const TIERS: { id: Tier; label: string }[] = [
@@ -175,7 +176,7 @@ export default function HifdhLiveClass({ userId, studentName, isTeacher }: Props
   }
 
   return (
-    <LiveKitRoom serverUrl={wsUrl} token={token} connect video={isTeacher} audio className="flex flex-1 overflow-hidden" data-lk-theme="default">
+    <LiveKitRoom serverUrl={wsUrl} token={token} connect video={isTeacher} audio options={getLiveKitRoomOptions()} className="flex flex-1 overflow-hidden" data-lk-theme="default">
       <RoomAudioRenderer />
       <div className="flex-1 flex flex-col overflow-hidden">
         <ActiveSpeakerStage />
