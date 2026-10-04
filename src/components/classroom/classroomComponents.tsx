@@ -3159,6 +3159,20 @@ export const InClassQuranReader=({onClose}:any)=>{
   const[mushafLoading,setMushafLoading]=useState(false);
   const[chromeHidden,setChromeHidden]=useState(()=>{try{return document.body.dataset.classUi==="hidden";}catch{return false;}});
   const lastTapRef=useRef(0);
+  const panelRef=useRef<HTMLDivElement>(null);
+  const[topPad,setTopPad]=useState(0);
+  useEffect(()=>{
+    const calc=()=>{
+      if(chromeHidden){setTopPad(0);return;}
+      const h=document.querySelector("[data-class-header]") as HTMLElement|null;
+      const el=panelRef.current;
+      if(!h||!el){setTopPad(0);return;}
+      setTopPad(Math.max(0,Math.ceil(h.offsetHeight-el.getBoundingClientRect().top)));
+    };
+    calc();
+    window.addEventListener("resize",calc);
+    return()=>window.removeEventListener("resize",calc);
+  },[chromeHidden,fullscreen]);
   useEffect(()=>{
     const h=(e:any)=>setChromeHidden(!!e?.detail?.hidden);
     window.addEventListener("classroom:ui-state",h);
@@ -3166,9 +3180,11 @@ export const InClassQuranReader=({onClose}:any)=>{
   },[]);
   const onReaderTap=(e:any)=>{
     if(e?.target?.closest?.("button,a,input,textarea,select"))return;
-    const now=Date.now();
-    if(now-lastTapRef.current<350){lastTapRef.current=0;window.dispatchEvent(new Event("classroom:toggle-ui"));}
-    else lastTapRef.current=now;
+    const r=e.currentTarget.getBoundingClientRect();
+    const x=(e.clientX-r.left)/Math.max(1,r.width);
+    if(x<0.4)changePage(1);
+    else if(x>0.6)changePage(-1);
+    else window.dispatchEvent(new Event("classroom:toggle-ui"));
   };
   const mushafBoxRef=useRef<HTMLDivElement>(null);
   const[mushafBoxH,setMushafBoxH]=useState(0);
@@ -3192,6 +3208,7 @@ export const InClassQuranReader=({onClose}:any)=>{
   const[expandedTafseer,setExpandedTafseer]=useState<Record<string,string>>({});
   const[loadingTafseer,setLoadingTafseer]=useState<Record<string,boolean>>({});
   const[showPicker,setShowPicker]=useState(false);
+  const[showReciters,setShowReciters]=useState(false);
   /* audio + reciters */
   const audioRef=useRef<HTMLAudioElement|null>(null);
   const[playingVerse,setPlayingVerse]=useState<string|null>(null);
@@ -3446,12 +3463,12 @@ export const InClassQuranReader=({onClose}:any)=>{
 
   /* ── single-line nav bar: prev | page | next | Surah | reciters (scrollable) ── */
   const PageNav=()=>chromeHidden?null:(
-    <div style={{display:"flex",alignItems:"center",gap:3,padding:"4px 6px",borderBottom:"1px solid #e8dfc8",background:"#fff",flexShrink:0,overflowX:"auto",WebkitOverflowScrolling:"touch" as any}}>
+    <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderBottom:"1px solid #eee",background:"#fff",flexShrink:0,overflowX:"auto",WebkitOverflowScrolling:"touch" as any}}>
       {/* Prev */}
-      <button onClick={()=>changePage(-1)} disabled={page<=1}
+      {mode!=="quran"&&<button onClick={()=>changePage(-1)} disabled={page<=1}
         style={{flexShrink:0,padding:"4px 10px",borderRadius:6,border:"1px solid #d4c9a0",background:"#f5f0e4",color:"#1a3d24",cursor:page<=1?"not-allowed":"pointer",fontSize:14,fontWeight:700,opacity:page<=1?0.35:1}}>
         ←
-      </button>
+      </button>}
       {/* Page number / jump input */}
       {pageInputOpen?(
         <div style={{display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
@@ -3471,40 +3488,58 @@ export const InClassQuranReader=({onClose}:any)=>{
         </button>
       )}
       {/* Next */}
-      <button onClick={()=>changePage(1)} disabled={page>=604}
+      {mode!=="quran"&&<button onClick={()=>changePage(1)} disabled={page>=604}
         style={{flexShrink:0,padding:"4px 10px",borderRadius:6,border:"1px solid #d4c9a0",background:"#f5f0e4",color:"#1a3d24",cursor:page>=604?"not-allowed":"pointer",fontSize:14,fontWeight:700,opacity:page>=604?0.35:1}}>
         →
-      </button>
+      </button>}
       {/* Surah picker */}
       <button onClick={()=>setShowPicker(true)}
         style={{flexShrink:0,padding:"4px 8px",borderRadius:6,border:"1px solid #b7791f",background:"#fffbf0",color:"#b7791f",cursor:"pointer",fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>
         ☰ Surah
       </button>
-      {/* Divider */}
-      <div style={{flexShrink:0,width:1,height:20,background:"#e8dfc8",margin:"0 2px"}}/>
-      {/* Reciters — scroll within the same row */}
-      {RECITERS.map(r=>(
-        <button key={r.id} onClick={()=>{
-          setReciter(r.id);
-          if(playingVerse){const[s,v]=playingVerse.split(":").map(Number);audioRef.current?.pause();setPlayingVerse(null);setTimeout(()=>playVerse(s,v),80);}
-        }}
-          style={{flexShrink:0,padding:"3px 9px",borderRadius:12,border:`1.5px solid ${reciter===r.id?"#b7791f":"rgba(183,121,31,.3)"}`,
-            background:reciter===r.id?"#b7791f":"#fff",color:reciter===r.id?"#fff":"#7a5c1e",
-            fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",transition:"all .15s"}}>
-          {r.ar}
-        </button>
-      ))}
+      {/* Reciter — opens a list, like Surah */}
+      <button onClick={()=>setShowReciters(true)}
+        style={{flexShrink:0,padding:"4px 8px",borderRadius:6,border:"1px solid #b7791f",background:"#fffbf0",color:"#b7791f",cursor:"pointer",fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>
+        🎙 {RECITERS.find(r=>r.id===reciter)?.ar||"Reciter"} ▾
+      </button>
     </div>
   );
 
   /* ReciterStrip kept as no-op so existing references don't break */
   const ReciterStrip=()=>null;
+  const ReciterPicker=()=>showReciters?(
+    <div style={{position:"absolute",inset:0,zIndex:30,background:"rgba(0,0,0,.5)"}} onClick={()=>setShowReciters(false)}>
+      <div onClick={e=>e.stopPropagation()}
+        style={{position:"absolute",top:topPad,left:0,right:0,bottom:0,background:"#fff",display:"flex",flexDirection:"column"}}>
+        <div style={{padding:"10px 14px",background:"linear-gradient(135deg,#1a3d24,#276749)",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+          <div style={{flex:1,fontSize:13,fontWeight:800,color:"#fff"}}>Choose Reciter</div>
+          <button onClick={()=>setShowReciters(false)}
+            style={{background:"rgba(255,255,255,.2)",border:"none",color:"#fff",borderRadius:6,width:26,height:26,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <X style={{width:12,height:12}}/>
+          </button>
+        </div>
+        <div style={{flex:1,overflowY:"auto"}}>
+          {RECITERS.map(r=>(
+            <button key={r.id} onClick={()=>{
+              setReciter(r.id);setShowReciters(false);
+              if(playingVerse){const[sv,vv]=playingVerse.split(":").map(Number);audioRef.current?.pause();setPlayingVerse(null);setTimeout(()=>playVerse(sv,vv),80);}
+            }}
+              style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"12px 14px",background:reciter===r.id?"#f0fff4":"none",border:"none",borderBottom:"1px solid #f0e8d4",cursor:"pointer",textAlign:"left"}}>
+              <span style={{width:24,height:24,borderRadius:"50%",background:reciter===r.id?"#1a3d24":"#e5e7eb",color:"#fff",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{reciter===r.id?"✓":""}</span>
+              <span style={{flex:1,fontSize:13,fontWeight:600,color:"#1a3d24"}}>{r.name}</span>
+              <span style={{fontFamily:"'Amiri',serif",fontSize:16,color:"#b7791f",fontWeight:700}}>{r.ar}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  ):null;
 
   /* ── surah picker overlay ── */
   const SurahPicker=()=>showPicker?(
     <div style={{position:"absolute",inset:0,zIndex:30,background:"rgba(0,0,0,.5)"}} onClick={()=>setShowPicker(false)}>
       <div onClick={e=>e.stopPropagation()}
-        style={{position:"absolute",inset:0,background:"#faf6ec",display:"flex",flexDirection:"column"}}>
+        style={{position:"absolute",top:topPad,left:0,right:0,bottom:0,background:"#faf6ec",display:"flex",flexDirection:"column"}}>
         <div style={{padding:"10px 14px",background:"linear-gradient(135deg,#1a3d24,#276749)",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
           <div style={{flex:1,fontSize:13,fontWeight:800,color:"#fff"}}>Jump to Surah</div>
           <button onClick={()=>setShowPicker(false)}
@@ -3561,12 +3596,12 @@ export const InClassQuranReader=({onClose}:any)=>{
     :{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.6)"};
 
   const panelStyle:React.CSSProperties=fullscreen
-    ?{flex:1,display:"flex",flexDirection:"column",background:"#faf6ec",overflow:"hidden"}
-    :{position:"absolute",top:0,right:0,bottom:0,width:"min(460px,100%)",background:"#faf6ec",display:"flex",flexDirection:"column",boxShadow:"-8px 0 40px rgba(0,0,0,.5)",borderLeft:"1px solid rgba(183,121,31,.2)"};
+    ?{flex:1,display:"flex",flexDirection:"column",background:"#fff",overflow:"hidden"}
+    :{position:"absolute",top:0,right:0,bottom:0,width:"min(460px,100%)",background:"#fff",display:"flex",flexDirection:"column",boxShadow:"-8px 0 40px rgba(0,0,0,.5)",borderLeft:"1px solid rgba(183,121,31,.2)"};
 
   return(
     <div style={outerStyle} onClick={fullscreen?undefined:onClose}>
-      <div onClick={e=>e.stopPropagation()} style={panelStyle}>
+      <div ref={panelRef} onClick={e=>e.stopPropagation()} style={{...panelStyle,paddingTop:topPad,boxSizing:"border-box"}}>
 
         {/* ── Single-line compact header ── */}
         <div style={{background:"linear-gradient(135deg,#1a3d24,#276749)",padding:"7px 10px",flexShrink:0,display:chromeHidden?"none":"flex",alignItems:"center",gap:6}}>
@@ -3606,7 +3641,7 @@ export const InClassQuranReader=({onClose}:any)=>{
             <ReciterStrip/>
             <div
               ref={mushafBoxRef}
-              style={{flex:1,overflowY:"auto",touchAction:"manipulation",background:printedBg||"linear-gradient(180deg,#f5f0e8 0%,#ede8da 100%)"}}
+              style={{flex:1,overflowY:"auto",touchAction:"manipulation",background:"#fff"}}
               onTouchStart={onTouchStart}
               onTouchEnd={onTouchEnd}
               onClick={onReaderTap}
@@ -3617,11 +3652,11 @@ export const InClassQuranReader=({onClose}:any)=>{
                   <MushafPageView
                     page={page}
                     seamless
+                    pureWhite
                     availableHeight={Math.max(300,mushafBoxH-(chromeHidden?8:64))}
                     maxStretch={1.4}
                     onBackground={setPrintedBg}
                     highlight={playingVerse?(()=>{const[ps,pv]=playingVerse.split(":").map(Number);return{surah:ps,ayah:pv};})():null}
-                    onAyahClick={(sn,an)=>playVerse(sn,an)}
                     onUnavailable={()=>setPrintedFail(true)}
                   />
                 </div>
@@ -3976,6 +4011,7 @@ export const InClassQuranReader=({onClose}:any)=>{
 
         {/* Surah picker overlay — shared */}
         {SurahPicker()}
+        {ReciterPicker()}
 
         {/* Google Fonts */}
         <style>{`@import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&display=swap');`}</style>

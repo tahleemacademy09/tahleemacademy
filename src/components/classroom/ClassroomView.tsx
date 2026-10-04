@@ -1441,7 +1441,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           {/* ══ FEATURE 4: CONNECTION STATE BANNER — shown during LiveKit's own reconnect ══ */}
           <ConnectionStateBanner/>
           {/* ══ GOOGLE MEET STYLE TOP BAR ══ */}
-          <div style={{
+          <div data-class-header="1" style={{
             position:"fixed",top:0,left:0,right:0,zIndex:60,
             height:56,boxSizing:"content-box",
             transform:uiHidden?"translateY(-100%)":"translateY(0)",
