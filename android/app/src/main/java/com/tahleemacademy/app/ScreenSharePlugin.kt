@@ -14,6 +14,8 @@ import io.livekit.android.LiveKit
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
+import io.livekit.android.room.track.LocalVideoTrackOptions
+import io.livekit.android.room.track.VideoCaptureParameter
 import io.livekit.android.room.track.Track
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -79,6 +81,15 @@ class ScreenSharePlugin : Plugin() {
 
         scope.launch {
             val newRoom = LiveKit.create(context.applicationContext)
+            val dm = context.resources.displayMetrics
+            val sw = dm.widthPixels.coerceAtLeast(1)
+            val sh = dm.heightPixels.coerceAtLeast(1)
+            val k = minOf(1f, 1600f / maxOf(sw, sh))
+            val cw = ((sw * k).toInt() / 2) * 2
+            val ch = ((sh * k).toInt() / 2) * 2
+            newRoom.localParticipant.videoTrackCaptureDefaults = LocalVideoTrackOptions(
+                captureParams = VideoCaptureParameter(width = cw, height = ch, maxFps = 15)
+            )
             try {
                 newRoom.connect(url, token)
                 newRoom.localParticipant.setScreenShareEnabled(true, data)
