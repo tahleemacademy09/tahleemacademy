@@ -23,6 +23,7 @@ import { Track } from "livekit-client";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 import { Mic, MicOff, Video, VideoOff, PhoneOff, Loader2, Users, X } from "lucide-react";
+import { getLiveKitRoomOptions } from "@/lib/livekitOptions";
 
 const G = "#0f2d1f";
 const GOLD = "#c9a84c";
@@ -94,6 +95,7 @@ export default function MajlisCallRoom({ channelId, channelName, isPrivileged, o
         connect
         video
         audio
+        options={getLiveKitRoomOptions()}
         style={{ width: "100%", height: "100%" }}
         onDisconnected={onLeave}
       >
