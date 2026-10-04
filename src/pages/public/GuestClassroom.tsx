@@ -21,6 +21,7 @@
 */
 
 import { useEffect, useState, useRef, useCallback } from "react";
+import { getLiveKitRoomOptions } from "@/lib/livekitOptions";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   LiveKitRoom, RoomAudioRenderer, useRoomContext,
@@ -1167,22 +1168,7 @@ const GuestClassroom = () => {
         // Keeping it here AND in ReconnectMonitor caused autoReconnect() to fire
         // TWICE per disconnect, scheduling two setRoomKey() increments ~2 s apart
         // and creating a permanent "Reconnecting..." loop that never resolved.
-        options={{
-          adaptiveStream:{ pixelDensity:"screen" },
-          dynacast:true,
-          disconnectOnPageLeave:false,
-          audioCaptureDefaults:{
-            echoCancellation:true, noiseSuppression:true,
-            autoGainControl:true, sampleRate:48000, channelCount:1,
-          },
-          publishDefaults:{
-            audioPreset:{ maxBitrate:64000 },
-            dtx:false, red:true, stopMicTrackOnMute:false,
-            videoEncoding:{ maxBitrate:700_000, maxFramerate:20 },
-            backupCodec:true,
-          },
-          videoCaptureDefaults:{ resolution:{ width:1280, height:720 } },
-        }}
+        options={getLiveKitRoomOptions(isMobile)}
         style={{ flex:1, display:"flex", flexDirection:"column", minHeight:0, position:"relative" }}
         data-lk-theme="default"
       >
