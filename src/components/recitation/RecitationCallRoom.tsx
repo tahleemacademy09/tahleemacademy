@@ -17,6 +17,7 @@ import { LiveKitRoom, VideoConference, RoomAudioRenderer } from "@livekit/compon
 import "@livekit/components-styles";
 import { supabase } from "@/integrations/supabase/client";
 import { Loader2, AlertTriangle, PhoneOff } from "lucide-react";
+import { getLiveKitRoomOptions } from "@/lib/livekitOptions";
 
 const G = "#064E3B";
 
@@ -108,6 +109,7 @@ const RecitationCallRoom = ({ roomName, onLeave }: RecitationCallRoomProps) => {
         connect
         video
         audio
+        options={getLiveKitRoomOptions()}
         data-lk-theme="default"
         style={{ height: "100%", minHeight: 480 }}
         onDisconnected={onLeave}
