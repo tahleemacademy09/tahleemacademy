@@ -13,6 +13,7 @@ import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useA
 import { useCurrentTermId } from "@/hooks/useCurrentTermId";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { toast } from "@/hooks/use-toast";
+import ProgramsAdmin from "@/components/majlis/ProgramsAdmin";
 import {
   BookOpen, Clock, Edit2, Trash2, Plus, X, Users,
   Calendar, Video, ChevronDown, ChevronUp, Save, Lock, Loader2,
@@ -756,6 +757,7 @@ export default function TimetableManagement() {
             </div>
           ))
         )}
+        <ProgramsAdmin />
       </div>
     </div>
   );
