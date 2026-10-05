@@ -17,7 +17,7 @@ const GM     = "#1a4731";
 const GOLD   = "#c9a84c";
 const BORDER = "rgba(15,45,31,0.1)";
 
-const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
+const SubjectRecordings = ({ subjectId, programId }: { subjectId: string; programId?: string | null }) => {
   const { t }             = useLanguage();
   const { user, hasRole, profile } = useAuth();
   const qc                = useQueryClient();
@@ -177,8 +177,9 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
   });
 
   const filtered = recordings?.filter(r =>
-    (r.teacher_name || "").toLowerCase().includes(search.toLowerCase()) ||
-    new Date(r.created_at!).toLocaleDateString().includes(search)
+    (!programId || (r as any).program_id === programId) &&
+    ((r.teacher_name || "").toLowerCase().includes(search.toLowerCase()) ||
+    new Date(r.created_at!).toLocaleDateString().includes(search))
   );
 
   const fmtDur = (s: number) => {
