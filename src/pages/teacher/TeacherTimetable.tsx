@@ -10,6 +10,7 @@ import { useStaffTermId } from "@/hooks/useCurrentTermId";
 import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { format } from "date-fns";
+import ProgramsTimetableSection from "@/components/majlis/ProgramsTimetableSection";
 import { Clock, Video, Calendar, BookOpen, Plus, ChevronRight, Users, Mic, ClipboardList, MapPin } from "lucide-react";
 
 const G    = "#0f2d1f";
@@ -396,6 +397,7 @@ export default function TeacherTimetable() {
             </div>
           </div>
         )}
+        <div style={{ marginTop: 24 }}><ProgramsTimetableSection isStaff /></div>
         {/* Exam & Test Schedule — tests for subjects this teacher teaches,
             plus any general test not tied to one subject */}
         <div style={{ marginTop: 24 }}>
