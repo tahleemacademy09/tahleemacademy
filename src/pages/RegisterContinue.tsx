@@ -333,7 +333,6 @@ const RegisterContinue = () => {
       });
       setPaying(true);
       setTimeout(async () => {
-        await recordPayment(userId, ref);
         await advanceTasjeel(userId, postPaymentStep);
         setPaying(false);
         navigate(postPaymentRoute, { replace: true });
@@ -355,26 +354,23 @@ const RegisterContinue = () => {
         amount: config.entrance_fee_amount * 100,
         currency: config.entrance_fee_currency,
         ref,
-        metadata: { full_name: name, type: "registration" },
+        metadata: { full_name: name, type: "registration", user_id: userId },
         // IMPORTANT: callback must NOT be async — Paystack breaks if it is.
         // Use .then() chains for post-payment async work instead.
         callback: (res: any) => {
-          recordPayment(userId, res.reference)
-            .then(() => advanceTasjeel(userId, postPaymentStep))
-            .then(() => {
+          confirmRegistrationPayment(res.reference)
+            .then((serverStep) => {
               setPaying(false);
-              navigate(postPaymentRoute, { replace: true });
+              const route = serverStep ? (resolveRoute(serverStep, config) ?? postPaymentRoute) : postPaymentRoute;
+              navigate(route, { replace: true });
             })
             .catch(() => {
-              // Payment was received by Paystack but DB write failed.
-              // DO NOT silently advance the user — their enrollments row would
-              // remain with registration_paid: false, locking them out forever
-              // with no way to retry payment. Instead show an actionable error
-              // with the Paystack reference so support can manually reconcile.
+              // Paystack took the payment but the server hasn't confirmed it yet.
+              // The webhook may still complete it; show the reference for support.
               setPaying(false);
               toast({
-                title: "Payment received — account not updated",
-                description: `Your payment went through (ref: ${res.reference}) but we couldn't update your account. Please contact support with this reference and we'll sort it out immediately.`,
+                title: "Payment received — confirming",
+                description: `Your payment (ref: ${res.reference}) is being confirmed. Refresh in a minute; if you are still stuck, contact support with this reference.`,
                 variant: "destructive",
               });
             });
@@ -391,29 +387,24 @@ const RegisterContinue = () => {
     }
   };
 
-  const recordPayment = async (userId: string, ref: string) => {
-    try {
-      await supabase.from("payment_history" as any).insert({
-        user_id:      userId,
-        amount:       config.entrance_fee_amount,
-        paid_at:      new Date().toISOString(),
-        status:       "success",
-        payment_ref:  ref,
-        payment_type: "registration",
-        plan_type:    "registration",
-      });
-      await supabase.from("enrollments" as any).upsert({
-        user_id:                userId,
-        level:                  "pending",
-        plan_type:              "monthly",
-        amount:                 config.entrance_fee_amount,
-        status:                 "grace",
-        grace_end_date:         new Date(Date.now() + 7 * 86400000).toISOString(),
-        registration_paid:      true,
-        registration_paid_at:   new Date().toISOString(),
-        admin_override:         false,
-      }, { onConflict: "user_id" });
-    } catch (_) { /* non-fatal */ }
+  // Registration payments are recorded SERVER-SIDE (paystack-verify checks the
+  // charge with Paystack, then writes payments / payment_history / tasjeel_progress
+  // with the service role). The browser cannot write these rows (RLS), so it only
+  // asks the server to confirm, retrying briefly in case the webhook lands first.
+  // Resolves with the step the server moved the student to (or null if unknown).
+  const confirmRegistrationPayment = async (reference: string): Promise<string | null> => {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const { data, error } = await supabase.functions.invoke("paystack-verify", { body: { reference } });
+      if (!error && (data as any)?.ok) return ((data as any).next_step as string) ?? null;
+      console.warn("[RegisterContinue] paystack-verify attempt", attempt + 1, error?.message ?? data);
+      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+    }
+    // Last resort: the webhook may have recorded it in the meantime.
+    const { data: row } = await supabase
+      .from("payment_history" as any).select("id")
+      .eq("payment_ref", reference).eq("status", "success").maybeSingle();
+    if (row) return null;
+    throw new Error("Payment not confirmed yet");
   };
 
   // ── Styles ────────────────────────────────────────────────────────────────
