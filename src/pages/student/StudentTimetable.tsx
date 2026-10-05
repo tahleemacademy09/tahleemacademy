@@ -17,6 +17,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { useViewingTermId } from "@/hooks/useCurrentTermId";
+import ProgramsTimetableSection from "@/components/majlis/ProgramsTimetableSection";
 import { Video, Calendar, BookOpen, Bell, Users, Lock, UserCheck, LayoutGrid, ClipboardList, MapPin } from "lucide-react";
 
 const G    = "#0f2d1f";
@@ -844,6 +845,7 @@ export default function StudentTimetable() {
         ) : (
           <GeneralTimetable profile={profile} hasRole={hasRole} t={t} language={language} navigate={navigate} showBanner={false} />
         )}
+        <ProgramsTimetableSection isStaff={isPrivileged} />
         <ExamScheduleSection studentLevel={studentLevel} isPrivileged={isPrivileged} navigate={navigate} t={t} language={language} />
       </div>
     </div>
