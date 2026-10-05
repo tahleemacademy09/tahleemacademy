@@ -138,59 +138,77 @@ export async function healStuckPaymentStep(userId: string, step: string): Promis
 
 // ── resolveTasjeelStep ────────────────────────────────────────────────────
 // SINGLE SOURCE OF TRUTH for "what step is this authenticated user actually
-// at, and where do they belong." Used by both useTasjeel() (the continuous
-// dashboard guard) and Login.tsx (the one-time post-sign-in redirect) so the
-// two can never disagree about a user's destination. Previously each kept
-// an independent Supabase query with its own timeout, which could resolve
-// to two different steps a few hundred ms apart — Login.tsx would navigate
-// to /student, then TasjeelGuard's own slower query would resolve and bounce
-// the user again. That double-navigate is what looked like a "reload."
+// at, and where do they belong." Used by useTasjeel() (dashboard guard),
+// Login.tsx, Index.tsx, AuthCallback.tsx and RegisterContinue.tsx.
 //
-// "No row" handling is the existing-users-login-freely rule: a CONFIRMED
-// user with no tasjeel_progress row is an existing/legacy account that
-// predates this pipeline — back-fill them as completed rather than dropping
-// them into registration. An UNCONFIRMED user with no row is genuinely new
-// and belongs at the start of the pipeline.
+// FIX (verified students skipping the registration flow):
+//  1. A slow / failed / timed-out read used to look identical to "no row".
+//     Because a verified student always has email_confirmed_at, the old
+//     "no row + confirmed email = legacy user, back-fill completed" rule
+//     fired and sent a mid-registration student straight to the dashboard
+//     (and cached them as completed on that device). A failed read now
+//     returns "timeout" — callers must NOT treat that as completed.
+//  2. A genuinely missing row (the signup trigger is the normal creator, so
+//     this is rare) now starts the student at "enrollment" instead of
+//     "completed". The upsert ignores duplicates so it can never overwrite
+//     real progress, and we re-read afterwards in case a concurrent request
+//     created the row first.
+// Returns one of the step names, or "timeout" when the status could not be
+// determined.
 export async function resolveTasjeelStep(
   userId: string,
-  emailConfirmedAt: string | null | undefined,
+  _emailConfirmedAt?: string | null | undefined, // kept for call-site compatibility; no longer used
   timeoutMs = 6000
 ): Promise<string> {
-  const timeoutPromise = new Promise<{ data: null }>((resolve) =>
-    setTimeout(() => resolve({ data: null }), timeoutMs)
-  );
-  const queryPromise = supabase
-    .from("tasjeel_progress")
-    .select("current_step")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  const { data } = await Promise.race([queryPromise, timeoutPromise]);
-  const existingStep = (data as any)?.current_step as string | undefined;
-
-  if (existingStep) return healStuckPaymentStep(userId, existingStep);
-
-  // No row at all.
-  if (emailConfirmedAt) {
-    // Existing confirmed user predating the pipeline — back-fill once so
-    // this check is a no-op on every future login/dashboard visit.
+  const readStep = async (): Promise<{ step: string | null; failed: boolean }> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<{ data: null; error: { message: string } }>((resolve) => {
+      timer = setTimeout(() => resolve({ data: null, error: { message: "timeout" } }), timeoutMs);
+    });
     try {
-      const now = new Date().toISOString();
-      await supabase.from("tasjeel_progress").insert({
-        user_id:      userId,
-        current_step: "completed",
-        created_at:   now,
-        updated_at:   now,
-        completed_at: now,
-      });
+      const res: any = await Promise.race([
+        supabase
+          .from("tasjeel_progress")
+          .select("current_step")
+          .eq("user_id", userId)
+          .maybeSingle() as any,
+        timeoutPromise,
+      ]);
+      if (res?.error) return { step: null, failed: true };
+      return { step: (res?.data?.current_step as string | undefined) ?? null, failed: false };
     } catch {
-      /* non-fatal — row may already exist from a concurrent request */
+      return { step: null, failed: true };
+    } finally {
+      if (timer) clearTimeout(timer);
     }
-    return "completed";
+  };
+
+  const first = await readStep();
+  if (first.failed) return "timeout";
+  if (first.step) return healStuckPaymentStep(userId, first.step);
+
+  // Confirmed: no row exists. Create it at the start of the pipeline.
+  const now = new Date().toISOString();
+  let upsertFailed = false;
+  try {
+    const { error } = await supabase
+      .from("tasjeel_progress")
+      .upsert(
+        { user_id: userId, current_step: "enrollment", created_at: now, updated_at: now },
+        { onConflict: "user_id", ignoreDuplicates: true }
+      );
+    if (error) upsertFailed = true;
+  } catch {
+    upsertFailed = true;
   }
 
-  // Genuinely new, unconfirmed account — start of the pipeline.
-  return "enrollment";
+  // Re-read: a concurrent request (signup trigger, another tab) may have
+  // created the row with real progress; always prefer what is stored.
+  const second = await readStep();
+  if (second.failed) return "timeout";
+  if (second.step) return healStuckPaymentStep(userId, second.step);
+
+  return upsertFailed ? "timeout" : "enrollment";
 }
 
 // ── createDashboardIfNotExists ────────────────────────────────────────────
@@ -206,25 +224,24 @@ export async function createDashboardIfNotExists(userId: string) {
 }
 
 // ── initializeTasjeel ─────────────────────────────────────────────────────
+// Idempotent: the signup trigger normally creates the row already, so this
+// must never insert a duplicate (that produced tasjeel_progress_user_id_key
+// errors) and must never overwrite existing progress.
 export async function initializeTasjeel(userId: string, registrationEnabled = true) {
-  const { data: existing } = await supabase
-    .from("tasjeel_progress")
-    .select("id, current_step")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (existing) return;
-
   const step = registrationEnabled ? "enrollment" : "completed";
   const now  = new Date().toISOString();
 
-  await supabase.from("tasjeel_progress").insert({
-    user_id:      userId,
-    current_step: step,
-    created_at:   now,
-    updated_at:   now,
-    ...(step === "completed" ? { completed_at: now } : {}),
-  });
+  const { error } = await supabase.from("tasjeel_progress").upsert(
+    {
+      user_id:      userId,
+      current_step: step,
+      created_at:   now,
+      updated_at:   now,
+      ...(step === "completed" ? { completed_at: now } : {}),
+    },
+    { onConflict: "user_id", ignoreDuplicates: true }
+  );
+  if (error) throw error;
 }
 
 // ── useTasjeel hook ───────────────────────────────────────────────────────
@@ -322,8 +339,15 @@ export function useTasjeel() {
       // everywhere.
       const step = await resolveTasjeelStep(userId, user?.email_confirmed_at);
       if (!didTimeout) {
-        setCurrentStep(step);
-        persistCompletedCache(userId, step);
+        if (step === "timeout") {
+          // Could not determine the step. Never grant the dashboard on a
+          // failed read — show the Retry screen unless a previously
+          // validated "completed" cache exists for this device.
+          if (!hasCompletedCache(userId)) setCurrentStep("timeout");
+        } else {
+          setCurrentStep(step);
+          persistCompletedCache(userId, step);
+        }
       }
     } catch {
       if (!didTimeout) {
