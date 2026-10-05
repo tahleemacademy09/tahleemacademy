@@ -1,6 +1,7 @@
 // supabase/functions/paystack-webhook/index.ts
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { applyRegistrationPayment, getRegistrationFeeKobo, isRegistrationPayment } from "./registration.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin":  "https://tahleemacademy.vercel.app",
@@ -295,6 +296,22 @@ Deno.serve(async (req) => {
         console.error(`[webhook] Cannot resolve student for ref=${reference} email=${customerEmail}`);
         // Still return 200 so Paystack doesn't keep retrying
         return new Response(JSON.stringify({ received: true, warning: "student not found" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // ── Registration fee: separate path (no subscription / profile changes) ──
+      if (isRegistrationPayment(reference, meta)) {
+        const feeKobo = await getRegistrationFeeKobo(supabase);
+        if (feeKobo && amountKobo < feeKobo) {
+          console.error(`[webhook] Registration ref=${reference} underpaid: ${amountKobo} < ${feeKobo}`);
+          return new Response(JSON.stringify({ received: true, warning: "underpaid" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        await applyRegistrationPayment(supabase, studentId, reference, transactionId, amountKobo, currency, channel);
+        console.log(`[webhook] ✅ Registration done ref=${reference} student=${studentId}`);
+        return new Response(JSON.stringify({ received: true }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
