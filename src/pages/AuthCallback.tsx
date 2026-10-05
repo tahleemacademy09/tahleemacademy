@@ -25,7 +25,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { TASJEEL_ROUTES, healStuckPaymentStep } from "@/hooks/useTasjeel";
+import { TASJEEL_ROUTES, resolveTasjeelStep } from "@/hooks/useTasjeel";
 import { BookOpen } from "lucide-react";
 
 const G    = "#064E3B";
@@ -86,36 +86,12 @@ const AuthCallback = () => {
         return;
       }
 
-      // ── Step 4: student — wait for Tasjeel to initialise ────────────────
-      // Poll up to 5 seconds (10 × 500 ms) for the record to appear.
-      let tasjeel = null;
-      for (let attempt = 0; attempt < 10; attempt++) {
-        const { data } = await supabase
-          .from("tasjeel_progress" as any)
-          .select("current_step")
-          .eq("user_id", userId)
-          .maybeSingle();
-
-        if (data) {
-          tasjeel = data;
-          break;
-        }
-        await new Promise((r) => setTimeout(r, 500));
-      }
-
-      // If Tasjeel never initialised (edge case), fall back to student home.
-      // NOTE: we don't reuse resolveTasjeelStep()'s "no row + confirmed email
-      // = existing user, back-fill completed" rule here — Google/OAuth users
-      // have email_confirmed_at set immediately even on a brand-new signup,
-      // so that rule would incorrectly skip registration for new Google
-      // sign-ups. The polling loop above already gives initializeTasjeel a
-      // few seconds to create the real row; "completed" is only the fallback
-      // once that window has passed.
-      const rawStep = (tasjeel as any)?.current_step ?? "completed";
-      // Self-heal: if this student is stuck on "enrollment"/"payment" despite
-      // already having paid (or the fee being disabled), skip them forward
-      // instead of bouncing them back to the payment screen.
-      const step  = await healStuckPaymentStep(userId, rawStep);
+      // ── Step 4: student — resolve their exact pipeline step ─────────────
+      // Same resolver as Login/Index/TasjeelGuard. It never assumes
+      // "completed" when a read fails or a row is missing: a failed read
+      // returns "timeout" (→ /student, where TasjeelGuard shows Retry), and
+      // a missing row is created at "enrollment".
+      const step  = await resolveTasjeelStep(userId, session.user.email_confirmed_at, 8000);
       const route = TASJEEL_ROUTES[step] ?? "/student";
 
       navigate(route, { replace: true });

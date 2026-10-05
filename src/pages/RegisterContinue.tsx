@@ -29,7 +29,7 @@ import {
   BookOpen, CheckCircle2, CreditCard, Shield, Star,
   ArrowRight, Loader2, AlertCircle,
 } from "lucide-react";
-import { initializeTasjeel, healStuckPaymentStep } from "@/hooks/useTasjeel";
+import { resolveTasjeelStep } from "@/hooks/useTasjeel";
 
 const G    = "#0f2d1f";
 const GM   = "#1a4731";
@@ -37,20 +37,26 @@ const GOLD = "#c9a84c";
 const PAYSTACK_KEY = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || "";
 
 // ── Paystack script loader ────────────────────────────────────────────────
+// Never blocks the page: resolves when the script loads, errors, or after 8s.
+// (Previously a blocked/slow script left the "Verifying your email…" spinner
+// up forever.) handlePayment() already shows a toast if PaystackPop is missing.
 const ensurePaystack = () =>
   new Promise<void>((resolve) => {
     if ((window as any).PaystackPop) { resolve(); return; }
-    if (document.getElementById("paystack-script")) {
-      const poll = setInterval(() => {
-        if ((window as any).PaystackPop) { clearInterval(poll); resolve(); }
-      }, 200);
+    let poll: ReturnType<typeof setInterval> | undefined;
+    const finish = () => { if (poll) clearInterval(poll); clearTimeout(timer); resolve(); };
+    const timer = setTimeout(finish, 8000);
+    const existing = document.getElementById("paystack-script");
+    if (existing) {
+      poll = setInterval(() => { if ((window as any).PaystackPop) finish(); }, 200);
       return;
     }
     const s = document.createElement("script");
     s.id = "paystack-script";
     s.src = "https://js.paystack.co/v1/inline.js";
     s.async = true;
-    s.onload = () => resolve();
+    s.onload = finish;
+    s.onerror = finish;
     document.body.appendChild(s);
   });
 
@@ -150,128 +156,55 @@ const RegisterContinue = () => {
         }
 
         const userId = sessionUser.id;
-        const emailAlreadyConfirmed = !!sessionUser.email_confirmed_at;
 
-        // ── Check for existing tasjeel row (with timeout) ──────────────────
-        // If this user already has a row they're either mid-pipeline or done.
-        // Route them directly without calling initializeTasjeel.
-        const tpTimeout = new Promise<{ data: null }>((resolve) =>
-          setTimeout(() => resolve({ data: null }), 6000)
-        );
-        const { data: existingTp } = await Promise.race([
-          supabase
-            .from("tasjeel_progress" as any)
-            .select("current_step")
-            .eq("user_id", userId)
-            .maybeSingle(),
-          tpTimeout,
-        ]);
+        // ── Resolve the student's real step ─────────────────────────────────
+        // FIX: this block used to treat "no row / slow read" + confirmed email
+        // as an existing user and send them to /student as "completed". A
+        // student who has JUST verified their email is always confirmed, so
+        // any slow read here dropped brand-new students on the dashboard
+        // instead of continuing registration. resolveTasjeelStep() never
+        // assumes completed: a failed read returns "timeout", a missing row
+        // is created at "enrollment", and it already self-heals a stuck
+        // payment step.
+        const step = await resolveTasjeelStep(userId, sessionUser.email_confirmed_at, 8000);
 
-        if (existingTp) {
-          const rawStep = (existingTp as any).current_step;
-          // Self-heal: if this student is sitting on "enrollment"/"payment"
-          // but has actually already paid (or the fee is now disabled), skip
-          // them past it instead of re-showing the payment screen. See
-          // healStuckPaymentStep() for why this can happen.
-          const existingStep = await healStuckPaymentStep(userId, rawStep);
-          const existingRoute = resolveRoute(existingStep, config);
-          if (existingRoute) {
-            navigate(existingRoute, { replace: true });
-            return;
-          }
-          // Step is enrollment/payment → show payment screen (or skip if fee off)
-          if (config.entrance_fee_enabled) {
-            await ensurePaystack();
-            setPhase("payment");
-          } else {
-            navigate("/student", { replace: true });
-          }
-          return;
-        }
-
-        // ── Existing confirmed user with no tasjeel row ────────────────────
-        // This happens when an existing user is sent here by Login.tsx via
-        // the enrollment/payment pipeline route, but they've already confirmed
-        // their email. They should go straight to /student, not get stuck on
-        // the verification error screen.
-        if (emailAlreadyConfirmed) {
-          // Backfill a completed tasjeel row so this doesn't happen again
-          try {
-            const now = new Date().toISOString();
-            await supabase.from("tasjeel_progress" as any).insert({
-              user_id: userId,
-              current_step: "completed",
-              created_at: now,
-              updated_at: now,
-              completed_at: now,
-            });
-          } catch { /* non-fatal — row may already exist from a race */ }
-          navigate("/student", { replace: true });
-          return;
-        }
-
-        // BUG 5 — wrap initializeTasjeel in try/catch so a DB error doesn't
-        // leave the page stuck on the loading spinner forever.
-        try {
-          await initializeTasjeel(userId, true);
-        } catch (initErr: any) {
-          console.error("[RegisterContinue] initializeTasjeel failed:", initErr);
-          setErrMsg("There was a problem setting up your account. Please try again or contact support.");
-          setPhase("error");
-          return;
-        }
-
-        // Fetch current tasjeel step
-        const { data: tp, error: tpErr } = await supabase
-          .from("tasjeel_progress" as any)
-          .select("current_step")
-          .eq("user_id", userId)
-          .maybeSingle();
-
-        if (tpErr) {
-          console.error("[RegisterContinue] tasjeel_progress fetch failed:", tpErr);
+        if (step === "timeout") {
           setErrMsg("Could not load your registration status. Please check your connection and try again.");
           setPhase("error");
           return;
         }
 
-        const currentStep = (tp as any)?.current_step ?? "enrollment";
-
-        // BUG 1 — removed stale "review" → awaiting-level mapping; "review" is
-        // not a real step and would loop. resolveRoute's default handles unknowns.
-
-        // BUG 2, 3 — unified routing: handles "recitation", "schedule_session",
-        // and "payment" (stale) correctly.
-        const route = resolveRoute(currentStep, config);
-
+        // Pipeline pages for steps beyond payment
+        const route = resolveRoute(step, config);
         if (route) {
           navigate(route, { replace: true });
           return;
         }
 
-        // Step is enrollment | payment (stale) | unknown → show payment if needed
-        // BUG 7 — if BOTH fee and onboarding are disabled, skip straight to the
-        //          first enabled step rather than navigating to /onboarding
-        //          which would immediately redirect the user again.
-        if (config.entrance_fee_enabled) {
+        // Next enabled step after payment (respects disabled steps)
+        const nextAfterPayment = config.onboarding_required
+          ? "onboarding"
+          : config.entrance_exam_required
+            ? "exam"
+            : config.recitation_test_required
+              ? "recitation"
+              : "level_assignment";
+
+        if ((step === "enrollment" || step === "payment") && config.entrance_fee_enabled) {
+          // Genuinely unpaid → show the payment screen
           await ensurePaystack();
           setPhase("payment");
-        } else {
-          // No fee — skip ahead to the first required step
-          const nextStep = config.onboarding_required
-            ? "onboarding"
-            : config.entrance_exam_required
-              ? "exam"
-              : config.recitation_test_required
-                ? "recitation"
-                : "level_assignment";
-
-          await advanceTasjeel(userId, nextStep);
-
-          // Navigate to the correct destination for that step
-          const nextRoute = resolveRoute(nextStep, config) ?? "/student/awaiting-level";
-          navigate(nextRoute, { replace: true });
+          return;
         }
+
+        // Fee disabled (enrollment/payment), or onboarding disabled
+        // (step === "onboarding" with resolveRoute → null): skip ahead to the
+        // first required step instead of re-showing payment or looping.
+        const skipTo = step === "onboarding"
+          ? (config.entrance_exam_required ? "exam" : config.recitation_test_required ? "recitation" : "level_assignment")
+          : nextAfterPayment;
+        await advanceTasjeel(userId, skipTo);
+        navigate(resolveRoute(skipTo, config) ?? "/student/awaiting-level", { replace: true });
       } catch (err: any) {
         // BUG 5 — catch-all so any unexpected throw shows a clean error UI
         console.error("[RegisterContinue] unexpected error:", err);
