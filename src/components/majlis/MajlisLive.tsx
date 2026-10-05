@@ -25,6 +25,7 @@ import { useAcademicLevels } from "@/hooks/useAcademicLevels";
 import { useToast } from "@/hooks/use-toast";
 import SubjectRecordings from "@/components/classroom/SubjectRecordings";
 import { useMajlisLive, type MajlisMeeting } from "@/components/majlis/useMajlisLive";
+import { useMajlisPrograms } from "@/components/majlis/ProgramsTimetableSection";
 
 const G0 = "#061409", G1 = "#0f2d1f", G2 = "#1a3d27", G3 = "#276749";
 const GOLD = "#c9a84c", WARM = "#faf8f4", BRD = "#e5ddd3";
@@ -107,7 +108,11 @@ export default function MajlisLive({ onClose, isPrivileged }: Props) {
   const { data: levels = [] } = useAcademicLevels();
   const { subject, liveSession, liveMeeting, isLive, ready, refresh } = useMajlisLive();
 
-  const [tab, setTab] = useState<"live" | "schedule" | "recordings">("live");
+  const { data: programs = [] } = useMajlisPrograms();
+  const urlParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+  const [tab, setTab] = useState<"live" | "schedule" | "recordings">(urlParams.get("tab") === "recordings" ? "recordings" : "live");
+  const [recProgram, setRecProgram] = useState<string>(urlParams.get("program") || "all");
+  const [progId, setProgId] = useState<string>("");
   const [meetings, setMeetings] = useState<MajlisMeeting[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -203,11 +208,12 @@ export default function MajlisLive({ onClose, isPrivileged }: Props) {
       const { data: already } = await supabase.from("live_sessions").select("id").eq("subject_id", subject.id).eq("status", "live").maybeSingle();
       if (already) sessionId = already.id;
       else if (sessionId) {
-        await supabase.from("live_sessions").update({ status: "live", started_at: nowIso, actual_start_time: nowIso, topic: mTitle } as any).eq("id", sessionId);
+        await supabase.from("live_sessions").update({ status: "live", started_at: nowIso, actual_start_time: nowIso, topic: mTitle, program_id: existing?.program_id || progId || null } as any).eq("id", sessionId);
       } else {
         const { data: s, error } = await supabase.from("live_sessions").insert({
           subject_id: subject.id, host_id: user.id, status: "live", topic: mTitle,
           scheduled_at: nowIso, started_at: nowIso, actual_start_time: nowIso,
+          program_id: existing?.program_id || progId || null,
         } as any).select("id").single();
         if (error) throw error;
         sessionId = s!.id;
@@ -221,6 +227,7 @@ export default function MajlisLive({ onClose, isPrivileged }: Props) {
         const { data: m, error } = await (supabase as any).from("majlis_meetings").insert({
           title: mTitle, description: note.trim() || null, kind: mKind, audience: mAud, status: "live",
           started_at: nowIso, host_id: user.id, host_name: hostName, session_id: sessionId,
+          program_id: progId || null,
         }).select("id").single();
         if (error) throw error;
         meetingId = m.id;
@@ -439,6 +446,11 @@ export default function MajlisLive({ onClose, isPrivileged }: Props) {
                 <div><p style={lbl}>{t("Agenda / note (optional)", "جدول الأعمال / ملاحظة (اختياري)")}</p>
                   <textarea value={note} onChange={e => setNote(e.target.value)} disabled={isLive} rows={2} style={{ ...inp, resize: "vertical" }} /></div>
                 <div><p style={lbl}>{t("Who should be alerted", "من سيصله التنبيه")}</p>{AudiencePicker({ value: audience, onChange: setAudience })}</div>
+                {programs.length > 0 && <div><p style={lbl}>{t("Program (for recordings)", "البرنامج (للتسجيلات)")}</p>
+                  <select value={progId} onChange={e => setProgId(e.target.value)} style={inp}>
+                    <option value="">{t("No program", "بدون برنامج")}</option>
+                    {programs.map(p => <option key={p.id} value={p.id}>{t(p.name, p.name_ar || p.name)}</option>)}
+                  </select></div>}
                 <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#374151", fontWeight: 700 }}>
                   <input type="checkbox" checked={notify || kind === "urgent"} disabled={kind === "urgent"} onChange={e => setNotify(e.target.checked)} />
                   {t("Send a notification now", "أرسل إشعاراً الآن")}{kind === "urgent" ? t(" (always on for urgent)", " (دائماً للعاجل)") : ""}
@@ -498,7 +510,17 @@ export default function MajlisLive({ onClose, isPrivileged }: Props) {
           </>
         ) : (
           <div style={{ background: "#fff", borderRadius: 16, border: `1px solid ${BRD}`, padding: 10 }}>
-            <SubjectRecordings subjectId={subject.id} />
+            {programs.length > 0 && (
+              <div style={{ display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "none", padding: "4px 4px 10px" }}>
+                {[{ id: "all", label: t("All", "الكل"), color: G2 }, ...programs.map(p => ({ id: p.id, label: t(p.name, p.name_ar || p.name), color: p.color }))].map(c => {
+                  const sel = recProgram === c.id;
+                  return (
+                    <button key={c.id} onClick={() => setRecProgram(c.id)} style={{ flexShrink: 0, padding: "6px 13px", borderRadius: 20, border: `1.5px solid ${sel ? c.color : BRD}`, background: sel ? c.color : "#fff", color: sel ? "#fff" : "#374151", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{c.label}</button>
+                  );
+                })}
+              </div>
+            )}
+            <SubjectRecordings subjectId={subject.id} programId={recProgram === "all" ? null : recProgram} />
           </div>
         )}
       </div>

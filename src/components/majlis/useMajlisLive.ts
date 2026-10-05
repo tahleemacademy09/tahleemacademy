@@ -10,7 +10,7 @@ export interface MajlisMeeting {
   kind: "meeting" | "urgent" | "discussion" | "lecture";
   audience: string; status: "scheduled" | "live" | "ended" | "cancelled";
   scheduled_at: string | null; started_at: string | null; ended_at: string | null;
-  host_id: string; host_name: string | null; session_id: string | null; created_at: string;
+  host_id: string; host_name: string | null; session_id: string | null; created_at: string; program_id?: string | null;
 }
 
 export function useMajlisLive() {
