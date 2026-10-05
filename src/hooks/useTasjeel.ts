@@ -87,14 +87,18 @@ export async function healStuckPaymentStep(userId: string, step: string): Promis
   try {
     const [{ data: settingsRows }, { data: enrollment }] = await Promise.all([
       supabase.from("academy_settings" as any).select("key, value"),
-      supabase.from("enrollments" as any).select("registration_paid").eq("user_id", userId).maybeSingle(),
+      // payment_history is written server-side only (admin/service role), so a
+      // success row is a trustworthy "registration paid" signal. (enrollments.
+      // registration_paid can't be written — course_id is NOT NULL — so it is not used.)
+      supabase.from("payment_history" as any).select("id").eq("user_id", userId)
+        .eq("payment_type", "registration").eq("status", "success").limit(1).maybeSingle(),
     ]);
 
     const cfg: Record<string, string> = {};
     (settingsRows || []).forEach((r: any) => { if (r.value !== null) cfg[r.key] = r.value; });
 
     const feeEnabled  = cfg.entrance_fee_enabled !== "false";
-    const alreadyPaid = !!(enrollment as any)?.registration_paid;
+    const alreadyPaid = !!enrollment;
 
     // Nothing to heal — fee is required and genuinely not yet paid.
     if (feeEnabled && !alreadyPaid) return step;
