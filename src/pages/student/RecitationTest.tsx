@@ -67,55 +67,135 @@ async function transcribeRecitation(blob: Blob): Promise<string | null> {
   return null;
 }
 
-// ── Local playback (works for MediaRecorder WebM, which has no duration header) ──
-function LocalAudioPlayer({ src, fallbackSecs }: { src: string; fallbackSecs: number }) {
-  const ref = useRef<HTMLAudioElement>(null);
+// ── Local playback ──────────────────────────────────────────────────────────
+// Android Chrome locks the audio session to the earpiece after getUserMedia(), so a
+// plain <audio> element plays silently. Decoding to PCM and playing through the Web
+// Audio API always uses the loudspeaker — same approach as Daily Hifdh Revision.
+function LocalAudioPlayer({ blob, fallbackSecs }: { blob: Blob; fallbackSecs: number }) {
+  const ctxRef     = useRef<AudioContext | null>(null);
+  const srcRef     = useRef<AudioBufferSourceNode | null>(null);
+  const bufRef     = useRef<AudioBuffer | null>(null);
+  const startedRef = useRef(0);      // ctx.currentTime when this source started
+  const offsetRef  = useRef(0);      // seconds into the buffer where it started
+  const rafRef     = useRef<number | null>(null);
+  const dragRef    = useRef<{ was: boolean } | null>(null);
+
   const [playing, setPlaying] = useState(false);
-  const [cur, setCur] = useState(0);
-  const [dur, setDur] = useState(Math.max(1, fallbackSecs));
-  const [err, setErr] = useState(false);
+  const [cur, setCur]         = useState(0);
+  const [dur, setDur]         = useState(Math.max(1, fallbackSecs));
+  const [ready, setReady]     = useState(false);
+  const [err, setErr]         = useState(false);
 
-  useEffect(() => { setPlaying(false); setCur(0); setErr(false); setDur(Math.max(1, fallbackSecs)); }, [src, fallbackSecs]);
-
-  const realDur = () => {
-    const d = ref.current?.duration;
-    return d && isFinite(d) && d > 0 ? d : Math.max(1, fallbackSecs);
+  const getCtx = () => {
+    if (!ctxRef.current || ctxRef.current.state === "closed") {
+      const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
+      ctxRef.current = new AC();
+    }
+    return ctxRef.current!;
   };
+  const stopRaf = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; } };
+  const stopSource = () => {
+    const s = srcRef.current; srcRef.current = null;
+    if (s) { s.onended = null; try { s.stop(); } catch { /* noop */ } try { s.disconnect(); } catch { /* noop */ } }
+  };
+  const position = () => {
+    const b = bufRef.current; if (!b) return 0;
+    return Math.min(b.duration, offsetRef.current + (getCtx().currentTime - startedRef.current));
+  };
+
+  // Decode the recording whenever it changes
+  useEffect(() => {
+    let cancelled = false;
+    stopRaf(); stopSource();
+    bufRef.current = null; offsetRef.current = 0;
+    setReady(false); setErr(false); setPlaying(false); setCur(0); setDur(Math.max(1, fallbackSecs));
+    (async () => {
+      try {
+        const ctx = getCtx();
+        if (ctx.state === "suspended") await ctx.resume();
+        const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
+        if (cancelled) return;
+        bufRef.current = decoded;
+        setDur(decoded.duration);
+        setReady(true);
+      } catch (e) {
+        console.warn("[RecitationTest] could not decode recording:", e);
+        if (!cancelled) setErr(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blob]);
+
+  useEffect(() => () => { stopRaf(); stopSource(); ctxRef.current?.close().catch(() => {}); }, []); // eslint-disable-line
+
+  const finish = () => { stopRaf(); stopSource(); setPlaying(false); setCur(0); offsetRef.current = 0; };
+
+  const playFrom = async (offset: number) => {
+    const b = bufRef.current; if (!b) return;
+    const ctx = getCtx();
+    if (ctx.state === "suspended") await ctx.resume();
+    stopSource(); stopRaf();
+    const src = ctx.createBufferSource();
+    src.buffer = b;
+    src.connect(ctx.destination);
+    src.onended = () => { if (srcRef.current === src) finish(); };
+    offsetRef.current = offset;
+    startedRef.current = ctx.currentTime;
+    src.start(0, offset);
+    srcRef.current = src;
+    setPlaying(true);
+    const tick = () => {
+      const p = position();
+      setCur(p);
+      if (p < b.duration) rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  };
+
   const toggle = async () => {
-    const a = ref.current; if (!a) return;
-    if (a.paused) { try { setErr(false); await a.play(); } catch { setErr(true); } }
-    else a.pause();
+    if (!bufRef.current) return;
+    if (playing) {
+      offsetRef.current = position();
+      stopSource(); stopRaf(); setPlaying(false); setCur(offsetRef.current);
+    } else {
+      const b = bufRef.current;
+      await playFrom(offsetRef.current >= b.duration - 0.05 ? 0 : offsetRef.current);
+    }
   };
-  const seek = (v: number) => {
-    const a = ref.current; if (!a) return;
-    try { a.currentTime = v; } catch { /* noop */ }
-    setCur(v);
+
+  // Slider: pause while dragging, resume from the new spot on release
+  const onDrag = (v: number) => {
+    if (!bufRef.current) return;
+    if (!dragRef.current) {
+      dragRef.current = { was: playing };
+      if (playing) { stopSource(); stopRaf(); setPlaying(false); }
+    }
+    offsetRef.current = v; setCur(v);
   };
+  const onRelease = () => {
+    const d = dragRef.current; dragRef.current = null;
+    if (d?.was) playFrom(offsetRef.current);
+  };
+
   const t = (n: number) => `${Math.floor(n / 60)}:${String(Math.floor(n % 60)).padStart(2, "0")}`;
   const shownCur = Math.min(cur, dur);
 
   return (
     <div style={{ display:"flex", alignItems:"center", gap:12, background:"#F0FDF4", border:"1px solid #BBF7D0", borderRadius:14, padding:"8px 12px", marginBottom:10 }}>
-      <audio
-        ref={ref} src={src} preload="auto"
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onEnded={() => { setPlaying(false); setCur(0); }}
-        onLoadedMetadata={() => setDur(realDur())}
-        onTimeUpdate={e => { setCur(e.currentTarget.currentTime); const d = realDur(); if (d > dur) setDur(d); }}
-        onError={() => setErr(true)}
-      />
-      <button onClick={toggle} aria-label={playing ? "Pause" : "Play your recording"}
-        style={{ width:42, height:42, borderRadius:"50%", border:"none", background:G, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-        {playing ? <Pause size={18} fill="#fff" /> : <Play size={18} fill="#fff" style={{ marginLeft:2 }} />}
+      <button onClick={toggle} disabled={!ready} aria-label={playing ? "Pause" : "Play your recording"}
+        style={{ width:42, height:42, borderRadius:"50%", border:"none", background: ready ? G : "#9CA3AF", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+        {!ready && !err ? <Loader2 size={18} style={{ animation:"spin .8s linear infinite" }} />
+          : playing ? <Pause size={18} fill="#fff" /> : <Play size={18} fill="#fff" style={{ marginLeft:2 }} />}
       </button>
       <div style={{ flex:1, minWidth:0 }}>
-        <input type="range" min={0} max={dur} step={0.1} value={shownCur}
-          onChange={e => seek(parseFloat(e.target.value))}
+        <input type="range" min={0} max={dur} step={0.1} value={shownCur} disabled={!ready}
+          onChange={e => onDrag(parseFloat(e.target.value))}
+          onPointerUp={onRelease} onTouchEnd={onRelease} onKeyUp={onRelease}
           style={{ width:"100%", accentColor:G, display:"block" }} />
         <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:"#166534", fontWeight:700, marginTop:2 }}>
           <span>{t(shownCur)}</span>
-          <span>{err ? "Tap play to retry" : t(dur)}</span>
+          <span>{err ? "Playback unavailable on this device" : t(dur)}</span>
         </div>
       </div>
     </div>
@@ -501,7 +581,8 @@ const RecitationTest = () => {
     // 2) Fallback — Supabase storage bucket used by earlier recitation tests
     if (!finalPath) {
       try {
-        const path = `${user.id}/${Date.now()}.${ext}`;
+        // storage RLS on this bucket requires the uid as the 2nd folder segment
+        const path = `fallback/${user.id}/${Date.now()}.${ext}`;
         const { error } = await withTimeout(
           (supabase as any).storage.from("recitation-audio").upload(path, blob, { contentType: blob.type || "audio/webm", upsert: true }) as Promise<any>,
           UPLOAD_TIMEOUT_MS, "Storage upload",
@@ -908,9 +989,9 @@ const RecitationTest = () => {
               </div>
             )}
 
-            {substage === "recorded" && audioUrl && (
+            {substage === "recorded" && audioBlob && (
               <div>
-                <LocalAudioPlayer src={audioUrl} fallbackSecs={recSecs} />
+                <LocalAudioPlayer blob={audioBlob} fallbackSecs={recSecs} />
                 <div style={{ display:"flex", gap:10 }}>
                   <button onClick={retake} style={{ flex:1, padding:"12px", borderRadius:14, border:"2px solid #e5e7eb", background:"#fff", color:"#666", fontSize:13, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
                     <RotateCcw size={15} /> Re-record
