@@ -14,6 +14,7 @@ import { uploadExamAudioToR2 } from "@/lib/examAudioUpload";
 import { useToast } from "@/hooks/use-toast";
 import { useRecitationSettings } from "@/hooks/useRecitationSettings";
 import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
+import MushafPageView from "@/components/hifdh/MushafPageView";
 import {
   Mic, Upload, CheckCircle2, Video, Clock,
   Star, ArrowRight, Loader2, RotateCcw, BookOpen,
@@ -211,6 +212,15 @@ const RecitationTest = () => {
   const [loadingQuran, setLoadingQuran] = useState(false);
   const [quranReload,  setQuranReload]  = useState(0);
   const [fontPx,       setFontPx]       = useState(26);
+  // The printed Madinah Mushaf page is shown by default (like the Quran reader).
+  // Only if it can't load (offline / blocked) do we fall back to plain text.
+  const [printedFailed, setPrintedFailed] = useState(false);
+  const [winH, setWinH] = useState(() => (typeof window !== "undefined" ? window.innerHeight : 800));
+  useEffect(() => {
+    const on = () => setWinH(window.innerHeight);
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, []);
   // Tips are shown on the instruction screen first, so the reader starts clean.
   const [showTips,     setShowTips]     = useState(false);
   // Instruction screen ("Next") shown once before the mushaf page + recorder.
@@ -755,10 +765,12 @@ const RecitationTest = () => {
                 {quranMeta ? `${quranMeta.surahEn} · Juz ${quranMeta.juz} · Page ${quranMeta.page}` : "Loading your page…"}
               </div>
             </div>
+            {printedFailed && (
             <div style={{ display:"flex", gap:6, flexShrink:0 }}>
-              <button onClick={() => setFontPx(f => Math.max(18, f - 2))} aria-label="Smaller text" style={{ width:34, height:34, borderRadius:10, border:"1px solid rgba(255,255,255,.3)", background:"rgba(255,255,255,.12)", color:"#fff", fontWeight:800, fontSize:12 }}>A-</button>
-              <button onClick={() => setFontPx(f => Math.min(40, f + 2))} aria-label="Larger text" style={{ width:34, height:34, borderRadius:10, border:"1px solid rgba(255,255,255,.3)", background:"rgba(255,255,255,.12)", color:"#fff", fontWeight:800, fontSize:15 }}>A+</button>
-            </div>
+                <button onClick={() => setFontPx(f => Math.max(18, f - 2))} aria-label="Smaller text" style={{ width:34, height:34, borderRadius:10, border:"1px solid rgba(255,255,255,.3)", background:"rgba(255,255,255,.12)", color:"#fff", fontWeight:800, fontSize:12 }}>A-</button>
+                <button onClick={() => setFontPx(f => Math.min(40, f + 2))} aria-label="Larger text" style={{ width:34, height:34, borderRadius:10, border:"1px solid rgba(255,255,255,.3)", background:"rgba(255,255,255,.12)", color:"#fff", fontWeight:800, fontSize:15 }}>A+</button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -781,6 +793,18 @@ const RecitationTest = () => {
               </div>
             )}
 
+            {!printedFailed ? (
+              <div style={{ margin:"0 -16px" }}>
+                <MushafPageView
+                  page={assignedPage}
+                  seamless
+                  pureWhite
+                  availableHeight={Math.max(300, winH - 200)}
+                  maxStretch={1.4}
+                  onUnavailable={() => setPrintedFailed(true)}
+                />
+              </div>
+            ) : (
             <div style={{ border:"2px solid #E8D5A3", borderRadius:16, background:"#FFFEF5", padding:"22px 14px", direction:"rtl" as const, boxShadow:"0 2px 14px rgba(0,0,0,.05)" }}>
               {loadingQuran ? (
                 <div style={{ textAlign:"center", padding:"60px 0", display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
@@ -803,6 +827,7 @@ const RecitationTest = () => {
                 </div>
               )}
             </div>
+            )}
             {quranMeta && (
               <div style={{ textAlign:"center", marginTop:10, fontSize:10, fontWeight:700, color:"#9C7722", letterSpacing:.8 }}>PAGE {quranMeta.page} · RECITE THE WHOLE PAGE</div>
             )}
