@@ -48,3 +48,30 @@ export async function uploadExamAudioToR2(path: string, blob: Blob): Promise<Upl
     return { error: e?.message || "Upload failed" };
   }
 }
+
+// Playback URL for an audio file stored in R2 (e.g. "recitation-test/<uid>/<file>.webm").
+export async function getR2AudioUrl(path: string, expiresIn = 3600): Promise<string | null> {
+  try {
+    const { data, error } = await supabase.functions.invoke("exam-audio-url", {
+      body: { path, action: "sign", expiresIn },
+    });
+    if (error || !data?.url) {
+      console.error("[R2 audio] sign failed:", error || data);
+      return null;
+    }
+    return data.url as string;
+  } catch (e) {
+    console.error("[R2 audio] sign failed:", e);
+    return null;
+  }
+}
+
+// Resolves a stored recitation-test audio_path to a playable URL.
+// New recordings live in R2; older ones are still in the Supabase "recitation-audio" bucket.
+export async function resolveRecitationAudioUrl(path: string): Promise<string | null> {
+  if (!path) return null;
+  if (path.startsWith("data:") || path.startsWith("http")) return path;
+  if (path.startsWith("recitation-test/")) return getR2AudioUrl(path);
+  const { data } = await supabase.storage.from("recitation-audio").createSignedUrl(path, 3600);
+  return data?.signedUrl || null;
+}
