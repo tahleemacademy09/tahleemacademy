@@ -62,6 +62,9 @@ interface ClassControlsProps {
       non-privileged participant, the Raise Hand control is hidden. Defaults to
       true so every existing caller that doesn't pass it keeps working as-is. */
   handRaiseEnabled?:     boolean;
+  /** Optional: re-purpose the side-panel button (e.g. the virtual interview uses it for "Questions"). */
+  chatButtonTitle?:      string;
+  chatButtonIcon?:       React.ReactNode;
 }
 
 const REACTION_EMOJIS = ["👏", "🤲", "❤️", "😂", "🌟", "👍"];
@@ -350,7 +353,7 @@ const SettingsModal = ({ onClose, room, initialTab }: { onClose: () => void; roo
 const ClassControls = ({
   sessionId, onToggleChat, onToggleParticipants, onEndClass, onLeaveClass,
   chatUnread, onLaunchPoll, onLaunchQuiz, isHostOverride, extraMenuItems, camLocked, collapsed,
-  handRaiseEnabled = true,
+  handRaiseEnabled = true, chatButtonTitle, chatButtonIcon,
 }: ClassControlsProps) => {
   const room = useRoomContext();
   const { user, hasRole } = useAuth();
@@ -691,7 +694,7 @@ const ClassControls = ({
     setFloatingEmoji({ emoji, id: Date.now() });
     setShowReactions(false);
     setShowMoreEmojis(false);
-    if (user) supabase.from("class_chat_messages").insert({ session_id: sessionId, sender_id: user.id, message: emoji, type: "emoji" });
+    if (user && sessionId) supabase.from("class_chat_messages").insert({ session_id: sessionId, sender_id: user.id, message: emoji, type: "emoji" });
     setTimeout(() => setFloatingEmoji(null), 2000);
   };
 
@@ -740,6 +743,7 @@ const ClassControls = ({
 
   // ── Mute all students ─────────────────────────────────────────────────
   const muteAllStudents = async () => {
+    if (!sessionId) return;
     await supabase.from("class_participants").update({ is_muted: true }).eq("session_id", sessionId);
     toast({ title: t("All students muted", "تم كتم جميع الطلاب") });
   };
@@ -946,8 +950,8 @@ const ClassControls = ({
         )}
 
         <div style={{ position: "relative", flex: "1 1 0", maxWidth: 64, minWidth: 40 }}>
-          <button onClick={onToggleChat} title="Chat" style={sqBtn()}>
-            <MessageSquareText className="h-5 w-5" />
+          <button onClick={onToggleChat} title={chatButtonTitle || "Chat"} style={sqBtn()}>
+            {chatButtonIcon ?? <MessageSquareText className="h-5 w-5" />}
             {chatUnread > 0 && (
               <span style={{position:"absolute",top:-6,right:-6,minWidth:18,height:18,padding:"0 5px",borderRadius:9,background:"#ea4335",color:"#fff",fontSize:10,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",border:"2px solid #111b21",boxSizing:"content-box"}}>
                 {chatUnread > 99 ? "99+" : chatUnread}
