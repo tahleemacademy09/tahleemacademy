@@ -15,7 +15,13 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 
-const COMPLETED_CACHE_PREFIX = "ta_tasjeel_completed:";
+// v2: the old key ("ta_tasjeel_completed:") could have been poisoned by an older
+// build that wrongly resolved a half-registered student as "completed" and saved
+// that on the device — the dashboard then opened without any server check.
+// Bumping the key makes every device ignore those stale flags and re-verify.
+const COMPLETED_CACHE_PREFIX = "ta_tasjeel_completed_v2:";
+const LEGACY_CACHE_PREFIX    = "ta_tasjeel_completed:";
+try { Object.keys(localStorage).filter(k => k.startsWith(LEGACY_CACHE_PREFIX)).forEach(k => localStorage.removeItem(k)); } catch { /* storage unavailable */ }
 
 function hasCompletedCache(userId: string | null): boolean {
   if (!userId) return false;
