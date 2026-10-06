@@ -163,19 +163,19 @@ const EntranceResults = () => {
   const handleContinue = async () => {
     if (!user) return;
     try {
-      // Advance Tasjeel pipeline step → level_assignment
-      await supabase.from("tasjeel_progress" as any).update({
-        current_step: "level_assignment",
+      // Follow the real pipeline — never jump past the recitation test.
+      const { data: rows } = await supabase.from("academy_settings" as any)
+        .select("key, value").eq("key", "recitation_test_required");
+      const recRequired = (rows as any[])?.[0]?.value !== "false";
+      const next = recRequired ? "recitation" : "level_assignment";
+
+      const { error } = await supabase.from("tasjeel_progress" as any).update({
+        current_step: next,
         updated_at:   new Date().toISOString(),
       } as any).eq("user_id", user.id);
+      if (error) throw error;
 
-      toast({
-        title: "✅ Exam Submitted!",
-        description: "Your results are being reviewed. You will be notified when your level is assigned.",
-      });
-
-      // Navigate to awaiting-level page (no sign-out needed)
-      navigate("/student/awaiting-level", { replace: true });
+      navigate(recRequired ? "/student/recitation-test" : "/student/awaiting-level", { replace: true });
     } catch {
       toast({ title: "Error", description: "Could not update status. Please try again.", variant: "destructive" });
     }

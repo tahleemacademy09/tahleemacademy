@@ -209,6 +209,9 @@ const RecitationTest = () => {
   const [quranAyahs,   setQuranAyahs]   = useState<{n: number; text: string}[]>([]);
   const [quranMeta,    setQuranMeta]    = useState<{surahEn: string; surahAr: string; juz: number; page: number} | null>(null);
   const [loadingQuran, setLoadingQuran] = useState(false);
+  const [quranReload,  setQuranReload]  = useState(0);
+  const [fontPx,       setFontPx]       = useState(26);
+  const [showTips,     setShowTips]     = useState(true);
 
   const assignedPage = useMemo(() => {
     if (!user?.id) return 1;
@@ -242,7 +245,7 @@ const RecitationTest = () => {
       })
       .catch(() => {})
       .finally(() => setLoadingQuran(false));
-  }, [user?.id, assignedPage]); // eslint-disable-line
+  }, [user?.id, assignedPage, quranReload]); // eslint-disable-line
 
   const fr = (s: number) => `${Math.floor(s/60).toString().padStart(2,"0")}:${(s%60).toString().padStart(2,"0")}`;
 
@@ -318,7 +321,19 @@ const RecitationTest = () => {
     }
   };
 
-  const stopRec   = () => { mediaRef.current?.stop(); };
+  const stopRec   = () => {
+    const minSec = Number(settings.min_duration_sec) || 0;
+    if (minSec > 0 && recTime < minSec) {
+      toast({ title: "Keep reciting", description: `Please recite for at least ${minSec} seconds.`, variant: "destructive" });
+      return;
+    }
+    mediaRef.current?.stop();
+  };
+  // Auto-stop at the configured maximum length
+  useEffect(() => {
+    const maxSec = Number(settings.max_duration_sec) || 0;
+    if (substage === "recording" && maxSec > 0 && recTime >= maxSec) mediaRef.current?.stop();
+  }, [recTime, substage]); // eslint-disable-line react-hooks/exhaustive-deps
   const cancelRec = () => {
     cancelRef.current = true;
     mediaRef.current?.stop();
@@ -348,10 +363,11 @@ const RecitationTest = () => {
 
       // stage = 1, status = stage1_complete — NOT yet stage 2
       // Score is NOT saved here; only the audio path is persisted.
-      await (supabase as any).from("recitation_tests").upsert({
+      const { error: dbErr } = await (supabase as any).from("recitation_tests").upsert({
         user_id: user.id, audio_path: finalPath, stage: 1,
         stage1_submitted_at: new Date().toISOString(), status: "stage1_complete",
       }, { onConflict: "user_id" });
+      if (dbErr) throw new Error(dbErr.message);
 
       setSavedAudioPath(finalPath);
       setSubstage("done");
@@ -456,8 +472,7 @@ const RecitationTest = () => {
       // defaults to Al-Fatiha's text — so students reciting their assigned
       // page were being silently graded against the wrong verses. Only fall
       // back to settings.surah_reference if the page failed to load.
-      const refText = quranAyahs.map(a => a.text).join(" ")
-        || (settings.surah_reference || "");
+      const refText = quranAyahs.map(a => a.text).join(" ");
 
       let breakdown: ScoreBreakdown;
       if (transcript && refText) {
@@ -496,13 +511,15 @@ const RecitationTest = () => {
     if (!user || aiScore === null) return;
     setSubmittingScore(true);
     try {
-      await (supabase as any).from("recitation_tests").update({
+      const { error: scoreErr } = await (supabase as any).from("recitation_tests").upsert({
+        user_id:               user.id,
         ai_score:              aiScore,
         ai_transcript:         aiTranscript || "No transcript",
         stage:                 2,
         stage2_completed_at:   new Date().toISOString(),
         status:                "stage2_complete",
-      }).eq("user_id", user.id);
+      }, { onConflict: "user_id" });
+      if (scoreErr) throw new Error(scoreErr.message);
 
       toast({ title: "✅ Score submitted!" });
       setStage(3);
@@ -511,6 +528,20 @@ const RecitationTest = () => {
     } finally {
       setSubmittingScore(false);
     }
+  };
+
+  // ── Skip AI score (scoring failed) → go to booking, instructor scores live ──
+  const handleSkipScore = async () => {
+    if (!user) return;
+    const { error } = await (supabase as any).from("recitation_tests").upsert({
+      user_id: user.id, ai_score: null, ai_transcript: "No transcript — manual review",
+      stage: 2, stage2_completed_at: new Date().toISOString(), status: "stage2_complete",
+    }, { onConflict: "user_id" });
+    if (error) {
+      toast({ title: "Could not continue", description: error.message, variant: "destructive" });
+      return;
+    }
+    setStage(3);
   };
 
   // ── Re-record (from stage 2 preview) ─────────────────────────────────────
@@ -536,19 +567,30 @@ const RecitationTest = () => {
     if (!user || !sessionDate || !sessionTime) {
       toast({ title: "Please select a date and time", variant: "destructive" }); return;
     }
+    // Local-time instant of the slot (device timezone) — stored as a proper timestamptz.
+    const slotAt = new Date(`${sessionDate}T${sessionTime}:00`);
+    if (isNaN(slotAt.getTime()) || slotAt.getTime() < Date.now() + 5 * 60_000) {
+      toast({ title: "That time has passed", description: "Please pick a later slot.", variant: "destructive" });
+      setSessionTime("");
+      return;
+    }
     setBooking(true);
     try {
-      await (supabase as any).from("recitation_tests").update({
-        stage: 3,
+      const nowIso = new Date().toISOString();
+      const { error: bookErr } = await (supabase as any).from("recitation_tests").upsert({
+        user_id:                   user.id,
+        stage:                     3,
         virtual_session_date:      sessionDate,
         virtual_session_time:      sessionTime,
-        stage3_session_date:       `${sessionDate}T${sessionTime}:00`,
-        virtual_session_booked_at: new Date().toISOString(),
-        stage3_requested_at:       new Date().toISOString(),
+        stage3_session_date:       slotAt.toISOString(),
+        virtual_session_booked_at: nowIso,
+        stage3_requested_at:       nowIso,
         status:                    "awaiting_teacher",
-      }).eq("user_id", user.id);
+      }, { onConflict: "user_id" });
+      // Never claim success unless the booking really saved.
+      if (bookErr) throw new Error(bookErr.message);
 
-      // Notify admins
+      // Notify admins (non-critical)
       try {
         const { data: adminRoles } = await supabase.from("user_roles").select("user_id").eq("role", "admin");
         const adminIds = (adminRoles || []).map((r: any) => r.user_id);
@@ -560,7 +602,7 @@ const RecitationTest = () => {
             type:       "recitation_booking",
             link:       "/admin/tasjeel",
             is_read:    false,
-            created_at: new Date().toISOString(),
+            created_at: nowIso,
           }));
           await (supabase as any).from("notifications").insert(notifications);
         }
@@ -580,13 +622,11 @@ const RecitationTest = () => {
   const scoreColor = (s: number) => s >= 80 ? "#16A34A" : s >= 60 ? "#D97706" : "#DC2626";
   const scoreLabel = (s: number) => s >= 80 ? "Excellent" : s >= 60 ? "Good" : "Needs Practice";
 
-  const availableSlots = (() => {
+  const ALL_SLOTS = (() => {
     const slots: string[] = [];
     for (let h = 20; h <= 22; h++) {
       const mins = h === 20 ? [30, 45] : h === 22 ? [0] : [0, 15, 30, 45];
-      mins.forEach(m => {
-        slots.push(`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`);
-      });
+      mins.forEach(m => slots.push(`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`));
     }
     return slots;
   })();
@@ -600,10 +640,20 @@ const RecitationTest = () => {
     return `${h}:${m} ${ampm}`;
   };
 
-  const sessionDates = Array.from({ length: 2 }, (_, i) => {
+  // Local (device) calendar dates — NOT toISOString(), which is UTC and can be off by a day.
+  const localDateStr = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  const todayStr = localDateStr(new Date());
+
+  // Slots still bookable on a given date (today's past slots are hidden; 15 min lead time)
+  const slotsFor = (dateStr: string) =>
+    ALL_SLOTS.filter(t => new Date(`${dateStr}T${t}:00`).getTime() > Date.now() + 15 * 60_000);
+
+  // Next 3 days that still have at least one open slot
+  const sessionDates = Array.from({ length: 3 }, (_, i) => {
     const d = new Date(); d.setDate(d.getDate() + i);
-    return d.toISOString().split("T")[0];
-  });
+    return localDateStr(d);
+  }).filter(d => slotsFor(d).length > 0);
   const parsedTips = (settings.tips || "").split(/,|\n/).map(t => t.trim()).filter(Boolean);
 
   if (settingsLoading) return (
@@ -612,6 +662,139 @@ const RecitationTest = () => {
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
+
+  // ══ STAGE 1 — FULL-PAGE MUSHAF READER + RECORDER ══════════════════════════
+  if (stage === 1) {
+    const tips = parsedTips.length > 0 ? parsedTips : [
+      "Find a quiet room with no background noise",
+      "Hold phone 15–20cm from your mouth",
+      "Recite clearly and at your normal pace",
+      "Complete the full page without stopping",
+    ];
+    return (
+      <div style={{ position:"fixed", inset:0, zIndex:40, display:"flex", flexDirection:"column", background:"#FFFEF5", fontFamily:"'Cairo',system-ui,sans-serif" }}>
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=Amiri+Quran&family=Amiri:wght@400;700&display=swap');
+          @keyframes spin{to{transform:rotate(360deg)}}
+          @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+          @keyframes waveBar{from{transform:scaleY(.3)}to{transform:scaleY(1)}}
+        `}</style>
+
+        {/* Top bar */}
+        <div style={{ background:`linear-gradient(135deg,${G},${GM})`, padding:"calc(env(safe-area-inset-top,0px) + 12px) 16px 12px", color:"#fff", flexShrink:0 }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+            <div style={{ minWidth:0 }}>
+              <div style={{ fontWeight:800, fontSize:15 }}>Recitation Test · Step 1 of 3</div>
+              <div style={{ fontSize:11, opacity:.75 }}>
+                {quranMeta ? `${quranMeta.surahEn} · Juz ${quranMeta.juz} · Page ${quranMeta.page}` : "Loading your page…"}
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+              <button onClick={() => setFontPx(f => Math.max(18, f - 2))} aria-label="Smaller text" style={{ width:34, height:34, borderRadius:10, border:"1px solid rgba(255,255,255,.3)", background:"rgba(255,255,255,.12)", color:"#fff", fontWeight:800, fontSize:12 }}>A-</button>
+              <button onClick={() => setFontPx(f => Math.min(40, f + 2))} aria-label="Larger text" style={{ width:34, height:34, borderRadius:10, border:"1px solid rgba(255,255,255,.3)", background:"rgba(255,255,255,.12)", color:"#fff", fontWeight:800, fontSize:15 }}>A+</button>
+            </div>
+          </div>
+        </div>
+
+        {/* Page — scrolls, fills the whole screen */}
+        <div style={{ flex:1, overflowY:"auto", WebkitOverflowScrolling:"touch" as any, padding:"16px 16px 24px" }}>
+          <div style={{ maxWidth:720, margin:"0 auto" }}>
+            {showTips && (
+              <div style={{ background:"#F0FDF4", borderRadius:12, padding:"10px 14px", border:"1px solid #86EFAC", marginBottom:14 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+                  <div style={{ fontSize:12, fontWeight:700, color:"#166534" }}>
+                    📌 {settings.instructions || "Recite the full page below, then tap the mic."}
+                  </div>
+                  <button onClick={() => setShowTips(false)} style={{ border:"none", background:"transparent", color:"#166534", fontWeight:800, fontSize:16, lineHeight:1 }} aria-label="Hide tips">×</button>
+                </div>
+                {tips.map((tip, i) => (
+                  <div key={i} style={{ fontSize:11.5, color:"#166534", marginBottom:3, display:"flex", gap:6, alignItems:"flex-start" }}>
+                    <CheckCircle2 size={12} color="#16A34A" style={{ marginTop:2, flexShrink:0 }} />{tip}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ border:"2px solid #E8D5A3", borderRadius:16, background:"#FFFEF5", padding:"22px 14px", direction:"rtl" as const, boxShadow:"0 2px 14px rgba(0,0,0,.05)" }}>
+              {loadingQuran ? (
+                <div style={{ textAlign:"center", padding:"60px 0", display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
+                  <Loader2 size={28} style={{ animation:"spin .8s linear infinite", color:"#C9A84C" }} />
+                  <span style={{ fontSize:12, color:"#9CA3AF" }}>Loading page {assignedPage}…</span>
+                </div>
+              ) : quranAyahs.length > 0 ? (
+                <div style={{ fontSize:fontPx, fontFamily:"'Amiri Quran','Amiri',serif", lineHeight:2.5, color:"#1A1A1A", textAlign:"justify" as const }}>
+                  {quranAyahs.map((a, i) => (
+                    <span key={i}>
+                      {a.text}
+                      <span style={{ display:"inline-flex", alignItems:"center", justifyContent:"center", width:30, height:30, margin:"0 4px", fontSize:12, fontWeight:800, color:"#7D5A1E", fontFamily:"'Cairo',sans-serif", background:"#F5ECD5", borderRadius:"50%", border:"1px solid #DBC580", verticalAlign:"middle" }}>{a.n}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ textAlign:"center", padding:"40px 12px", direction:"ltr" as const }}>
+                  <div style={{ fontSize:13, color:"#9C7722", marginBottom:12 }}>Couldn't load page {assignedPage}. Check your connection and try again.</div>
+                  <button onClick={() => setQuranReload(n => n + 1)} style={{ padding:"10px 22px", borderRadius:12, border:"none", background:G, color:"#fff", fontWeight:700, fontSize:13 }}>Retry</button>
+                </div>
+              )}
+            </div>
+            {quranMeta && (
+              <div style={{ textAlign:"center", marginTop:10, fontSize:10, fontWeight:700, color:"#9C7722", letterSpacing:.8 }}>PAGE {quranMeta.page} · RECITE THE WHOLE PAGE</div>
+            )}
+          </div>
+        </div>
+
+        {/* Bottom recorder bar */}
+        <div style={{ flexShrink:0, background:"#fff", borderTop:"1px solid #E8D5A3", boxShadow:"0 -6px 24px rgba(0,0,0,.08)", padding:"12px 16px calc(env(safe-area-inset-bottom,0px) + 14px)" }}>
+          <div style={{ maxWidth:560, margin:"0 auto" }}>
+            {substage === "idle" && (
+              <button onClick={startRec} disabled={quranAyahs.length === 0}
+                style={{ width:"100%", padding:"14px", borderRadius:16, border:"none", background: quranAyahs.length === 0 ? "#d1d5db" : `linear-gradient(135deg,${G},${GM})`, color:"#fff", fontSize:15, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center", gap:10, boxShadow:"0 6px 18px rgba(6,78,59,.28)" }}>
+                <Mic size={22} /> Start Recording — بِسْمِ اللَّهِ
+              </button>
+            )}
+
+            {substage === "recording" && (
+              <div>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:2, height:34, marginBottom:6 }}>
+                  {WAVE_H.map((h,i) => (
+                    <div key={i} style={{ width:3, height:h*1.6, borderRadius:3, background:"#E74C3C", animation:`waveBar ${.4+(i%4)*.1}s ease-in-out infinite alternate`, animationDelay:`${i*.04}s` }} />
+                  ))}
+                </div>
+                <div style={{ textAlign:"center", fontSize:22, fontWeight:900, color:"#E74C3C", marginBottom:8 }}>
+                  ● {fr(recTime)}{Number(settings.max_duration_sec) > 0 ? <span style={{ fontSize:12, color:"#9ca3af", fontWeight:600 }}> / {fr(Number(settings.max_duration_sec))}</span> : null}
+                </div>
+                <div style={{ display:"flex", gap:10 }}>
+                  <button onClick={cancelRec} style={{ flex:1, padding:"12px", borderRadius:14, border:"2px solid #e5e7eb", background:"#fff", color:"#666", fontSize:13, fontWeight:700 }}>Cancel</button>
+                  <button onClick={stopRec} style={{ flex:2, padding:"12px", borderRadius:14, border:"none", background:"#E74C3C", color:"#fff", fontSize:14, fontWeight:800 }}>Stop & Review</button>
+                </div>
+              </div>
+            )}
+
+            {(substage === "uploading" || uploading) && (
+              <div style={{ textAlign:"center", padding:"8px 0" }}>
+                <Loader2 style={{ width:28, height:28, color:GM, animation:"spin .8s linear infinite", margin:"0 auto 6px" }} />
+                <div style={{ fontSize:13, color:"#666" }}>Uploading your recitation…</div>
+              </div>
+            )}
+
+            {substage === "recorded" && audioUrl && !uploading && (
+              <div>
+                <audio controls src={audioUrl} style={{ width:"100%", height:44, marginBottom:10 }} preload="auto" />
+                <div style={{ display:"flex", gap:10 }}>
+                  <button onClick={retake} style={{ flex:1, padding:"12px", borderRadius:14, border:"2px solid #e5e7eb", background:"#fff", color:"#666", fontSize:13, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+                    <RotateCcw size={15} /> Re-record
+                  </button>
+                  <button onClick={uploadAudio} style={{ flex:2, padding:"12px", borderRadius:14, border:"none", background:`linear-gradient(135deg,${G},${GM})`, color:"#fff", fontSize:14, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+                    <Upload size={16} /> Continue to AI Scoring
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight:"100vh", background:`linear-gradient(160deg,${G},${GM},#0a1f12)`, display:"flex", flexDirection:"column", fontFamily:"'Cairo',system-ui,sans-serif" }}>
@@ -663,123 +846,6 @@ const RecitationTest = () => {
 
           <div style={{ padding:"24px" }}>
 
-            {/* ─── STAGE 1: RECORD ──────────────────────────────────────── */}
-            {stage === 1 && (
-              <div>
-                <div style={{ textAlign:"center", marginBottom:20 }}>
-                  <div style={{ fontSize:18, fontWeight:800, color:G, marginBottom:6 }}>Stage 1 — Record Your Recitation</div>
-                  <div style={{ fontSize:13, color:"#666", lineHeight:1.6 }}>
-                    {settings.instructions || <>Recite <strong>the page shown below</strong> clearly.</>}
-                  </div>
-                </div>
-
-                {/* Mushaf page */}
-                <div style={{ background:"#FFFEF5", borderRadius:16, border:"2px solid #E8D5A3", marginBottom:18, overflow:"hidden", boxShadow:"0 4px 20px rgba(0,0,0,.08)" }}>
-                  <div style={{ background:"linear-gradient(135deg,#F5ECD5,#EDD9A3)", padding:"10px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", borderBottom:"1px solid #DBC580" }}>
-                    <span style={{ fontSize:12, fontWeight:700, color:"#7D5A1E", fontFamily:"'Amiri',serif" }}>
-                      {quranMeta ? `الجزء ${quranMeta.juz}` : "الجزء"}
-                    </span>
-                    <span style={{ fontSize:11, fontWeight:800, color:"#5C3D11", letterSpacing:.5 }}>
-                      {quranMeta?.surahEn || "Loading…"}
-                    </span>
-                  </div>
-                  <div style={{ padding:"18px 16px", minHeight:180, direction:"rtl" as const }}>
-                    {loadingQuran ? (
-                      <div style={{ textAlign:"center", padding:"30px 0", display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
-                        <Loader2 size={24} style={{ animation:"spin .8s linear infinite", color:"#C9A84C" }} />
-                        <span style={{ fontSize:12, color:"#9CA3AF" }}>Loading page {assignedPage}…</span>
-                      </div>
-                    ) : quranAyahs.length > 0 ? (
-                      <div style={{ fontSize:22, fontFamily:"'Amiri Quran','Amiri',serif", lineHeight:2.6, color:"#1A1A1A", textAlign:"justify" as const }}>
-                        {quranAyahs.map((a, i) => (
-                          <span key={i}>
-                            {a.text}
-                            <span style={{ display:"inline-flex", alignItems:"center", justifyContent:"center", width:28, height:28, margin:"0 4px", fontSize:11, fontWeight:800, color:"#7D5A1E", fontFamily:"'Cairo',sans-serif", background:"#F5ECD5", borderRadius:"50%", border:"1px solid #DBC580", verticalAlign:"middle" }}>
-                              {a.n}
-                            </span>
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <div style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:"#9C7722" }}>
-                        Couldn't load page {assignedPage}. Please refresh and try again.
-                      </div>
-                    )}
-                  </div>
-                  {quranMeta && (
-                    <div style={{ borderTop:"1px solid #DBC580", padding:"6px 16px", background:"#F9F0DC", textAlign:"center" as const }}>
-                      <span style={{ fontSize:10, fontWeight:700, color:"#9C7722", letterSpacing:.8 }}>PAGE {quranMeta.page} · RECITE THIS PAGE</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Tips */}
-                <div style={{ background:"#F0FDF4", borderRadius:12, padding:"12px 16px", border:"1px solid #86EFAC", marginBottom:20 }}>
-                  <div style={{ fontSize:11, fontWeight:700, color:"#166534", marginBottom:6 }}>📌 Tips for a good recording:</div>
-                  {(parsedTips.length > 0 ? parsedTips : [
-                    "Find a quiet room with no background noise",
-                    "Hold phone 15–20cm from your mouth",
-                    "Recite clearly and at your normal pace",
-                    "Complete the full page without stopping",
-                  ]).map((tip,i) => (
-                    <div key={i} style={{ fontSize:12, color:"#166534", marginBottom:i<3?4:0, display:"flex", alignItems:"flex-start", gap:6 }}>
-                      <CheckCircle2 size={12} color="#16A34A" style={{ marginTop:1, flexShrink:0 }} />{tip}
-                    </div>
-                  ))}
-                </div>
-
-                {/* Controls */}
-                {substage === "idle" && (
-                  <div style={{ textAlign:"center" }}>
-                    <button onClick={startRec} style={{ width:80, height:80, borderRadius:"50%", background:`linear-gradient(135deg,${G},${GM})`, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 12px", boxShadow:"0 8px 24px rgba(6,78,59,.3)" }}>
-                      <Mic size={32} color="#fff" />
-                    </button>
-                    <div style={{ fontSize:14, fontWeight:700, color:G }}>Tap to start recording</div>
-                    <div style={{ fontSize:12, color:"#9ca3af", marginTop:4 }}>بِسْمِ اللَّهِ — say Bismillah before you begin</div>
-                  </div>
-                )}
-
-                {substage === "recording" && (
-                  <div style={{ textAlign:"center" }}>
-                    <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:2, height:48, marginBottom:12 }}>
-                      {WAVE_H.map((h,i) => (
-                        <div key={i} style={{ width:3, height:h*2, borderRadius:3, background:"#E74C3C", animation:`waveBar ${.4+(i%4)*.1}s ease-in-out infinite alternate`, animationDelay:`${i*.04}s` }} />
-                      ))}
-                    </div>
-                    <div style={{ fontSize:24, fontWeight:900, color:"#E74C3C", marginBottom:12 }}>{fr(recTime)}</div>
-                    <div style={{ display:"flex", gap:12, justifyContent:"center" }}>
-                      <button onClick={cancelRec} style={{ padding:"10px 20px", borderRadius:12, border:"2px solid #e5e7eb", background:"#fff", color:"#666", fontSize:13, fontWeight:600, cursor:"pointer" }}>Cancel</button>
-                      <button onClick={stopRec} style={{ padding:"10px 24px", borderRadius:12, border:"none", background:"#E74C3C", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>Stop & Review</button>
-                    </div>
-                  </div>
-                )}
-
-                {(substage === "uploading" || uploading) && (
-                  <div style={{ textAlign:"center", padding:"20px 0" }}>
-                    <Loader2 style={{ width:36, height:36, color:GM, animation:"spin .8s linear infinite", margin:"0 auto 10px" }} />
-                    <div style={{ fontSize:14, color:"#666" }}>Uploading your recitation…</div>
-                  </div>
-                )}
-
-                {substage === "recorded" && audioUrl && (
-                  <div>
-                    <div style={{ background:"#F0FDF4", borderRadius:14, padding:"16px", border:"1px solid #86EFAC", marginBottom:16 }}>
-                      <div style={{ fontSize:13, fontWeight:700, color:G, marginBottom:10 }}>Review your recording:</div>
-                      <audio controls src={audioUrl} style={{ width:"100%", height:48, borderRadius:8 }} preload="auto" />
-                    </div>
-                    <div style={{ display:"flex", gap:10 }}>
-                      <button onClick={retake} style={{ flex:1, padding:"12px", borderRadius:12, border:"2px solid #e5e7eb", background:"#fff", color:"#666", fontSize:13, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-                        <RotateCcw size={15} /> Re-record
-                      </button>
-                      <button onClick={uploadAudio} disabled={uploading} style={{ flex:2, padding:"12px", borderRadius:12, border:"none", background:`linear-gradient(135deg,${G},${GM})`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-                        <Upload size={16} /> Continue to AI Scoring
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
             {/* ─── STAGE 2: AI SCORING (PREVIEW) ────────────────────────── */}
             {stage === 2 && (
               <div style={{ textAlign:"center" }}>
@@ -811,14 +877,7 @@ const RecitationTest = () => {
                         <RotateCcw size={15} /> Re-record
                       </button>
                       <button
-                        onClick={async () => {
-                          // Skip AI score — go to session booking without a score
-                          await (supabase as any).from("recitation_tests").update({
-                            ai_score: null, ai_transcript: "No transcript — manual review",
-                            stage: 2, stage2_completed_at: new Date().toISOString(), status: "stage2_complete",
-                          }).eq("user_id", user!.id);
-                          setStage(3);
-                        }}
+                        onClick={handleSkipScore}
                         style={{ width:"100%", padding:"13px", borderRadius:13, border:"none", background:`linear-gradient(135deg,${G},${GM})`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}
                       >
                         Skip to Session Booking <ArrowRight size={16} />
@@ -922,8 +981,9 @@ const RecitationTest = () => {
 
                       {sessionDates.map(d => {
                         const date    = new Date(d + "T12:00:00");
-                        const isToday = d === new Date().toISOString().split("T")[0];
-                        const dayLabel = (isToday ? "Today" : "Tomorrow") + " · " +
+                        const isToday = d === todayStr;
+                        const isTomorrow = d === localDateStr(new Date(Date.now() + 86_400_000));
+                        const dayLabel = (isToday ? "Today" : isTomorrow ? "Tomorrow" : "") + (isToday || isTomorrow ? " · " : "") +
                           date.toLocaleDateString("en-NG", { weekday:"short", day:"numeric", month:"short" });
                         const isDateSel = sessionDate === d;
                         return (
@@ -932,7 +992,7 @@ const RecitationTest = () => {
                               {dayLabel}
                             </div>
                             <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                              {availableSlots.map(t => {
+                              {slotsFor(d).map(t => {
                                 const isSel = sessionDate === d && sessionTime === t;
                                 return (
                                   <button key={t}
