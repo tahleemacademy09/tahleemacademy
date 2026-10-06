@@ -112,7 +112,7 @@ const TrackerCard = ({ s }: { s: any }) => {
               <p style={{ margin: "4px 0 0", fontSize: 12, fontWeight: 700, color: "#374151" }}>
                 {exam ? `${Math.round(exam.percentage ?? 0)}%` : "Not taken"}
               </p>
-              {exam && <p style={{ margin: "2px 0 0", fontSize: 10, color: "#6B7280" }}>{exam.score ?? 0}/{exam.max_score ?? 0} · {fmt(exam.submitted_at || exam.updated_at)}</p>}
+              {exam && <p style={{ margin: "2px 0 0", fontSize: 10, color: "#6B7280" }}>{exam.score ?? 0}/{exam.total_points ?? 0} · {fmt(exam.submitted_at || exam.updated_at)}</p>}
             </div>
             <div style={{ background: "#F0FDF4", borderRadius: 12, padding: 10, border: "1px solid #86EFAC" }}>
               <p style={{ margin: 0, fontSize: 9, fontWeight: 800, color: "#166534", textTransform: "uppercase" }}>🎙️ Recitation</p>
@@ -148,7 +148,7 @@ export default function TasjeelAdmin() {
       const [profRes, recRes, examRes, payRes] = await Promise.all([
         supabase.from("profiles").select("user_id, full_name, email, avatar_url, student_id, phone, country").in("user_id", ids as any),
         (supabase as any).from("recitation_tests").select("*").in("user_id", ids),
-        supabase.from("exam_attempts").select("user_id, score, max_score, percentage, status, submitted_at, updated_at").in("user_id", ids as any).order("submitted_at", { ascending: false }),
+        supabase.from("exam_attempts").select("user_id, score, total_points, percentage, status, submitted_at, updated_at").in("user_id", ids as any).order("submitted_at", { ascending: false }),
         (supabase as any).from("payment_history").select("user_id, amount, paid_at, status, payment_ref, payment_type").in("user_id", ids).eq("payment_type", "registration"),
       ]);
       const by = (rows: any[] | null, first = false) => {
