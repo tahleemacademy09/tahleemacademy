@@ -10,7 +10,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { storageSupabase } from "../../integrations/supabase/storageClient";
+import { resolveRecitationAudioUrl } from "@/lib/examAudioUpload";
 import { useToast } from "@/hooks/use-toast";
 import { useAcademicLevels } from "@/hooks/useAcademicLevels";
 import {
@@ -348,8 +348,8 @@ const LevelAssignment = () => {
     if (path.startsWith("data:") || path.startsWith("http")) {
       setAudioUrls(p => ({ ...p, [uid]: path })); return;
     }
-    const { data } = await storageSupabase.storage.from("recitation-audio").createSignedUrl(path, 3600);
-    if (data?.signedUrl) setAudioUrls(p => ({ ...p, [uid]: data.signedUrl }));
+    const url = await resolveRecitationAudioUrl(path);
+    if (url) setAudioUrls(p => ({ ...p, [uid]: url }));
   };
 
   // ── Load Quran page for admin view ──────────────────────────────────────────

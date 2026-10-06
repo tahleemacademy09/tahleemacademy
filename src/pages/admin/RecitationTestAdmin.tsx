@@ -9,6 +9,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { resolveRecitationAudioUrl } from "@/lib/examAudioUpload";
 import { useRecitationSettings, DEFAULT_RECITATION_SETTINGS } from "@/hooks/useRecitationSettings";
 import {
   Mic, Save, RefreshCw, CheckCircle2, XCircle, Clock,
@@ -174,12 +175,14 @@ const RecitationTestAdmin = () => {
     toast({ title: "Reset to defaults — click Save to apply" });
   };
 
-  const playAudio = (id: string, url: string) => {
+  const playAudio = async (id: string, path: string) => {
     if (playingId === id) { audioEl?.pause(); setPlayingId(null); return; }
     audioEl?.pause();
+    const url = await resolveRecitationAudioUrl(path);
+    if (!url) { toast({ title: "Could not load this recording", variant: "destructive" }); return; }
     const el = new Audio(url);
     el.onended = () => setPlayingId(null);
-    el.play();
+    el.play().catch(() => { setPlayingId(null); toast({ title: "Could not play this recording", variant: "destructive" }); });
     setAudioEl(el);
     setPlayingId(id);
   };
