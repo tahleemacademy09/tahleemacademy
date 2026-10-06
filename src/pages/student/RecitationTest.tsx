@@ -250,6 +250,8 @@ interface ScoreBreakdown {
   coverage: number;   // % of reference words recited
   accuracy: number;   // precision of what was heard
   fluency: number;    // pronunciation similarity
+  recitationMarks?: number; // out of 70 — how much of the page was recited correctly
+  qualityMarks?: number;    // out of 30 — accuracy (20) + fluency (10), scaled by coverage
 }
 
 /**
@@ -302,7 +304,9 @@ function scoreRecitation(
   const lcsLen = dp[R * (G2 + 1) + G2];
   const coverage  = Math.round((lcsLen / R) * 100);   // recall
   const precision = Math.round((lcsLen / G2) * 100);  // precision
-  const accuracy  = Math.round(coverage * 0.65 + precision * 0.35);
+  // Accuracy = of the words the student actually said, how many matched the page.
+  // It is shown for information only — it does NOT lift the score (see `total` below).
+  const accuracy  = precision;
 
   // ── Fluency score ─────────────────────────────────────────────────────────
   let fluency: number;
@@ -328,12 +332,22 @@ function scoreRecitation(
     fluency = simCount > 0 ? Math.round((simSum / simCount) * 100) : 55;
   }
 
-  const total = Math.round(accuracy * 0.6 + fluency * 0.4);
+  // MARKING: 70 marks for the recitation itself, 30 for quality.
+  //   • Recitation (70) = share of the page recited correctly (coverage, order-aware).
+  //   • Quality (30)    = accuracy of what was said (20) + fluency (10).
+  // Quality marks are scaled by coverage, so a short recitation can't earn them:
+  // reciting 12% of the page can score at most ~12/100, never 50+.
+  const C = coverage / 100;
+  const recitationMarks = 70 * C;
+  const qualityMarks    = 30 * C * ((accuracy * 2 / 3 + fluency / 3) / 100);
+  const total = Math.round(recitationMarks + qualityMarks);
   return {
     total:    Math.min(100, Math.max(0, total)),
     coverage: Math.min(100, coverage),
     accuracy: Math.min(100, accuracy),
     fluency:  Math.min(100, fluency),
+    recitationMarks: Math.round(recitationMarks * 10) / 10,
+    qualityMarks:    Math.round(qualityMarks * 10) / 10,
   };
 }
 
@@ -764,8 +778,9 @@ const RecitationTest = () => {
     } finally { setBooking(false); }
   };
 
-  const scoreColor = (s: number) => s >= 80 ? "#16A34A" : s >= 60 ? "#D97706" : "#DC2626";
-  const scoreLabel = (s: number) => s >= 80 ? "Excellent" : s >= 60 ? "Good" : "Needs Practice";
+  const PASS_MARK = 70;
+  const scoreColor = (s: number) => s >= PASS_MARK ? "#16A34A" : s >= 50 ? "#D97706" : "#DC2626";
+  const scoreLabel = (s: number) => s >= PASS_MARK ? "Passed" : s >= 50 ? "Almost there" : "Needs Practice";
 
   const ALL_SLOTS = (() => {
     const slots: string[] = [];
@@ -1110,12 +1125,19 @@ const RecitationTest = () => {
                       <div style={{ fontSize:11, color:scoreColor(aiScore), fontWeight:700, marginTop:2 }}>{scoreLabel(aiScore)}</div>
                     </div>
 
+                    {scoreBreakdown?.recitationMarks !== undefined && (
+                      <div style={{ display:"flex", justifyContent:"center", gap:18, fontSize:12, fontWeight:700, color:"#374151", marginBottom:14 }}>
+                        <span>Recitation <span style={{ color:G }}>{Math.round(scoreBreakdown.recitationMarks)}/70</span></span>
+                        <span>Quality <span style={{ color:G }}>{Math.round(scoreBreakdown.qualityMarks ?? 0)}/30</span></span>
+                      </div>
+                    )}
+
                     {/* Score breakdown */}
                     {scoreBreakdown && (
                       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:16 }}>
                         {[
-                          { label:"Coverage", value:scoreBreakdown.coverage, tip:"Words recited" },
-                          { label:"Accuracy", value:scoreBreakdown.accuracy, tip:"Correct words" },
+                          { label:"Coverage", value:scoreBreakdown.coverage, tip:"Of the page recited" },
+                          { label:"Accuracy", value:scoreBreakdown.accuracy, tip:"Of what you said" },
                           { label:"Fluency",  value:scoreBreakdown.fluency,  tip:"Pronunciation" },
                         ].map((m,i) => (
                           <div key={i} style={{ background:"#f9fafb", borderRadius:12, padding:"10px 8px", border:"1px solid #e5e7eb", textAlign:"center" as const }}>
