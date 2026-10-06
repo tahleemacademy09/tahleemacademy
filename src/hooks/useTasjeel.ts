@@ -91,20 +91,24 @@ export async function healStuckPaymentStep(userId: string, step: string): Promis
   if (step !== "enrollment" && step !== "payment") return step;
 
   try {
-    const [{ data: settingsRows }, { data: enrollment }] = await Promise.all([
+    const [{ data: settingsRows }, { data: enrollment }, { data: profileRow }] = await Promise.all([
       supabase.from("academy_settings" as any).select("key, value"),
       // payment_history is written server-side only (admin/service role), so a
       // success row is a trustworthy "registration paid" signal. (enrollments.
       // registration_paid can't be written — course_id is NOT NULL — so it is not used.)
       supabase.from("payment_history" as any).select("id").eq("user_id", userId)
         .eq("payment_type", "registration").eq("status", "success").limit(1).maybeSingle(),
+      // An admin can exempt a student (Payment Management → Exempt). That sets
+      // payment_status to exempt/exempt_temp, which students cannot edit.
+      supabase.from("profiles").select("payment_status").eq("user_id", userId).maybeSingle(),
     ]);
 
     const cfg: Record<string, string> = {};
     (settingsRows || []).forEach((r: any) => { if (r.value !== null) cfg[r.key] = r.value; });
 
     const feeEnabled  = cfg.entrance_fee_enabled !== "false";
-    const alreadyPaid = !!enrollment;
+    const adminExempt = ["exempt", "exempt_temp"].includes((profileRow as any)?.payment_status);
+    const alreadyPaid = !!enrollment || adminExempt;
 
     // Nothing to heal — fee is required and genuinely not yet paid.
     if (feeEnabled && !alreadyPaid) return step;
@@ -372,11 +376,11 @@ export function useTasjeel() {
     fetchStep();
   }, [fetchStep]);
 
-  const advanceStep = useCallback(async (nextStep: string) => {
-    if (!userId) return;
+  const advanceStep = useCallback(async (nextStep: string): Promise<{ ok: boolean; error?: string }> => {
+    if (!userId) return { ok: false, error: "Not signed in" };
     // A student can never move themselves to "completed" — only an admin placing
     // them in a level does (the database enforces this as well).
-    if (nextStep === "completed") return;
+    if (nextStep === "completed") return { ok: false, error: "Only an admin can complete registration" };
     // Always update local state FIRST so guards on the destination page
     // see the new step immediately — even if the DB call fails with 400.
     // (A 400 here usually means an RLS UPDATE policy is missing; see the
@@ -390,9 +394,16 @@ export function useTasjeel() {
         .eq("user_id", userId);
       if (error) {
         console.error("[useTasjeel] advanceStep DB error — local state already updated:", error.message);
+        // RETURN the failure. Local state is per-hook-instance, so the next page
+        // re-reads the DB; if the DB refused the move (e.g. the no-skip trigger
+        // says payment is missing) callers must know instead of navigating on
+        // and bouncing back and forth between two pages.
+        return { ok: false, error: error.message };
       }
-    } catch (err) {
+      return { ok: true };
+    } catch (err: any) {
       console.error("[useTasjeel] advanceStep network error — local state already updated:", err);
+      return { ok: false, error: err?.message || "Network error" };
     }
   }, [userId]);
 
