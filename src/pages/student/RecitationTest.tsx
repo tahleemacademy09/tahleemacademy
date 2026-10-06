@@ -17,7 +17,7 @@ import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 import {
   Mic, Upload, CheckCircle2, Video, Clock,
   Star, ArrowRight, Loader2, RotateCcw, BookOpen,
-  AlertCircle, Calendar, Send,
+  AlertCircle, Calendar, Send, ChevronRight,
 } from "lucide-react";
 
 const G    = "#064E3B";
@@ -211,7 +211,13 @@ const RecitationTest = () => {
   const [loadingQuran, setLoadingQuran] = useState(false);
   const [quranReload,  setQuranReload]  = useState(0);
   const [fontPx,       setFontPx]       = useState(26);
-  const [showTips,     setShowTips]     = useState(true);
+  // Tips are shown on the instruction screen first, so the reader starts clean.
+  const [showTips,     setShowTips]     = useState(false);
+  // Instruction screen ("Next") shown once before the mushaf page + recorder.
+  const [introDone,     setIntroDone]     = useState(false);
+  // Don't render stage 1 (or the instructions) until we know whether the
+  // student already submitted — otherwise it flashes then jumps to stage 3.
+  const [resumeChecked, setResumeChecked] = useState(false);
 
   const assignedPage = useMemo(() => {
     if (!user?.id) return 1;
@@ -263,7 +269,7 @@ const RecitationTest = () => {
         .select("stage, status, ai_score, audio_path, virtual_session_date, virtual_session_time")
         .eq("user_id", user.id)
         .maybeSingle();
-      if (!data) return;
+      if (!data) { setResumeChecked(true); return; }
 
       if (data.status === "awaiting_teacher" || data.stage >= 3) {
         // Fully submitted + session booked
@@ -272,23 +278,30 @@ const RecitationTest = () => {
         setSessionTime(data.virtual_session_time || "");
         setBookingDone(true);
         setStage(3);
+        setIntroDone(true);
       } else if (data.status === "stage2_complete" || data.stage >= 2) {
         // AI score was submitted — move to session booking
         setAiScore(data.ai_score ?? null);
         setStage(3);
+        setIntroDone(true);
       } else {
         // stage === 1 (audio uploaded but score NOT submitted) → force re-record
         // The user refreshed before pressing "Submit Score".
         // Reset to idle stage 1 so they must re-record.
         setStage(1);
         setSubstage("idle");
-        if (data.stage >= 1) {
+        // Only warn when a recording was really uploaded. The row is also
+        // created (stage 1, "stage1_pending") the moment the page first opens,
+        // which is NOT a lost recording.
+        if (data.audio_path || data.status === "stage1_complete") {
+          setIntroDone(true);   // they've already seen the instructions
           toast({
             title: "Recitation not submitted",
             description: "Your previous recording was not submitted. Please re-record.",
           });
         }
       }
+      setResumeChecked(true);
     })();
   }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -660,12 +673,74 @@ const RecitationTest = () => {
   }).filter(d => slotsFor(d).length > 0);
   const parsedTips = (settings.tips || "").split(/,|\n/).map(t => t.trim()).filter(Boolean);
 
-  if (settingsLoading) return (
+  if (settingsLoading || !resumeChecked) return (
     <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:`linear-gradient(160deg,${G},${GM})` }}>
       <Loader2 style={{ width:36, height:36, color:"#fff", animation:"spin .8s linear infinite" }} />
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
+
+  // ══ INSTRUCTIONS — shown once, student taps Next to continue ═════════════
+  if (stage === 1 && !introDone) {
+    const introTips = parsedTips.length > 0 ? parsedTips : [
+      "Find a quiet room with no background noise",
+      "Hold phone 15–20cm from your mouth",
+      "Recite clearly and at your normal pace",
+      "Complete the full page without stopping",
+    ];
+    const minSec = Number(settings.min_duration_sec) || 0;
+    const maxSec = Number(settings.max_duration_sec) || 0;
+    const steps = [
+      { icon: "📖", title: "Your page is assigned", desc: "You will be shown one page of the Qur'an. Recite the whole page from beginning to end." },
+      { icon: "🎙️", title: "Record once, clearly", desc: "Tap Start Recording, recite at your normal pace, then tap Stop & Review." },
+      { icon: "⏱️", title: "Recording length", desc: minSec > 0 || maxSec > 0 ? `${minSec > 0 ? `At least ${minSec}s` : ""}${minSec > 0 && maxSec > 0 ? " · " : ""}${maxSec > 0 ? `up to ${Math.floor(maxSec/60)} min ${maxSec%60 ? `${maxSec%60}s` : ""}`.trim() : ""}.` : "Take the time you need, without stopping." },
+      { icon: "✅", title: "Submit your score", desc: "After the AI review, press Submit — a recording that is not submitted must be repeated." },
+      { icon: "📅", title: "Then book a live session", desc: "Finally you will choose a time for a short live session with an ustadh, in shaa Allah." },
+    ];
+    return (
+      <div style={{ position:"fixed", inset:0, zIndex:40, overflowY:"auto", background:"linear-gradient(160deg,#021a0e 0%,#0c2d1a 50%,#041409 100%)", display:"flex", justifyContent:"center", alignItems:"flex-start", padding:"16px 12px 32px", fontFamily:"'Cairo',system-ui,sans-serif" }}>
+        <div style={{ width:"100%", maxWidth:560, background:"rgba(255,255,255,.04)", border:"1px solid rgba(201,168,76,.2)", borderRadius:20, padding:"28px 20px" }}>
+          <div style={{ textAlign:"center", marginBottom:22 }}>
+            <div style={{ width:70, height:70, borderRadius:"50%", margin:"0 auto 14px", background:"rgba(201,168,76,.12)", border:"2px solid rgba(201,168,76,.4)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <Mic size={30} color={GOLD} />
+            </div>
+            <p style={{ fontFamily:"'Amiri',serif", fontSize:20, color:GOLD, margin:"0 0 10px", direction:"rtl" }}>بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ</p>
+            <h1 style={{ fontSize:20, fontWeight:900, color:"#fff", margin:"0 0 4px" }}>Recitation Test</h1>
+            <p style={{ fontSize:12, color:"rgba(201,168,76,.7)", margin:0, fontFamily:"'Amiri',serif" }}>اختبار التلاوة — Tahleem Academy</p>
+            {settings.instructions && (
+              <p style={{ fontSize:12, color:"rgba(255,255,255,.65)", margin:"12px 0 0", lineHeight:1.6 }}>{settings.instructions}</p>
+            )}
+          </div>
+
+          <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:18 }}>
+            <p style={{ fontSize:11, fontWeight:700, color:"rgba(201,168,76,.8)", margin:"0 0 6px", textTransform:"uppercase", letterSpacing:1 }}>📋 Guidance · التعليمات</p>
+            {steps.map((st, i) => (
+              <div key={i} style={{ display:"flex", gap:12, alignItems:"flex-start", background:"rgba(255,255,255,.04)", borderRadius:12, padding:"10px 14px", border:"1px solid rgba(255,255,255,.07)" }}>
+                <span style={{ fontSize:18, flexShrink:0, marginTop:1 }}>{st.icon}</span>
+                <div>
+                  <p style={{ fontWeight:700, fontSize:13, color:"#fff", margin:"0 0 2px" }}>{st.title}</p>
+                  <p style={{ fontSize:11, color:"rgba(255,255,255,.55)", margin:0, lineHeight:1.5 }}>{st.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ background:"rgba(34,197,94,.08)", border:"1px solid rgba(34,197,94,.25)", borderRadius:12, padding:"12px 16px", marginBottom:22 }}>
+            <p style={{ fontWeight:700, fontSize:12, color:"#86EFAC", margin:"0 0 6px" }}>🎧 Before you start</p>
+            {introTips.map((tip, i) => (
+              <div key={i} style={{ fontSize:11.5, color:"rgba(134,239,172,.85)", marginBottom:3, display:"flex", gap:6, alignItems:"flex-start" }}>
+                <CheckCircle2 size={12} color="#4ADE80" style={{ marginTop:2, flexShrink:0 }} />{tip}
+              </div>
+            ))}
+          </div>
+
+          <button onClick={() => setIntroDone(true)} style={{ width:"100%", padding:"16px", borderRadius:14, border:"none", background:`linear-gradient(135deg,${G},${GM})`, color:"#fff", fontSize:16, fontWeight:800, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8, boxShadow:"0 8px 32px rgba(6,78,59,.5)", minHeight:52 }}>
+            Next — التالي <ChevronRight size={18} />
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // ══ STAGE 1 — FULL-PAGE MUSHAF READER + RECORDER ══════════════════════════
   if (stage === 1) {

@@ -23,6 +23,7 @@ const EntranceExamResume = () => {
 
   const [status,     setStatus]     = useState<"loading" | "error">("loading");
   const [message,    setMessage]    = useState("Finding your exam…");
+  const [errorTitle, setErrorTitle] = useState("Could not load exam");
   const [retryCount, setRetryCount] = useState(0);
   const didNavigate = useRef(false);
 
@@ -37,6 +38,7 @@ const EntranceExamResume = () => {
 
     didNavigate.current = false;
     setStatus("loading");
+    setErrorTitle("Could not load exam");
     setMessage("Finding your exam…");
 
     // 10s timeout — spinner never hangs forever
@@ -144,7 +146,22 @@ const EntranceExamResume = () => {
           // DB call fails with 400. Without this, RecitationTest's step guard
           // sees currentStep="exam" and bounces back here → infinite PATCH loop.
           clearTimeout(timeoutId);
-          await advanceStep("recitation");   // updates local state regardless of DB result
+          const adv = await advanceStep("recitation");
+          if (!adv.ok) {
+            // The database refused to move this student on (see trigger
+            // trg_tasjeel_no_skip). Navigating anyway makes RecitationTest
+            // re-read the DB, see step="exam" and bounce straight back here —
+            // an endless shuffle between the two pages. Stop and say why.
+            console.error("[EntranceExamResume] could not advance to recitation:", adv.error);
+            setErrorTitle("Could not continue to recitation");
+            setStatus("error");
+            setMessage(
+              /payment/i.test(adv.error || "")
+                ? "Your exam is saved, but we could not find your registration payment, so the recitation step is locked. Please complete payment or contact Tahleem Academy support."
+                : (adv.error || "We could not move you to the recitation step. Please try again.")
+            );
+            return;
+          }
           didNavigate.current = true;
           navigate("/student/recitation-test", { replace: true });
           return;
@@ -219,7 +236,7 @@ const EntranceExamResume = () => {
           </div>
           <div>
             <p style={{ color: "#fff", fontSize: 16, fontWeight: 800, margin: "0 0 8px" }}>
-              Could not load exam
+              {errorTitle}
             </p>
             <p style={{ color: "rgba(255,255,255,.65)", fontSize: 13, margin: 0, maxWidth: 300, lineHeight: 1.6 }}>
               {message}
