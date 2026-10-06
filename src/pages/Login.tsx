@@ -80,7 +80,7 @@ const Login = () => {
     // Student: resolve their exact pipeline step before navigating.
     (async () => {
       try {
-        const step = await resolveTasjeelStep(user.id, user.email_confirmed_at, 5000);
+        const step = await resolveTasjeelStep(user.id, user.email_confirmed_at, 8000);
         if (step === "completed") {
           navigate(fromPath?.startsWith("/student") ? fromPath : "/student", { replace: true });
         } else {
