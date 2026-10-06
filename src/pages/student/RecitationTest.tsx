@@ -10,7 +10,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { uploadExamAudioToR2 } from "@/lib/examAudioUpload";
+import { uploadExamAudioToR2, resolveRecitationAudioUrl } from "@/lib/examAudioUpload";
 import { useToast } from "@/hooks/use-toast";
 import { useRecitationSettings } from "@/hooks/useRecitationSettings";
 import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
@@ -397,6 +397,9 @@ const RecitationTest = () => {
   const runIdRef     = useRef(0);                              // bumps on every new/discarded recording
   const uploadRef    = useRef<Promise<string|null>|null>(null); // background upload → resolves to saved path
   const quranRef     = useRef<{n:number;text:string}[]>([]);
+  const submittedRef = useRef(false);                          // true once the score has been submitted
+  const previewRef   = useRef<Promise<void>|null>(null);       // in-flight "save preview" write
+  const [rescorePath, setRescorePath] = useState<string|null>(null); // saved audio to re-score after a reload
 
   // ── Quran mushaf page — deterministic per user ────────────────────────────
   const [quranAyahs,   setQuranAyahs]   = useState<{n: number; text: string}[]>([]);
@@ -470,7 +473,7 @@ const RecitationTest = () => {
     (async () => {
       const { data } = await (supabase as any)
         .from("recitation_tests")
-        .select("stage, status, ai_score, audio_path, virtual_session_date, virtual_session_time")
+        .select("stage, status, ai_score, ai_transcript, audio_path, virtual_session_date, virtual_session_time")
         .eq("user_id", user.id)
         .maybeSingle();
       if (!data) { setResumeChecked(true); return; }
@@ -488,6 +491,22 @@ const RecitationTest = () => {
         setAiScore(data.ai_score ?? null);
         setStage(3);
         setIntroDone(true);
+      } else if (data.status === "scored_pending" && data.ai_score !== null && data.ai_score !== undefined && data.audio_path) {
+        // Recording was saved AND scored, but the student hadn't pressed Submit yet
+        // (minimised / refreshed / came back later) → show the score screen again.
+        setAiScore(data.ai_score);
+        setAiTranscript(data.ai_transcript || null);
+        setSavedAudioPath(data.audio_path);
+        setIntroDone(true);
+        setStage(2);
+      } else if (data.status === "stage1_complete" && data.audio_path) {
+        // Recording was saved but scoring hadn't finished → score the saved audio now
+        // instead of making the student record again.
+        setSavedAudioPath(data.audio_path);
+        setIntroDone(true);
+        setScoring(true);
+        setStage(2);
+        setRescorePath(data.audio_path);
       } else {
         // stage === 1 (audio uploaded but score NOT submitted) → force re-record
         // The user refreshed before pressing "Submit Score".
@@ -508,6 +527,32 @@ const RecitationTest = () => {
       setResumeChecked(true);
     })();
   }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── After a reload: score the saved audio once the mushaf text is loaded ─────
+  useEffect(() => {
+    if (!rescorePath || quranAyahs.length === 0) return;
+    const path = rescorePath;
+    setRescorePath(null);
+    const runId = ++runIdRef.current;
+    (async () => {
+      try {
+        const url = await resolveRecitationAudioUrl(path);
+        if (!url) throw new Error("no url");
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        await runScoring(await r.blob(), runId);
+      } catch {
+        if (runId === runIdRef.current) { setScoreIssue("failed"); setScoring(false); }
+      }
+    })();
+  }, [rescorePath, quranAyahs.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Rebuild the breakdown tiles for a score restored from the database
+  useEffect(() => {
+    if (scoreBreakdown || aiScore === null || !aiTranscript || quranAyahs.length === 0) return;
+    const b = scoreRecitation(aiTranscript, quranAyahs.map(a => a.text).join(" "), []);
+    setScoreBreakdown(b);
+  }, [aiScore, aiTranscript, scoreBreakdown, quranAyahs]);
 
   // ── Recording ────────────────────────────────────────────────────────────
   const startRec = async () => {
@@ -563,7 +608,18 @@ const RecitationTest = () => {
     discardWork();
     setRecTime(0); setSubstage("idle"); setAudioBlob(null); setAudioUrl(null);
   };
+  // Forget any saved (unsubmitted) recording + score — only used when the student
+  // chooses to re-record. Leaving or minimising the page never calls this.
+  const clearSavedPreview = async () => {
+    if (!user) return;
+    try {
+      await (supabase as any).from("recitation_tests")
+        .update({ stage: 0, status: "retake", audio_path: null, ai_score: null, ai_transcript: null })
+        .eq("user_id", user.id);
+    } catch { /* non-critical */ }
+  };
   const retake = () => {
+    clearSavedPreview();
     discardWork();
     setAudioBlob(null); setAudioUrl(null); setSubstage("idle");
     setAiScore(null); setAiTranscript(null); setScoreBreakdown(null);
@@ -572,6 +628,7 @@ const RecitationTest = () => {
   // ── Background work: score + save, started the moment recording stops ─────
   const beginBackgroundWork = (blob: Blob) => {
     const runId = ++runIdRef.current;
+    submittedRef.current = false;
     setAiScore(null); setAiTranscript(null); setScoreBreakdown(null); setScoreIssue(null);
     runScoring(blob, runId);
     uploadRef.current = saveRecording(blob, runId);
@@ -647,6 +704,24 @@ const RecitationTest = () => {
     setScoreBreakdown(breakdown);
     setAiScore(breakdown.total);
     setScoring(false);
+    previewRef.current = persistPreview(runId, breakdown.total, transcript);
+  };
+
+  // Saves the (unsubmitted) score next to the stored audio so the result screen
+  // survives minimising, refreshing, or coming back much later. Only saved when the
+  // audio itself was stored — if storing failed, the student is asked to retry.
+  const persistPreview = async (runId: number, score: number, transcript: string): Promise<void> => {
+    if (!user) return;
+    try {
+      let path = savedAudioPath;
+      if (!path && uploadRef.current) path = await withTimeout(uploadRef.current, UPLOAD_TIMEOUT_MS * 2, "Upload");
+      if (!path) return;
+      if (runId !== runIdRef.current || submittedRef.current) return;
+      await (supabase as any).from("recitation_tests").upsert({
+        user_id: user.id, audio_path: path, ai_score: score, ai_transcript: transcript,
+        stage: 1, status: "scored_pending",
+      }, { onConflict: "user_id" });
+    } catch { /* non-critical — worst case the student re-records */ }
   };
 
   // ── Submit Score (user-initiated) ─────────────────────────────────────────
@@ -655,6 +730,8 @@ const RecitationTest = () => {
     if (!user || aiScore === null) return;
     setSubmittingScore(true);
     try {
+      submittedRef.current = true;
+      if (previewRef.current) { try { await previewRef.current; } catch { /* noop */ } }
       // Make sure the recording finished saving so the teacher can hear it.
       let audioPath = savedAudioPath;
       if (!audioPath && uploadRef.current) {
@@ -678,6 +755,7 @@ const RecitationTest = () => {
       }
       setStage(3);
     } catch (e: any) {
+      submittedRef.current = false;
       toast({ title: "Could not save score", description: e.message, variant: "destructive" });
     } finally {
       setSubmittingScore(false);
@@ -704,7 +782,7 @@ const RecitationTest = () => {
     // Clear the stage-1 DB row so resume logic doesn't redirect to stage 2
     if (user) {
       const { error: resetErr } = await (supabase as any).from("recitation_tests")
-        .update({ stage: 0, status: "retake", audio_path: null })
+        .update({ stage: 0, status: "retake", audio_path: null, ai_score: null, ai_transcript: null })
         .eq("user_id", user.id);
       if (resetErr) {
         toast({ title: "Could not reset your recording", description: resetErr.message, variant: "destructive" });
