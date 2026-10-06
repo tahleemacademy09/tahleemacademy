@@ -1,6 +1,6 @@
 /*  src/pages/admin/RecitationTestAdmin.tsx
     Admin control panel for the student Recitation Test.
-    Controls: surah, reference text, instructions, tips,
+    Controls: instructions, tips,
     recording limits, session time slots, AI scoring toggle,
     and ability to enable/disable the test entirely.
     Also shows all pending student submissions for review.
@@ -90,9 +90,6 @@ const RecitationTestAdmin = () => {
   const [expandedId, setExpandedId]   = useState<string | null>(null);
 
   // Local editable state — mirrors settings
-  const [surahName,        setSurahName]        = useState("");
-  const [surahArabic,      setSurahArabic]      = useState("");
-  const [surahReference,   setSurahReference]   = useState("");
   const [instructions,     setInstructions]     = useState("");
   const [tips,             setTips]             = useState("");
   const [minDur,           setMinDur]           = useState("10");
@@ -108,9 +105,6 @@ const RecitationTestAdmin = () => {
   // Sync local state when settings load
   useEffect(() => {
     if (loading) return;
-    setSurahName(settings.surah_name || DEFAULT_RECITATION_SETTINGS.surah_name);
-    setSurahArabic(settings.surah_arabic || DEFAULT_RECITATION_SETTINGS.surah_arabic);
-    setSurahReference(settings.surah_reference || DEFAULT_RECITATION_SETTINGS.surah_reference);
     setInstructions(settings.instructions || DEFAULT_RECITATION_SETTINGS.instructions);
     setTips(settings.tips || DEFAULT_RECITATION_SETTINGS.tips);
     setMinDur(String(settings.min_duration_sec ?? 10));
@@ -152,9 +146,6 @@ const RecitationTestAdmin = () => {
     setSaving(true);
     try {
       await save({
-        surah_name:         surahName,
-        surah_arabic:       surahArabic,
-        surah_reference:    surahReference,
         instructions,
         tips,
         min_duration_sec:   Number(minDur) as any,
@@ -175,8 +166,7 @@ const RecitationTestAdmin = () => {
 
   const resetToDefaults = () => {
     const d = DEFAULT_RECITATION_SETTINGS;
-    setSurahName(d.surah_name); setSurahArabic(d.surah_arabic);
-    setSurahReference(d.surah_reference); setInstructions(d.instructions);
+    setInstructions(d.instructions);
     setTips(d.tips); setMinDur("10"); setMaxDur("120");
     setAvailTimes(d.available_times); setAiEnabled(true); setTestEnabled(true);
     setDisabledMsg(d.disabled_message);
@@ -278,33 +268,21 @@ const RecitationTestAdmin = () => {
               )}
             </div>
 
-            {/* Surah settings */}
+            {/* Recording limits — the student always gets a full mushaf page to recite, assigned automatically */}
             <div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: G, marginBottom: 12 }}>Surah to Recite</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-                <div>
-                  <Label>Surah Name (English)</Label>
-                  <TextInput value={surahName} onChange={setSurahName} placeholder="e.g. Al-Fatiha" />
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <div style={{ flex: 1 }}>
-                    <Label>Min Recording (seconds)</Label>
-                    <TextInput value={minDur} onChange={setMinDur} type="number" placeholder="10" />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <Label>Max Recording (seconds)</Label>
-                    <TextInput value={maxDur} onChange={setMaxDur} type="number" placeholder="120" />
-                  </div>
-                </div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: G, marginBottom: 4 }}>Recording Limits</div>
+              <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 12 }}>
+                Each new student is automatically given one full Quran page to read and recite — nothing to configure here.
               </div>
-              <div style={{ marginBottom: 12 }}>
-                <Label>Arabic Text (shown to student with diacritics)</Label>
-                <TextArea value={surahArabic} onChange={setSurahArabic} dir="rtl" rows={5} placeholder="Arabic text with tashkeel shown in the exam card…" />
-              </div>
-              <div>
-                <Label>Reference Text for AI Scoring (plain Arabic, no diacritics)</Label>
-                <TextArea value={surahReference} onChange={setSurahReference} dir="rtl" rows={3} placeholder="Plain Arabic text used to compare with AI transcription…" />
-                <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 4 }}>This is what the AI compares the student's recitation against. Remove all tashkeel/diacritics.</div>
+              <div style={{ display: "flex", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <Label>Min Recording (seconds)</Label>
+                  <TextInput value={minDur} onChange={setMinDur} type="number" placeholder="10" />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <Label>Max Recording (seconds)</Label>
+                  <TextInput value={maxDur} onChange={setMaxDur} type="number" placeholder="120" />
+                </div>
               </div>
             </div>
 
@@ -313,7 +291,7 @@ const RecitationTestAdmin = () => {
               <div style={{ fontSize: 14, fontWeight: 800, color: G, marginBottom: 12 }}>Student Instructions</div>
               <div style={{ marginBottom: 12 }}>
                 <Label>Main Instruction</Label>
-                <TextArea value={instructions} onChange={setInstructions} rows={2} placeholder="e.g. Recite the surah clearly into your microphone…" />
+                <TextArea value={instructions} onChange={setInstructions} rows={2} placeholder="e.g. Recite the full page clearly into your microphone…" />
               </div>
               <div>
                 <Label>Tips (one per line or comma-separated)</Label>
