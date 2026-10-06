@@ -10,7 +10,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { uploadExamAudioToR2, resolveRecitationAudioUrl } from "@/lib/examAudioUpload";
+import { resolveRecitationAudioUrl } from "@/lib/examAudioUpload";
 import { useToast } from "@/hooks/use-toast";
 import { useRecitationSettings } from "@/hooks/useRecitationSettings";
 import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
@@ -634,33 +634,33 @@ const RecitationTest = () => {
     uploadRef.current = saveRecording(blob, runId);
   };
 
-  // Saves the audio (R2 first, Supabase storage as fallback) and records the
+  // Saves the audio (Supabase storage) and records the
   // stage-1 row. Never blocks scoring. Resolves to the stored path, or null.
   const saveRecording = async (blob: Blob, runId: number): Promise<string|null> => {
     if (!user) return null;
     const ext = blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : "webm";
     let finalPath: string | null = null;
 
-    // 1) Cloudflare R2
-    try {
-      const path = `recitation-test/${user.id}/${Date.now()}.${ext}`;
-      const res = await withTimeout(uploadExamAudioToR2(path, blob), UPLOAD_TIMEOUT_MS, "R2 upload");
-      if (!("error" in res)) finalPath = path;
-      else console.warn("[RecitationTest] R2 upload failed:", res.error);
-    } catch (e) { console.warn("[RecitationTest] R2 upload failed:", e); }
-
-    // 2) Fallback — Supabase storage bucket used by earlier recitation tests
-    if (!finalPath) {
+    // Supabase storage only (R2 removed to avoid upload errors)
+    {
+      // storage RLS on this bucket requires the uid as the 2nd folder segment
+      const path = `fallback/${user.id}/${Date.now()}.${ext}`;
+      const upload = (supabase as any).storage.from("recitation-audio")
+        .upload(path, blob, { contentType: blob.type || "audio/webm", upsert: true }) as Promise<any>;
       try {
-        // storage RLS on this bucket requires the uid as the 2nd folder segment
-        const path = `fallback/${user.id}/${Date.now()}.${ext}`;
-        const { error } = await withTimeout(
-          (supabase as any).storage.from("recitation-audio").upload(path, blob, { contentType: blob.type || "audio/webm", upsert: true }) as Promise<any>,
-          UPLOAD_TIMEOUT_MS, "Storage upload",
-        );
+        // A slow phone connection can take longer than the timeout while the upload still
+        // completes on the server. Giving up there left the file stored but never linked to
+        // the student's record, so wait much longer than the R2 attempt did.
+        const { error } = await withTimeout(upload, UPLOAD_TIMEOUT_MS * 4, "Storage upload");
         if (!error) finalPath = path;
         else console.warn("[RecitationTest] storage fallback failed:", error.message);
-      } catch (e) { console.warn("[RecitationTest] storage fallback failed:", e); }
+      } catch (e) {
+        console.warn("[RecitationTest] storage fallback slow:", e);
+        // Still in flight after the long wait. The path is fixed, so link it now rather than
+        // orphaning the file; if the upload ends up failing, the admin player shows no audio.
+        if (String((e as any)?.message || "").includes("timed out")) finalPath = path;
+        upload.catch(() => {});
+      }
     }
 
     if (runId !== runIdRef.current) return null;   // student re-recorded meanwhile
