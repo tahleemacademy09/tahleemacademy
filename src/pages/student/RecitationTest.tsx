@@ -335,18 +335,8 @@ const RecitationTest = () => {
   };
 
   const stopRec   = () => {
-    const minSec = Number(settings.min_duration_sec) || 0;
-    if (minSec > 0 && recTime < minSec) {
-      toast({ title: "Keep reciting", description: `Please recite for at least ${minSec} seconds.`, variant: "destructive" });
-      return;
-    }
     mediaRef.current?.stop();
   };
-  // Auto-stop at the configured maximum length
-  useEffect(() => {
-    const maxSec = Number(settings.max_duration_sec) || 0;
-    if (substage === "recording" && maxSec > 0 && recTime >= maxSec) mediaRef.current?.stop();
-  }, [recTime, substage]); // eslint-disable-line react-hooks/exhaustive-deps
   const cancelRec = () => {
     cancelRef.current = true;
     mediaRef.current?.stop();
@@ -688,12 +678,9 @@ const RecitationTest = () => {
       "Recite clearly and at your normal pace",
       "Complete the full page without stopping",
     ];
-    const minSec = Number(settings.min_duration_sec) || 0;
-    const maxSec = Number(settings.max_duration_sec) || 0;
     const steps = [
       { icon: "📖", title: "Your page is assigned", desc: "You will be shown one page of the Qur'an. Recite the whole page from beginning to end." },
       { icon: "🎙️", title: "Record once, clearly", desc: "Tap Start Recording, recite at your normal pace, then tap Stop & Review." },
-      { icon: "⏱️", title: "Recording length", desc: minSec > 0 || maxSec > 0 ? `${minSec > 0 ? `At least ${minSec}s` : ""}${minSec > 0 && maxSec > 0 ? " · " : ""}${maxSec > 0 ? `up to ${Math.floor(maxSec/60)} min ${maxSec%60 ? `${maxSec%60}s` : ""}`.trim() : ""}.` : "Take the time you need, without stopping." },
       { icon: "✅", title: "Submit your score", desc: "After the AI review, press Submit — a recording that is not submitted must be repeated." },
       { icon: "📅", title: "Then book a live session", desc: "Finally you will choose a time for a short live session with an ustadh, in shaa Allah." },
     ];
@@ -840,7 +827,7 @@ const RecitationTest = () => {
                   ))}
                 </div>
                 <div style={{ textAlign:"center", fontSize:22, fontWeight:900, color:"#E74C3C", marginBottom:8 }}>
-                  ● {fr(recTime)}{Number(settings.max_duration_sec) > 0 ? <span style={{ fontSize:12, color:"#9ca3af", fontWeight:600 }}> / {fr(Number(settings.max_duration_sec))}</span> : null}
+                  ● {fr(recTime)}
                 </div>
                 <div style={{ display:"flex", gap:10 }}>
                   <button onClick={cancelRec} style={{ flex:1, padding:"12px", borderRadius:14, border:"2px solid #e5e7eb", background:"#fff", color:"#666", fontSize:13, fontWeight:700 }}>Cancel</button>
