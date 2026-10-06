@@ -10,7 +10,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { storageSupabase } from "../../integrations/supabase/storageClient";
+import { uploadExamAudioToR2 } from "@/lib/examAudioUpload";
 import { useToast } from "@/hooks/use-toast";
 import { useRecitationSettings } from "@/hooks/useRecitationSettings";
 import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
@@ -23,7 +23,7 @@ import {
 const G    = "#064E3B";
 const GM   = "#075E54";
 const GOLD = "#D4A843";
-const BUCKET = "recitation-audio";
+// Recitation recordings are stored in Cloudflare R2 (via the exam-audio-url edge function)
 const GROQ_MODEL   = "whisper-large-v3";
 const GROQ_KEY     = import.meta.env.VITE_GROQ_API_KEY    || "";
 const DEEPGRAM_KEY = import.meta.env.VITE_DEEPGRAM_API_KEY || "";
@@ -351,15 +351,15 @@ const RecitationTest = () => {
     setUploading(true);
     try {
       const ext = audioBlob.type.includes("mp4") ? "mp4" : audioBlob.type.includes("ogg") ? "ogg" : "webm";
-      const path = `recitations/${user.id}/${Date.now()}.${ext}`;
-      const { error } = await storageSupabase.storage.from(BUCKET).upload(path, audioBlob, { contentType: audioBlob.type, upsert: true });
-      let finalPath = path;
-      if (error) {
-        const b64 = await new Promise<string>(res => {
-          const r = new FileReader(); r.onloadend = () => res(r.result as string); r.readAsDataURL(audioBlob);
-        });
-        finalPath = b64;
+      const path = `recitation-test/${user.id}/${Date.now()}.${ext}`;
+      let upErr: string | null = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const res = await uploadExamAudioToR2(path, audioBlob);
+        upErr = "error" in res ? res.error : null;
+        if (!upErr) break;
       }
+      if (upErr) throw new Error(`Audio upload failed: ${upErr}. Please check your connection and try again.`);
+      const finalPath = path; // R2 object key; playback URLs are signed on demand
 
       // stage = 1, status = stage1_complete — NOT yet stage 2
       // Score is NOT saved here; only the audio path is persisted.
@@ -548,9 +548,13 @@ const RecitationTest = () => {
   const handleReRecord = async () => {
     // Clear the stage-1 DB row so resume logic doesn't redirect to stage 2
     if (user) {
-      await (supabase as any).from("recitation_tests")
+      const { error: resetErr } = await (supabase as any).from("recitation_tests")
         .update({ stage: 0, status: "retake", audio_path: null })
         .eq("user_id", user.id);
+      if (resetErr) {
+        toast({ title: "Could not reset your recording", description: resetErr.message, variant: "destructive" });
+        return;
+      }
     }
     setAiScore(null);
     setAiTranscript(null);
