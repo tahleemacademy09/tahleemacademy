@@ -47,8 +47,8 @@ const fmtTime = (s: number) =>
 
 // ── Beautiful Pre-Exam Instructions ────────────────────────────────────────
 const PreExamInstructions = ({
-  exam, procEnabled, regConfig, onStart,
-}: { exam: any; procEnabled: boolean; regConfig: any; onStart: () => void }) => {
+  exam, procEnabled, regConfig, onStart, questionCount,
+}: { exam: any; procEnabled: boolean; regConfig: any; onStart: () => void; questionCount: number }) => {
   const isMobile = useIsMobile();
   const [checked, setChecked] = useState(false);
 
@@ -100,7 +100,7 @@ const PreExamInstructions = ({
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 24 }}>
           {[
             { icon: "⏱️", v: `${exam?.time_limit_minutes || 15} min`, l: "Duration" },
-            { icon: "❓", v: `${exam?.question_count || "?"}`, l: "Questions" },
+            { icon: "❓", v: `${questionCount || exam?.question_count || "—"}`, l: "Questions" },
             { icon: "🏆", v: `${exam?.passing_score || 50}%`, l: "Pass Mark" },
           ].map((s, i) => (
             <div key={i} style={{
@@ -677,7 +677,7 @@ const EntranceExamTaking = () => {
   if (showInstructions) return (
     <PreExamInstructions
       exam={exam} procEnabled={procConfig.proctoring_enabled}
-      regConfig={regConfig}
+      regConfig={regConfig} questionCount={questions.length}
       onStart={() => {
         setShowInstructions(false);
         // If proctoring enabled, go to camera setup first; otherwise start exam directly
