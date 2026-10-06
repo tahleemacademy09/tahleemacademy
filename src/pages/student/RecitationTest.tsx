@@ -1,7 +1,7 @@
 /*  src/pages/student/RecitationTest.tsx
     3-Stage Recitation Proficiency Test
     Stage 1: Record audio
-    Stage 2: AI analysis — score shown as PREVIEW only (not saved)
+    Stage 2: Scoring — score shown as PREVIEW only (not saved)
              User must press "Submit Score" to confirm and advance.
              Refreshing before submit = back to Stage 1 (re-record).
     Stage 3: Book virtual session with admin → advance to level_assignment
@@ -16,18 +16,111 @@ import { useRecitationSettings } from "@/hooks/useRecitationSettings";
 import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 import MushafPageView from "@/components/hifdh/MushafPageView";
 import {
-  Mic, Upload, CheckCircle2, Video, Clock,
+  Mic, CheckCircle2, Video, Clock,
   Star, ArrowRight, Loader2, RotateCcw, BookOpen,
-  AlertCircle, Calendar, Send, ChevronRight,
+  AlertCircle, Calendar, Send, ChevronRight, Play, Pause,
 } from "lucide-react";
 
 const G    = "#064E3B";
 const GM   = "#075E54";
 const GOLD = "#D4A843";
-// Recitation recordings are stored in Cloudflare R2 (via the exam-audio-url edge function)
-const GROQ_MODEL   = "whisper-large-v3";
-const GROQ_KEY     = import.meta.env.VITE_GROQ_API_KEY    || "";
-const DEEPGRAM_KEY = import.meta.env.VITE_DEEPGRAM_API_KEY || "";
+// Recitation recordings are stored in Cloudflare R2 (via the exam-audio-url edge function).
+// Transcription goes through the `groq-transcribe` edge function — the same one the
+// Daily Hifdh Revision uses — so no API key ever lives in the browser.
+const QURAN_STYLE_PROMPT =
+  "قرآن كريم بالتشكيل الكامل. تلاوة قرآنية بالرسم العثماني. صَ ضَ طَ ظَ إِ أَ ئَ ؤَ";
+const TRANSCRIBE_TIMEOUT_MS = 90_000;
+const UPLOAD_TIMEOUT_MS     = 30_000;
+
+const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+    p.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
+  });
+
+/** Transcribes one recording. Returns "" for silence, null if the service failed. */
+async function transcribeRecitation(blob: Blob): Promise<string | null> {
+  const url = (import.meta as any).env?.VITE_SUPABASE_URL;
+  const key = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY;
+  if (!url || !key) return null;
+  const ext = blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : "webm";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TRANSCRIBE_TIMEOUT_MS);
+    try {
+      const fd = new FormData();
+      fd.append("file", new File([blob], `recitation.${ext}`, { type: blob.type || "audio/webm" }));
+      fd.append("prompt", QURAN_STYLE_PROMPT);
+      const r = await fetch(`${url}/functions/v1/groq-transcribe`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, apikey: key },
+        body: fd,
+        signal: ctrl.signal,
+      });
+      if (r.ok) {
+        const j = await r.json().catch(() => ({}));
+        return String(j.text ?? "").trim();
+      }
+    } catch { /* retry once */ }
+    finally { clearTimeout(timer); }
+  }
+  return null;
+}
+
+// ── Local playback (works for MediaRecorder WebM, which has no duration header) ──
+function LocalAudioPlayer({ src, fallbackSecs }: { src: string; fallbackSecs: number }) {
+  const ref = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [cur, setCur] = useState(0);
+  const [dur, setDur] = useState(Math.max(1, fallbackSecs));
+  const [err, setErr] = useState(false);
+
+  useEffect(() => { setPlaying(false); setCur(0); setErr(false); setDur(Math.max(1, fallbackSecs)); }, [src, fallbackSecs]);
+
+  const realDur = () => {
+    const d = ref.current?.duration;
+    return d && isFinite(d) && d > 0 ? d : Math.max(1, fallbackSecs);
+  };
+  const toggle = async () => {
+    const a = ref.current; if (!a) return;
+    if (a.paused) { try { setErr(false); await a.play(); } catch { setErr(true); } }
+    else a.pause();
+  };
+  const seek = (v: number) => {
+    const a = ref.current; if (!a) return;
+    try { a.currentTime = v; } catch { /* noop */ }
+    setCur(v);
+  };
+  const t = (n: number) => `${Math.floor(n / 60)}:${String(Math.floor(n % 60)).padStart(2, "0")}`;
+  const shownCur = Math.min(cur, dur);
+
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:12, background:"#F0FDF4", border:"1px solid #BBF7D0", borderRadius:14, padding:"8px 12px", marginBottom:10 }}>
+      <audio
+        ref={ref} src={src} preload="auto"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => { setPlaying(false); setCur(0); }}
+        onLoadedMetadata={() => setDur(realDur())}
+        onTimeUpdate={e => { setCur(e.currentTarget.currentTime); const d = realDur(); if (d > dur) setDur(d); }}
+        onError={() => setErr(true)}
+      />
+      <button onClick={toggle} aria-label={playing ? "Pause" : "Play your recording"}
+        style={{ width:42, height:42, borderRadius:"50%", border:"none", background:G, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+        {playing ? <Pause size={18} fill="#fff" /> : <Play size={18} fill="#fff" style={{ marginLeft:2 }} />}
+      </button>
+      <div style={{ flex:1, minWidth:0 }}>
+        <input type="range" min={0} max={dur} step={0.1} value={shownCur}
+          onChange={e => seek(parseFloat(e.target.value))}
+          style={{ width:"100%", accentColor:G, display:"block" }} />
+        <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:"#166534", fontWeight:700, marginTop:2 }}>
+          <span>{t(shownCur)}</span>
+          <span>{err ? "Tap play to retry" : t(dur)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const WAVE_H = [4,8,14,10,18,12,6,16,9,13,7,15,11,5,17,8,12,6,14,10];
 
@@ -185,7 +278,8 @@ const RecitationTest = () => {
   const [recTime,   setRecTime]   = useState(0);
   const [audioUrl,  setAudioUrl]  = useState<string|null>(null);
   const [audioBlob, setAudioBlob] = useState<Blob|null>(null);
-  const [uploading, setUploading] = useState(false);
+  const [scoreIssue, setScoreIssue] = useState<"silent"|"failed"|null>(null);
+  const [recSecs, setRecSecs] = useState(0);
 
   // AI analysis state — score is PREVIEW only until user presses Submit
   const [scoring,        setScoring]        = useState(false);
@@ -205,6 +299,10 @@ const RecitationTest = () => {
   const chunksRef = useRef<Blob[]>([]);
   const timerRef  = useRef<any>(null);
   const cancelRef = useRef(false);
+  const recSecsRef   = useRef(0);
+  const runIdRef     = useRef(0);                              // bumps on every new/discarded recording
+  const uploadRef    = useRef<Promise<string|null>|null>(null); // background upload → resolves to saved path
+  const quranRef     = useRef<{n:number;text:string}[]>([]);
 
   // ── Quran mushaf page — deterministic per user ────────────────────────────
   const [quranAyahs,   setQuranAyahs]   = useState<{n: number; text: string}[]>([]);
@@ -263,6 +361,8 @@ const RecitationTest = () => {
       .finally(() => setLoadingQuran(false));
   }, [user?.id, assignedPage, quranReload]); // eslint-disable-line
 
+  quranRef.current = quranAyahs;
+
   const fr = (s: number) => `${Math.floor(s/60).toString().padStart(2,"0")}:${(s%60).toString().padStart(2,"0")}`;
 
   // ── Resume state check ────────────────────────────────────────────────────
@@ -319,26 +419,35 @@ const RecitationTest = () => {
   const startRec = async () => {
     try {
       cancelRef.current = false;
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+      });
       const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t => {
         try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
       }) || "";
-      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 128000 } : { audioBitsPerSecond: 128000 });
       chunksRef.current = [];
       mr.ondataavailable = e => { if (e.data?.size > 0) chunksRef.current.push(e.data); };
       mr.onstop = () => {
         stream.getTracks().forEach(t => t.stop());
-        clearInterval(timerRef.current); setRecTime(0);
+        clearInterval(timerRef.current);
+        const secs = recSecsRef.current;
+        setRecTime(0);
         if (cancelRef.current) return;
         const blob = new Blob(chunksRef.current, { type: mime || "audio/webm" });
-        if (blob.size === 0) { toast({ title: "Recording empty", variant: "destructive" }); return; }
+        if (blob.size < 1000) { toast({ title: "Recording too short", description: "Please recite the page and try again.", variant: "destructive" }); setSubstage("idle"); return; }
+        setRecSecs(secs);
         setAudioBlob(blob);
         setAudioUrl(URL.createObjectURL(blob));
         setSubstage("recorded");
+        // Start scoring + saving the instant recording stops — the student can
+        // listen back while this runs, so the result is ready when they tap "See My Score".
+        beginBackgroundWork(blob);
       };
       mr.start(200); mediaRef.current = mr;
+      recSecsRef.current = 0;
       setSubstage("recording");
-      timerRef.current = setInterval(() => setRecTime(t => t + 1), 1000);
+      timerRef.current = setInterval(() => { recSecsRef.current += 1; setRecTime(t => t + 1); }, 1000);
     } catch {
       toast({ title: "Microphone denied", description: "Allow mic access in your browser settings", variant: "destructive" });
     }
@@ -347,175 +456,102 @@ const RecitationTest = () => {
   const stopRec   = () => {
     mediaRef.current?.stop();
   };
+  const discardWork = () => {
+    runIdRef.current += 1;          // any in-flight scoring/upload becomes stale
+    uploadRef.current = null;
+    setScoring(false);
+    setScoreIssue(null);
+  };
   const cancelRec = () => {
     cancelRef.current = true;
     mediaRef.current?.stop();
     clearInterval(timerRef.current);
+    discardWork();
     setRecTime(0); setSubstage("idle"); setAudioBlob(null); setAudioUrl(null);
   };
   const retake = () => {
+    discardWork();
     setAudioBlob(null); setAudioUrl(null); setSubstage("idle");
     setAiScore(null); setAiTranscript(null); setScoreBreakdown(null);
   };
 
-  // ── Upload (stage 1 complete) ─────────────────────────────────────────────
-  const uploadAudio = async () => {
-    if (!audioBlob || !user) return;
-    setUploading(true);
-    try {
-      const ext = audioBlob.type.includes("mp4") ? "mp4" : audioBlob.type.includes("ogg") ? "ogg" : "webm";
-      const path = `recitation-test/${user.id}/${Date.now()}.${ext}`;
-      let upErr: string | null = null;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const res = await uploadExamAudioToR2(path, audioBlob);
-        upErr = "error" in res ? res.error : null;
-        if (!upErr) break;
-      }
-      if (upErr) throw new Error(`Audio upload failed: ${upErr}. Please check your connection and try again.`);
-      const finalPath = path; // R2 object key; playback URLs are signed on demand
+  // ── Background work: score + save, started the moment recording stops ─────
+  const beginBackgroundWork = (blob: Blob) => {
+    const runId = ++runIdRef.current;
+    setAiScore(null); setAiTranscript(null); setScoreBreakdown(null); setScoreIssue(null);
+    runScoring(blob, runId);
+    uploadRef.current = saveRecording(blob, runId);
+  };
 
-      // stage = 1, status = stage1_complete — NOT yet stage 2
-      // Score is NOT saved here; only the audio path is persisted.
-      const { error: dbErr } = await (supabase as any).from("recitation_tests").upsert({
+  // Saves the audio (R2 first, Supabase storage as fallback) and records the
+  // stage-1 row. Never blocks scoring. Resolves to the stored path, or null.
+  const saveRecording = async (blob: Blob, runId: number): Promise<string|null> => {
+    if (!user) return null;
+    const ext = blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : "webm";
+    let finalPath: string | null = null;
+
+    // 1) Cloudflare R2
+    try {
+      const path = `recitation-test/${user.id}/${Date.now()}.${ext}`;
+      const res = await withTimeout(uploadExamAudioToR2(path, blob), UPLOAD_TIMEOUT_MS, "R2 upload");
+      if (!("error" in res)) finalPath = path;
+      else console.warn("[RecitationTest] R2 upload failed:", res.error);
+    } catch (e) { console.warn("[RecitationTest] R2 upload failed:", e); }
+
+    // 2) Fallback — Supabase storage bucket used by earlier recitation tests
+    if (!finalPath) {
+      try {
+        const path = `${user.id}/${Date.now()}.${ext}`;
+        const { error } = await withTimeout(
+          (supabase as any).storage.from("recitation-audio").upload(path, blob, { contentType: blob.type || "audio/webm", upsert: true }) as Promise<any>,
+          UPLOAD_TIMEOUT_MS, "Storage upload",
+        );
+        if (!error) finalPath = path;
+        else console.warn("[RecitationTest] storage fallback failed:", error.message);
+      } catch (e) { console.warn("[RecitationTest] storage fallback failed:", e); }
+    }
+
+    if (runId !== runIdRef.current) return null;   // student re-recorded meanwhile
+    if (!finalPath) return null;
+
+    setSavedAudioPath(finalPath);
+    try {
+      await (supabase as any).from("recitation_tests").upsert({
         user_id: user.id, audio_path: finalPath, stage: 1,
         stage1_submitted_at: new Date().toISOString(), status: "stage1_complete",
       }, { onConflict: "user_id" });
-      if (dbErr) throw new Error(dbErr.message);
-
-      setSavedAudioPath(finalPath);
-      setSubstage("done");
-      toast({ title: "✅ Audio uploaded!", description: "AI is now analysing your recitation…" });
-      setTimeout(() => { setStage(2); runAIScoring(audioBlob, finalPath); }, 800);
-    } catch (e: any) {
-      toast({ title: "Upload error", description: e.message, variant: "destructive" });
-    } finally { setUploading(false); }
+    } catch { /* non-critical — submit writes audio_path again */ }
+    return finalPath;
   };
 
-  // ── AI Scoring ────────────────────────────────────────────────────────────
-  // IMPORTANT: This function analyses and sets the score as a PREVIEW.
-  // It does NOT write to the database. The score is only saved when the
-  // user explicitly presses "Submit Score" (handleSubmitScore below).
-  const runAIScoring = async (blob: Blob | null, _path?: string) => {
+  // "See My Score" — if scoring already finished this is instant.
+  const goToScore = () => setStage(2);
+
+  // ── Scoring ───────────────────────────────────────────────────────────────
+  // Transcribes via the groq-transcribe edge function and scores against the
+  // mushaf page shown to the student. This is a PREVIEW: nothing is written to
+  // the database until the student presses "Submit Score" (handleSubmitScore).
+  const runScoring = async (blob: Blob, runId: number) => {
     setScoring(true);
-    setAiScore(null);
-    setAiTranscript(null);
-    setScoreBreakdown(null);
+    const transcript = await transcribeRecitation(blob);
+    if (runId !== runIdRef.current) return;          // discarded — ignore result
 
-    try {
-      // If we have the blob in memory, use it; otherwise we cannot re-score
-      // (user must re-record — this is intentional per product spec).
-      const audioData = blob;
-
-      if (!audioData || (!DEEPGRAM_KEY && !GROQ_KEY)) {
-        // No API keys — produce a demo score so the UI isn't stuck
-        await new Promise(r => setTimeout(r, 1800));
-        const demo = Math.floor(Math.random() * 20) + 60;
-        const breakdown: ScoreBreakdown = { total: demo, coverage: demo, accuracy: demo, fluency: demo };
-        setAiScore(demo);
-        setAiTranscript("بسم الله الرحمن الرحيم الحمد لله رب العالمين");
-        setScoreBreakdown(breakdown);
-        setScoring(false);
-        return;
-      }
-
-      let transcript   = "";
-      let wordConf: number[] = [];
-
-      // ── Deepgram (preferred — gives per-word confidence) ──────────────────
-      if (DEEPGRAM_KEY && audioData) {
-        try {
-          const r = await fetch(
-            "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&words=true",
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Token ${DEEPGRAM_KEY}`,
-                "Content-Type": audioData.type || "audio/webm",
-              },
-              body: audioData,
-            }
-          );
-          if (r.ok) {
-            const d = await r.json();
-            transcript = d?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
-            wordConf   = (d?.results?.channels?.[0]?.alternatives?.[0]?.words || [])
-              .map((w: any) => w.confidence ?? 0);
-          }
-        } catch { /* fall through to Groq */ }
-      }
-
-      // ── Groq Whisper (fallback) ───────────────────────────────────────────
-      if (!transcript && GROQ_KEY && audioData) {
-        try {
-          const fd = new FormData();
-          const ext = audioData.type.includes("mp4") ? "mp4"
-                    : audioData.type.includes("ogg") ? "ogg" : "webm";
-          fd.append("file", new File([audioData], `recitation.${ext}`, { type: audioData.type }));
-          fd.append("model",           GROQ_MODEL);
-          fd.append("language",        "ar");
-          fd.append("response_format", "verbose_json");
-          fd.append("temperature",     "0");
-          fd.append("prompt",          "قرآن كريم بالتشكيل الكامل. تلاوة قرآنية بالرسم العثماني. صَ ضَ طَ ظَ إِ أَ ئَ ؤَ");
-
-          const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${GROQ_KEY}` },
-            body: fd,
-          });
-          if (r.ok) {
-            const json = await r.json();
-            // Silence gate
-            const segs: { no_speech_prob?: number }[] = json.segments ?? [];
-            const avgNS = segs.length > 0
-              ? segs.reduce((s, g) => s + (g.no_speech_prob ?? 0), 0) / segs.length
-              : 0;
-            if (avgNS < 0.55) {
-              transcript = (json.text ?? "").trim();
-            }
-          }
-        } catch { /* fall through */ }
-      }
-
-      setAiTranscript(transcript || null);
-
-      // ── Score against reference ───────────────────────────────────────────
-      // Build reference text from the actual mushaf page shown to the
-      // student (this is what they were instructed to recite). The old
-      // priority scored against settings.surah_reference first, which
-      // defaults to Al-Fatiha's text — so students reciting their assigned
-      // page were being silently graded against the wrong verses. Only fall
-      // back to settings.surah_reference if the page failed to load.
-      const refText = quranAyahs.map(a => a.text).join(" ");
-
-      let breakdown: ScoreBreakdown;
-      if (transcript && refText) {
-        breakdown = scoreRecitation(transcript, refText, wordConf);
-      } else if (transcript) {
-        // No reference configured — score purely on fluency from confidence
-        const fl = wordConf.length > 0
-          ? Math.round((wordConf.reduce((a,b) => a+b,0)/wordConf.length)*100)
-          : 65;
-        breakdown = { total: fl, coverage: 0, accuracy: fl, fluency: fl };
-      } else {
-        // No transcript at all — unable to score
-        setAiScore(null);
-        setScoreBreakdown(null);
-        setScoring(false);
-        return;
-      }
-
-      setAiScore(breakdown.total);
-      setScoreBreakdown(breakdown);
-    } catch {
-      // Graceful fallback so UI isn't stuck
-      const fb = 68;
-      const fbBreakdown: ScoreBreakdown = { total: fb, coverage: fb, accuracy: fb, fluency: fb };
-      setAiScore(fb);
-      setAiTranscript("Admin will review manually");
-      setScoreBreakdown(fbBreakdown);
-    } finally {
-      setScoring(false);
+    if (transcript === null) {
+      setScoreIssue("failed"); setScoring(false); return;
     }
+    if (transcript.replace(/[^\u0600-\u06FF]/g, "").length < 3) {
+      setScoreIssue("silent"); setScoring(false); return;
+    }
+
+    const refText = quranRef.current.map(a => a.text).join(" ");
+    const breakdown: ScoreBreakdown = refText
+      ? scoreRecitation(transcript, refText, [])
+      : { total: 0, coverage: 0, accuracy: 0, fluency: 0 };
+
+    setAiTranscript(transcript);
+    setScoreBreakdown(breakdown);
+    setAiScore(breakdown.total);
+    setScoring(false);
   };
 
   // ── Submit Score (user-initiated) ─────────────────────────────────────────
@@ -524,8 +560,14 @@ const RecitationTest = () => {
     if (!user || aiScore === null) return;
     setSubmittingScore(true);
     try {
+      // Make sure the recording finished saving so the teacher can hear it.
+      let audioPath = savedAudioPath;
+      if (!audioPath && uploadRef.current) {
+        try { audioPath = await withTimeout(uploadRef.current, UPLOAD_TIMEOUT_MS * 2, "Upload"); } catch { /* handled below */ }
+      }
       const { error: scoreErr } = await (supabase as any).from("recitation_tests").upsert({
         user_id:               user.id,
+        ...(audioPath ? { audio_path: audioPath } : {}),
         ai_score:              aiScore,
         ai_transcript:         aiTranscript || "No transcript",
         stage:                 2,
@@ -534,7 +576,11 @@ const RecitationTest = () => {
       }, { onConflict: "user_id" });
       if (scoreErr) throw new Error(scoreErr.message);
 
-      toast({ title: "✅ Score submitted!" });
+      if (!audioPath) {
+        toast({ title: "Score submitted", description: "Your audio could not be saved, but your score and transcript were.", });
+      } else {
+        toast({ title: "✅ Score submitted!" });
+      }
       setStage(3);
     } catch (e: any) {
       toast({ title: "Could not save score", description: e.message, variant: "destructive" });
@@ -543,7 +589,7 @@ const RecitationTest = () => {
     }
   };
 
-  // ── Skip AI score (scoring failed) → go to booking, instructor scores live ──
+  // ── Skip scoring (couldn't score) → go to booking, instructor scores live ──
   const handleSkipScore = async () => {
     if (!user) return;
     const { error } = await (supabase as any).from("recitation_tests").upsert({
@@ -559,6 +605,7 @@ const RecitationTest = () => {
 
   // ── Re-record (from stage 2 preview) ─────────────────────────────────────
   const handleReRecord = async () => {
+    discardWork();
     // Clear the stage-1 DB row so resume logic doesn't redirect to stage 2
     if (user) {
       const { error: resetErr } = await (supabase as any).from("recitation_tests")
@@ -691,7 +738,7 @@ const RecitationTest = () => {
     const steps = [
       { icon: "📖", title: "Your page is assigned", desc: "You will be shown one page of the Qur'an. Recite the whole page from beginning to end." },
       { icon: "🎙️", title: "Record once, clearly", desc: "Tap Start Recording, recite at your normal pace, then tap Stop & Review." },
-      { icon: "✅", title: "Submit your score", desc: "After the AI review, press Submit — a recording that is not submitted must be repeated." },
+      { icon: "✅", title: "Submit your score", desc: "After your score appears, press Submit — a recording that is not submitted must be repeated." },
       { icon: "📅", title: "Then book a live session", desc: "Finally you will choose a time for a short live session with an ustadh, in shaa Allah." },
     ];
     return (
@@ -861,22 +908,17 @@ const RecitationTest = () => {
               </div>
             )}
 
-            {(substage === "uploading" || uploading) && (
-              <div style={{ textAlign:"center", padding:"8px 0" }}>
-                <Loader2 style={{ width:28, height:28, color:GM, animation:"spin .8s linear infinite", margin:"0 auto 6px" }} />
-                <div style={{ fontSize:13, color:"#666" }}>Uploading your recitation…</div>
-              </div>
-            )}
-
-            {substage === "recorded" && audioUrl && !uploading && (
+            {substage === "recorded" && audioUrl && (
               <div>
-                <audio controls src={audioUrl} style={{ width:"100%", height:44, marginBottom:10 }} preload="auto" />
+                <LocalAudioPlayer src={audioUrl} fallbackSecs={recSecs} />
                 <div style={{ display:"flex", gap:10 }}>
                   <button onClick={retake} style={{ flex:1, padding:"12px", borderRadius:14, border:"2px solid #e5e7eb", background:"#fff", color:"#666", fontSize:13, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
                     <RotateCcw size={15} /> Re-record
                   </button>
-                  <button onClick={uploadAudio} style={{ flex:2, padding:"12px", borderRadius:14, border:"none", background:`linear-gradient(135deg,${G},${GM})`, color:"#fff", fontSize:14, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-                    <Upload size={16} /> Continue to AI Scoring
+                  <button onClick={goToScore} style={{ flex:2, padding:"12px", borderRadius:14, border:"none", background:`linear-gradient(135deg,${G},${GM})`, color:"#fff", fontSize:14, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+                    {scoring
+                      ? <><Loader2 size={16} style={{ animation:"spin .8s linear infinite" }} /> Checking…</>
+                      : <><Star size={16} /> See My Score</>}
                   </button>
                 </div>
               </div>
@@ -915,7 +957,7 @@ const RecitationTest = () => {
             <div style={{ display:"flex", alignItems:"center", gap:0 }}>
               {[
                 { n:1, icon:<Mic size={14}/>,    label: settings.stage1_label || "Record" },
-                { n:2, icon:<Star size={14}/>,   label: settings.stage2_label || "AI Score" },
+                { n:2, icon:<Star size={14}/>,   label: (settings.stage2_label && settings.stage2_label !== "AI Score") ? settings.stage2_label : "Your Score" },
                 { n:3, icon:<Video size={14}/>,  label: settings.stage3_label || "Book Session" },
               ].map((s,i) => (
                 <div key={s.n} style={{ display:"flex", alignItems:"center", flex: i<2 ? 1 : undefined }}>
@@ -940,25 +982,27 @@ const RecitationTest = () => {
             {/* ─── STAGE 2: AI SCORING (PREVIEW) ────────────────────────── */}
             {stage === 2 && (
               <div style={{ textAlign:"center" }}>
-                <div style={{ fontSize:18, fontWeight:800, color:G, marginBottom:6 }}>Stage 2 — AI Recitation Analysis</div>
+                <div style={{ fontSize:18, fontWeight:800, color:G, marginBottom:6 }}>Stage 2 — Your Recitation Score</div>
                 <div style={{ fontSize:13, color:"#666", marginBottom:24, lineHeight:1.6 }}>
-                  Review your AI score below. Submit when you're happy, or re-record to try again.
+                  Review your score below. Submit when you're happy, or re-record to try again.
                 </div>
 
                 {scoring && (
                   <div style={{ padding:"30px 0" }}>
                     <Loader2 style={{ width:48, height:48, color:GM, animation:"spin .8s linear infinite", margin:"0 auto 16px" }} />
-                    <div style={{ fontSize:15, fontWeight:700, color:G, marginBottom:6 }}>Analysing recitation…</div>
-                    <div style={{ fontSize:13, color:"#9ca3af" }}>Comparing with reference text</div>
+                    <div style={{ fontSize:15, fontWeight:700, color:G, marginBottom:6 }}>Checking your recitation…</div>
+                    <div style={{ fontSize:13, color:"#9ca3af" }}>Just a few seconds</div>
                   </div>
                 )}
 
                 {!scoring && aiScore === null && (
                   <div style={{ animation:"fadeUp .4s ease", padding:"10px 0" }}>
                     <div style={{ width:64, height:64, borderRadius:"50%", background:"#FFF7ED", border:"2px solid #FCA5A5", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px", fontSize:28 }}>⚠️</div>
-                    <div style={{ fontSize:14, fontWeight:700, color:"#7C2D12", marginBottom:6 }}>AI analysis could not complete</div>
+                    <div style={{ fontSize:14, fontWeight:700, color:"#7C2D12", marginBottom:6 }}>{scoreIssue === "silent" ? "We couldn't hear a clear recitation" : "We couldn't score this automatically"}</div>
                     <div style={{ fontSize:13, color:"#9ca3af", marginBottom:20, lineHeight:1.6 }}>
-                      Your recording could not be scored automatically. An instructor will evaluate you live in Stage 3.
+                      {scoreIssue === "silent"
+                        ? "Move closer to the microphone and recite the page again. You can also skip, and an instructor will evaluate you live in Stage 3."
+                        : "Your recording could not be scored automatically. You can re-record, or skip and an instructor will evaluate you live in Stage 3."}
                     </div>
                     <div style={{ display:"flex", gap:10, flexDirection:"column" }}>
                       <button
@@ -1003,9 +1047,9 @@ const RecitationTest = () => {
                     )}
 
                     {/* What AI heard */}
-                    {aiTranscript && aiTranscript !== "Admin will review manually" && (
+                    {aiTranscript && (
                       <div style={{ background:"#f9fafb", borderRadius:12, padding:"12px 14px", border:"1px solid #e5e7eb", marginBottom:16, textAlign:"right" as const }}>
-                        <div style={{ fontSize:11, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:.5, marginBottom:6, textAlign:"left" as const }}>What AI heard:</div>
+                        <div style={{ fontSize:11, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:.5, marginBottom:6, textAlign:"left" as const }}>What we heard:</div>
                         <div style={{ fontSize:14, fontFamily:"'Amiri',serif", direction:"rtl", color:"#333", lineHeight:1.8 }}>{aiTranscript}</div>
                       </div>
                     )}
