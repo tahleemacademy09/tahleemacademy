@@ -10,11 +10,13 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { resolveRecitationAudioUrl } from "@/lib/examAudioUpload";
+import InterviewQuestionsManager from "@/components/recitation/InterviewQuestionsManager";
 import { useRecitationSettings, DEFAULT_RECITATION_SETTINGS } from "@/hooks/useRecitationSettings";
 import {
   Mic, Save, RefreshCw, CheckCircle2, XCircle, Clock,
   Settings, Users, Eye, Play, Pause, ToggleLeft, ToggleRight,
-  AlertCircle, BookOpen, Loader2, ChevronDown, ChevronUp
+  AlertCircle, BookOpen, Loader2, ChevronDown, ChevronUp,
+  HelpCircle,
 } from "lucide-react";
 
 const G    = "#064E3B";
@@ -82,7 +84,7 @@ const RecitationTestAdmin = () => {
   const { toast } = useToast();
   const { settings, loading, save, refetch } = useRecitationSettings();
 
-  const [tab, setTab]       = useState<"settings" | "submissions">("settings");
+  const [tab, setTab]       = useState<"settings" | "submissions" | "interview">("settings");
   const [saving, setSaving] = useState(false);
   const [subs, setSubs]     = useState<any[]>([]);
   const [loadingSubs, setLoadingSubs] = useState(false);
@@ -242,6 +244,7 @@ const RecitationTestAdmin = () => {
         <div style={{ display: "flex", borderBottom: "1px solid #f0f0f0", padding: "0 8px" }}>
           <Tab active={tab === "settings"} onClick={() => setTab("settings")} icon={<Settings size={14} />} label="Test Settings" />
           <Tab active={tab === "submissions"} onClick={() => setTab("submissions")} icon={<Users size={14} />} label="Student Submissions" count={subs.filter(s => s.status === "awaiting_teacher").length || undefined} />
+          <Tab active={tab === "interview"} onClick={() => setTab("interview")} icon={<HelpCircle size={14} />} label="Interview Questions" />
         </div>
 
         {/* ── SETTINGS TAB ─────────────────────────────────────── */}
@@ -338,6 +341,12 @@ const RecitationTestAdmin = () => {
         )}
 
         {/* ── SUBMISSIONS TAB ──────────────────────────────────── */}
+        {tab === "interview" && (
+          <div style={{ padding: 24, background: "#F9FAFB" }}>
+            <InterviewQuestionsManager />
+          </div>
+        )}
+
         {tab === "submissions" && (
           <div style={{ padding: 24 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>

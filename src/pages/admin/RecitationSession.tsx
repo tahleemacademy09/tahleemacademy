@@ -17,11 +17,12 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { useEffect, useState, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { ChevronLeft, Video, CheckCircle2, GraduationCap, Loader2, Save } from "lucide-react";
+import { CheckCircle2, GraduationCap, Loader2, Save } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAcademicLevels } from "@/hooks/useAcademicLevels";
-import RecitationCallRoom from "@/components/recitation/RecitationCallRoom";
+import InterviewRoom from "@/components/recitation/InterviewRoom";
+import InterviewRevealedPanel from "@/components/recitation/InterviewRevealedPanel";
 
 const G = "#064E3B";
 const GM = "#075E54";
@@ -167,26 +168,8 @@ const AdminRecitationSession = () => {
     );
   }
 
-  return (
-    <div style={{ minHeight: "100vh", background: "#F9FAFB", fontFamily: "'Cairo',sans-serif" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", background: "#0b0f0e", color: "#fff" }}>
-        <button onClick={goBack} style={{ background: "rgba(255,255,255,.08)", border: "none", borderRadius: 10, width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", cursor: "pointer" }}>
-          <ChevronLeft size={18} />
-        </button>
-        <Video size={18} color="#86EFAC" />
-        <span style={{ fontWeight: 700, fontSize: 14 }}>
-          Virtual Recitation Session {student?.full_name ? `— ${student.full_name}` : ""}
-        </span>
-      </div>
-
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 16, padding: 16 }}>
-        {/* ── Call ── */}
-        <div style={{ flex: "2 1 480px", minWidth: 320, minHeight: 480, background: "#0b0f0e", borderRadius: 16 }}>
-          <RecitationCallRoom roomName={roomName} onLeave={goBack} />
-        </div>
-
-        {/* ── Admin settings panel ── */}
-        <div style={{ flex: "1 1 320px", minWidth: 280, background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", padding: 18, height: "fit-content" }}>
+  const settingsNode = (
+    <div style={{ padding: 16 }}>
           <p style={{ fontSize: 11, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 1, margin: "0 0 14px" }}>
             Session Settings
           </p>
@@ -256,8 +239,18 @@ const AdminRecitationSession = () => {
             </>
           )}
         </div>
-      </div>
-    </div>
+  );
+
+  return (
+    <InterviewRoom
+      roomName={roomName}
+      title={student?.full_name ? `Interview · ${student.full_name}` : "Virtual Interview"}
+      panels={[
+        { id: "questions", label: "Student's questions", node: <InterviewRevealedPanel studentId={studentId} /> },
+        { id: "session",   label: "Session & level",     node: settingsNode, light: true },
+      ]}
+      onLeave={goBack}
+    />
   );
 };
 
