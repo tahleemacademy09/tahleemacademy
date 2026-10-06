@@ -52,14 +52,20 @@ const PreExamInstructions = ({
   const isMobile = useIsMobile();
   const [checked, setChecked] = useState(false);
 
+  const mins     = exam?.time_limit_minutes || 15;
+  const passMark = exam?.passing_score || 50;
+  const maxViol  = Number(exam?.max_warnings) > 0 ? Number(exam.max_warnings) : 3;
+
   const steps = [
-    { icon: "📖", title: "Read Carefully", desc: "Read each question carefully before answering." },
-    { icon: "⏱️", title: `${exam?.time_limit_minutes || 15} Minutes`, desc: "You have a time limit. Manage your time wisely." },
-    { icon: "🚫", title: "No Tab Switching", desc: "Switching tabs or minimising counts as a violation." },
-    { icon: "✅", title: `Pass: ${exam?.passing_score || 50}%`, desc: "You need this score to proceed to recitation." },
+    { icon: "🤲", title: "Begin with Bismillah", desc: "Renew your intention (niyyah) to seek knowledge for the sake of Allah, and ask Him for ease and success." },
+    { icon: "📖", title: "Read Carefully", desc: "Read each question slowly and answer with calm and certainty. Seek help only from Allah." },
+    { icon: "⏱️", title: `${mins} Minutes`, desc: "Your time is an amanah (trust). Pace yourself — the timer starts once you begin." },
+    { icon: "🕌", title: "Stay Within the Exam", desc: "Leaving the page, switching apps or minimising the screen is recorded as a violation." },
+    { icon: "✅", title: `Pass Mark: ${passMark}%`, desc: "Give your best effort, in shaa Allah. Your result will be reviewed by the academy." },
   ];
-  if (procEnabled) steps.push({ icon: "📷", title: "Camera On", desc: "Your webcam will be used for identity verification." });
-  if (regConfig?.recitation_test_required) steps.push({ icon: "🎙️", title: "Recitation Next", desc: "After this exam you will record a Quran recitation." });
+  if (procEnabled) steps.push({ icon: "🛡️", title: "Honesty & Monitoring", desc: "Your camera and screen may be monitored to keep the exam fair. Honesty (sidq) is part of our faith — be truthful in every answer." });
+  else steps.push({ icon: "🤝", title: "Honesty (Sidq)", desc: "Answer on your own, without help from anyone. Truthfulness is part of our faith." });
+  if (regConfig?.recitation_test_required) steps.push({ icon: "🎙️", title: "Recitation Next", desc: "After this exam, in shaa Allah, you will recite a page of the Qur'an and book a short live session." });
 
   return (
     <div style={{
@@ -94,14 +100,17 @@ const PreExamInstructions = ({
           <p style={{ fontSize: 12, color: "rgba(201,168,76,.7)", margin: 0, fontFamily: "'Amiri',serif" }}>
             اختبار القبول — Tahleem Academy
           </p>
+          <p style={{ fontFamily: "'Amiri',serif", fontSize: 15, color: "rgba(255,255,255,.7)", margin: "12px 0 0", direction: "rtl", lineHeight: 1.9 }}>
+            وَقُل رَّبِّ زِدْنِي عِلْمًا
+          </p>
         </div>
 
         {/* Stats row */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 24 }}>
           {[
-            { icon: "⏱️", v: `${exam?.time_limit_minutes || 15} min`, l: "Duration" },
+            { icon: "⏱️", v: `${mins} min`, l: "Duration" },
             { icon: "❓", v: `${questionCount || exam?.question_count || "—"}`, l: "Questions" },
-            { icon: "🏆", v: `${exam?.passing_score || 50}%`, l: "Pass Mark" },
+            { icon: "🏆", v: `${passMark}%`, l: "Pass Mark" },
           ].map((s, i) => (
             <div key={i} style={{
               background: "rgba(255,255,255,.06)", borderRadius: 14, padding: "12px 10px",
@@ -117,7 +126,7 @@ const PreExamInstructions = ({
         {/* Instructions grid */}
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
           <p style={{ fontSize: 11, fontWeight: 700, color: "rgba(201,168,76,.8)", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: 1 }}>
-            📋 Instructions · التعليمات
+            📋 Guidance · التعليمات
           </p>
           {steps.map((s, i) => (
             <div key={i} style={{
@@ -143,11 +152,12 @@ const PreExamInstructions = ({
           <EyeOff size={16} color={RED} style={{ flexShrink: 0, marginTop: 2 }} />
           <div>
             <p style={{ fontWeight: 700, fontSize: 12, color: RED, margin: "0 0 3px" }}>
-              ⚠️ Anti-Cheat Monitoring Active
+              ⚠️ A Gentle Reminder
             </p>
             <p style={{ fontSize: 11, color: "rgba(239,68,68,.75)", margin: 0, lineHeight: 1.5 }}>
-              Leaving the page, switching tabs, or minimising counts as a violation.
-              After <strong style={{ color: RED }}>3 violations</strong> your exam will be auto-submitted.
+              Leaving the page, switching apps or minimising the screen is recorded as a violation.
+              After <strong style={{ color: RED }}>{maxViol} violations</strong> your exam will be submitted automatically.
+              Allah is always watching — let us keep this exam honest and sincere.
             </p>
           </div>
         </div>
@@ -170,7 +180,7 @@ const PreExamInstructions = ({
           </div>
           <input type="checkbox" checked={checked} onChange={e => setChecked(e.target.checked)} style={{ display: "none" }} />
           <p style={{ fontSize: 12, color: "rgba(255,255,255,.7)", margin: 0, lineHeight: 1.6 }}>
-            I have read and understood all the instructions. I agree to abide by the exam rules and the academic integrity policy of Tahleem Academy.
+            I have read and understood the guidance. I intend to answer honestly and by myself, and I agree to abide by the exam rules and the academic integrity policy of Tahleem Academy.
           </p>
         </label>
 
@@ -183,7 +193,7 @@ const PreExamInstructions = ({
           boxShadow: checked ? "0 8px 32px rgba(6,78,59,.5)" : "none",
           transition: "all .2s", minHeight: 52,
         }}>
-          <BookOpen size={18} /> {checked ? "Begin Exam — ابدأ الاختبار" : "Please read all instructions above"}
+          <BookOpen size={18} /> {checked ? "بسم الله — Begin Exam" : "Please read the guidance above"}
         </button>
       </div>
     </div>
@@ -191,9 +201,9 @@ const PreExamInstructions = ({
 };
 
 // ── Violation Warning ──────────────────────────────────────────────────────
-const ViolationWarning = ({ count, onReturn }: { count: number; onReturn: () => void }) => {
+const ViolationWarning = ({ count, max, onReturn }: { count: number; max: number; onReturn: () => void }) => {
   const isMobile = useIsMobile();
-  const remaining = 3 - count;
+  const remaining = max - count;
   return (
     <div style={{
       position: "fixed", inset: 0, zIndex: 200,
@@ -210,19 +220,19 @@ const ViolationWarning = ({ count, onReturn }: { count: number; onReturn: () => 
           <AlertTriangle size={32} color={RED} />
         </div>
         <h2 style={{ fontSize: isMobile ? 18 : 22, fontWeight: 900, color: RED, margin: "0 0 10px" }}>
-          ⚠️ Violation {count} / 3
+          ⚠️ Warning {count} / {max}
         </h2>
         <p style={{ fontSize: 13, color: "rgba(255,255,255,.75)", margin: "0 0 16px", lineHeight: 1.6 }}>
-          You left or minimised the exam window.
+          You left or minimised the exam window. Please return and stay focused — may Allah grant you success.
         </p>
         <div style={{ background: "rgba(239,68,68,.1)", borderRadius: 12, padding: "12px 16px", marginBottom: 20, border: "1px solid rgba(239,68,68,.25)" }}>
           <p style={{ fontSize: 13, fontWeight: 800, color: RED, margin: 0 }}>
-            {remaining === 1 ? "⚡ FINAL WARNING — next violation auto-submits!" : `${remaining} violations remaining before auto-submit`}
+            {remaining === 1 ? "⚡ FINAL WARNING — the next violation will submit your exam." : `${remaining} warnings remaining before the exam is submitted`}
           </p>
         </div>
         <button onClick={onReturn} style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", background: `linear-gradient(135deg,${G},${GM})`, color: "#fff", fontWeight: 800, cursor: "pointer", fontSize: 14, minHeight: 48 }}>
           <Eye size={14} style={{ display: "inline", marginRight: 6, verticalAlign: "middle" }} />
-          Return to Exam
+          Return to the Exam
         </button>
       </div>
     </div>
@@ -492,6 +502,9 @@ const EntranceExamTaking = () => {
   const [navOpen,           setNavOpen]           = useState(false);
 
   const violationRef   = useRef(0);
+  const maxViolRef     = useRef(3);
+  const maxViolations  = Number(exam?.max_warnings) > 0 ? Number(exam.max_warnings) : 3;
+  maxViolRef.current   = maxViolations;
   const examActiveRef  = useRef(false);
   const submittedRef   = useRef(false);
   const answersRef     = useRef(answers);
@@ -572,7 +585,7 @@ const EntranceExamTaking = () => {
       if (Date.now() - examStartTimeRef.current < GRACE_MS) return; // still in grace period
       violationRef.current += 1;
       const c = violationRef.current; setViolationCount(c);
-      if (c >= 3) { toast({ title: "⚠️ Exam auto-submitted", variant: "destructive" }); setTimeout(() => { if (!submittedRef.current) handleSubmit(); }, 1000); }
+      if (c >= maxViolRef.current) { toast({ title: "⚠️ Exam submitted automatically", description: "Too many warnings were recorded.", variant: "destructive" }); setTimeout(() => { if (!submittedRef.current) handleSubmit(); }, 1000); }
       else setShowViolation(true);
     };
     const onVis = () => { if (document.visibilityState !== "visible") fire(); };
@@ -718,7 +731,7 @@ const EntranceExamTaking = () => {
         .qnav:active{transform:scale(.9)} * { -webkit-tap-highlight-color:transparent; }
       `}</style>
 
-      {showViolation && <ViolationWarning count={violationCount} onReturn={() => setShowViolation(false)} />}
+      {showViolation && <ViolationWarning count={violationCount} max={maxViolations} onReturn={() => setShowViolation(false)} />}
       {procEnabled && <ProctoringOverlay {...proc} attemptId={attemptId!} onPointDeduction={() => {}} />}
 
       {/* ── TOP BAR ─────────────────────────────────────────────────────── */}
@@ -757,7 +770,7 @@ const EntranceExamTaking = () => {
         {/* Violation badge */}
         {violationCount > 0 && (
           <div style={{ padding: "4px 10px", borderRadius: 8, background: "#FEF2F2", border: "1.5px solid #FECACA", fontSize: 12, fontWeight: 700, color: RED }}>
-            ⚠️ {violationCount}/3
+            ⚠️ {violationCount}/{maxViolations}
           </div>
         )}
 
