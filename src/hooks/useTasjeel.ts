@@ -368,6 +368,9 @@ export function useTasjeel() {
 
   const advanceStep = useCallback(async (nextStep: string) => {
     if (!userId) return;
+    // A student can never move themselves to "completed" — only an admin placing
+    // them in a level does (the database enforces this as well).
+    if (nextStep === "completed") return;
     // Always update local state FIRST so guards on the destination page
     // see the new step immediately — even if the DB call fails with 400.
     // (A 400 here usually means an RLS UPDATE policy is missing; see the
