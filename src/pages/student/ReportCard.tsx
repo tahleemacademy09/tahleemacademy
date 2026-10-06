@@ -61,6 +61,12 @@ const subjectKey = (en: string) =>
 const isEntranceExam = (title?: string | null, titleAr?: string | null, flag?: boolean | null) =>
   !!flag || /entrance/i.test(title || "") || /قبول/.test(titleAr || "");
 
+// "1st", "2nd", "3rd", "11th"...
+const ordinalEn = (n: number) => {
+  const v = n % 100;
+  return `${n}${[, "st", "nd", "rd"][(v - 20) % 10] || [, "st", "nd", "rd"][v] || "th"}`;
+};
+
 const getSubjectDisplay = (row: { name_ar: string; name_en: string }) => ({ ar: row.name_ar, en: row.name_en });
 
 interface GradedExam {
@@ -250,6 +256,9 @@ const ReportCard = () => {
   const [loading, setLoading] = useState(true);
   const [term, setTerm]       = useState("first");
   const [session, setSession] = useState("");
+  // Class position per term (rank among students of the same level), from the
+  // get_term_position database function.
+  const [positions, setPositions] = useState<Record<string, { pos: number; size: number }>>({});
 
   // Follow the academy's Current Term setting (Admin Settings > Academy) so
   // the card opens on the right term by default, and switches live if the
@@ -307,6 +316,21 @@ const ReportCard = () => {
       setLoading(false);
     })();
   }, [targetId, isAdminView]);
+
+  useEffect(() => {
+    if (!targetId || loading) return;
+    let cancelled = false;
+    (async () => {
+      const out: Record<string, { pos: number; size: number }> = {};
+      await Promise.all(TERMS.map(async tm => {
+        const { data } = await (supabase as any).rpc("get_term_position", { p_user_id: targetId, p_term: tm.key, p_session: session || null });
+        const r = Array.isArray(data) ? data[0] : data;
+        if (r?.class_position) out[tm.key] = { pos: r.class_position, size: r.class_size };
+      }));
+      if (!cancelled) setPositions(out);
+    })();
+    return () => { cancelled = true; };
+  }, [targetId, session, loading]);
 
   const termExams = exams.filter(e => e.term === term && (!session || e.session === session));
   const rows       = buildSubjectRows(termExams);
@@ -398,6 +422,7 @@ const ReportCard = () => {
       <tr><td>المجموع الكلي / Total Obtainable</td><td>${toArabicDigits(tObtainable)}</td></tr>
       <tr><td>عدد المواد / Subjects</td><td>${toArabicDigits(tRows.length)}</td></tr>
       <tr><td>المتوسط / Average</td><td>${toArabicDigits(tAvg.toFixed(1))}%</td></tr>
+      ${positions[termKey] ? `<tr><td>الترتيب / Position</td><td style="font-weight:900">${toArabicDigits(positions[termKey].pos)} / ${toArabicDigits(positions[termKey].size)} (${ordinalEn(positions[termKey].pos)})</td></tr>` : ""}
     </tbody>
   </table>
   <div class="grade-box">
@@ -664,6 +689,7 @@ ${pagesHtml}
                   ["المجموع الكلي", toArabicDigits(totalObtainable)],
                   ["عدد المواد", toArabicDigits(rows.length)],
                   ["المتوسط", `${toArabicDigits(avgScore.toFixed(1))}%`],
+                  ...(positions[term] ? [["الترتيب / Position", `${toArabicDigits(positions[term].pos)} / ${toArabicDigits(positions[term].size)} (${ordinalEn(positions[term].pos)})`]] : []),
                 ].map(([label, val]) => (
                   <div key={label as string} className="flex justify-between text-sm py-1.5 border-b last:border-0">
                     <span className="text-muted-foreground font-semibold">{label}</span><strong style={{ color: G }}>{val}</strong>
