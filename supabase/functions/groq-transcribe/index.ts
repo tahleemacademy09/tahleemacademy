@@ -119,7 +119,7 @@ Deno.serve(async (req) => {
     const segments = Array.isArray(data?.segments) ? data.segments : null;
     const text = segments
       ? segments
-          .filter((s: any) => (s?.no_speech_prob ?? 0) < NO_SPEECH_THRESHOLD)
+          .filter((s: any) => !((s?.no_speech_prob ?? 0) >= NO_SPEECH_THRESHOLD && (s?.avg_logprob ?? 0) < -1))
           .map((s: any) => (s?.text ?? "").trim())
           .filter(Boolean)
           .join(" ")
