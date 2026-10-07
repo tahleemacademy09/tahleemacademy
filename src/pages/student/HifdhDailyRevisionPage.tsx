@@ -14,7 +14,7 @@
 //    → testing (MCQ, ≥75% gate) → complete (submit + notify)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
@@ -1304,6 +1304,64 @@ function PreTestReview({audioUrl,pageResults,onContinue}:{audioUrl:string|null;p
   );
 }
 
+/* ── Swipeable pager: one Mushaf page per slide, dots at the bottom ── */
+function SwipePages({ pages, height, viewIdx, onView, onFull, onBg }: {
+  pages: number[]; height: number; viewIdx: number;
+  onView: (i: number) => void; onFull: () => void; onBg?: (css: string) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  // Restore the slide we were on (e.g. coming back from recording / full screen)
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el) el.scrollLeft = viewIdx * el.clientWidth;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    const el = ref.current;
+    if (el && Math.round(el.scrollLeft / el.clientWidth) !== viewIdx)
+      el.scrollTo({ left: viewIdx * el.clientWidth, behavior: "smooth" });
+  }, [viewIdx]);
+  const onScroll = () => {
+    const el = ref.current;
+    if (!el || !el.clientWidth) return;
+    const i = Math.round(el.scrollLeft / el.clientWidth);
+    if (i !== viewIdx && i >= 0 && i < pages.length) onView(i);
+  };
+  return (
+    <div style={{ position: "relative", margin: "0 -16px" }}>
+      <button onClick={onFull} aria-label="Full page"
+        style={{ position: "absolute", top: 6, right: 22, zIndex: 5, width: 34, height: 34, borderRadius: 99,
+          border: "1px solid #C9A84C", background: "rgba(255,255,255,.92)", color: "#78350F",
+          display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+        <Maximize2 size={16} />
+      </button>
+      <div ref={ref} onScroll={onScroll}
+        style={{ display: "flex", overflowX: "auto", overflowY: "hidden", scrollSnapType: "x mandatory",
+          WebkitOverflowScrolling: "touch", scrollbarWidth: "none" as any, msOverflowStyle: "none" as any }}>
+        {pages.map((pn, i) => (
+          <div key={pn} style={{ flex: "0 0 100%", scrollSnapAlign: "center", scrollSnapStop: "always" }}>
+            <MushafPageView page={pn} seamless pureWhite availableHeight={height} maxStretch={1.4}
+              onBackground={i === 0 ? onBg : undefined} />
+          </div>
+        ))}
+      </div>
+      {/* Dots + label */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, padding: "8px 0 2px" }}>
+        <div style={{ display: "flex", gap: 8 }}>
+          {pages.map((pn, i) => (
+            <button key={pn} onClick={() => onView(i)} aria-label={`Page ${pn}`}
+              style={{ width: i === viewIdx ? 22 : 9, height: 9, borderRadius: 6, border: "none", padding: 0, cursor: "pointer",
+                background: i === viewIdx ? GOLD : "#d1d5db", transition: "all .2s" }} />
+          ))}
+        </div>
+        <span style={{ fontSize: 10, fontWeight: 700, color: "#6B7280" }}>
+          Page {pages[viewIdx]} · {viewIdx + 1} of {pages.length} · swipe to see the next page
+        </span>
+      </div>
+    </div>
+  );
+}
+
 interface SessionProps {
   assignment: Assignment;
   userId: string;
@@ -1354,6 +1412,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     phase === "testing" && !!hifdhProctoringEnabled && !!userId,
   );
   const [pageIdx,      setPageIdx]     = useState(0);
+  // Multi-page days (cumulative cycle): ONE recording + ONE transcription for all pages.
+  // pageIdx stays 0; viewIdx is only which page the student is looking at (swipe).
+  const isGroup = todayPages.length > 1;
+  const [viewIdx, setViewIdx] = useState(0);
+  const pageGroupsRef = useRef<Ayah[][]>([]);
+  const pagesKey = todayPages.join(",");
+  const curViewPage = todayPages[isGroup ? viewIdx : pageIdx];
   const [pageAyahs,    setPageAyahs]   = useState<Ayah[]>([]);
   const [fetchingPage, setFetchingPage] = useState(false);
   const [printedBg, setPrintedBg] = useState("#fffdf6");
@@ -1559,11 +1624,36 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   /* ── fetch ayahs when phase=reading ── */
   useEffect(() => {
     if (phase!=="reading") return;
+    if (isGroup) {
+      // Load every page of the day; the reference text for scoring is all pages joined in order.
+      let cancelled = false;
+      setFetchingPage(true); setPageAyahs([]);
+      Promise.all(todayPages.map(fetchPageAyahs)).then(groups => {
+        if (cancelled) return;
+        pageGroupsRef.current = groups;
+        const flat = groups.flat();
+        setPageAyahs(flat); pageAyahsRef.current = flat; setFetchingPage(false);
+      });
+      return () => { cancelled = true; };
+    }
     const pn = todayPages[pageIdx];
     if (!pn) return;
     setFetchingPage(true); setPageAyahs([]);
     fetchPageAyahs(pn).then(a => { setPageAyahs(a); pageAyahsRef.current = a; setFetchingPage(false); });
-  }, [phase, pageIdx, todayPages]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, pageIdx, pagesKey]);
+
+  /* ── Split the single combined result back into one PageResult per page ── */
+  const buildGroupResults = (tx: string, corr: boolean[], sc: number): PageResult[] => {
+    const groups = pageGroupsRef.current;
+    let off = 0;
+    return todayPages.map((pn, i) => {
+      const ay = groups[i] ?? [];
+      const c = corr.slice(off, off + ay.length); off += ay.length;
+      return { pageNum: pn, score: sc, errorWords: getErrorWords(tx, ay), ayahs: ay,
+               ayahCorrectness: c, transcript: i === 0 ? tx : "" };
+    });
+  };
 
   /* ── keep recSecsRef in sync so mr.onstop can read it ── */
   useEffect(() => { recSecsRef.current = recSecs; }, [recSecs]);
@@ -1592,10 +1682,19 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           session_data: {
             recitation_score: score,
             test_score:       null,
-            pages_done:       todayPages.slice(0, pageIdx + 1),
+            pages_done:       isGroup ? todayPages : todayPages.slice(0, pageIdx + 1),
             // audioStorageUrlRef is guaranteed populated before setScore fires (see mr.onstop fix)
             audio_url:        audioStorageUrlRef.current,
-            page_results: [
+            page_results: isGroup
+              // One recording for all pages: full transcript + word detail on the first
+              // entry, per-page ayah correctness / errors split out for each page.
+              ? buildGroupResults(last?.tx ?? "", last?.ayahCorrectness ?? [], score).map((r, i) => ({
+                  pageNum: r.pageNum, score, transcript: r.transcript,
+                  word_results: i === 0 ? wordRes : [],
+                  ayahCorrectness: r.ayahCorrectness, errorWords: r.errorWords,
+                  grouped_recording: true,
+                }))
+              : [
               ...pageResults,
               {
                 pageNum:         todayPages[pageIdx],
@@ -2066,6 +2165,14 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
   const acceptPage = () => {
     const last = lastResultRef.current || { tx: "", ayahCorrectness: [] };
+    if (isGroup) {
+      // Single combined recording passed → record every page as passed together, go to the test.
+      const results = buildGroupResults(last.tx, last.ayahCorrectness, score!);
+      setPageResults(results); setRetryCount(0);
+      setRecitationScore(score!); setScore(null);
+      fetchJuzAyahs().then(()=>{ setPhase("pre_test_review"); });
+      return;
+    }
     const r: PageResult={
       pageNum:todayPages[pageIdx], score:score!, errorWords, ayahs:pageAyahs,
       ayahCorrectness: last.ayahCorrectness,
@@ -2718,19 +2825,23 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             <BackBtn onClick={()=>{if(mediaRecRef.current&&mediaRecRef.current.state!=="inactive"){mediaRecRef.current.stop();mediaRecRef.current=null;}setIsRecording(false);clearInterval(timerRef.current);setPhase("intro");}}/>
             <div style={{flex:1}}>
               <p style={{margin:0,fontWeight:800,fontSize:14,color:W}}>
-                Page {todayPages[pageIdx]} — Recite Aloud
+                {isGroup ? `Pages ${todayPages[0]} – ${todayPages[todayPages.length-1]}` : `Page ${todayPages[pageIdx]}`} — Recite Aloud
               </p>
               <p style={{margin:0,fontSize:10,color:`${GOLD}cc`}}>
-                Page {pageIdx+1} of {todayPages.length}{retryCount>0?` · Attempt ${retryCount+1}`:""}
+                {isGroup
+                  ? `${todayPages.length} pages · one recording${retryCount>0?` · Attempt ${retryCount+1}`:""}`
+                  : `Page ${pageIdx+1} of ${todayPages.length}${retryCount>0?` · Attempt ${retryCount+1}`:""}`}
               </p>
             </div>
-            {/* Page dots */}
+            {/* Page dots (single-page flow only — multi-page days use the swipe dots under the page) */}
+            {!isGroup && (
             <div style={{display:"flex",gap:4}}>
               {todayPages.map((_,i)=>(
                 <div key={i} style={{width:8,height:8,borderRadius:"50%",
                   background:i<pageIdx?PASS:i===pageIdx?GOLD:"rgba(255,255,255,.25)"}}/>
               ))}
             </div>
+            )}
           </div>
 
           <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",
@@ -2773,7 +2884,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                   🔴 {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
                 </span>
                 <p style={{margin:0,fontSize:11,color:"#9CA3AF",textAlign:"center",maxWidth:260,lineHeight:1.6}}>
-                  Recite Page {todayPages[pageIdx]} from memory. Tap below when finished to get your score.
+                  {isGroup
+                    ? `Recite pages ${todayPages[0]} – ${todayPages[todayPages.length-1]} from memory, in order, in one go. Tap below when finished to get your score.`
+                    : `Recite Page ${todayPages[pageIdx]} from memory. Tap below when finished to get your score.`}
                 </p>
               </div>
             )}
@@ -2784,12 +2897,18 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 display:"flex",alignItems:"center",gap:8}}>
                 <Target size={13} color={AMBER}/>
                 <span style={{fontSize:11,fontWeight:700,color:AMBER}}>
-                  Recite the full page clearly — need ≥{PASS_THRESHOLD}% to proceed
+                  {isGroup
+                    ? `Recite all ${todayPages.length} pages in one recording — need ≥${PASS_THRESHOLD}% to proceed`
+                    : `Recite the full page clearly — need ≥${PASS_THRESHOLD}% to proceed`}
                 </span>
               </div>
             )}
             {/* Printed Madinah Mushaf page — fills the screen like the Quran reader; Start Reciting stays visible below */}
-            {!isRecording && todayPages[pageIdx] && (
+            {!isRecording && isGroup && (
+              <SwipePages pages={todayPages} height={Math.max(300, winH-250)} viewIdx={viewIdx}
+                onView={setViewIdx} onFull={()=>setShowFull(true)} onBg={setPrintedBg}/>
+            )}
+            {!isRecording && !isGroup && todayPages[pageIdx] && (
               <div style={{position:"relative",margin:"0 -16px"}}>
                 <button onClick={()=>setShowFull(true)} aria-label="Full page"
                   style={{position:"absolute",top:6,right:22,zIndex:5,width:34,height:34,borderRadius:99,border:"1px solid #C9A84C",background:"rgba(255,255,255,.92)",color:"#78350F",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
@@ -2798,15 +2917,25 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 <MushafPageView page={todayPages[pageIdx]} seamless pureWhite availableHeight={Math.max(300, winH-215)} maxStretch={1.4} onBackground={setPrintedBg}/>
               </div>
             )}
-            {showFull && todayPages[pageIdx] && (
+            {showFull && curViewPage && (
               <div style={{position:"fixed",inset:0,zIndex:500,background:"#fff",display:"flex",flexDirection:"column"}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",paddingTop:"calc(8px + env(safe-area-inset-top, 0px))",borderBottom:"1px solid rgba(0,0,0,.06)",flexShrink:0}}>
                   <button onClick={()=>setShowFull(false)} style={{display:"inline-flex",alignItems:"center",gap:6,border:"1px solid #e3e9e5",background:"#fff",borderRadius:99,padding:"6px 14px",fontSize:12,fontWeight:800,cursor:"pointer"}}><XIcon size={14}/> Close</button>
-                  <span style={{fontSize:13,fontWeight:800,color:"#1a1a2e"}}>Page {todayPages[pageIdx]}</span>
+                  {isGroup ? (
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <button onClick={()=>setViewIdx(i=>Math.max(0,i-1))} disabled={viewIdx===0} aria-label="Previous page"
+                        style={{border:"1px solid #e3e9e5",background:"#fff",borderRadius:99,width:30,height:30,fontSize:16,fontWeight:800,cursor:"pointer",opacity:viewIdx===0?.35:1}}>‹</button>
+                      <span style={{fontSize:13,fontWeight:800,color:"#1a1a2e"}}>Page {curViewPage} · {viewIdx+1}/{todayPages.length}</span>
+                      <button onClick={()=>setViewIdx(i=>Math.min(todayPages.length-1,i+1))} disabled={viewIdx===todayPages.length-1} aria-label="Next page"
+                        style={{border:"1px solid #e3e9e5",background:"#fff",borderRadius:99,width:30,height:30,fontSize:16,fontWeight:800,cursor:"pointer",opacity:viewIdx===todayPages.length-1?.35:1}}>›</button>
+                    </div>
+                  ) : (
+                    <span style={{fontSize:13,fontWeight:800,color:"#1a1a2e"}}>Page {curViewPage}</span>
+                  )}
                 </div>
                 <div style={{flex:1,minHeight:0,overflowY:"auto",display:"flex",alignItems:"center",justifyContent:"center"}}>
                   <div style={{width:"100%"}}>
-                    <MushafPageView page={todayPages[pageIdx]} seamless pureWhite availableHeight={Math.max(300, winH-125)} maxStretch={1.4}/>
+                    <MushafPageView key={curViewPage} page={curViewPage} seamless pureWhite availableHeight={Math.max(300, winH-125)} maxStretch={1.4}/>
                   </div>
                 </div>
                 <div style={{padding:"10px 16px",paddingBottom:"calc(10px + env(safe-area-inset-bottom, 0px))",borderTop:`1px solid ${BRD}`,flexShrink:0}}>
@@ -2886,7 +3015,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               <BackBtn onClick={()=>setPhase("reading")}/>
               <div style={{flex:1}}>
                 <p style={{margin:0,fontWeight:800,fontSize:14,color:W}}>
-                  Page {todayPages[pageIdx]} — Result
+                  {isGroup ? `Pages ${todayPages[0]} – ${todayPages[todayPages.length-1]}` : `Page ${todayPages[pageIdx]}`} — Result
                 </p>
                 <p style={{margin:0,fontSize:10,color:`${GOLD}cc`}}>
                   {score>=PASS_THRESHOLD?"Passed ✓":"Below pass mark — review & record again"}
@@ -2920,7 +3049,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               {(savedAudioUrl||audioUrl)&&(
                 <div style={{marginBottom:4}}>
                   <p style={{margin:"0 0 6px",fontSize:10,fontWeight:800,color:G3,textTransform:"uppercase",letterSpacing:.5}}>🎙️ Your Recitation — Listen & Review</p>
-                  <FullAudioPlayer url={savedAudioUrl||audioUrl||""} label={`Page ${todayPages[pageIdx]} Recitation`}/>
+                  <FullAudioPlayer url={savedAudioUrl||audioUrl||""} label={isGroup ? `Pages ${todayPages[0]} – ${todayPages[todayPages.length-1]} Recitation` : `Page ${todayPages[pageIdx]} Recitation`}/>
                 </div>
               )}
 
@@ -3023,7 +3152,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                     display:"flex",alignItems:"center",justifyContent:"center",gap:8,
                     boxShadow:`0 4px 16px ${PASS}44`}}>
                   <CheckCircle2 size={18}/>
-                  {pageIdx+1<todayPages.length?"Continue to Next Page →":"Proceed to Test →"}
+                  {!isGroup && pageIdx+1<todayPages.length?"Continue to Next Page →":"Proceed to Test →"}
                 </button>
               ):(
                 <button onClick={retryPage}
