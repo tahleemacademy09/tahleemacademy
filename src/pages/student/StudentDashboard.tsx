@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useRevisionAssignedCount } from "@/hooks/useRevisionAssignedCount";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { useVisibleRealtime } from "@/hooks/useVisibleRealtime";
 import { supabase } from "@/integrations/supabase/client";
@@ -424,6 +425,7 @@ const NotificationsCard = ({ items, unread, expanded, onToggle, onRead, onReadAl
 const StudentDashboard = () => {
   const { t, language } = useLanguage();
   const { user, profile, refreshProfile, hasRole } = useAuth();
+  const revisionBadge = useRevisionAssignedCount(user?.id);
   const { effectiveUserId, isImpersonating } = useImpersonation();
   const { isPrivateStudent: hookPrivate, allowGeneralAccess: hookGeneral } = usePrivateStudent();
   const { settings, isExamsModuleEnabled, isTimetableModuleEnabled } = useAcademySettings();
@@ -939,7 +941,7 @@ const StudentDashboard = () => {
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:16, rowGap:18 }}>
             {([
-              { to:"/student/hifdh-program", icon:Mic,           label:t("Hifdh","الحفظ"),  grad:`linear-gradient(135deg, ${MID_GREEN}, ${DARK_GREEN})`,  iconColor:"#fff", show: true, live:false },
+              { to:"/student/hifdh-program", icon:Mic,           label:t("Hifdh","الحفظ"),  grad:`linear-gradient(135deg, ${MID_GREEN}, ${DARK_GREEN})`,  iconColor:"#fff", show: true, live:false, badge: revisionBadge },
               { to:"/student/live-now",     icon:Video,         label:t("Live Classes","الفصول الحية"), grad:"linear-gradient(135deg,#4299e1,#2b6cb0)",               iconColor:"#fff", show: !isPrivateStudent || allowGeneralAccess, live: hasLiveClassNow },
               { to:"/student/exams",        icon:ClipboardList, label:t("My Exams","امتحاناتي"),        grad:"linear-gradient(135deg,#48bb78,#276749)",               iconColor:"#fff", show: true, live:false },
               { to:"/student/transcripts",  icon:GraduationCap, label:t("Transcripts","السجلات"),       grad:`linear-gradient(135deg, ${GOLD_LIGHT}, ${GOLD})`,       iconColor:DARK_GREEN, show: true, live:false },
@@ -952,6 +954,16 @@ const StudentDashboard = () => {
                     <div style={{ width:"100%", aspectRatio:"1", borderRadius:18, background:action.grad, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 6px 16px rgba(15,45,31,0.18)" }}>
                       <action.icon style={{ width:24, height:24, color:action.iconColor }} />
                     </div>
+                    {((action as any).badge ?? 0) > 0 && (
+                      <span aria-label={`${(action as any).badge} assigned`} style={{
+                        position:"absolute", top:-6, right:-6, minWidth:20, height:20, padding:"0 5px",
+                        display:"flex", alignItems:"center", justifyContent:"center",
+                        background:"#ef4444", color:"#fff", fontSize:11, fontWeight:800, lineHeight:1,
+                        borderRadius:10, boxShadow:"0 2px 6px rgba(239,68,68,0.5)", border:"1.5px solid #fff",
+                      }}>
+                        {(action as any).badge > 99 ? "99+" : (action as any).badge}
+                      </span>
+                    )}
                     {action.live && (
                       <span style={{
                         position:"absolute", top:-6, right:-6, display:"flex", alignItems:"center", gap:3,

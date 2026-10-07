@@ -135,7 +135,7 @@ export default function AdminSettings() {
   const [pw,              setPw]              = useState({ new: "", confirm: "" });
   const [acSaving,        setAcSaving]        = useState(false);
   const [hifdhSaving,     setHifdhSaving]     = useState(false);
-  const [hifdhDraft,      setHifdhDraft]      = useState({ violation_limit: 5, pass_mark: 55, proctoring_enabled: false });
+  const [hifdhDraft,      setHifdhDraft]      = useState({ violation_limit: 5, pass_mark: 60, proctoring_enabled: false });
 
   /* ── Profile ─────────────────────────────────────────────────── */
   const [form, setForm] = useState({

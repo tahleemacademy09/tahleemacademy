@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useRevisionAssignedCount } from "@/hooks/useRevisionAssignedCount";
 import { useImpersonation } from "@/hooks/useImpersonation";
 import { usePaymentAccess } from "@/hooks/usePaymentAccess";
 import { useSubjectRegistrationSettings } from "@/hooks/useSubjectRegistrationSettings";
@@ -144,6 +145,15 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     })();
   }, [user, role, location.pathname]);
 
+  // ── Murājaʿah badge (student) ────────────────────────────────
+  // Number of today's revision assignments still waiting. Re-checked on every
+  // route change so it clears right after the student finishes the session.
+  // Declared before `studentNav`, which reads it.
+  const revisionBadge = useRevisionAssignedCount(
+    role === "student" ? user?.id : undefined,
+    location.pathname,
+  );
+
   // ── Payment-locking: block features when student subscription is locked ──
   const { accessStatus: paymentStatus, isLoading: paymentLoading } = usePaymentAccess();
   const isPaymentLocked = role === "student" && !paymentLoading && paymentStatus === "locked";
@@ -214,7 +224,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       ...(isTimetableModuleEnabled ? [{ to:"/student/timetable", icon:Calendar, label:t("Jadwal (Timetable)","الجدول الدراسي") }] : []),
       { to:"/student/live-now",    icon:Video,          label:t("Live Now","مباشر الآن") },
       { to:"/student/revision",    icon:RefreshCw,      label:t("Al-Murāja'ah","المراجعة") },
-      { to:"/student/hifdh-program", icon:BookMarked,   label:t("Hifdh Program","برنامج الحفظ") },
+      { to:"/student/hifdh-program", icon:BookMarked,   label:t("Hifdh Program","برنامج الحفظ"), badge: revisionBadge },
       { to:"/student/musabaqah",   icon:Trophy,         label:t("Al-Musābaqah 🏆","المسابقة 🏆") },
     ]},
     { type:"group", key:"exams", icon:ClipboardList, label:t("Al-Ikhtibārāt","الاختبارات"), children:[

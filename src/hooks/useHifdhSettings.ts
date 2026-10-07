@@ -22,7 +22,7 @@ export interface HifdhSettings {
 
 export const DEFAULT_HIFDH_SETTINGS: HifdhSettings = {
   violation_limit: 5,
-  pass_mark: 55,
+  pass_mark: 60,
   proctoring_enabled: false,
   auto_assign_portions: true,
 };

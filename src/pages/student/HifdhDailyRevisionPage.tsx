@@ -118,8 +118,10 @@ async function idbDeleteBlob(key: string): Promise<void> {
   } catch { /* non-critical */ }
 }
 
-const PASS_THRESHOLD = 55;
+const PASS_THRESHOLD = 60; // minimum recitation pass mark (%)
 const TEST_PASS_THRESHOLD = 55;
+
+import { isCumulative, pagesForWorkDay, newPagesForWorkDay, cycleDayOf, cycleNumberOf, CYCLE_LENGTH } from "@/lib/revisionCycle";
 
 /* ── Interfaces ─────────────────────────────────────────────────── */
 interface Assignment {
@@ -277,9 +279,7 @@ function buildProgramDays(
     const dayOfWeek = new Date(date+"T00:00:00").getDay();
     const isWork    = !daysOff.includes(dayOfWeek);
     if (isWork) {
-      const offset = Math.floor(workDayIdx * a.daily_pages);
-      const pages  = Array.from({length: a.daily_pages}, (_, i) => base + offset + i)
-                          .filter(p => p >= 1 && p <= 604);
+      const pages  = pagesForWorkDay({ base, dailyPages: a.daily_pages, workDayIdx, cumulative: isCumulative(a) });
       const log    = logMap.get(date);
       const status: ProgramDay["status"] =
         date < today  ? (log?.completed || log?.session_data?.teacher_override ? "done" : "missed")
@@ -299,9 +299,20 @@ function getTodayPages(a: Assignment): number[] {
   const base      = getAssignmentStartPage(a);   // e.g. Juz 28 → 542
   const startDate = getStartDate(a);
   const elapsed   = startDate ? workingDaysElapsed(startDate, getDaysOff(a)) : 0;
-  const offset    = Math.floor(elapsed * a.daily_pages); // pages already covered
-  return Array.from({length: a.daily_pages}, (_, i) => base + offset + i)
-              .filter(p => p >= 1 && p <= 604);
+  // Cumulative 5-day cycle: day 1 = 1 page, day 2 = 2 pages … day 5 = 5 pages, day 6 starts fresh.
+  return pagesForWorkDay({ base, dailyPages: a.daily_pages, workDayIdx: elapsed, cumulative: isCumulative(a) });
+}
+
+/** Where today sits in the 5-day cycle (for the "Day 3 of 5" label). */
+function getTodayCycleInfo(a: Assignment) {
+  const startDate = getStartDate(a);
+  const idx = startDate ? workingDaysElapsed(startDate, getDaysOff(a)) : 0;
+  return {
+    cumulative: isCumulative(a),
+    cycleNumber: cycleNumberOf(idx),
+    cycleDay: cycleDayOf(idx),
+    newPages: newPagesForWorkDay({ base: getAssignmentStartPage(a), dailyPages: a.daily_pages, workDayIdx: idx }),
+  };
 }
 
 /* ── Quran fetcher ──────────────────────────────────────────────── */
@@ -3988,6 +3999,7 @@ export default function HifdhDailyRevisionPage() {
 
   /* ── Derived ── */
   const todayPages   = assignment ? getTodayPages(assignment)        : [];
+  const cycleInfo    = assignment ? getTodayCycleInfo(assignment)     : null;
   const programDays  = assignment ? buildProgramDays(assignment,logs,today) : [];
   const doneDays     = programDays.filter(d=>d.status==="done");
   const missedDays   = programDays.filter(d=>d.status==="missed");
@@ -4228,6 +4240,13 @@ export default function HifdhDailyRevisionPage() {
                       <p style={{margin:"3px 0 0",fontWeight:900,fontSize:22,color:W,letterSpacing:-.5}}>
                         {todayDone?"Session Complete! ✓":`Day ${dayOfProg} of ${totalDays}`}
                       </p>
+                      {cycleInfo?.cumulative && !todayDone && (
+                        <p style={{margin:"4px 0 0",fontSize:11,fontWeight:700,color:`${GOLD}`,lineHeight:1.4}}>
+                          Cycle {cycleInfo.cycleNumber} · Day {cycleInfo.cycleDay} of {CYCLE_LENGTH}
+                          {" · "}{todayPages.length} page{todayPages.length>1?"s":""} to revise
+                          {cycleInfo.cycleDay>1 ? ` (${cycleInfo.cycleDay-1} previous + new)` : " (new page)"}
+                        </p>
+                      )}
                     </div>
                     {todayDone
                       ?<div style={{width:44,height:44,borderRadius:12,background:"rgba(255,255,255,.12)",
