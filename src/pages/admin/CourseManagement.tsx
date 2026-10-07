@@ -701,7 +701,9 @@ const LessonModal = React.memo(({ ed, onClose, onSave, busy }: { ed?: any; onClo
     duration_minutes: ed?.duration_minutes || 0,
     sort_order: ed?.sort_order || 0,
     is_free: ed?.is_free || false,
+    interactive_html: ed?.interactive_html || "",
   });
+  const [showPreview, setShowPreview] = useState(false);
   
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
@@ -718,6 +720,28 @@ const LessonModal = React.memo(({ ed, onClose, onSave, busy }: { ed?: any; onClo
           <Fld label="What students will learn / Session outline">
             <textarea value={f.content} onChange={e => setF(l => ({ ...l, content: e.target.value }))} rows={5}
               style={{ ...inp, resize: "vertical" }} placeholder={"• Rules of Noon Sakinah\n• Practice recitation of Ayat 1–7\n• Q&A session"} />
+          </Fld>
+          <Fld label="Lesson page (what students see)">
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {f.interactive_html ? (
+                <>
+                  <button type="button" onClick={() => setShowPreview(v => !v)}
+                    style={{ padding: "9px 12px", borderRadius: 10, border: "1.5px solid #86EFAC", background: "#F0FDF4", color: "#166534", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                    {showPreview ? "Hide preview" : "Preview lesson"}
+                  </button>
+                  {showPreview && (
+                    <iframe srcDoc={f.interactive_html} title="Lesson preview" sandbox="allow-scripts allow-same-origin"
+                      style={{ width: "100%", height: 420, border: "1px solid #E5E7EB", borderRadius: 10, background: "#fff" }} />
+                  )}
+                </>
+              ) : (
+                <p style={{ margin: 0, fontSize: 12, color: "#9CA3AF" }}>No lesson page yet — paste HTML below to add one.</p>
+              )}
+              <textarea value={f.interactive_html} onChange={e => setF(l => ({ ...l, interactive_html: e.target.value }))} rows={8}
+                spellCheck={false} dir="ltr"
+                style={{ ...inp, resize: "vertical", fontFamily: "ui-monospace,Menlo,monospace", fontSize: 11, whiteSpace: "pre", overflow: "auto" }}
+                placeholder="<!DOCTYPE html>…" />
+            </div>
           </Fld>
           <Fld label="Estimated Duration (minutes)"><input type="number" value={f.duration_minutes} onChange={e => setF(l => ({ ...l, duration_minutes: Number(e.target.value) }))} style={inp} min={0} /></Fld>
           <Fld label="Sort Order"><input type="number" value={f.sort_order} onChange={e => setF(l => ({ ...l, sort_order: Number(e.target.value) }))} style={inp} min={0} /></Fld>
@@ -1222,7 +1246,10 @@ export default function CourseManagement() {
         duration_minutes: p.duration_minutes,
         sort_order: p.sort_order,
         subject_id: selSubject?.id,
-        is_free: p.is_free
+        is_free: p.is_free,
+        // Only touch the lesson page when it was actually edited, so saving a title/order change
+        // can never overwrite or blank the HTML students see.
+        ...((p.interactive_html || "") !== (edLesson?.interactive_html || "") ? { interactive_html: p.interactive_html || null } : {}),
       };
       const { error: lessonErr } = edLesson ? await supabase.from("lessons").update(d).eq("id", edLesson.id) : await supabase.from("lessons").insert(d);
       if (lessonErr) throw lessonErr;
