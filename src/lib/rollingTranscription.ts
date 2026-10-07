@@ -77,6 +77,12 @@ export class RollingTranscriber {
   private active: SegmentEntry[] = [];
   private restartTimer: ReturnType<typeof setInterval> | null = null;
   private transcript = "";
+  // Chunk results keyed by start order: chunks can finish transcribing out of order, and
+  // merging in completion order would scramble the text. `inflight` also stops finalize()
+  // resolving while a chunk whose recorder already stopped is still being transcribed.
+  private seq = 0;
+  private results = new Map<number, string>();
+  private inflight = 0;
   private pendingFinal: (() => void) | null = null;
   private stopped = false;
 
@@ -114,13 +120,20 @@ export class RollingTranscriber {
     mr.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
 
     const prompt = this.opts.buildPrompt();
+    const mySeq = this.seq++;
     mr.onstop = () => {
-      this.active = this.active.filter((e) => e !== entry);
       const blob = new Blob(chunks, { type: this.mime || "audio/webm" });
-      if (blob.size < 3000) { this.resolvePendingIfDone(); return; } // near-silent/empty
+      if (blob.size < 3000) { // near-silent/empty
+        this.active = this.active.filter((e) => e !== entry);
+        this.resolvePendingIfDone();
+        return;
+      }
+      this.inflight++;
+      this.active = this.active.filter((e) => e !== entry);
       this.opts.transcribeChunk(blob, prompt)
-        .then((txt) => { if (txt) this.transcript = mergeTranscripts(this.transcript, txt); })
-        .finally(() => this.resolvePendingIfDone());
+        .then((txt) => { if (txt) { this.results.set(mySeq, txt); this.rebuild(); } })
+        .catch(() => { /* a failed chunk just leaves a gap; caller decides on fallback */ })
+        .finally(() => { this.inflight--; this.resolvePendingIfDone(); });
     };
 
     this.active.push(entry);
@@ -134,8 +147,14 @@ export class RollingTranscriber {
     }, this.opts.intervalMs + this.opts.overlapMs);
   }
 
+  private rebuild() {
+    let t = "";
+    [...this.results.keys()].sort((a, b) => a - b).forEach((k) => { t = mergeTranscripts(t, this.results.get(k)!); });
+    this.transcript = t;
+  }
+
   private resolvePendingIfDone() {
-    if (this.active.length === 0 && this.pendingFinal) {
+    if (this.active.length === 0 && this.inflight === 0 && this.pendingFinal) {
       const f = this.pendingFinal;
       this.pendingFinal = null;
       f();
@@ -150,7 +169,7 @@ export class RollingTranscriber {
     this.stopped = true;
     if (this.restartTimer) clearInterval(this.restartTimer);
     return new Promise((resolve) => {
-      if (this.active.length === 0) { resolve(this.transcript); return; }
+      if (this.active.length === 0 && this.inflight === 0) { resolve(this.transcript); return; }
       this.pendingFinal = () => resolve(this.transcript);
       // Snapshot before iterating — stopping a recorder synchronously
       // triggers onstop, which mutates this.active.
