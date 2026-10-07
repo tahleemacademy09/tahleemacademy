@@ -122,7 +122,7 @@ const PASS_THRESHOLD = 60; // minimum recitation pass mark (%)
 const TEST_PASS_THRESHOLD = 55;
 
 import { isCumulative, pagesForWorkDay, newPagesForWorkDay, cycleDayOf, cycleNumberOf, CYCLE_LENGTH } from "@/lib/revisionCycle";
-import { JUZ_START_PAGES, SURAH_START_PAGES, getHizbStartPage, assignmentPageList } from "@/lib/hifdhSegments";
+import { JUZ_START_PAGES, SURAH_START_PAGES, getHizbStartPage, assignmentPageList, pageClipForAssignment } from "@/lib/hifdhSegments";
 
 /* ── Interfaces ─────────────────────────────────────────────────── */
 interface Assignment {
@@ -1281,8 +1281,8 @@ function PreTestReview({audioUrl,pageResults,onContinue}:{audioUrl:string|null;p
 }
 
 /* ── Swipeable pager: one Mushaf page per slide, dots at the bottom ── */
-function SwipePages({ pages, height, viewIdx, onView, onFull, onBg }: {
-  pages: number[]; height: number; viewIdx: number;
+function SwipePages({ pages, height, viewIdx, onView, onFull, onBg, clipFor }: {
+  pages: number[]; height: number; viewIdx: number; clipFor?: (page: number) => number[] | null;
   onView: (i: number) => void; onFull: () => void; onBg?: (css: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -1317,6 +1317,7 @@ function SwipePages({ pages, height, viewIdx, onView, onFull, onBg }: {
         {pages.map((pn, i) => (
           <div key={pn} style={{ flex: "0 0 100%", scrollSnapAlign: "center", scrollSnapStop: "always" }}>
             <MushafPageView page={pn} seamless pureWhite availableHeight={height} maxStretch={1.4}
+              onlySurahs={clipFor?.(pn) ?? undefined}
               onBackground={i === 0 ? onBg : undefined} />
           </div>
         ))}
@@ -1487,6 +1488,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const audioBlobRef       = useRef<Blob|null>(null);
   const audioStorageUrlRef = useRef<string|null>(null);
   const pageAyahsRef = useRef<Ayah[]>([]);
+  // Pages where only part belongs to the assigned surah (e.g. Adh-Dhariyat starts half-way down):
+  // the rest is blurred on screen and left out of the reference text used for scoring.
+  const clipFor = (pn: number): number[] | null => assignment ? pageClipForAssignment(assignment as any, pn) : null;
+  const fetchClipped = (pn: number): Promise<Ayah[]> =>
+    fetchPageAyahs(pn).then(a => {
+      const c = clipFor(pn);
+      if (!c) return a;
+      const kept = a.filter(x => c.includes(x.surah?.number));
+      return kept.length ? kept : a;
+    });
   const recSecsRef   = useRef(0);
   const wakeLockRef  = useRef<any>(null);
 
@@ -1604,7 +1615,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       // Load every page of the day; the reference text for scoring is all pages joined in order.
       let cancelled = false;
       setFetchingPage(true); setPageAyahs([]);
-      Promise.all(todayPages.map(fetchPageAyahs)).then(groups => {
+      Promise.all(todayPages.map(fetchClipped)).then(groups => {
         if (cancelled) return;
         pageGroupsRef.current = groups;
         const flat = groups.flat();
@@ -1615,7 +1626,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     const pn = todayPages[pageIdx];
     if (!pn) return;
     setFetchingPage(true); setPageAyahs([]);
-    fetchPageAyahs(pn).then(a => { setPageAyahs(a); pageAyahsRef.current = a; setFetchingPage(false); });
+    fetchClipped(pn).then(a => { setPageAyahs(a); pageAyahsRef.current = a; setFetchingPage(false); });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, pageIdx, pagesKey]);
 
@@ -1775,7 +1786,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       }
     }
     if (!pagesToFetch.length) return [];
-    const results = await Promise.all(pagesToFetch.map(fetchPageAyahs));
+    const results = await Promise.all(pagesToFetch.map(fetchClipped));
     const flat = results.flat();
     setJuzAyahs(flat);
     return flat;
@@ -2891,7 +2902,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             {/* Printed Madinah Mushaf page — fills the screen like the Quran reader; Start Reciting stays visible below */}
             {!isRecording && isGroup && (
               <SwipePages pages={todayPages} height={Math.max(300, winH-250)} viewIdx={viewIdx}
-                onView={setViewIdx} onFull={()=>setShowFull(true)} onBg={setPrintedBg}/>
+                onView={setViewIdx} onFull={()=>setShowFull(true)} onBg={setPrintedBg} clipFor={clipFor}/>
             )}
             {!isRecording && !isGroup && todayPages[pageIdx] && (
               <div style={{position:"relative",margin:"0 -16px"}}>
@@ -2899,7 +2910,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                   style={{position:"absolute",top:6,right:22,zIndex:5,width:34,height:34,borderRadius:99,border:"1px solid #C9A84C",background:"rgba(255,255,255,.92)",color:"#78350F",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
                   <Maximize2 size={16}/>
                 </button>
-                <MushafPageView page={todayPages[pageIdx]} seamless pureWhite availableHeight={Math.max(300, winH-215)} maxStretch={1.4} onBackground={setPrintedBg}/>
+                <MushafPageView page={todayPages[pageIdx]} seamless pureWhite availableHeight={Math.max(300, winH-215)} maxStretch={1.4} onlySurahs={clipFor(todayPages[pageIdx])??undefined} onBackground={setPrintedBg}/>
               </div>
             )}
             {showFull && curViewPage && (
@@ -2920,7 +2931,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 </div>
                 <div style={{flex:1,minHeight:0,overflowY:"auto",display:"flex",alignItems:"center",justifyContent:"center"}}>
                   <div style={{width:"100%"}}>
-                    <MushafPageView key={curViewPage} page={curViewPage} seamless pureWhite availableHeight={Math.max(300, winH-125)} maxStretch={1.4}/>
+                    <MushafPageView key={curViewPage} page={curViewPage} seamless pureWhite availableHeight={Math.max(300, winH-125)} maxStretch={1.4} onlySurahs={clipFor(curViewPage)??undefined}/>
                   </div>
                 </div>
                 <div style={{padding:"10px 16px",paddingBottom:"calc(10px + env(safe-area-inset-bottom, 0px))",borderTop:`1px solid ${BRD}`,flexShrink:0}}>

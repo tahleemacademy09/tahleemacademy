@@ -158,3 +158,32 @@ export function withSegments(notesJson: string, segments: Segment[]): string {
   else delete obj.segments;
   return JSON.stringify(obj);
 }
+
+/**
+ * Surahs that belong to the student's portion on `page`, or null when the whole page counts.
+ * Used to blur the part of a page that is NOT assigned (e.g. the end of the previous surah above
+ * the place where Adh-Dhariyat starts) and to leave that text out of scoring.
+ * A page is only clipped when every segment covering it is a whole surah; if a juz', hizb or page
+ * range also covers the page, the full page is shown.
+ */
+export function allowedSurahsForPage(segments: Segment[], page: number): number[] | null {
+  if (!segments.length) return null;
+  const cover = segments.filter(s => {
+    const r = segmentRange(s);
+    return !!r && page >= r[0] && page <= r[1];
+  });
+  if (!cover.length || cover.some(s => s.t !== "surah")) return null;
+  return [...new Set(cover.map(s => (s as { n: number }).n))];
+}
+
+/** Same, for a whole assignment (mixed segments, or the old single-surah mode on its first page). */
+export function pageClipForAssignment(
+  a: { notes?: string | null; mode?: string; selected_items?: number[] },
+  page: number,
+): number[] | null {
+  const segs = parseSegments(a.notes);
+  if (segs.length) return allowedSurahsForPage(segs, page);
+  const first = a.selected_items?.[0];
+  if (a.mode === "surah" && first && SURAH_START_PAGES[first] === page) return range(first, 114);
+  return null;
+}

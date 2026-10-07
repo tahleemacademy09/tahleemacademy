@@ -409,8 +409,10 @@ function mvPrefetchAround(page: number, white = false): () => void {
 }
 
 /** fitHeight: pixels of screen NOT available to the page (bars, buttons). When set, the whole page is fitted to the screen height. */
-export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, onUnavailable }: {
+export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, onUnavailable, onlySurahs }: {
   page: number; fontSize?: number; halves?: [number, number]; fitHeight?: number;
+  /** blur everything on the page that does not belong to these surahs (e.g. the end of the previous surah above where the assigned surah starts) */
+  onlySurahs?: number[];
   /** force a pure white page with pure black ink (recolours the printed SVG) */
   pureWhite?: boolean;
   /** full-screen mode: pixel height the page may use. The page fills it, stretching vertically by at most `maxStretch`; if it would be taller than this it is narrowed instead so it never scrolls */
@@ -568,6 +570,40 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
     else { svg.setAttribute("preserveAspectRatio", "xMidYMid meet"); svg.style.height = "auto"; }
   }, [fillH, mode, aspect, src]);
 
+  // blur the unassigned part of the page (above / below the assigned surah)
+  const [clipBands, setClipBands] = useState<{ top: number; bottom: number } | null>(null);
+  const onlyKey = onlySurahs && onlySurahs.length ? onlySurahs.join(",") : "";
+  useEffect(() => {
+    setClipBands(null);
+    if (!onlyKey || mode !== "inline") return;
+    const allowed = new Set(onlyKey.split(",").map(Number));
+    const id = window.requestAnimationFrame(() => {
+      const host = hostRef.current;
+      const root = host?.shadowRoot;
+      if (!host || !root) return;
+      const hr = host.getBoundingClientRect();
+      if (!(hr.height > 20)) return;
+      const ok: { c: number; t: number; b: number }[] = [];
+      const bad: { c: number; t: number; b: number }[] = [];
+      root.querySelectorAll(MV_POLY).forEach((el) => {
+        const a = mvAyahOf(el);
+        if (!a) return;
+        const r = (el as Element).getBoundingClientRect();
+        if (!(r.height > 0)) return;
+        (allowed.has(a.surah) ? ok : bad).push({ c: (r.top + r.bottom) / 2, t: r.top, b: r.bottom });
+      });
+      if (!ok.length || !bad.length) return;
+      const firstC = Math.min(...ok.map((x) => x.c));
+      const lastC = Math.max(...ok.map((x) => x.c));
+      const above = bad.filter((x) => x.c < firstC);
+      const below = bad.filter((x) => x.c > lastC);
+      const top = above.length ? (Math.max(...above.map((x) => x.b)) - hr.top) / hr.height : 0;
+      const bottom = below.length ? (Math.max(...ok.map((x) => x.b)) - hr.top) / hr.height : 1;
+      if (top > 0 || bottom < 1) setClipBands({ top: Math.min(1, Math.max(0, top)), bottom: Math.min(1, Math.max(0, bottom)) });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [onlyKey, mode, src, aspect, boxW, fillH, fillW]);
+
   if (mode === "text") return <MushafTextPage page={safe} fontSize={fontSize} halves={halves} />;
 
   const partial = !!halves && !(halves[0] === 0 && halves[1] === 1);
@@ -602,6 +638,12 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
             />
           )}
 
+          {shown && clipBands && clipBands.top > 0 && (
+            <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: `${clipBands.top * 100}%`, backdropFilter: "blur(7px)", WebkitBackdropFilter: "blur(7px)", background: "rgba(255,255,255,.55)", borderBottom: `2px solid ${MV_GOLD}`, pointerEvents: "none" }} />
+          )}
+          {shown && clipBands && clipBands.bottom < 1 && (
+            <div style={{ position: "absolute", left: 0, right: 0, top: `${clipBands.bottom * 100}%`, bottom: 0, backdropFilter: "blur(7px)", WebkitBackdropFilter: "blur(7px)", background: "rgba(255,255,255,.55)", borderTop: `2px solid ${MV_GOLD}`, pointerEvents: "none" }} />
+          )}
           {shown && dimTop && <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: "50%", background: fade, pointerEvents: "none" }} />}
           {shown && dimBottom && <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "50%", background: fade, pointerEvents: "none" }} />}
           {shown && partial && (
