@@ -6,6 +6,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "@/integrations/supabase/storageClient";
+import { isHifdhR2Path, getHifdhAudioUrl } from "@/lib/hifdhAudio";
 import SegmentPicker from "@/components/hifdh/SegmentPicker";
 import { Segment, parseSegments, withSegments, legacyFieldsFromSegments, segmentsSummary } from "@/lib/hifdhSegments";
 import {
@@ -485,9 +486,12 @@ export default function HifdhRevisionTracker() {
     if (audioPlaying===logId){ setAudioPlaying(null); return; }
     setAudioLoading(logId);
     try {
-      const {data} = await storageSupabase.storage.from("recitation-audio").createSignedUrl(path,3600);
-      if (!data?.signedUrl) throw new Error("No URL");
-      const el = new Audio(data.signedUrl);
+      // New daily-revision recordings live in R2; older ones are in the Supabase "recitation-audio" bucket.
+      const signedUrl = isHifdhR2Path(path)
+        ? await getHifdhAudioUrl(path)
+        : (await storageSupabase.storage.from("recitation-audio").createSignedUrl(path,3600)).data?.signedUrl;
+      if (!signedUrl) throw new Error("No URL");
+      const el = new Audio(signedUrl);
       audioRef.current = el;
       el.onended = () => setAudioPlaying(null);
       el.onerror = () => { setAudioPlaying(null); setAudioLoading(null); };

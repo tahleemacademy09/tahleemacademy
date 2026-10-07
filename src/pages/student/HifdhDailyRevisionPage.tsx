@@ -17,6 +17,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { uploadHifdhAudio, resolveHifdhSessionAudio, HIFDH_R2_PREFIX } from "@/lib/hifdhAudio";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
 import HifdhLiveClass from "@/components/hifdh/HifdhLiveClass";
 import {
@@ -142,6 +143,7 @@ interface DailyLog {
   session_data?: {
     page_results?: PageResult[]; errors?: any[];
     audio_url?: string | null;
+    audio_path?: string | null;
     recitation_score?: number; test_score?: number;
     pages_done?: number[];
     teacher_override?: any;
@@ -1452,6 +1454,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [savedAudioUrl,setSavedAudioUrl] = useState<string|null>(
     recitationAlreadyDone ? (todayLog?.session_data?.audio_url ?? null) : null
   );
+  // New recordings are stored as an R2 path — turn it into a playable link when revisiting today's log.
+  useEffect(() => {
+    if (!recitationAlreadyDone || !todayLog?.session_data?.audio_path) return;
+    let cancelled = false;
+    resolveHifdhSessionAudio(todayLog.session_data).then(u => { if (!cancelled && u) setSavedAudioUrl(prev => prev ?? u); });
+    return () => { cancelled = true; };
+  }, [recitationAlreadyDone, todayLog?.session_data?.audio_path]);
   // Record-type question state
   const [qRecording,   setQRecording]   = useState(false);
   const [qRecSecs,     setQRecSecs]     = useState(0);
@@ -1671,7 +1680,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             test_score:       null,
             pages_done:       isGroup ? todayPages : todayPages.slice(0, pageIdx + 1),
             // audioStorageUrlRef is guaranteed populated before setScore fires (see mr.onstop fix)
-            audio_url:        audioStorageUrlRef.current,
+            audio_url:        null,
+            audio_path:       audioStorageUrlRef.current,
             page_results: isGroup
               // One recording for all pages: full transcript + word detail on the first
               // entry, per-page ayah correctness / errors split out for each page.
@@ -1844,26 +1854,19 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         const uploadAudioToStorage = async (): Promise<string|null> => {
           const today = todayISO();
           const ext   = blob.type.includes("mp4") ? "mp4" : "webm";
-          const path  = `${userId}/${today}_${Date.now()}.${ext}`;
+          const path  = `${HIFDH_R2_PREFIX}${userId}/${today}_${Date.now()}.${ext}`;
           // Retry a few times: a flaky mobile connection is the usual reason an upload fails.
+          // Recordings go to Cloudflare R2 (private). Only the path is stored; teachers and
+          // admins get a fresh playback link each time they open the recording.
           for (let attempt = 1; attempt <= 3; attempt++) {
             try {
-              const { error: upErr } = await (supabase as any).storage
-                .from("hifdh-daily-audio")
-                .upload(path, blob, { contentType: blob.type || "audio/webm", upsert: true });
-              if (upErr) throw upErr;
-              // 1-year signed URL (the old 24h one stopped working for teachers/admins the next day).
-              const { data: signedData, error: signErr } = await (supabase as any).storage
-                .from("hifdh-daily-audio")
-                .createSignedUrl(path, 60 * 60 * 24 * 365);
-              if (signErr) throw signErr;
-              return signedData?.signedUrl ?? null;
+              return await uploadHifdhAudio(path, blob);
             } catch (e: any) {
               console.warn(`[HifdhDaily] audio upload attempt ${attempt}/3 failed:`, e?.message ?? e);
               if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));
             }
           }
-          console.error("[HifdhDaily] audio upload failed after 3 attempts — check the 'hifdh-daily-audio' bucket and its policies");
+          console.error("[HifdhDaily] audio upload failed after 3 attempts — check the hifdh-audio-url function and R2 secrets");
           return null;
         };
 
@@ -2327,7 +2330,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           recitation_score:recAvg, test_score:tScore,
           section_a_score: sA, section_b_score: sB,
           pages_done:todayPages,
-          audio_url: audioStorageUrl,
+          audio_url: null,
+          audio_path: audioStorageUrl,
           page_results:pageResults.map(r=>({
             pageNum:r.pageNum, score:r.score, errorWords:r.errorWords,
             ayahCorrectness: r.ayahCorrectness,
@@ -3900,7 +3904,12 @@ function DayDetailModal({day,totalPagesInProg,pagesReadSoFar,onClose}:{
   const log=day.log;
   const sd=log?.session_data;
   const pageResults:PageResult[]=sd?.page_results??[];
-  const audioUrl:string|null=sd?.audio_url??null;
+  const [audioUrl,setAudioUrl]=useState<string|null>(sd?.audio_url??null);
+  useEffect(()=>{
+    let cancelled=false;
+    resolveHifdhSessionAudio(sd).then(u=>{ if(!cancelled) setAudioUrl(u); });
+    return ()=>{ cancelled=true; };
+  },[sd?.audio_path,sd?.audio_url]);
   const pagesLeft=Math.max(0,totalPagesInProg-pagesReadSoFar);
 
   return(
