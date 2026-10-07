@@ -17,6 +17,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { RollingTranscriber } from "@/lib/rollingTranscription";
 import { uploadHifdhAudio, resolveHifdhSessionAudio, HIFDH_R2_PREFIX } from "@/lib/hifdhAudio";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
 import HifdhLiveClass from "@/components/hifdh/HifdhLiveClass";
@@ -305,16 +306,21 @@ async function fetchPageAyahs(page: number): Promise<Ayah[]> {
       const verses: any[] = j?.verses ?? [];
       if (verses.length > 0) {
         return verses.map((v: any) => {
-          const meta = SURAH_NAME_BY_NUM[v.chapter_id ?? 0];
+          // The qdc by_page response has NO chapter_id — only verse_key ("29:1"). Reading
+          // chapter_id alone made surah.number 0, so the assigned-surah clip matched nothing and
+          // silently fell back to the WHOLE page (previous surah's verses scored as "missing").
+          const vkParts = String(v.verse_key ?? "").split(":");
+          const chapterNo = Number(v.chapter_id ?? vkParts[0]) || 0;
+          const meta = SURAH_NAME_BY_NUM[chapterNo];
           return {
           // NOTE: `number` here is the global 1-6236 ayah id when available from the API,
           // but we no longer rely on it for audio playback (see quranAyahAudioUrl below) —
           // audio is keyed off surah.number + numberInSurah instead, which is always correct.
           number: v.id ?? v.verse_number ?? 0,
-          numberInSurah: v.verse_number ?? 0,
+          numberInSurah: v.verse_number ?? (Number(vkParts[1]) || 0),
           text: v.text_uthmani ?? v.words?.map((w: any) => w.text_uthmani ?? w.text).join(" ") ?? "",
           surah: {
-            number: v.chapter_id ?? 0,
+            number: chapterNo,
             name: meta?.arabicName ?? "",
             englishName: meta?.name ?? "",
           },
@@ -1496,6 +1502,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const audioChunks  = useRef<Blob[]>([]);
   const audioBlobRef       = useRef<Blob|null>(null);
   const audioStorageUrlRef = useRef<string|null>(null);
+  const rollerRef     = useRef<RollingTranscriber|null>(null);
+  const rollFinalRef  = useRef<Promise<string>|null>(null);
+  const rollFailRef   = useRef(0);
+  const attemptRef    = useRef(0);
+  const [audioReadyTick, setAudioReadyTick] = useState(0);
   const pageAyahsRef = useRef<Ayah[]>([]);
   // Pages where only part belongs to the assigned surah (e.g. Adh-Dhariyat starts half-way down):
   // the rest is blurred on screen and left out of the reference text used for scoring.
@@ -1714,7 +1725,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       } catch(e) { console.warn("[HifdhDaily] interim save exception:", e); }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, score]);
+  }, [phase, score, audioReadyTick]);
 
 
   /* ── Proctoring: detect tab switches during test ─────────────── */
@@ -1873,8 +1884,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         // Run transcription AND storage upload in parallel.
         // setScore must only fire AFTER both resolve — otherwise the interim-save
         // useEffect fires while audioStorageUrlRef is still null (the race condition).
-        Promise.all([finalizeTranscript(blob, pageAyahsRef.current), uploadAudioToStorage()]).then(([tx, storageUrl]) => {
+        // Upload runs in the BACKGROUND — the score no longer waits on it (a slow/retrying R2
+        // upload used to hold the "Analysing…" screen). When it lands, the interim save re-runs
+        // (audioReadyTick) so the log gets its audio_path.
+        const myAttempt = attemptRef.current;
+        uploadAudioToStorage().then((storageUrl) => {
+          if (attemptRef.current !== myAttempt) return;
           audioStorageUrlRef.current = storageUrl;
+          setAudioReadyTick(t => t + 1);
+        });
+        finalizeTranscript(blob, pageAyahsRef.current).then((tx) => {
           // ── DO NOT call setSavedAudioUrl(storageUrl) here ────────────────────────────────────────
           // savedAudioUrl is already set to the local blob URL (line above Promise.all).
           // Replacing it with the remote URL caused silent playback failure:
@@ -1910,6 +1929,25 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           setCarryOverSecs(0);
         });
       };
+      // Overlapping ~15s chunks transcribed WHILE the student recites: after Stop only the last
+      // chunk is left (a couple of seconds), and no request ever covers a long file that Whisper
+      // would window internally and silently drop words from.
+      attemptRef.current++;
+      rollFailRef.current = 0;
+      rollFinalRef.current = null;
+      rollerRef.current?.cancel();
+      const roller = new RollingTranscriber(stream, mime || "", {
+        intervalMs: 15000,
+        overlapMs: 3000,
+        buildPrompt: () => buildStylePrompt(),
+        transcribeChunk: async (chunkBlob, prompt) => {
+          const t = await transcribeAudio(chunkBlob, undefined, prompt, 25000);
+          if (t === "__NO_API__") { rollFailRef.current++; return ""; }
+          return t;
+        },
+      });
+      rollerRef.current = roller;
+      roller.start();
       mr.start(200);
       mediaRecRef.current = mr;
       setIsRecording(true);
@@ -1929,16 +1967,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   }, []);
 
   // ── Vocabulary-hint prompt builder (shared by rolling chunks + fallback) ──
-  const buildStylePrompt = (ayahs?: Ayah[]): string => {
-    if (ayahs && ayahs.length > 0) {
-      const hint = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ " +
-        ayahs.slice(0, 4).map(a => a.text).join(" ");
-      return hint.slice(0, 220); // Whisper prompt cap — slice still enforces
-      // the limit, so this only adds coverage on pages with shorter ayahs
-      // (e.g. juz 'Amma) where 2 ayahs left the prompt well under budget.
-    }
-    return "قرآن كريم بالتشكيل الكامل. تلاوة قرآنية بالرسم العثماني.";
-  };
+  // Style/script hint ONLY — never the page's verses. Feeding the reference text to Whisper as a
+  // prompt makes it continue/echo that text (e.g. repeating the previous surah's opening words)
+  // and swallow the first words actually recited.
+  const buildStylePrompt = (_ayahs?: Ayah[]): string =>
+    "تلاوة القرآن الكريم بالتشكيل الكامل.";
 
   const lastTranscribeErrorRef = useRef<string>("");
 
@@ -1998,12 +2031,22 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     }
   };
 
-  // Single whole-recording transcription: one Groq call on the entire audio
-  // blob, no chunking. Longer timeout since a multi-minute recitation takes
-  // longer to upload/transcribe as one file than an 18s chunk did.
+  // Result of the rolling chunks (already transcribed during recitation). Falls back to one
+  // whole-recording call only if a chunk failed or nothing came back, keeping whichever is longer.
   const finalizeTranscript = async (fullBlob: Blob, ayahs?: Ayah[]): Promise<string> => {
-    const tx = await transcribeAudio(fullBlob, ayahs, undefined, 120000);
-    return tx && tx !== "__NO_API__" && tx.length > 5 ? tx : "__NO_API__";
+    let rolled = "";
+    if (rollFinalRef.current) {
+      try { rolled = (await rollFinalRef.current).trim(); } catch { rolled = ""; }
+    } else if (rollerRef.current) {
+      rollerRef.current.cancel(); rollerRef.current = null;
+    }
+    rollFinalRef.current = null;
+    const wc = (t: string) => t.split(/\s+/).filter(Boolean).length;
+    if (rolled.length > 5 && rollFailRef.current === 0) return rolled;
+    const whole = await transcribeAudio(fullBlob, ayahs, undefined, 60000);
+    const wholeOk = whole && whole !== "__NO_API__" && whole.length > 5 ? whole : "";
+    const best = wc(wholeOk) > wc(rolled) ? wholeOk : rolled;
+    return best.length > 5 ? best : "__NO_API__";
   };
 
   const lastResultRef = useRef<{ tx: string; ayahCorrectness: boolean[] } | null>(null);
@@ -2011,6 +2054,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const handleStop = () => {
     setIsRecording(false);
     clearInterval(timerRef.current);
+    // Stop the chunk recorders FIRST (while the mic stream is still live) so every in-flight
+    // chunk is flushed and awaited before the stream tracks are released in mr.onstop.
+    if (rollerRef.current) { rollFinalRef.current = rollerRef.current.finalize(); rollerRef.current = null; }
     if (mediaRecRef.current && mediaRecRef.current.state !== "inactive") {
       mediaRecRef.current.stop(); // triggers mr.onstop → finalizeTranscript → setScore
     }
@@ -2854,7 +2900,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         <>
           <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:"14px 16px",
             display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
-            <BackBtn onClick={()=>{if(mediaRecRef.current&&mediaRecRef.current.state!=="inactive"){mediaRecRef.current.stop();mediaRecRef.current=null;}setIsRecording(false);clearInterval(timerRef.current);setPhase("intro");}}/>
+            <BackBtn onClick={()=>{rollerRef.current?.cancel();rollerRef.current=null;rollFinalRef.current=null;if(mediaRecRef.current&&mediaRecRef.current.state!=="inactive"){mediaRecRef.current.stop();mediaRecRef.current=null;}setIsRecording(false);clearInterval(timerRef.current);setPhase("intro");}}/>
             <div style={{flex:1}}>
               <p style={{margin:0,fontWeight:800,fontSize:14,color:W}}>
                 {isGroup ? `Pages ${todayPages[0]} – ${todayPages[todayPages.length-1]}` : `Page ${todayPages[pageIdx]}`} — Recite Aloud
@@ -3009,10 +3055,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           justifyContent:"center",gap:16,background:G0,padding:32}}>
           <Loader2 size={40} color={GOLD} style={{animation:"spin .9s linear infinite"}}/>
           <p style={{margin:0,color:"#e5c76b",fontWeight:700,fontSize:15,textAlign:"center"}}>
-            Analysing your recitation…
+            Checking your recitation…
           </p>
           <p style={{margin:0,color:"#6B7280",fontSize:12,textAlign:"center"}}>
-            Using AI to check your Arabic — this takes a few seconds
+            Just a moment
           </p>
         </div>
       )}
