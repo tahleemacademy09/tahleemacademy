@@ -31,6 +31,8 @@ export function pagesForWorkDay(opts: {
   dailyPages: number;    // new pages per day
   workDayIdx: number;    // 0 = first working day of the programme
   cumulative: boolean;
+  /** Explicit ordered page list (mixed juz/hizb/surah/page segments). Wraps around when used up. */
+  pageList?: number[] | null;
 }): number[] {
   const { base, workDayIdx, cumulative } = opts;
   const n = Math.max(1, Math.round(Number(opts.dailyPages) || 1));
@@ -41,6 +43,16 @@ export function pagesForWorkDay(opts: {
   const startPage = base + firstSlot * n;
   const endPage = base + idx * n + (n - 1);
 
+  if (opts.pageList && opts.pageList.length) {
+    const L = opts.pageList;
+    const out: number[] = [];
+    for (let k = firstSlot * n; k <= idx * n + (n - 1); k++) {
+      const p = L[k % L.length];
+      if (!out.includes(p)) out.push(p);
+    }
+    return out;
+  }
+
   const pages: number[] = [];
   for (let p = startPage; p <= endPage; p++) {
     if (p >= 1 && p <= 604) pages.push(p);
@@ -50,9 +62,15 @@ export function pagesForWorkDay(opts: {
 
 /** The pages that are NEW today (the last slot) — useful for labels. */
 export function newPagesForWorkDay(opts: {
-  base: number; dailyPages: number; workDayIdx: number;
+  base: number; dailyPages: number; workDayIdx: number; pageList?: number[] | null;
 }): number[] {
   const n = Math.max(1, Math.round(Number(opts.dailyPages) || 1));
+  if (opts.pageList && opts.pageList.length) {
+    const L = opts.pageList;
+    const first = Math.max(0, opts.workDayIdx) * n;
+    return Array.from({ length: n }, (_, i) => L[(first + i) % L.length])
+      .filter((p, i, arr) => arr.indexOf(p) === i);
+  }
   const start = opts.base + Math.max(0, opts.workDayIdx) * n;
   return Array.from({ length: n }, (_, i) => start + i).filter(p => p >= 1 && p <= 604);
 }

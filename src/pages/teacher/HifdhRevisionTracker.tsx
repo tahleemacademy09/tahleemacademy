@@ -6,6 +6,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "@/integrations/supabase/storageClient";
+import SegmentPicker from "@/components/hifdh/SegmentPicker";
+import { Segment, parseSegments, withSegments, legacyFieldsFromSegments, segmentsSummary } from "@/lib/hifdhSegments";
 import {
   BookOpen, Check, Clock, Search, ChevronDown, ChevronUp,
   Loader2, Plus, X, Edit2, CheckCircle2, Play, Pause, Volume2,
@@ -28,6 +30,7 @@ interface Student {
   assignment?: Assignment; todayLog?: DailyLog;
 }
 interface Assignment {
+  segments?: Segment[];
   id: string; mode: "juz"|"hizb"|"surah"; selected_items: number[];
   daily_pages: number; reciter_id: string; active: boolean; notes?: string;
   program_start?: string; program_days?: number; days_off?: number[];
@@ -38,6 +41,7 @@ interface DailyLog {
   acknowledged_by: string | null; acknowledged_at: string | null; ack_note: string | null;
 }
 interface BulkForm {
+  segments: Segment[];
   target: "all"|"level";
   levelSlug: string;
   mode: "juz"|"hizb"|"surah";
@@ -125,7 +129,7 @@ function BulkAssignModal({
 }) {
   const [form, setForm] = useState<BulkForm>({
     target:"all", levelSlug: levels[0]||"",
-    mode:"juz", selectedItems:[1], dailyPages:1,
+    segments:[{t:"juz",n:1}], mode:"juz", selectedItems:[1], dailyPages:1,
     programStart: todayStr(), programDays:30, daysOff:[0],
     reciterId:"Alafasy_128kbps", notes:"",
   });
@@ -151,12 +155,12 @@ function BulkAssignModal({
     if (!targets.length) { setError("No students match."); return; }
     setSaving(true); setError(null);
     let done = 0, failed = 0;
-    const notesJson = JSON.stringify({
+    const notesJson = withSegments(JSON.stringify({
       programStart: form.programStart,
       programDays:  form.programDays,
       daysOff:      form.daysOff,
       custom:       form.notes,
-    });
+    }), form.segments);
     for (const s of targets) {
       setProgress(`Assigning ${s.full_name}… (${done+failed+1}/${targets.length})`);
       try {
@@ -225,24 +229,9 @@ function BulkAssignModal({
           👥 {targets.length} student{targets.length!==1?"s":""} will be assigned
         </div>
 
-        <Label>Mode</Label>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6, marginBottom:14 }}>
-          {(["juz","hizb","surah"] as const).map(m => (
-            <Pill key={m} active={form.mode===m} onClick={() => upd("mode",m)}>
-              {m==="juz"?"Juz":m==="hizb"?"Hizb":"Surah"}
-            </Pill>
-          ))}
-        </div>
-
-        <Label>
-          {form.mode==="juz"?"Juz (1–30)":form.mode==="hizb"?"Hizb (1–60)":"Surah numbers"} — comma separated
-        </Label>
-        <input value={form.selectedItems.join(",")}
-          onChange={e => {
-            const nums = e.target.value.split(",").map(n=>parseInt(n.trim())).filter(n=>!isNaN(n));
-            upd("selectedItems", nums);
-          }}
-          placeholder="e.g. 1,2,3" style={inp} />
+        <Label>What to revise — mix juz', hizb, surahs and pages</Label>
+        <SegmentPicker value={form.segments}
+          onChange={s => setForm(f => ({ ...f, segments: s, ...(s.length ? { mode: legacyFieldsFromSegments(s).mode, selectedItems: legacyFieldsFromSegments(s).selected_items } : { selectedItems: [] }) }))} />
 
         <Label>Pages Per Day</Label>
         <div style={{ display:"flex", gap:6, marginBottom:14 }}>
@@ -403,6 +392,7 @@ export default function HifdhRevisionTracker() {
           program_start: extra.programStart ?? a.program_start,
           program_days:  extra.programDays  ?? a.program_days,
           days_off:      extra.daysOff      ?? a.days_off ?? [],
+          segments:      parseSegments(a.notes),
         };
       });
       const lMap: Record<string,DailyLog> = {};
@@ -499,12 +489,12 @@ export default function HifdhRevisionTracker() {
     if (!userId){ return; }
     setSavingAssign(true); setSaveError(null);
     try {
-      const notesJson = JSON.stringify({
+      const notesJson = withSegments(JSON.stringify({
         programStart: assignForm.program_start,
         programDays:  assignForm.program_days,
         daysOff:      assignForm.days_off ?? [],
         custom:       assignForm.notes || "",
-      });
+      }), assignForm.segments ?? []);
       const {error: rpcErr} = await (supabase as any).rpc("save_hifdh_assignment",{
         p_student_id:     studentId,
         p_mode:           assignForm.mode,
@@ -732,7 +722,7 @@ export default function HifdhRevisionTracker() {
                       {assign?(
                         <div style={{fontSize:12,color:"#374151"}}>
                           <strong>{assign.mode==="juz"?"Juz":assign.mode==="hizb"?"Hizb":"Surah"}</strong>{" "}
-                          {assign.selected_items.join(", ")} · {assign.daily_pages} page{assign.daily_pages!==1?"s":""}/day
+                          {assign.segments?.length ? segmentsSummary(assign.segments) : assign.selected_items.join(", ")} · {assign.daily_pages} page{assign.daily_pages!==1?"s":""}/day
                           {assign.program_start&&(
                             <div style={{fontSize:10,color:"#9aab94",marginTop:2,display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
                               <Calendar size={9}/> Started {assign.program_start}
@@ -756,6 +746,7 @@ export default function HifdhRevisionTracker() {
                       setAssignForm({
                         mode:assign?.mode??"juz",
                         selected_items:assign?.selected_items??[1],
+                        segments:assign?.segments?.length?assign.segments:undefined,
                         daily_pages:assign?.daily_pages??1,
                         reciter_id:assign?.reciter_id??"Alafasy_128kbps",
                         program_start:assign?.program_start??todayStr(),
@@ -779,25 +770,10 @@ export default function HifdhRevisionTracker() {
                         {assign?"Update Assignment":"New Assignment"}
                       </div>
 
-                      <Label>Mode</Label>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:12}}>
-                        {(["juz","hizb","surah"] as const).map(m=>(
-                          <button key={m} onClick={()=>setAssignForm(f=>({...f,mode:m,selected_items:[1]}))}
-                            style={{padding:"7px 4px",borderRadius:8,border:`2px solid ${assignForm.mode===m?G:BRD}`,
-                              background:assignForm.mode===m?G:WARM,color:assignForm.mode===m?"#fff":"#374151",
-                              fontSize:12,fontWeight:700,cursor:"pointer"}}>
-                            {m==="juz"?"Juz":m==="hizb"?"Hizb":"Surah"}
-                          </button>
-                        ))}
-                      </div>
-
-                      <Label>{assignForm.mode==="juz"?"Juz (1-30)":assignForm.mode==="hizb"?"Hizb (1-60)":"Surah numbers"} — comma separated</Label>
-                      <input value={(assignForm.selected_items||[]).join(",")}
-                        onChange={e=>{
-                          const nums=e.target.value.split(",").map(n=>parseInt(n.trim())).filter(n=>!isNaN(n));
-                          setAssignForm(f=>({...f,selected_items:nums}));
-                        }}
-                        style={inp} placeholder="e.g. 1,2,3"/>
+                      <Label>What to revise — mix juz', hizb, surahs and pages</Label>
+                      <SegmentPicker
+                        value={assignForm.segments ?? ((assignForm.selected_items||[]).map(n=>({t:assignForm.mode||"juz",n})) as Segment[])}
+                        onChange={s=>setAssignForm(f=>({...f,segments:s,...(s.length?legacyFieldsFromSegments(s):{selected_items:[]})}))}/>
 
                       <Label>Pages per day</Label>
                       <div style={{display:"flex",gap:6,marginBottom:12}}>
