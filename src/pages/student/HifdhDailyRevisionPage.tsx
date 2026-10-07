@@ -1307,18 +1307,18 @@ function SwipePages({ pages, height, viewIdx, onView, onFull, onBg, clipFor }: {
   // Restore the slide we were on (e.g. coming back from recording / full screen)
   useLayoutEffect(() => {
     const el = ref.current;
-    if (el) el.scrollLeft = viewIdx * el.clientWidth;
+    if (el) el.scrollLeft = -viewIdx * el.clientWidth; // RTL scroller: page 1 on the right, scrollLeft goes negative
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     const el = ref.current;
-    if (el && Math.round(el.scrollLeft / el.clientWidth) !== viewIdx)
-      el.scrollTo({ left: viewIdx * el.clientWidth, behavior: "smooth" });
+    if (el && Math.round(Math.abs(el.scrollLeft) / el.clientWidth) !== viewIdx)
+      el.scrollTo({ left: -viewIdx * el.clientWidth, behavior: "smooth" });
   }, [viewIdx]);
   const onScroll = () => {
     const el = ref.current;
     if (!el || !el.clientWidth) return;
-    const i = Math.round(el.scrollLeft / el.clientWidth);
+    const i = Math.round(Math.abs(el.scrollLeft) / el.clientWidth);
     if (i !== viewIdx && i >= 0 && i < pages.length) onView(i);
   };
   return (
@@ -1330,10 +1330,10 @@ function SwipePages({ pages, height, viewIdx, onView, onFull, onBg, clipFor }: {
         <Maximize2 size={16} />
       </button>
       <div ref={ref} onScroll={onScroll}
-        style={{ display: "flex", overflowX: "auto", overflowY: "hidden", scrollSnapType: "x mandatory",
+        style={{ display: "flex", direction: "rtl", overflowX: "auto", overflowY: "hidden", scrollSnapType: "x mandatory",
           WebkitOverflowScrolling: "touch", scrollbarWidth: "none" as any, msOverflowStyle: "none" as any }}>
         {pages.map((pn, i) => (
-          <div key={pn} style={{ flex: "0 0 100%", scrollSnapAlign: "center", scrollSnapStop: "always" }}>
+          <div key={pn} style={{ flex: "0 0 100%", direction: "ltr", scrollSnapAlign: "center", scrollSnapStop: "always" }}>
             <MushafPageView page={pn} seamless pureWhite availableHeight={height} maxStretch={1.4}
               onlySurahs={clipFor?.(pn) ?? undefined}
               onBackground={i === 0 ? onBg : undefined} />
@@ -1342,7 +1342,7 @@ function SwipePages({ pages, height, viewIdx, onView, onFull, onBg, clipFor }: {
       </div>
       {/* Dots + label */}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, padding: "8px 0 2px" }}>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, direction: "rtl" }}>
           {pages.map((pn, i) => (
             <button key={pn} onClick={() => onView(i)} aria-label={`Page ${pn}`}
               style={{ width: i === viewIdx ? 22 : 9, height: 9, borderRadius: 6, border: "none", padding: 0, cursor: "pointer",
@@ -1350,7 +1350,7 @@ function SwipePages({ pages, height, viewIdx, onView, onFull, onBg, clipFor }: {
           ))}
         </div>
         <span style={{ fontSize: 10, fontWeight: 700, color: "#6B7280" }}>
-          Page {pages[viewIdx]} · {viewIdx + 1} of {pages.length} · swipe to see the next page
+          Page {pages[viewIdx]} · {viewIdx + 1} of {pages.length} · swipe right for the next page
         </span>
       </div>
     </div>
@@ -1411,6 +1411,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // pageIdx stays 0; viewIdx is only which page the student is looking at (swipe).
   const isGroup = todayPages.length > 1;
   const [viewIdx, setViewIdx] = useState(0);
+  const swipeStart = useRef<{ x: number; y: number } | null>(null);
   const pageGroupsRef = useRef<Ayah[][]>([]);
   const pagesKey = todayPages.join(",");
   const curViewPage = todayPages[isGroup ? viewIdx : pageIdx];
@@ -3021,7 +3022,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                     <span style={{fontSize:13,fontWeight:800,color:"#1a1a2e"}}>Page {curViewPage}</span>
                   )}
                 </div>
-                <div style={{flex:1,minHeight:0,overflowY:"auto",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <div
+                  onTouchStart={e=>{ const t=e.touches[0]; swipeStart.current={x:t.clientX,y:t.clientY}; }}
+                  onTouchEnd={e=>{
+                    const st=swipeStart.current; swipeStart.current=null;
+                    if(!st||!isGroup) return;
+                    const t=e.changedTouches[0]; const dx=t.clientX-st.x; const dy=t.clientY-st.y;
+                    if(Math.abs(dx)<50||Math.abs(dx)<Math.abs(dy)*1.5) return;
+                    setViewIdx(i=>dx>0?Math.min(todayPages.length-1,i+1):Math.max(0,i-1)); // swipe right = next page (Mushaf direction)
+                  }}
+                  style={{flex:1,minHeight:0,overflowY:"auto",display:"flex",alignItems:"center",justifyContent:"center",touchAction:"pan-y"}}>
                   <div style={{width:"100%"}}>
                     <MushafPageView key={curViewPage} page={curViewPage} seamless pureWhite availableHeight={Math.max(300, winH-125)} maxStretch={1.4} onlySurahs={clipFor(curViewPage)??undefined}/>
                   </div>
