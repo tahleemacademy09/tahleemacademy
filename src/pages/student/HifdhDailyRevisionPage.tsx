@@ -1842,22 +1842,28 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         // even on private buckets. The local blob URL is kept for immediate student playback
         // and is NEVER replaced with the storage URL (avoids 403 on private buckets).
         const uploadAudioToStorage = async (): Promise<string|null> => {
-          try {
-            const today = todayISO();
-            const ext   = blob.type.includes("mp4") ? "mp4" : "webm";
-            const path  = `${userId}/${today}_${Date.now()}.${ext}`;
-            const { error: upErr } = await (supabase as any).storage
-              .from("hifdh-daily-audio")
-              .upload(path, blob, { contentType: blob.type, upsert: true });
-            if (!upErr) {
-              // Use createSignedUrl (works on private buckets) instead of getPublicUrl
-              // which silently returns a broken URL when the bucket has no public policy.
-              const { data: signedData } = await (supabase as any).storage
+          const today = todayISO();
+          const ext   = blob.type.includes("mp4") ? "mp4" : "webm";
+          const path  = `${userId}/${today}_${Date.now()}.${ext}`;
+          // Retry a few times: a flaky mobile connection is the usual reason an upload fails.
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              const { error: upErr } = await (supabase as any).storage
                 .from("hifdh-daily-audio")
-                .createSignedUrl(path, 60 * 60 * 24); // 24-hour signed URL for admin review
+                .upload(path, blob, { contentType: blob.type || "audio/webm", upsert: true });
+              if (upErr) throw upErr;
+              // 1-year signed URL (the old 24h one stopped working for teachers/admins the next day).
+              const { data: signedData, error: signErr } = await (supabase as any).storage
+                .from("hifdh-daily-audio")
+                .createSignedUrl(path, 60 * 60 * 24 * 365);
+              if (signErr) throw signErr;
               return signedData?.signedUrl ?? null;
+            } catch (e: any) {
+              console.warn(`[HifdhDaily] audio upload attempt ${attempt}/3 failed:`, e?.message ?? e);
+              if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));
             }
-          } catch { /* bucket may not exist yet — silent fail */ }
+          }
+          console.error("[HifdhDaily] audio upload failed after 3 attempts — check the 'hifdh-daily-audio' bucket and its policies");
           return null;
         };
 
@@ -2093,7 +2099,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // mispronounces Arabic and has none of the correct tajweed. If the CDN
   // genuinely fails, we surface a retry state rather than substituting TTS.
   // ──────────────────────────────────────────────────────────────────────────
+  const listenCtxRef   = useRef<AudioContext | null>(null);
+  const listenSrcRef   = useRef<AudioBufferSourceNode | null>(null);
+  const listenTokenRef = useRef(0);
   const stopListenAudio = () => {
+    listenTokenRef.current++;
+    if (listenSrcRef.current) {
+      try { listenSrcRef.current.onended = null; listenSrcRef.current.stop(); } catch {}
+      try { listenSrcRef.current.disconnect(); } catch {}
+      listenSrcRef.current = null;
+    }
     if (listenAudioRef.current) {
       listenAudioRef.current.pause(); listenAudioRef.current.src = "";
       listenAudioRef.current = null;
@@ -2112,51 +2127,68 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       setListenErrorUrl("missing verse data (surahNum=" + (surahNum??0) + " ayah=" + (numberInSurah??0) + ")");
       return;
     }
-    // play() must be called synchronously inside the click-handler user-gesture.
-    // cdn.islamic.network is used as PRIMARY: everyayah.com has a known HTTPS
-    // certificate mismatch (NET::ERR_CERT_COMMON_NAME_INVALID) that makes it
-    // fail as a primary source, and by the time that failure triggered the old
-    // fallback (inside an async onerror/catch), the tap's user-gesture window
-    // had already expired on mobile — so the fallback play() was often blocked
-    // too, landing on the error state. islamic.network is reliable HTTPS and
-    // is now called first, synchronously, inside the tap handler.
     const everyAyahUrl = quranAyahAudioUrl(surahNum, numberInSurah, "Alafasy_128kbps");
     const islamicNetUrl = globalNum && globalNum > 0
       ? `https://cdn.islamic.network/quran/audio/128/ar.alafasy/${globalNum}.mp3`
       : null;
-    const primaryUrl = islamicNetUrl ?? everyAyahUrl;
-    const fallbackUrl = islamicNetUrl ? everyAyahUrl : null;
-    console.log("[HifdhDaily] playListenAudio primary:", primaryUrl, "fallback:", fallbackUrl);
+    const urls = [islamicNetUrl, everyAyahUrl].filter(Boolean) as string[];
+    const primaryUrl = urls[0];
+    const token = ++listenTokenRef.current;
+    setIsSpeaking(true);
 
-    const doPlay = (url: string, isFallback: boolean) => {
-      const audio = new Audio(url);
+    // The student has just used the microphone. On Android that leaves the phone's audio in "call"
+    // mode, where a normal <audio> element plays silently (or through the earpiece). Playing the
+    // decoded audio through an AudioContext always uses the loudspeaker — same fix the
+    // "Your Recitation" player already uses. The context is created/resumed right here, inside the
+    // tap, so the browser allows it.
+    const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
+    let ctx: AudioContext | null = null;
+    let resumed: Promise<void> = Promise.resolve();
+    try {
+      if (AC) {
+        ctx = listenCtxRef.current && listenCtxRef.current.state !== "closed" ? listenCtxRef.current : new AC();
+        listenCtxRef.current = ctx;
+        if (ctx!.state === "suspended") resumed = ctx!.resume();
+      }
+    } catch { ctx = null; }
+
+    const viaHtmlAudio = (i: number) => {
+      if (token !== listenTokenRef.current) return;
+      if (i >= urls.length) { setIsSpeaking(false); setListenError(true); setListenErrorUrl(primaryUrl); return; }
+      const audio = new Audio(urls[i]);
       listenAudioRef.current = audio;
-      setIsSpeaking(true);
       audio.onended = () => { setIsSpeaking(false); setListenDone(true); listenAudioRef.current = null; };
-      audio.onerror = () => {
-        console.error("[HifdhDaily] CDN failed:", url, "code:", audio.error?.code);
-        listenAudioRef.current = null;
-        if (!isFallback && fallbackUrl) {
-          doPlay(fallbackUrl, true);
-        } else {
-          setIsSpeaking(false);
-          setListenError(true);
-          setListenErrorUrl(primaryUrl);
-        }
-      };
-      audio.play().catch((e) => {
-        console.error("[HifdhDaily] play() rejected:", e?.name, url);
-        listenAudioRef.current = null;
-        if (!isFallback && fallbackUrl) {
-          doPlay(fallbackUrl, true);
-        } else {
-          setIsSpeaking(false);
-          setListenError(true);
-          setListenErrorUrl(primaryUrl);
-        }
-      });
+      audio.onerror = () => { listenAudioRef.current = null; viaHtmlAudio(i + 1); };
+      audio.play().catch(() => { listenAudioRef.current = null; viaHtmlAudio(i + 1); });
     };
-    doPlay(primaryUrl, false);
+
+    const viaContext = async (i: number): Promise<boolean> => {
+      if (!ctx || i >= urls.length) return false;
+      try {
+        const resp = await fetch(urls[i]);
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        const buf = await resp.arrayBuffer();
+        await resumed;
+        const decoded = await ctx.decodeAudioData(buf);
+        if (token !== listenTokenRef.current) return true;     // student moved on
+        const src = ctx.createBufferSource();
+        src.buffer = decoded;
+        src.connect(ctx.destination);
+        src.onended = () => {
+          if (listenSrcRef.current === src) {
+            listenSrcRef.current = null; setIsSpeaking(false); setListenDone(true);
+          }
+        };
+        listenSrcRef.current = src;
+        src.start(0);
+        return true;
+      } catch (e: any) {
+        console.warn("[HifdhDaily] listen audio via AudioContext failed:", urls[i], e?.message ?? e);
+        return viaContext(i + 1);
+      }
+    };
+
+    viaContext(0).then(ok => { if (!ok && token === listenTokenRef.current) viaHtmlAudio(0); });
   };
 
   const acceptPage = () => {
@@ -2935,8 +2967,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                   </div>
                 </div>
                 <div style={{padding:"10px 16px",paddingBottom:"calc(10px + env(safe-area-inset-bottom, 0px))",borderTop:`1px solid ${BRD}`,flexShrink:0}}>
-                  <button onClick={()=>{setShowFull(false);startRecording();}}
-                    style={{width:"100%",padding:"14px",borderRadius:14,border:"none",cursor:"pointer",background:`linear-gradient(135deg,${G2},${G3})`,color:W,fontWeight:900,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"inherit"}}>
+                  <button onClick={()=>{setShowFull(false);startRecording();}} disabled={fetchingPage||!pageAyahs.length}
+                    style={{width:"100%",padding:"14px",borderRadius:14,border:"none",cursor:(fetchingPage||!pageAyahs.length)?"wait":"pointer",opacity:(fetchingPage||!pageAyahs.length)?.55:1,background:`linear-gradient(135deg,${G2},${G3})`,color:W,fontWeight:900,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"inherit"}}>
                     <Mic size={17}/> Start Reciting
                   </button>
                 </div>
@@ -2948,11 +2980,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           <div style={{padding:"12px 16px",background:W,borderTop:`1px solid ${BRD}`,flexShrink:0}}>
             {!isRecording
               ?(
-                <button onClick={startRecording}
-                  style={{width:"100%",padding:"15px",borderRadius:14,border:"none",cursor:"pointer",
+                <button onClick={startRecording} disabled={fetchingPage||!pageAyahs.length}
+                  style={{width:"100%",padding:"15px",borderRadius:14,border:"none",cursor:(fetchingPage||!pageAyahs.length)?"wait":"pointer",opacity:(fetchingPage||!pageAyahs.length)?.55:1,
                     background:`linear-gradient(135deg,${G2},${G3})`,color:W,fontWeight:900,fontSize:14,
                     display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"inherit"}}>
-                  <Mic size={17}/> Start Reciting
+                  <Mic size={17}/> {(fetchingPage||!pageAyahs.length)?"Loading page…":"Start Reciting"}
                 </button>
               ):(
                 <button onClick={handleStop}
