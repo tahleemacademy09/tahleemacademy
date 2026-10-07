@@ -694,6 +694,184 @@ const SubjectsTabView = React.memo(({ fSubjects, search, sLoad, unlinked, selCou
   );
 });
 
+
+// ── Visual lesson-page editor ───────────────────────────────────────────────
+// Edits lessons.interactive_html the way students see it (no raw HTML). The page is loaded into a
+// script-free iframe (scripts off => the DOM stays pristine, so what we serialise back is exactly
+// what was edited). Every edit is converted to HTML automatically.
+const BLANK_LESSON_HTML =
+  '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+  '<link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">' +
+  '<style>body{margin:0;padding:16px;font-family:Cairo,sans-serif;line-height:2;color:#182B1D;background:#fbf9f4}h2{font-family:Amiri,serif;color:#234D3A}.cv{background:#f6e7b4;border-radius:6px;padding:0 4px}.pl{border-bottom:2px solid #234D3A}</style></head>' +
+  '<body><h2>Lesson title</h2><p>Start typing here…</p></body></html>';
+
+const ED_TEXT_COLORS = ["#182B1D", "#234D3A", "#8A6414", "#b91c1c", "#1d4ed8"];
+const ED_HILITES = ["#f6e7b4", "#fde68a", "#bbf7d0", "#bfdbfe", "transparent"];
+const ED_SIZES: [string, string][] = [["Small", "15px"], ["Normal", "19px"], ["Large", "25px"], ["X-Large", "32px"]];
+
+const LessonPageEditor = React.memo(({ initialHtml, onChange, flushRef }: {
+  initialHtml: string;
+  onChange: (html: string) => void;
+  flushRef: React.MutableRefObject<(() => string | null) | null>;
+}) => {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const initial = useRef(initialHtml).current;          // constant: never reloads the iframe while typing
+  const dirty = useRef(false);
+  const closedIdx = useRef<Set<number>>(new Set());     // <details> that were closed originally
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
+  const [ready, setReady] = useState(false);
+
+  const getDoc = () => frameRef.current?.contentDocument || null;
+
+  const serialize = useCallback((): string | null => {
+    const doc = getDoc();
+    if (!doc?.documentElement) return null;
+    const clone = doc.documentElement.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll("style[data-ed]").forEach(n => n.remove());
+    clone.querySelector("body")?.removeAttribute("contenteditable");
+    clone.querySelector("body")?.removeAttribute("spellcheck");
+    clone.querySelectorAll("details").forEach((d, i) => { if (closedIdx.current.has(i)) d.removeAttribute("open"); });
+    clone.querySelectorAll('[style=""]').forEach(n => n.removeAttribute("style"));
+    return "<!DOCTYPE html>" + clone.outerHTML;
+  }, []);
+
+  const sync = useCallback(() => {
+    dirty.current = true;
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => { const h = serialize(); if (h) onChangeRef.current(h); }, 250);
+  }, [serialize]);
+
+  useEffect(() => {
+    flushRef.current = () => (dirty.current ? serialize() : null);
+    return () => { flushRef.current = null; clearTimeout(timer.current); };
+  }, [flushRef, serialize]);
+
+  const onLoad = () => {
+    const doc = getDoc();
+    if (!doc?.body) return;
+    // Show everything: open every <details> (translations / answers live inside) and remember which were closed.
+    closedIdx.current = new Set();
+    doc.querySelectorAll("details").forEach((d, i) => { if (!d.open) closedIdx.current.add(i); d.open = true; });
+    const st = doc.createElement("style");
+    st.setAttribute("data-ed", "1");
+    st.textContent = "body{outline:none;caret-color:#8A6414;min-height:100vh;-webkit-user-select:text;user-select:text}summary{cursor:text}details>summary::-webkit-details-marker{display:none}";
+    doc.head.appendChild(st);
+    doc.body.setAttribute("contenteditable", "true");
+    doc.body.setAttribute("spellcheck", "false");
+    try { doc.execCommand("styleWithCSS", false, "true"); } catch { /* noop */ }
+    doc.addEventListener("input", sync);
+    // Stop summaries collapsing / buttons acting while editing.
+    doc.addEventListener("click", e => { const t = e.target as HTMLElement; if (t.closest("summary, button, a")) e.preventDefault(); }, true);
+    doc.addEventListener("keyup", e => { if (e.key === " " && (e.target as HTMLElement)?.closest?.("summary")) e.preventDefault(); }, true);
+    doc.addEventListener("toggle", e => { const d = e.target as HTMLDetailsElement; if (d && d.tagName === "DETAILS" && !d.open) d.open = true; }, true);
+    setReady(true);
+  };
+
+  const cmd = (name: string, val?: string) => {
+    const doc = getDoc(); if (!doc) return;
+    frameRef.current?.contentWindow?.focus();
+    try { doc.execCommand(name, false, val); } catch { /* noop */ }
+    sync();
+  };
+
+  const selRange = () => {
+    const doc = getDoc(); const sel = doc?.getSelection();
+    if (!doc || !sel || !sel.rangeCount) return null;
+    return { doc, sel, range: sel.getRangeAt(0) };
+  };
+
+  const wrap = (make: (doc: Document) => HTMLElement) => {
+    const r = selRange(); if (!r || r.sel.isCollapsed) return;
+    const el = make(r.doc);
+    el.appendChild(r.range.extractContents());
+    r.range.insertNode(el);
+    r.sel.removeAllRanges();
+    const nr = r.doc.createRange(); nr.selectNodeContents(el); r.sel.addRange(nr);
+    sync();
+  };
+
+  const setSize = (px: string) => wrap(doc => { const sp = doc.createElement("span"); sp.style.fontSize = px; return sp; });
+
+  const toggleClass = (cls: string) => {
+    const r = selRange(); if (!r) return;
+    const node = r.sel.anchorNode as Node | null;
+    const host = (node && (node.nodeType === 1 ? (node as HTMLElement) : node.parentElement))?.closest("span." + cls);
+    if (host) {                       // already styled → unwrap
+      const parent = host.parentNode!;
+      while (host.firstChild) parent.insertBefore(host.firstChild, host);
+      parent.removeChild(host);
+      sync();
+    } else {
+      wrap(doc => { const sp = doc.createElement("span"); sp.className = cls; return sp; });
+    }
+  };
+
+  const setDir = (dir: "rtl" | "ltr") => {
+    const r = selRange(); if (!r) return;
+    const node = r.sel.anchorNode as Node | null;
+    const el = (node && (node.nodeType === 1 ? (node as HTMLElement) : node.parentElement))?.closest("p,div,li,h2,h3,summary,label,section") as HTMLElement | null;
+    if (!el) return;
+    el.setAttribute("dir", dir);
+    el.style.textAlign = dir === "rtl" ? "right" : "left";
+    sync();
+  };
+
+  const clearFormat = () => {
+    cmd("removeFormat");
+    const r = selRange(); if (!r) return;
+    const node = r.sel.anchorNode as Node | null;
+    const host = (node && (node.nodeType === 1 ? (node as HTMLElement) : node.parentElement))?.closest("span.cv, span.pl");
+    if (host) { const parent = host.parentNode!; while (host.firstChild) parent.insertBefore(host.firstChild, host); parent.removeChild(host); sync(); }
+  };
+
+  const tb: React.CSSProperties = { minWidth: 34, height: 34, padding: "0 9px", borderRadius: 8, border: "1px solid #D1D5DB", background: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", color: "#111", flex: "none" };
+  const noFocus = (e: React.MouseEvent) => e.preventDefault();
+  const sep = <span style={{ width: 1, background: "#E5E7EB", margin: "0 2px", flex: "none" }} />;
+
+  return (
+    <div style={{ border: "1px solid #E5E7EB", borderRadius: 12, overflow: "hidden", background: "#fff" }}>
+      <div onMouseDown={noFocus} style={{ display: "flex", gap: 6, padding: 8, overflowX: "auto", background: "#F9FAFB", borderBottom: "1px solid #E5E7EB", opacity: ready ? 1 : .5, pointerEvents: ready ? "auto" : "none" }}>
+        <button type="button" style={tb} onClick={() => cmd("undo")} title="Undo">↶</button>
+        <button type="button" style={tb} onClick={() => cmd("redo")} title="Redo">↷</button>
+        {sep}
+        <button type="button" style={tb} onClick={() => cmd("bold")} title="Bold"><b>B</b></button>
+        <button type="button" style={{ ...tb, fontStyle: "italic" }} onClick={() => cmd("italic")} title="Italic">I</button>
+        <button type="button" style={{ ...tb, textDecoration: "underline" }} onClick={() => cmd("underline")} title="Underline">U</button>
+        {sep}
+        {ED_SIZES.map(([label, px]) => (
+          <button key={label} type="button" style={tb} onClick={() => setSize(px)} title={"Text size: " + label}>{label === "Small" ? "A−" : label === "Normal" ? "A" : label === "Large" ? "A+" : "A++"}</button>
+        ))}
+        {sep}
+        {ED_TEXT_COLORS.map(c => (
+          <button key={c} type="button" onClick={() => cmd("foreColor", c)} title="Text colour"
+            style={{ ...tb, minWidth: 30, padding: 0, color: c, fontSize: 16 }}>A<span style={{ display: "block", height: 3, background: c, margin: "-6px 7px 0", borderRadius: 2 }} /></button>
+        ))}
+        {sep}
+        {ED_HILITES.map(c => (
+          <button key={c} type="button" onClick={() => cmd("hiliteColor", c)} title={c === "transparent" ? "Remove highlight" : "Highlight"}
+            style={{ ...tb, minWidth: 30, padding: 0, background: c === "transparent" ? "#fff" : c }}>{c === "transparent" ? "✕" : ""}</button>
+        ))}
+        {sep}
+        <button type="button" style={tb} onClick={() => toggleClass("cv")} title="Lesson highlight (conversation word)">Word</button>
+        <button type="button" style={tb} onClick={() => toggleClass("pl")} title="Lesson underline (place word)">Place</button>
+        {sep}
+        <button type="button" style={tb} onClick={() => cmd("justifyRight")} title="Align right">⇥</button>
+        <button type="button" style={tb} onClick={() => cmd("justifyCenter")} title="Centre">↔</button>
+        <button type="button" style={tb} onClick={() => cmd("justifyLeft")} title="Align left">⇤</button>
+        <button type="button" style={tb} onClick={() => setDir("rtl")} title="Right-to-left (Arabic)">RTL</button>
+        <button type="button" style={tb} onClick={() => setDir("ltr")} title="Left-to-right (English)">LTR</button>
+        {sep}
+        <button type="button" style={tb} onClick={() => cmd("insertUnorderedList")} title="Bullet list">• List</button>
+        <button type="button" style={tb} onClick={clearFormat} title="Clear formatting">Tx</button>
+      </div>
+      <iframe ref={frameRef} srcDoc={initial} onLoad={onLoad} title="Lesson page editor"
+        sandbox="allow-same-origin"
+        style={{ width: "100%", height: 460, border: "none", display: "block", background: "#fff", resize: "vertical" }} />
+    </div>
+  );
+});
+
 const LessonModal = React.memo(({ ed, onClose, onSave, busy }: { ed?: any; onClose: () => void; onSave: (p: any) => Promise<void>; busy: boolean }) => {
   const [f, setF] = useState({
     title: ed?.title || "", title_ar: ed?.title_ar || "",
@@ -703,7 +881,7 @@ const LessonModal = React.memo(({ ed, onClose, onSave, busy }: { ed?: any; onClo
     is_free: ed?.is_free || false,
     interactive_html: ed?.interactive_html || "",
   });
-  const [showPreview, setShowPreview] = useState(false);
+  const flushRef = useRef<(() => string | null) | null>(null);
   
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
@@ -722,26 +900,15 @@ const LessonModal = React.memo(({ ed, onClose, onSave, busy }: { ed?: any; onClo
               style={{ ...inp, resize: "vertical" }} placeholder={"• Rules of Noon Sakinah\n• Practice recitation of Ayat 1–7\n• Q&A session"} />
           </Fld>
           <Fld label="Lesson page (what students see)">
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {f.interactive_html ? (
-                <>
-                  <button type="button" onClick={() => setShowPreview(v => !v)}
-                    style={{ padding: "9px 12px", borderRadius: 10, border: "1.5px solid #86EFAC", background: "#F0FDF4", color: "#166534", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
-                    {showPreview ? "Hide preview" : "Preview lesson"}
-                  </button>
-                  {showPreview && (
-                    <iframe srcDoc={f.interactive_html} title="Lesson preview" sandbox="allow-scripts allow-same-origin"
-                      style={{ width: "100%", height: 420, border: "1px solid #E5E7EB", borderRadius: 10, background: "#fff" }} />
-                  )}
-                </>
-              ) : (
-                <p style={{ margin: 0, fontSize: 12, color: "#9CA3AF" }}>No lesson page yet — paste HTML below to add one.</p>
-              )}
-              <textarea value={f.interactive_html} onChange={e => setF(l => ({ ...l, interactive_html: e.target.value }))} rows={8}
-                spellCheck={false} dir="ltr"
-                style={{ ...inp, resize: "vertical", fontFamily: "ui-monospace,Menlo,monospace", fontSize: 11, whiteSpace: "pre", overflow: "auto" }}
-                placeholder="<!DOCTYPE html>…" />
-            </div>
+            {f.interactive_html ? (
+              <LessonPageEditor initialHtml={f.interactive_html} flushRef={flushRef}
+                onChange={html => setF(l => ({ ...l, interactive_html: html }))} />
+            ) : (
+              <button type="button" onClick={() => setF(l => ({ ...l, interactive_html: BLANK_LESSON_HTML }))}
+                style={{ padding: "10px 12px", borderRadius: 10, border: "1.5px dashed #86EFAC", background: "#F0FDF4", color: "#166534", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                + Add lesson page
+              </button>
+            )}
           </Fld>
           <Fld label="Estimated Duration (minutes)"><input type="number" value={f.duration_minutes} onChange={e => setF(l => ({ ...l, duration_minutes: Number(e.target.value) }))} style={inp} min={0} /></Fld>
           <Fld label="Sort Order"><input type="number" value={f.sort_order} onChange={e => setF(l => ({ ...l, sort_order: Number(e.target.value) }))} style={inp} min={0} /></Fld>
@@ -749,7 +916,7 @@ const LessonModal = React.memo(({ ed, onClose, onSave, busy }: { ed?: any; onClo
             <input type="checkbox" id="lfree" checked={f.is_free} onChange={e => setF(l => ({ ...l, is_free: e.target.checked }))} />
             <label htmlFor="lfree" style={{ fontSize: 13, color: "#374151" }}>Free preview (visible without enrolment)</label>
           </div>
-          <button type="button" onClick={() => onSave(f)} disabled={busy || !f.title}
+          <button type="button" onClick={() => { const html = flushRef.current?.(); onSave(html ? { ...f, interactive_html: html } : f); }} disabled={busy || !f.title}
             style={{ padding: "12px", borderRadius: 12, border: "none", background: busy || !f.title ? "#e5e7eb" : `linear-gradient(135deg,${G},${GM})`, color: busy || !f.title ? "#9ca3af" : "#fff", fontWeight: 800, cursor: busy || !f.title ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             <Save size={14} /> {busy ? "Saving…" : ed ? "Update Lesson" : "Add Lesson"}
           </button>
