@@ -3,6 +3,7 @@
 // portions as side-by-side tiles, page chips like the D1–D7 circles, and the REAL mushaf page
 // (same look as Daily Hifdh Revision) instead of page numbers.
 
+import { useRevisionAssignedCount } from "@/hooks/useRevisionAssignedCount";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -111,6 +112,7 @@ export default function HifdhProgramHome() {
   const [fines, setFines] = useState<any[]>([]);
   const [revDays, setRevDays] = useState(0);
   const [doneToday, setDoneToday] = useState(false);
+  const revisionPending = useRevisionAssignedCount(user?.id, String(doneToday));
   const [busy, setBusy] = useState(false);
   const [selSlot, setSelSlot] = useState<number>(1);
   const [selPage, setSelPage] = useState<number | null>(null);
@@ -224,12 +226,18 @@ export default function HifdhProgramHome() {
   const doneCount = tasks.filter((t) => ["submitted", "passed"].includes(t.status)).length;
   const showBanner = suspended || fines.length > 0 || program.miss_streak > 0;
 
-  const tabBtn = (id: Tab, label: string, icon: React.ReactNode) => (
+  // Pending counts for the tab badges
+  const memorizePending = tasks.filter((t) => ["read_cleared", "failed"].includes(t.status)).length;
+  const readAlongPending = group && member && ["pending", "repeat"].includes(member.read_status) ? 1 : 0;
+
+  const tabBtn = (id: Tab, label: string, icon: React.ReactNode, badge = 0) => (
     <button key={id} onClick={() => setTab(id)} style={{
       flex: 1, padding: "13px 4px", background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700,
       display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
       color: tab === id ? HH_INK : HH_MUTED, borderBottom: `3px solid ${tab === id ? HH_GREEN : "transparent"}`,
-    }}>{icon}{label}</button>
+    }}>{icon}{label}{badge > 0 && (
+      <span style={{ minWidth: 18, height: 18, padding: "0 5px", borderRadius: 9, background: "#ef4444", color: "#fff", fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>{badge}</span>
+    )}</button>
   );
 
   return (
@@ -259,9 +267,9 @@ export default function HifdhProgramHome() {
         {/* Tabs */}
         {!suspended && (
           <div style={{ display: "flex", background: "#fff", borderBottom: `1px solid ${HH_LINE}` }}>
-            {tabBtn("memorize", "Memorize", <BookOpen size={15} />)}
-            {tabBtn("readalong", "Read-Along", <Video size={15} />)}
-            {tabBtn("revision", "Revision", <Repeat size={15} />)}
+            {tabBtn("memorize", "Memorize", <BookOpen size={15} />, suspended ? 0 : memorizePending)}
+            {tabBtn("readalong", "Read-Along", <Video size={15} />, suspended ? 0 : readAlongPending)}
+            {tabBtn("revision", "Revision", <Repeat size={15} />, suspended ? 0 : revisionPending)}
           </div>
         )}
 
