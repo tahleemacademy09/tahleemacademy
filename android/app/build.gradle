@@ -2,6 +2,12 @@ apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
 
 android {
+    applicationVariants.all { variant ->
+        variant.outputs.all {
+            outputFileName = "TahleemAcademy-${variant.name}.apk"
+        }
+    }
+
     namespace = "com.tahleemacademy.app"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
