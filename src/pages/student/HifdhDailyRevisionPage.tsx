@@ -211,6 +211,16 @@ function getAssignmentStartPage(a: Assignment): number {
 }
 
 /* ── Helpers ────────────────────────────────────────────────────── */
+/** Teacher's note shown to the student: only the free-text `custom` part of the notes JSON
+ *  (the rest — segments, programStart, etc. — is internal and must never be displayed). */
+function teacherNote(notes?: string | null): string {
+  if (!notes) return "";
+  try {
+    const o = JSON.parse(notes);
+    if (o && typeof o === "object") return typeof o.custom === "string" ? o.custom.trim() : "";
+  } catch { /* plain-text note */ }
+  return notes;
+}
 function getStartDate(a: Assignment): string|undefined {
   return a.program_start || a.starts_on || undefined;
 }
@@ -2876,12 +2886,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               ))}
             </div>
 
-            {assignment.notes&&(
+            {teacherNote(assignment.notes)&&(
               <div style={{padding:"12px 14px",borderRadius:12,background:`${GOLD}10`,
                 border:`1px solid ${GOLD}33`}}>
                 <p style={{margin:"0 0 4px",fontSize:10,fontWeight:800,color:"#92400E",
                   textTransform:"uppercase",letterSpacing:.5}}>📝 Teacher's Note</p>
-                <p style={{margin:0,fontSize:12,color:"#78350F",lineHeight:1.6}}>{assignment.notes}</p>
+                <p style={{margin:0,fontSize:12,color:"#78350F",lineHeight:1.6}}>{teacherNote(assignment.notes)}</p>
               </div>
             )}
 
@@ -4653,11 +4663,11 @@ export default function HifdhDailyRevisionPage() {
                       </div>
                     ))}
                   </div>
-                  {assignment.notes&&(
+                  {teacherNote(assignment.notes)&&(
                     <div style={{marginTop:10,padding:"10px 12px",borderRadius:10,
                       background:`${GOLD}0d`,border:`1px solid ${GOLD}33`}}>
                       <p style={{margin:0,fontSize:10,fontWeight:700,color:"#92400E"}}>📝 Teacher's Note</p>
-                      <p style={{margin:"3px 0 0",fontSize:12,color:"#78350F"}}>{assignment.notes}</p>
+                      <p style={{margin:"3px 0 0",fontSize:12,color:"#78350F"}}>{teacherNote(assignment.notes)}</p>
                     </div>
                   )}
                 </div>
