@@ -19,6 +19,7 @@ import { useAcademicLevels, getLevelConfig } from "@/hooks/useAcademicLevels";
 import { toast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
 import SubjectMaterials from "@/components/classroom/SubjectMaterials";
+import SubjectRecordings from "@/components/classroom/SubjectRecordings";
 import {
   Plus, BookOpen, Trash2, Edit2, ChevronRight, ChevronLeft,
   Loader2, EyeOff, Save, Image, Search, Layers, FolderOpen,
@@ -33,7 +34,7 @@ const GOLD = "#C9A84C";
 type MatType = "PDF"|"Video"|"Audio"|"Link"|"Text"|"Image"|"Document";
 type SortKey = "sort_order"|"title_asc"|"title_desc"|"level";
 type Level = string;
-type ContentTab = "syllabus"|"materials"|"lessons";
+type ContentTab = "syllabus"|"materials"|"lessons"|"recordings";
 
 const MATERIAL_TYPES: MatType[] = ["PDF","Video","Audio","Link","Text","Image","Document"];
 
@@ -1332,23 +1333,25 @@ export default function CourseManagement() {
               </>
             )}
           </div>
-          <button type="button" onClick={doAdd} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 11, border: "none", background: GOLD, color: G, fontSize: 13, fontWeight: 800, cursor: "pointer", flexShrink: 0, fontFamily: "inherit" }}>
+          {!(view === "content" && tab === "recordings") && <button type="button" onClick={doAdd} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 11, border: "none", background: GOLD, color: G, fontSize: 13, fontWeight: 800, cursor: "pointer", flexShrink: 0, fontFamily: "inherit" }}>
             <Plus size={14} /> {addLabel}
-          </button>
+          </button>}
         </div>
       </div>
 
       {/* Content tabs (only in content view) */}
       {view === "content" && (
-        <div style={{ background: "#fff", borderBottom: "1px solid #E5E7EB", padding: "0 16px", display: "flex", gap: 0 }}>
+        <div style={{ background: "#fff", borderBottom: "1px solid #E5E7EB", padding: "0 16px", display: "flex", gap: 0, overflowX: "auto", whiteSpace: "nowrap" }}>
           {([
             { id: "syllabus", label: "📋 Syllabus", count: (syllabus as any[]).length },
-            { id: "materials", label: "📁 Materials", count: (materials as any[]).length },            { id: "lessons", label: "📚 Sessions", count: (lessons as any[]).length },
+            { id: "materials", label: "📁 Materials", count: (materials as any[]).length },            
+            { id: "lessons", label: "📚 Sessions", count: (lessons as any[]).length },
+            { id: "recordings", label: "🎥 Recordings", count: 0 },
           ] as { id: ContentTab; label: string; count: number }[]).map(t => {
             const active = tab === t.id;
             return (
               <button key={t.id} onClick={() => setTab(t.id)}
-                style={{ padding: "12px 16px", border: "none", background: "none", cursor: "pointer", fontSize: 13, fontWeight: active ? 800 : 500, color: active ? G : "#6B7280", borderBottom: active ? `3px solid ${G}` : "3px solid transparent", display: "flex", alignItems: "center", gap: 7 }}>
+                style={{ flexShrink: 0, padding: "12px 16px", border: "none", background: "none", cursor: "pointer", fontSize: 13, fontWeight: active ? 800 : 500, color: active ? G : "#6B7280", borderBottom: active ? `3px solid ${G}` : "3px solid transparent", display: "flex", alignItems: "center", gap: 7 }}>
                 {t.label}
                 {t.count > 0 && <span style={{ background: active ? G : "#E5E7EB", color: active ? "#fff" : "#374151", borderRadius: 20, fontSize: 10, fontWeight: 700, padding: "1px 6px" }}>{t.count}</span>}
               </button>
@@ -1450,7 +1453,7 @@ export default function CourseManagement() {
 
         {/* ═══ CONTENT (Syllabus / Materials / Lessons) ══════ */}
         {view === "content" && selSubject && (
-          <div style={{ maxWidth: 720, margin: "0 auto" }}>
+          <div style={{ maxWidth: 1200, width: "100%", margin: "0 auto" }}>
             {/* Subject banner */}
             <div style={{ background: "#fff", borderRadius: 16, border: `1px solid ${safeLvl(selSubject.level).border}`, padding: "16px 20px", marginBottom: 20, display: "flex", alignItems: "center", gap: 14 }}>
               {selSubject.image_url && <img src={selSubject.image_url} alt="" style={{ width: 52, height: 52, borderRadius: 12, objectFit: "cover", flexShrink: 0 }} onError={e => { (e.target as any).style.display = "none"; }} />}
@@ -1528,6 +1531,16 @@ export default function CourseManagement() {
                 subjectTitle={selSubject.title}
               />
             )}
+            {/* ── RECORDINGS ────────────────────────────────── */}
+            {tab === "recordings" && selSubject && (
+              <div style={{ background: "#fff", borderRadius: 16, padding: 20 }}>
+                <div style={{ marginBottom: 16 }}>
+                  <h3 style={{ fontWeight: 800, fontSize: 15, color: "#111", margin: "0 0 2px" }}>Recordings</h3>
+                  <p style={{ fontSize: 12, color: "#9CA3AF", margin: 0 }}>Recorded live sessions for this subject — watch, edit details, download or delete</p>
+                </div>
+                <SubjectRecordings subjectId={selSubject.id} />
+              </div>
+            )}
             {/* ── LESSONS / SESSIONS ────────────────────────── */}
             {tab === "lessons" && (
               <div style={{ background: "#fff", borderRadius: 16, padding: 20 }}>
@@ -1543,28 +1556,30 @@ export default function CourseManagement() {
                   : (lessons as any[]).length === 0 ? <div style={{ textAlign: "center", padding: 48, color: "#9CA3AF" }}><BookOpen size={44} style={{ margin: "0 auto 14px", display: "block", opacity: .3 }} /><p style={{ fontWeight: 600, margin: "0 0 4px" }}>No sessions yet</p><p style={{ fontSize: 13, margin: 0 }}>Describe what each live session will cover</p></div>
                     : <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                       {(lessons as any[]).map((l: any, i: number) => (
-                        <div key={l.id} style={{ background: "#F9FAFB", borderRadius: 14, border: "1px solid #E5E7EB", padding: "14px 16px", display: "flex", gap: 12 }}>
-                          <div style={{ width: 34, height: 34, borderRadius: 10, background: "#F0FDF4", border: "1.5px solid #86EFAC", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: G, flexShrink: 0, marginTop: 1 }}>{i + 1}</div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <p style={{ fontWeight: 700, fontSize: 13, color: "#111", margin: "0 0 2px" }}>{l.title}</p>
-                            {l.title_ar && <p style={{ fontSize: 11, color: GOLD, margin: "0 0 4px", direction: "rtl", fontFamily: "'Amiri',serif" }}>{l.title_ar}</p>}
-                            {l.content && (
-                              <div style={{ marginTop: 6, padding: "8px 10px", borderRadius: 10, background: "#fff", border: "1px solid #E5E7EB" }}>
-                                {l.content.split("\n").filter(Boolean).map((line: string, j: number) => (
-                                  <p key={j} style={{ fontSize: 12, color: "#374151", margin: "2px 0", display: "flex", alignItems: "flex-start", gap: 6 }}>
-                                    <span style={{ color: G, fontWeight: 700, flexShrink: 0 }}>•</span>{line.replace(/^•\s*/, "")}
-                                  </p>
-                                ))}
-                              </div>
-                            )}
-                            <div style={{ display: "flex", gap: 8, fontSize: 11, color: "#9CA3AF", marginTop: 6, flexWrap: "wrap" }}>
-                              {l.duration_minutes > 0 && <span>⏱ {l.duration_minutes} min</span>}
-                              {l.is_free && <span style={{ color: "#16a34a", fontWeight: 700 }}>FREE</span>}
+                        <div key={l.id} style={{ background: "#F9FAFB", borderRadius: 14, border: "1px solid #E5E7EB", padding: "14px 16px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                            <div style={{ width: 34, height: 34, borderRadius: 10, background: "#F0FDF4", border: "1.5px solid #86EFAC", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: G, flexShrink: 0 }}>{i + 1}</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <p style={{ fontWeight: 700, fontSize: 14, color: "#111", margin: 0, overflowWrap: "anywhere" }}>{l.title}</p>
+                              {l.title_ar && <p style={{ fontSize: 12, color: GOLD, margin: "2px 0 0", direction: "rtl", textAlign: "right", fontFamily: "'Amiri',serif" }}>{l.title_ar}</p>}
+                            </div>
+                            <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                              <button type="button" aria-label="Edit session" onClick={() => { setEdLesson(l); setShowLesson(true); }} style={{ height: 34, padding: "0 12px", borderRadius: 9, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: G }}><Edit2 size={13} color={G} /> Edit</button>
+                              <button type="button" aria-label="Delete session" onClick={() => delLesson(l.id)} style={{ width: 34, height: 34, borderRadius: 9, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Trash2 size={13} color="#DC2626" /></button>
                             </div>
                           </div>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 5, flexShrink: 0 }}>
-                            <button type="button" onClick={() => { setEdLesson(l); setShowLesson(true); }} style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Edit2 size={12} color={G} /></button>
-                            <button type="button" onClick={() => delLesson(l.id)} style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Trash2 size={12} color="#DC2626" /></button>
+                          {l.content && (
+                            <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, background: "#fff", border: "1px solid #E5E7EB", width: "100%", boxSizing: "border-box" }}>
+                              {l.content.split("\n").filter(Boolean).map((line: string, j: number) => (
+                                <p key={j} style={{ fontSize: 13, color: "#374151", margin: "3px 0", display: "flex", alignItems: "flex-start", gap: 6, overflowWrap: "anywhere" }}>
+                                  <span style={{ color: G, fontWeight: 700, flexShrink: 0 }}>•</span><span style={{ unicodeBidi: "plaintext" }}>{line.replace(/^•\s*/, "")}</span>
+                                </p>
+                              ))}
+                            </div>
+                          )}
+                          <div style={{ display: "flex", gap: 8, fontSize: 11, color: "#9CA3AF", marginTop: 8, flexWrap: "wrap" }}>
+                            {l.duration_minutes > 0 && <span>⏱ {l.duration_minutes} min</span>}
+                            {l.is_free && <span style={{ color: "#16a34a", fontWeight: 700 }}>FREE</span>}
                           </div>
                         </div>
                       ))}

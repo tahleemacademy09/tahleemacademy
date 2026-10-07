@@ -24,11 +24,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import MaterialsViewer from "./MaterialsViewer";
+import HtmlMaterialEditor from "./HtmlMaterialEditor";
 import { useStaffTermId, useViewingTermId } from "@/hooks/useCurrentTermId";
 import {
   FileText, Video, Music, Image as ImageIcon, File as FileIcon,
   Upload, Plus, X, Trash2, Pencil,
-  Loader2, FolderOpen, Search, Lock, LockOpen,
+  Loader2, FolderOpen, Search, Lock, LockOpen, Code2, FilePlus2,
 } from "lucide-react";
 
 /* ── Design tokens (match SubjectAssignments / TeacherDashboard) ─────── */
@@ -57,6 +58,11 @@ const TYPE_CFG: Record<MaterialType, { color: string; bg: string; icon: any }> =
 const card: React.CSSProperties = {
   background: "#fff", border: `1px solid ${BORDER}`,
   borderRadius: 18, boxShadow: "0 2px 12px rgba(0,0,0,.06)", overflow: "hidden",
+};
+
+const isHtmlMaterial = (m: any) => {
+  const f = String(m?.file_url || "").split("?")[0].toLowerCase();
+  return f.endsWith(".html") || f.endsWith(".htm") || String(m?.material_type || "").toLowerCase().includes("html");
 };
 
 const fmtSize = (bytes?: number | null) => {
@@ -112,6 +118,7 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
   const [deleting, setDeleting]   = useState<any | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [htmlEditing, setHtmlEditing] = useState<any | null | false>(false); // false=closed, null=new page, row=edit
   const [feedback, setFeedback]   = useState<{ type: "success" | "error" | ""; message: string }>({ type: "", message: "" });
   const [form, setForm]           = useState({ ...emptyForm });
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -331,6 +338,11 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
           style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 16px", borderRadius: 11, border: "none", background: G, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", flexShrink: 0 }}>
           <Plus size={15} /> {t("New Material", "مادة جديدة")}
         </button>
+        <button
+          onClick={() => setHtmlEditing(null)}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 11, border: `1px solid ${GOLD}`, background: "#FBF6E6", color: G, fontWeight: 700, fontSize: 13, cursor: "pointer", flexShrink: 0 }}>
+          <FilePlus2 size={15} /> {t("New HTML Page", "صفحة HTML جديدة")}
+        </button>
       </div>
 
       {/* Lock status banner — reminds staff the tab is currently hidden from students */}
@@ -370,6 +382,11 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
                 </div>
               </div>
               <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                {isHtmlMaterial(m) && (
+                  <IconBtn onClick={() => setHtmlEditing(m)} title={t("Edit page content", "تحرير محتوى الصفحة")}>
+                    <Code2 size={15} color={GOLD} />
+                  </IconBtn>
+                )}
                 <IconBtn onClick={() => openEdit(m)} title={t("Edit", "تعديل")}>
                   <Pencil size={15} color={TMID} />
                 </IconBtn>
@@ -486,6 +503,17 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
             </form>
           </div>
         </div>
+      )}
+
+      {/* HTML page editor (visual / code / preview) */}
+      {htmlEditing !== false && subjectId && (
+        <HtmlMaterialEditor
+          material={htmlEditing}
+          subjectId={subjectId}
+          termId={currentTermId}
+          onClose={() => setHtmlEditing(false)}
+          onSaved={() => { setHtmlEditing(false); load(); }}
+        />
       )}
 
       {/* Delete confirm */}
