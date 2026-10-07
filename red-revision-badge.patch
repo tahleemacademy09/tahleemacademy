@@ -1,0 +1,64 @@
+diff --git a/src/pages/student/HifdhProgramHome.tsx b/src/pages/student/HifdhProgramHome.tsx
+--- a/src/pages/student/HifdhProgramHome.tsx
++++ b/src/pages/student/HifdhProgramHome.tsx
+@@ -8,6 +8,7 @@
+ import { supabase } from "@/integrations/supabase/client";
+ import { useAuth } from "@/contexts/AuthContext";
+ import { useLiveClass } from "@/contexts/LiveClassContext";
++import { useRevisionAssignedCount } from "@/hooks/useRevisionAssignedCount";
+ import { useToast } from "@/hooks/use-toast";
+ import MushafPageView from "@/components/hifdh/MushafPageView";
+ import { hpPortionLabel, hpPagesOf, hpSegmentFor } from "@/lib/hifdhPortion";
+@@ -92,6 +93,7 @@
+ 
+ export default function HifdhProgramHome() {
+   const { user } = useAuth();
++  const revisionCount = useRevisionAssignedCount(user?.id);
+   const { joinClass } = useLiveClass();
+   const navigate = useNavigate();
+   const { toast } = useToast();
+@@ -224,12 +226,21 @@
+   const doneCount = tasks.filter((t) => ["submitted", "passed"].includes(t.status)).length;
+   const showBanner = suspended || fines.length > 0 || program.miss_streak > 0;
+ 
+-  const tabBtn = (id: Tab, label: string, icon: React.ReactNode) => (
++  const tabBtn = (id: Tab, label: string, icon: React.ReactNode, count = 0) => (
+     <button key={id} onClick={() => setTab(id)} style={{
+       flex: 1, padding: "13px 4px", background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700,
+       display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+       color: tab === id ? HH_INK : HH_MUTED, borderBottom: `3px solid ${tab === id ? HH_GREEN : "transparent"}`,
+-    }}>{icon}{label}</button>
++    }}>
++      {icon}{label}
++      {count > 0 && (
++        <span aria-label={`${count} assigned`} style={{
++          background: HH_RED, color: "#fff", fontWeight: 800, fontSize: 10, lineHeight: 1,
++          minWidth: 16, height: 16, padding: "0 4px", borderRadius: 999,
++          display: "inline-flex", alignItems: "center", justifyContent: "center",
++        }}>{count > 99 ? "99+" : count}</span>
++      )}
++    </button>
+   );
+ 
+   return (
+@@ -261,7 +272,7 @@
+           <div style={{ display: "flex", background: "#fff", borderBottom: `1px solid ${HH_LINE}` }}>
+             {tabBtn("memorize", "Memorize", <BookOpen size={15} />)}
+             {tabBtn("readalong", "Read-Along", <Video size={15} />)}
+-            {tabBtn("revision", "Revision", <Repeat size={15} />)}
++            {tabBtn("revision", "Revision", <Repeat size={15} />, revisionCount)}
+           </div>
+         )}
+ 
+diff --git a/src/components/layout/DashboardLayout.tsx b/src/components/layout/DashboardLayout.tsx
+--- a/src/components/layout/DashboardLayout.tsx
++++ b/src/components/layout/DashboardLayout.tsx
+@@ -435,7 +435,7 @@
+       aria-label={`${count} unread`}
+       className="ms-auto inline-flex shrink-0 items-center justify-center rounded-full"
+       style={{
+-        background: "#c9a84c", color: "#14251b", fontWeight: 800,
++        background: "#dc2626", color: "#fff", fontWeight: 800,
+         fontSize: 10, lineHeight: 1, minWidth: 16, height: 16, padding: "0 4px",
+       }}
+     >
