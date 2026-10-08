@@ -3,6 +3,7 @@
    Routing configuration with lazy-loaded pages
 ═══════════════════════════════════════════════════════════════════════════════*/
 import { lazy, Suspense, useEffect } from "react";
+import Maintenance from "@/pages/Maintenance";
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -184,7 +185,17 @@ const queryClient = new QueryClient({
   },
 });
 
-const App = () => (
+// Set VITE_MAINTENANCE=true in Vercel env to show the maintenance screen to everyone.
+// Developer bypass: open the site once with ?bypass=1 (remembered in this browser).
+const MAINTENANCE = import.meta.env.VITE_MAINTENANCE === "true";
+if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("bypass") === "1") {
+  try { localStorage.setItem("tahleem-maint-bypass", "1"); } catch {}
+}
+const maintenanceBypassed = () => {
+  try { return localStorage.getItem("tahleem-maint-bypass") === "1"; } catch { return false; }
+};
+
+const AppMain = () => (
   <QueryClientProvider client={queryClient}>
     <LanguageProvider>
       <AuthProvider>
@@ -448,5 +459,7 @@ function PageViewTracker() {
   usePageViewTracking();
   return null;
 }
+
+const App = () => (MAINTENANCE && !maintenanceBypassed() ? <Maintenance /> : <AppMain />);
 
 export default App
