@@ -134,7 +134,20 @@ function dispatch(action: Action) {
 
 type Toast = Omit<ToasterToast, "id">;
 
+// Hide raw backend quota/restriction errors from students — show a friendly message instead.
+const QUOTA_RE = /restricted due to|exceed_[a-z_]*quota|project owner must upgrade|spend cap/i;
+function friendlyDescription(d: React.ReactNode): React.ReactNode {
+  if (typeof d === "string" && QUOTA_RE.test(d)) {
+    const ar = typeof localStorage !== "undefined" && localStorage.getItem("tahleem-lang") === "ar";
+    return ar
+      ? "نقوم بتحديث بسيط للنظام. يرجى المحاولة بعد قليل. جزاكم الله خيراً على صبركم."
+      : "We're doing a quick system upgrade. Please try again in a little while. Jazakumullah khayran for your patience.";
+  }
+  return d;
+}
+
 function toast({ ...props }: Toast) {
+  props = { ...props, description: friendlyDescription(props.description) };
   const id = genId();
 
   const update = (props: ToasterToast) =>
