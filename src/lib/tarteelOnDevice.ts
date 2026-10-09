@@ -87,7 +87,7 @@ export function advanceReveal(
   opts: { lookback?: number; lookahead?: number; skip?: number } = {},
 ): { frontier: number; matched: number[] } {
   const lookback = opts.lookback ?? 14;
-  const lookahead = opts.lookahead ?? 6;
+  const lookahead = opts.lookahead ?? 8;
   const skip = opts.skip ?? 3; // how many reference words may be skipped between two heard words
   if (!heard.length || frontier >= ref.length) return { frontier, matched: [] };
 
@@ -121,6 +121,9 @@ export function advanceReveal(
   }
   const newMatches = best.idxs.filter((i) => i >= frontier);
   if (!newMatches.length) return { frontier, matched: [] };
+  // A big jump forward on only two hits is usually a coincidence (common words like الله / من repeat a lot):
+  // require stronger evidence before moving the frontier more than a few words.
+  if (newMatches[0] - frontier > 3 && newMatches.length < 3) return { frontier, matched: [] };
   const last = newMatches[newMatches.length - 1];
   return { frontier: Math.max(frontier, last + 1), matched: newMatches };
 }
@@ -128,7 +131,8 @@ export function advanceReveal(
 /* ───────────────────────── Worker (model host) ───────────────────────── */
 
 const WORKER_SRC = `
-import { pipeline } from "${TRANSFORMERS_CDN}";
+import { pipeline, env } from "${TRANSFORMERS_CDN}";
+try { if (self.crossOriginIsolated) env.backends.onnx.wasm.numThreads = Math.min(4, self.navigator.hardwareConcurrency || 2); } catch (e) {}
 let asr = null;
 let device = "wasm";
 const MODEL = ${JSON.stringify(TARTEEL_MODEL)};
@@ -310,20 +314,71 @@ function resampleTo16k(input: Float32Array, srcRate: number): Float32Array {
   }
   return out;
 }
+/**
+ * Sequential audio segmenter. Every sample the microphone produces is handed to the model exactly once
+ * (plus a short overlap so a word cut at a boundary is heard whole). Because Whisper always processes a
+ * fixed 30 s block, a longer segment costs almost the same as a short one — so when the phone is slow the
+ * segment simply grows (up to maxSec) and the reveal catches up instead of silently skipping speech.
+ */
+export class SegmentBuffer {
+  private chunks: { start: number; data: Float32Array }[] = [];
+  private total = 0;     // absolute samples received
+  private procEnd = 0;   // absolute sample up to which audio has been handed out
+  constructor(
+    private rate: number,
+    private overlapSec = 1.5,
+    private maxSec = 20,
+    private minNewSec = 2,
+  ) {}
+
+  push(data: Float32Array) {
+    this.chunks.push({ start: this.total, data });
+    this.total += data.length;
+  }
+
+  /** Seconds of audio received but not yet handed to the model. */
+  pendingSec(): number { return (this.total - this.procEnd) / this.rate; }
+
+  /** The next segment (overlap + new audio), or null if there is not enough new audio yet. */
+  next(final = false): Float32Array | null {
+    const newSamples = this.total - this.procEnd;
+    if (newSamples < this.rate * (final ? 0.4 : this.minNewSec)) return null;
+    const overlap = Math.floor(this.overlapSec * this.rate);
+    const from = Math.max(0, this.procEnd - overlap);
+    const to = Math.min(this.total, from + Math.floor(this.maxSec * this.rate));
+    const out = new Float32Array(to - from);
+    for (const c of this.chunks) {
+      const cs = c.start, ce = c.start + c.data.length;
+      if (ce <= from || cs >= to) continue;
+      const a = Math.max(from, cs), b = Math.min(to, ce);
+      out.set(c.data.subarray(a - cs, b - cs), a - from);
+    }
+    this.procEnd = to;
+    const keepFrom = to - overlap;
+    while (this.chunks.length && this.chunks[0].start + this.chunks[0].data.length <= keepFrom) this.chunks.shift();
+    return out;
+  }
+
+  clear() { this.chunks = []; this.total = 0; this.procEnd = 0; }
+}
 
 export interface LiveStatus {
-  /** windows the model has finished transcribing */
+  /** segments the model has finished transcribing */
   windows: number;
-  /** windows skipped because the mic was near-silent */
+  /** segments skipped because the mic was near-silent */
   silent: number;
-  /** how long the last window took to transcribe (ms) */
+  /** how long the last segment took to transcribe (ms) */
   lastMs: number | null;
-  /** latest raw text the model produced for the newest window */
+  /** latest raw text the model produced for the newest segment */
   heard: string;
   /** reference words matched so far */
   matchedWords: number;
-  /** loudness of the newest audio window (0 = silence) */
+  /** loudness of the newest audio segment (0 = silence) */
   level: number;
+  /** seconds of recited audio the model has not looked at yet (0 = fully caught up) */
+  lagSec: number;
+  /** "webgpu" or "wasm" once the model is loaded */
+  device?: string;
   error?: string;
 }
 
@@ -332,11 +387,11 @@ export interface LiveSessionOptions {
   onStatus?: (s: LiveStatus) => void;
   /** Reference words of the page(s) being recited, in reading order (original, with diacritics). */
   referenceWords: string[];
-  /** Called whenever the reveal moves: `frontier` words are revealed, `revealed` is a per-word boolean array. */
+  /** Called whenever the reveal moves. `revealed` is a per-word boolean array of words actually heard. */
   onReveal: (state: { frontier: number; revealed: boolean[]; heardText: string }) => void;
-  /** Rolling audio window re-transcribed each tick. Shorter windows reduce reveal latency. */
-  windowSec?: number;
-  /** Desired polling interval; actual cadence is also limited by model inference time. */
+  /** Longest segment sent to the model in one go (seconds). */
+  maxSegmentSec?: number;
+  /** Polling interval; the real cadence is limited by model inference time. */
   tickMs?: number;
 }
 
@@ -345,8 +400,7 @@ export class LiveRecitationSession {
   private proc: ScriptProcessorNode | null = null;
   private src: MediaStreamAudioSourceNode | null = null;
   private sink: GainNode | null = null;
-  private buf: Float32Array[] = [];
-  private bufSamples = 0;
+  private seg: SegmentBuffer | null = null;
   private srcRate = 48000;
   private timer: ReturnType<typeof setInterval> | null = null;
   private busy = false;
@@ -356,7 +410,7 @@ export class LiveRecitationSession {
   private revealed: boolean[];
   private frontier = 0;
   private lastHeard = "";
-  private opts: Required<Omit<LiveSessionOptions, "referenceWords" | "onReveal" | "onStatus">> & Pick<LiveSessionOptions, "referenceWords" | "onReveal" | "onStatus">;
+  private opts: { maxSegmentSec: number; tickMs: number } & Pick<LiveSessionOptions, "referenceWords" | "onReveal" | "onStatus">;
   private windows = 0;
   private silent = 0;
   private lastMs: number | null = null;
@@ -365,40 +419,34 @@ export class LiveRecitationSession {
   private emitStatus() {
     this.opts.onStatus?.({
       windows: this.windows, silent: this.silent, lastMs: this.lastMs, heard: this.lastHeard,
-      matchedWords: this.revealed.filter(Boolean).length, level: this.lastLevel, error: this.lastError,
+      matchedWords: this.revealed.filter(Boolean).length, level: this.lastLevel,
+      lagSec: this.seg ? Math.round(this.seg.pendingSec() * 10) / 10 : 0,
+      device: tarteelEngine.state.device, error: this.lastError,
     });
   }
-  /** Every window's text, kept as a rough live transcript (used only as a fallback score source). */
+  /** Every segment's text, kept as a rough live transcript (used only as a fallback score source). */
   private windowTexts: string[] = [];
 
   constructor(private stream: MediaStream, opts: LiveSessionOptions) {
     this.ref = opts.referenceWords;
     this.refKeys = opts.referenceWords.map(tarteelWordKey);
     this.revealed = opts.referenceWords.map(() => false);
-    // Whisper inference cost scales with audio duration. Reprocessing 8 seconds every 1.2 seconds
-    // creates avoidable lag on phones; a 4.5-second rolling context is a practical first tuning step.
-    this.opts = { windowSec: 4.5, tickMs: 800, ...opts };
+    this.opts = { maxSegmentSec: 20, tickMs: 700, ...opts };
   }
 
   start() {
     const AC: typeof AudioContext = (window as any).AudioContext || (window as any).webkitAudioContext;
     this.ctx = new AC();
     this.srcRate = this.ctx.sampleRate;
+    this.seg = new SegmentBuffer(this.srcRate, 1.5, this.opts.maxSegmentSec, 2);
     this.src = this.ctx.createMediaStreamSource(this.stream);
     // ScriptProcessor is deprecated but still the one tap that works on every mobile browser.
     this.proc = this.ctx.createScriptProcessor(4096, 1, 1);
     this.sink = this.ctx.createGain();
     this.sink.gain.value = 0; // keep the graph alive without playing the mic back
     this.proc.onaudioprocess = (e) => {
-      if (this.stopped) return;
-      const ch = e.inputBuffer.getChannelData(0);
-      this.buf.push(new Float32Array(ch));
-      this.bufSamples += ch.length;
-      const keep = this.srcRate * (this.opts.windowSec + 2);
-      while (this.bufSamples - this.buf[0].length > keep && this.buf.length > 1) {
-        this.bufSamples -= this.buf[0].length;
-        this.buf.shift();
-      }
+      if (this.stopped || !this.seg) return;
+      this.seg.push(new Float32Array(e.inputBuffer.getChannelData(0)));
     };
     this.src.connect(this.proc);
     this.proc.connect(this.sink);
@@ -407,24 +455,14 @@ export class LiveRecitationSession {
     this.timer = setInterval(() => { void this.tick(false); }, this.opts.tickMs);
   }
 
-  private takeWindow(): Float32Array | null {
-    const want = Math.floor(this.srcRate * this.opts.windowSec);
-    const have = this.bufSamples;
-    if (have < this.srcRate * 1.5) return null; // not enough speech yet
-    const take = Math.min(want, have);
-    const out = new Float32Array(take);
-    let off = take;
-    for (let i = this.buf.length - 1; i >= 0 && off > 0; i--) {
-      const c = this.buf[i];
-      const n = Math.min(c.length, off);
-      out.set(c.subarray(c.length - n), off - n);
-      off -= n;
-    }
-    // Skip near-silent windows: nothing to transcribe and Whisper would hallucinate on them.
+  private takeSegment(final: boolean): Float32Array | null {
+    const out = this.seg?.next(final) ?? null;
+    if (!out) return null;
+    // Skip near-silent segments: nothing to transcribe and Whisper would hallucinate on them.
     let sum = 0;
     const step = 16;
     for (let i = 0; i < out.length; i += step) sum += out[i] * out[i];
-    const rms = Math.sqrt(sum / (out.length / step));
+    const rms = Math.sqrt(sum / Math.max(1, out.length / step));
     this.lastLevel = rms;
     if (rms < 0.004) { this.silent++; this.emitStatus(); return null; }
     return resampleTo16k(out, this.srcRate);
@@ -433,7 +471,7 @@ export class LiveRecitationSession {
   private async tick(final: boolean) {
     if (this.busy || (this.stopped && !final)) return;
     if (!tarteelEngine.isReady()) return;
-    const audio = this.takeWindow();
+    const audio = this.takeSegment(final);
     if (!audio) return;
     this.busy = true;
     try {
@@ -444,25 +482,27 @@ export class LiveRecitationSession {
       this.lastError = res.error;
       if (text) this.lastHeard = text;
       this.emitStatus();
-      if (!text || this.stopped && !final) return;
+      if (!text || (this.stopped && !final)) return;
       this.windowTexts.push(text);
       let heard = tarteelWords(text).map(tarteelWordKey);
-      // The newest word of a window is often half-heard; only trust it once the window is final.
+      // The newest word of a segment is often half-heard; only trust it once the recording is over.
       if (!final && heard.length > 3) heard = heard.slice(0, -1);
       const { frontier, matched } = advanceReveal(this.refKeys, this.frontier, heard);
       if (matched.length) {
-        // Words jumped over between the old and new frontier count as not-yet-revealed (missed).
+        // Only words actually heard are revealed; words jumped over stay hidden (missed).
         matched.forEach((i) => { this.revealed[i] = true; });
         this.frontier = frontier;
         this.opts.onReveal({ frontier: this.frontier, revealed: [...this.revealed], heardText: this.lastHeard });
-        this.emitStatus();
       }
+      this.emitStatus();
     } finally {
       this.busy = false;
+      // Backlog (slow phone): keep going straight away instead of waiting for the next timer tick.
+      if (!this.stopped && this.seg && this.seg.pendingSec() >= 2) setTimeout(() => { void this.tick(false); }, 0);
     }
   }
 
-  /** Last window text, for debugging / the on-screen "heard" line. */
+  /** Last segment text, for debugging / the on-screen "heard" line. */
   getLastHeard() { return this.lastHeard; }
   getFrontier() { return this.frontier; }
   getRevealed() { return [...this.revealed]; }
@@ -471,12 +511,13 @@ export class LiveRecitationSession {
     return this.ref.filter((_, i) => this.revealed[i]).join(" ");
   }
 
-  /** One last pass over the tail audio, then release the audio graph. */
+  /** Drain whatever audio the model has not seen yet (bounded), then release the audio graph. */
   async finish(): Promise<void> {
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
-    // Wait for any in-flight tick, then do a final (trusting) pass on the tail.
     for (let i = 0; i < 40 && this.busy; i++) await new Promise((r) => setTimeout(r, 100));
-    await this.tick(true);
+    for (let i = 0; i < 6 && this.seg && this.seg.pendingSec() > 0.4; i++) {
+      await this.tick(true);
+    }
     this.stopped = true;
     this.teardown();
   }
@@ -494,6 +535,6 @@ export class LiveRecitationSession {
     try { this.sink?.disconnect(); } catch { /* noop */ }
     try { void this.ctx?.close(); } catch { /* noop */ }
     this.ctx = null; this.proc = null; this.src = null; this.sink = null;
-    this.buf = []; this.bufSamples = 0;
+    this.seg?.clear();
   }
 }
