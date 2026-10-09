@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tarteel Browser Test</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Amiri+Quran&display=swap">
+<style>
+  /* Layout: one narrow column, three numbered stages (load model, choose ayah, recite), then results. */
+  :root {
+    --bg: #f5f7f6;
+    --card: #ffffff;
+    --fg: #14211e;
+    --muted: #5d6e69;
+    --line: #d5dfdb;
+    --accent: #0c6b58;
+    --accent-fg: #ffffff;
+    --ok: #17803d;
+    --ok-bg: #dcf3e3;
+    --warn: #8a5a00;
+    --warn-bg: #fbecc4;
+    --bad: #b3261e;
+    --bad-bg: #fbdcd9;
+    --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-ar: "Amiri Quran", "Noto Naskh Arabic", "Traditional Arabic", serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1715;
+      --card: #172421;
+      --fg: #e6efec;
+      --muted: #93a7a1;
+      --line: #2b3d38;
+      --accent: #3fc4a4;
+      --accent-fg: #07201a;
+      --ok: #6fdc95;
+      --ok-bg: #173b25;
+      --warn: #f0c36a;
+      --warn-bg: #3f3210;
+      --bad: #ff9c94;
+      --bad-bg: #44211e;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.5 var(--font-ui);
+    padding-inline: 16px;
+    padding-block: 20px 48px;
+  }
+  main { max-width: 640px; margin-inline: auto; display: grid; gap: 16px; }
+  h1 { font-size: 1.35rem; margin: 0; text-wrap: balance; }
+  .lede { color: var(--muted); margin: 4px 0 0; font-size: .95rem; }
+  section {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px;
+    display: grid;
+    gap: 12px;
+    min-width: 0;
+  }
+  h2 {
+    margin: 0;
+    font-size: .8rem;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  button, .btn {
+    font: inherit;
+    font-weight: 600;
+    min-height: 44px;
+    padding: 0 16px;
+    border-radius: 10px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--accent-fg);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+  button.ghost, .btn.ghost { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button:focus-visible, .btn:focus-visible, textarea:focus-visible, input:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .row > * { flex: 1 1 140px; }
+  textarea {
+    width: 100%;
+    min-height: 120px;
+    font: 1.35rem/2 var(--font-ar);
+    direction: rtl;
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+    resize: vertical;
+  }
+  .bar { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .status { color: var(--muted); font-size: .9rem; min-height: 1.4em; overflow-wrap: anywhere; }
+  .status.err { color: var(--bad); }
+  label.check { display: flex; gap: 8px; align-items: center; font-size: .9rem; color: var(--muted); }
+  input[type=file] { display: none; }
+  .words {
+    direction: rtl;
+    font: 1.6rem/2.3 var(--font-ar);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 10px;
+  }
+  .w { padding: 0 6px; border-radius: 6px; }
+  .w.ok { background: var(--ok-bg); color: var(--ok); }
+  .w.close { background: var(--warn-bg); color: var(--warn); }
+  .w.wrong { background: var(--bad-bg); color: var(--bad); }
+  .w.missed { background: var(--bad-bg); color: var(--bad); text-decoration: line-through; }
+  .heard { direction: rtl; font: 1.3rem/2 var(--font-ar); overflow-wrap: anywhere; }
+  .stats { display: flex; flex-wrap: wrap; gap: 8px 20px; font-variant-numeric: tabular-nums; }
+  .stats b { font-size: 1.3rem; display: block; }
+  .stats span { color: var(--muted); font-size: .8rem; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: .8rem; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-inline-end: 5px; }
+  .extra { color: var(--muted); font-size: .9rem; }
+  @media (prefers-reduced-motion: reduce) { .bar > i { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Tarteel Browser Test</h1>
+    <p class="lede">Runs the Tarteel Quran model on this device. Your recording is not uploaded anywhere.</p>
+  </header>
+
+  <section>
+    <h2>1. Load the model</h2>
+    <div class="bar"><i id="bar"></i></div>
+    <div id="loadStatus" class="status">Not loaded. The first load downloads about 100 MB and is cached afterwards.</div>
+    <label class="check"><input type="checkbox" id="useGpu"> Try the faster WebGPU mode (newer phones only)</label>
+    <button id="loadBtn" type="button">Load model</button>
+  </section>
+
+  <section>
+    <h2>2. The ayah to recite</h2>
+    <div class="row">
+      <button class="ghost" type="button" data-preset="ikhlas">Al-Ikhlas</button>
+      <button class="ghost" type="button" data-preset="fatiha">Al-Fatihah</button>
+    </div>
+    <textarea id="expected" dir="rtl" aria-label="Expected ayah text"></textarea>
+  </section>
+
+  <section>
+    <h2>3. Recite or upload</h2>
+    <div class="row">
+      <button id="recBtn" type="button">Record</button>
+      <label class="btn ghost" for="file">Upload a recording</label>
+      <input id="file" type="file" accept="audio/*,.m4a,.mp3,.wav,.ogg,.webm">
+    </div>
+    <div id="runStatus" class="status"></div>
+  </section>
+
+  <section id="results" hidden>
+    <h2>Result</h2>
+    <div class="stats">
+      <div><b id="sMatch">-</b><span>words matched</span></div>
+      <div><b id="sWer">-</b><span>word error rate</span></div>
+      <div><b id="sTime">-</b><span>transcribe time</span></div>
+    </div>
+    <div class="legend">
+      <span><i style="background:var(--ok-bg)"></i>correct</span>
+      <span><i style="background:var(--warn-bg)"></i>close</span>
+      <span><i style="background:var(--bad-bg)"></i>wrong or missed</span>
+    </div>
+    <div class="words" id="words"></div>
+    <div id="extra" class="extra"></div>
+    <h2>What the model heard</h2>
+    <div class="heard" id="heard"></div>
+  </section>
+</main>
+
+<script type="module">
+import { pipeline } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.0";
+
+const MODEL = "iqbalaesthetic/Basira"; // ONNX export of tarteel-ai/whisper-base-ar-quran
+
+const PRESETS = {
+  ikhlas: "قُلْ هُوَ ٱللَّهُ أَحَدٌ ۝ ٱللَّهُ ٱلصَّمَدُ ۝ لَمْ يَلِدْ وَلَمْ يُولَدْ ۝ وَلَمْ يَكُن لَّهُۥ كُفُوًا أَحَدٌۢ",
+  fatiha: "بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ ۝ ٱلْحَمْدُ لِلَّهِ رَبِّ ٱلْعَـٰلَمِينَ ۝ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ ۝ مَـٰلِكِ يَوْمِ ٱلدِّينِ ۝ إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ ۝ ٱهْدِنَا ٱلصِّرَٰطَ ٱلْمُسْتَقِيمَ ۝ صِرَٰطَ ٱلَّذِينَ أَنْعَمْتَ عَلَيْهِمْ غَيْرِ ٱلْمَغْضُوبِ عَلَيْهِمْ وَلَا ٱلضَّآلِّينَ",
+};
+
+const $ = (id) => document.getElementById(id);
+const expectedEl = $("expected");
+expectedEl.value = PRESETS.ikhlas;
+
+/* ---------- Arabic normalization and alignment ---------- */
+const MARKS = /[ؐ-ًؚ-ٰٟۖ-ۭـ࣓-ࣿ]/g;
+
+function normalize(text) {
+  return text
+    .replace(MARKS, "")
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/ؤ/g, "و")
+    .replace(/ئ/g, "ي")
+    .replace(/[^؀-ۿ\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function wordKey(w) {
+  return normalize(w).replace(/[اءأإآ]/g, "").replace(/(.)\1+/g, "$1");
+}
+function words(text) {
+  return text.split(/\s+/).filter((w) => wordKey(w));
+}
+function lev1(a, b) {
+  // true when edit distance is at most 1
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0, j = 0, edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++edits > 1) return false;
+    if (a.length > b.length) i++;
+    else if (a.length < b.length) j++;
+    else { i++; j++; }
+  }
+  return edits + (a.length - i) + (b.length - j) <= 1;
+}
+function isClose(a, b) {
+  return a.length >= 4 && b.length >= 4 && lev1(a, b);
+}
+
+// Returns per expected word: ok | close | wrong | missed, plus extra heard words.
+function align(expectedWords, heardWords) {
+  const E = expectedWords.map(wordKey);
+  const H = heardWords.map(wordKey);
+  const n = E.length, m = H.length;
+  const MATCH = 0, CLOSE = 4, WRONG = 12, GAP = 10;
+  const sub = (i, j) => (E[i] === H[j] ? MATCH : isClose(E[i], H[j]) ? CLOSE : WRONG);
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = 1; i <= n; i++) dp[i][0] = i * GAP;
+  for (let j = 1; j <= m; j++) dp[0][j] = j * GAP;
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      dp[i][j] = Math.min(dp[i - 1][j - 1] + sub(i - 1, j - 1), dp[i - 1][j] + GAP, dp[i][j - 1] + GAP);
+    }
+  }
+  const status = new Array(n).fill("missed");
+  const extras = [];
+  let i = n, j = m;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && dp[i][j] === dp[i - 1][j - 1] + sub(i - 1, j - 1)) {
+      const c = sub(i - 1, j - 1);
+      status[i - 1] = c === MATCH ? "ok" : c === CLOSE ? "close" : "wrong";
+      i--; j--;
+    } else if (i > 0 && dp[i][j] === dp[i - 1][j] + GAP) {
+      status[i - 1] = "missed";
+      i--;
+    } else {
+      extras.unshift(heardWords[j - 1]);
+      j--;
+    }
+  }
+  return { status, extras };
+}
+window.__align = { align, words, wordKey, normalize }; // handy for console checks
+
+/* ---------- Model loading ---------- */
+let asr = null;
+let loading = null;
+
+function setLoad(msg, err = false) {
+  const el = $("loadStatus");
+  el.textContent = msg;
+  el.classList.toggle("err", err);
+}
+
+async function webgpuF16() {
+  try {
+    if (!navigator.gpu) return false;
+    const adapter = await navigator.gpu.requestAdapter();
+    return !!adapter && adapter.features.has("shader-f16");
+  } catch { return false; }
+}
+
+async function loadModel() {
+  if (asr) return asr;
+  if (loading) return loading;
+  loading = (async () => {
+    $("loadBtn").disabled = true;
+    const files = {};
+    const progress = (e) => {
+      if (e.status === "progress" && e.total) {
+        files[e.file] = { loaded: e.loaded, total: e.total };
+        let l = 0, t = 0;
+        for (const f of Object.values(files)) { l += f.loaded; t += f.total; }
+        $("bar").style.width = (100 * l / t).toFixed(0) + "%";
+        setLoad(`Downloading model: ${(l / 1048576).toFixed(0)} of ${(t / 1048576).toFixed(0)} MB`);
+      }
+    };
+    const t0 = performance.now();
+    let opts = { device: "wasm", dtype: "q8" };
+    if ($("useGpu").checked && (await webgpuF16())) opts = { device: "webgpu", dtype: "fp16" };
+    try {
+      setLoad("Starting download...");
+      asr = await pipeline("automatic-speech-recognition", MODEL, { ...opts, progress_callback: progress });
+    } catch (e) {
+      if (opts.device === "webgpu") {
+        setLoad("WebGPU failed, switching to compatible mode...");
+        asr = await pipeline("automatic-speech-recognition", MODEL, { device: "wasm", dtype: "q8", progress_callback: progress });
+        opts = { device: "wasm", dtype: "q8" };
+      } else { throw e; }
+    }
+    $("bar").style.width = "100%";
+    setLoad(`Model ready (${opts.device}, ${opts.dtype}) in ${((performance.now() - t0) / 1000).toFixed(1)} s.`);
+    return asr;
+  })().catch((e) => {
+    loading = null;
+    asr = null;
+    $("loadBtn").disabled = false;
+    setLoad("Could not load the model: " + (e && e.message ? e.message : e), true);
+    throw e;
+  });
+  return loading;
+}
+
+/* ---------- Audio ---------- */
+async function decodeTo16k(arrayBuffer) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AC({ sampleRate: 16000 });
+  const buf = await ctx.decodeAudioData(arrayBuffer);
+  ctx.close();
+  const out = new Float32Array(buf.length);
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const ch = buf.getChannelData(c);
+    for (let k = 0; k < ch.length; k++) out[k] += ch[k] / buf.numberOfChannels;
+  }
+  return out;
+}
+
+function setRun(msg, err = false) {
+  const el = $("runStatus");
+  el.textContent = msg;
+  el.classList.toggle("err", err);
+}
+
+async function run(arrayBuffer) {
+  const expectedText = expectedEl.value.trim();
+  if (!expectedText) { setRun("Paste or choose the ayah first.", true); return; }
+  try {
+    setRun("Loading model...");
+    const model = await loadModel();
+    setRun("Reading audio...");
+    const audio = await decodeTo16k(arrayBuffer);
+    setRun(`Transcribing ${(audio.length / 16000).toFixed(1)} s of audio...`);
+    const t0 = performance.now();
+    const out = await model(audio, { language: "arabic", task: "transcribe", chunk_length_s: 30, stride_length_s: 5 });
+    const secs = (performance.now() - t0) / 1000;
+    const heardText = (out.text || "").trim();
+    render(expectedText, heardText, secs);
+    setRun("Done.");
+  } catch (e) {
+    setRun("Something failed: " + (e && e.message ? e.message : e), true);
+  }
+}
+
+/* ---------- Results ---------- */
+function render(expectedText, heardText, secs) {
+  const exp = words(expectedText);
+  const heard = words(heardText);
+  const { status, extras } = align(exp, heard);
+  const count = (s) => status.filter((x) => x === s).length;
+  const good = count("ok") + count("close");
+  const wrong = count("wrong"), missed = count("missed");
+  $("sMatch").textContent = `${good} / ${exp.length}`;
+  $("sWer").textContent = ((100 * (wrong + missed + extras.length)) / Math.max(exp.length, 1)).toFixed(0) + "%";
+  $("sTime").textContent = secs.toFixed(1) + " s";
+  const wrap = $("words");
+  wrap.textContent = "";
+  exp.forEach((w, i) => {
+    const s = document.createElement("span");
+    s.className = "w " + status[i];
+    s.textContent = w;
+    wrap.appendChild(s);
+  });
+  $("extra").textContent = extras.length ? "Extra words heard: " + extras.join(" ") : "";
+  $("heard").textContent = heardText || "(nothing heard)";
+  $("results").hidden = false;
+  $("results").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+/* ---------- Wiring ---------- */
+$("loadBtn").addEventListener("click", () => { loadModel().catch(() => {}); });
+document.querySelectorAll("[data-preset]").forEach((b) =>
+  b.addEventListener("click", () => { expectedEl.value = PRESETS[b.dataset.preset]; })
+);
+$("file").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  await run(await f.arrayBuffer());
+  e.target.value = "";
+});
+
+let recorder = null;
+$("recBtn").addEventListener("click", async () => {
+  if (recorder) { recorder.stop(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const chunks = [];
+    const rec = new MediaRecorder(stream);
+    recorder = rec;
+    rec.ondataavailable = (ev) => chunks.push(ev.data);
+    rec.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      recorder = null;
+      $("recBtn").textContent = "Record";
+      await run(await new Blob(chunks, { type: rec.mimeType }).arrayBuffer());
+    };
+    rec.start();
+    $("recBtn").textContent = "Stop and check";
+    setRun("Recording... recite now.");
+  } catch (e) {
+    setRun("The microphone is not available in this page. Use Upload a recording instead.", true);
+  }
+});
+</script>
+</body>
+</html>
