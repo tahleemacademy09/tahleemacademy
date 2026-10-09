@@ -17,8 +17,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { RollingTranscriber } from "@/lib/rollingTranscription";
-import { tarteelEngine, LiveRecitationSession, tarteelWordKey, tarteelNormalize, type TarteelProgress, type LiveStatus } from "@/lib/tarteelOnDevice";
+import { tarteelEngine, type TarteelProgress } from "@/lib/tarteelOnDevice";
 import { uploadHifdhAudio, resolveHifdhSessionAudio, HIFDH_R2_PREFIX } from "@/lib/hifdhAudio";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
 import HifdhLiveClass from "@/components/hifdh/HifdhLiveClass";
@@ -39,7 +38,7 @@ import { useProctoring } from "@/hooks/useProctoring";
 import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
 import MushafPageView from "@/components/hifdh/MushafPageView";
 import RecitationResultGrid from "@/components/hifdh/RecitationResultGrid";
-// RollingTranscriber import removed — transcription is now a single whole-recording Groq call on Stop
+// Transcription is 100% on-device Tarteel (no Groq / no server upload): the whole recording is transcribed once on Stop.
 
 // ── Lazy surah lookup ─────────────────────────────────────────────────────
 // Building this map at module init time (`const X = Object.fromEntries(SURAHS.map(...))`)
@@ -1523,9 +1522,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const audioChunks  = useRef<Blob[]>([]);
   const audioBlobRef       = useRef<Blob|null>(null);
   const audioStorageUrlRef = useRef<string|null>(null);
-  const rollerRef     = useRef<RollingTranscriber|null>(null);
-  const rollFinalRef  = useRef<Promise<string>|null>(null);
-  const rollFailRef   = useRef(0);
   const attemptRef    = useRef(0);
   const [audioReadyTick, setAudioReadyTick] = useState(0);
   const pageAyahsRef = useRef<Ayah[]>([]);
@@ -1542,51 +1538,17 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const recSecsRef   = useRef(0);
   const wakeLockRef  = useRef<any>(null);
 
-  // ── ROLLING TRANSCRIPTION (Groq) ──────────────────────────────────────────
-  // The Quran page is hidden while recording (see QuranPage render guard below),
-  // so there's no on-screen word reveal to drive anymore — WebSpeech-based live
-  // reveal has been removed entirely. What WebSpeech was never needed for (word
-  // reveal) is separate from what made scoring slow: uploading the WHOLE
-  // recording to Groq only after the student taps stop. To fix that we run a
-  // background rolling transcriber that chunks audio into OVERLAPPING ~18s
-  // windows (via the shared RollingTranscriber — see rollingTranscription.ts
-  // for why overlap matters: the old fixed 12s HARD-cut chunker, with no
-  // overlap and a brand-new MediaRecorder at every boundary, reliably clipped
-  // or dropped whatever word straddled each cut — a cut every 12 seconds
-  // through a multi-minute recitation added up to "skips a lot of words".
-  // By the time the student taps "Finished", only the last ~18-20s (one
-  // chunk) still needs transcribing.
-  const stylePromptRef = useRef<string>("");
-
-  // ── ON-DEVICE TARTEEL MODEL + LIVE WORD REVEAL ────────────────────────────
-  // The Tarteel Quran model runs inside the student's browser (Web Worker, nothing uploaded).
-  // While recording it re-transcribes the last few seconds every ~1.5 s and "unveils" each
-  // reference word as it is recited. It only drives the on-screen reveal; the final score still
-  // comes from the Groq transcript above, and the on-device text is the fallback if Groq fails.
+  // ── ON-DEVICE TARTEEL (the only transcription engine) ─────────────────────
+  // The student recites with NOTHING on screen. When they tap Finished, the whole recording is
+  // transcribed once by the Tarteel Quran model running inside their browser (Web Worker, nothing is
+  // uploaded) and the result is shown as a word-by-word grid. The model starts loading as soon as the
+  // student reaches the recite screen (first visit ≈100 MB, cached afterwards).
   const [tarteelState, setTarteelState] = useState<TarteelProgress>(tarteelEngine.state);
-  const [liveWordList, setLiveWordList] = useState<string[]>([]);
-  const [liveRevealed, setLiveRevealed] = useState<boolean[]>([]);
-  // Ayahs uncovered so far on the printed page ("surah:ayah"), and whether the printed page can't be covered (→ word panel instead).
-  const [revealProgress, setRevealProgress] = useState<Record<string, { m: number; n: number; f: number }>>({});
-  const revealKeyRef = useRef("");
-  const [coverFailed, setCoverFailed] = useState(false);
-  const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
-  const liveSessionRef = useRef<LiveRecitationSession | null>(null);
-  const liveFinalRef   = useRef<Promise<string> | null>(null);
   useEffect(() => tarteelEngine.subscribe(setTarteelState), []);
-  // While recording with the model ready, the printed page is shown covered and uncovers ayah by ayah.
-  // Until then (model still loading / unsupported / page can't be covered) the plain "Listening…" screen is used.
-  // Live word-by-word reveal while reciting. OFF: the student just recites and the full result appears after Submit.
-  // The on-device model still runs in the background as the fallback transcript. Set to true to bring the reveal back.
-  const LIVE_REVEAL_ENABLED = false;
-  const showCoverPage = LIVE_REVEAL_ENABLED && isRecording && tarteelState.status === "ready" && !coverFailed;
-  // Start downloading/loading the model as soon as the student reaches the recite screen, so it is
-  // ready by the time they tap Start Reciting (first visit ≈100 MB, cached afterwards).
   useEffect(() => {
     if (phase !== "reading") return;
-    tarteelEngine.load(true).catch(() => { /* status is shown in the UI; recording still works without it */ });
+    tarteelEngine.load(true).catch(() => { /* status is shown under the Start button */ });
   }, [phase]);
-  useEffect(() => () => { liveSessionRef.current?.cancel(); liveSessionRef.current = null; }, []);
 
   // ── WAKE LOCK: keep screen on for entire session ─────────────────────────
   useEffect(() => {
@@ -1944,7 +1906,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           audioStorageUrlRef.current = storageUrl;
           setAudioReadyTick(t => t + 1);
         });
-        finalizeTranscript(blob, pageAyahsRef.current).then((tx) => {
+        finalizeTranscript(blob).then((tx) => {
           // ── DO NOT call setSavedAudioUrl(storageUrl) here ────────────────────────────────────────
           // savedAudioUrl is already set to the local blob URL (line above Promise.all).
           // Replacing it with the remote URL caused silent playback failure:
@@ -1973,7 +1935,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           const errs = getErrorWords(tx, ayahs);
           const corr = getAyahCorrectness(tx, ayahs, capturedSecs);
           setLastTranscript(tx);
-          setCheckSecs(stopTsRef.current != null ? (performance.now() - stopTsRef.current) / 1000 : null);
+          // "transcribe time" = how long the Tarteel model itself took (as in the test page).
+          setCheckSecs(transcribeMsRef.current != null ? transcribeMsRef.current / 1000
+            : stopTsRef.current != null ? (performance.now() - stopTsRef.current) / 1000 : null);
           stopTsRef.current = null;
           lastResultRef.current = { tx, ayahCorrectness: corr };
           setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
@@ -1982,75 +1946,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           setCarryOverSecs(0);
         });
       };
-      // Overlapping ~15s chunks transcribed WHILE the student recites: after Stop only the last
-      // chunk is left (a couple of seconds), and no request ever covers a long file that Whisper
-      // would window internally and silently drop words from.
       attemptRef.current++;
-      rollFailRef.current = 0;
-      rollFinalRef.current = null;
-      rollerRef.current?.cancel();
-      const roller = new RollingTranscriber(stream, mime || "", {
-        intervalMs: 15000,
-        overlapMs: 3000,
-        buildPrompt: () => buildStylePrompt(),
-        transcribeChunk: async (chunkBlob, prompt) => {
-          const t = await transcribeAudio(chunkBlob, undefined, prompt, 25000);
-          if (t === "__NO_API__") { rollFailRef.current++; return ""; }
-          return t;
-        },
-      });
-      rollerRef.current = roller;
-      roller.start();
-      // Live word reveal (on-device model). Starts listening immediately; words begin unveiling as soon
-      // as the model has finished loading. Any failure here is non-fatal — recording and scoring go on.
-      try {
-        liveSessionRef.current?.cancel();
-        liveFinalRef.current = null;
-        const refWords = pageAyahsRef.current
-          .flatMap(a => (a.text ?? "").split(/\s+/))
-          .filter(w => tarteelWordKey(w));
-        setLiveWordList(refWords);
-        setLiveRevealed(refWords.map(() => false));
-        setRevealProgress({}); revealKeyRef.current = "";
-        setCoverFailed(false);
-        setLiveStatus(null);
-        // Where each ayah ends in the flat word list, so a word-level frontier can uncover whole ayahs.
-        const ranges: { key: string; start: number; weights: number[] }[] = [];
-        let off = 0;
-        pageAyahsRef.current.forEach(a => {
-          const ws = (a.text ?? "").split(/\s+/).filter(w => tarteelWordKey(w));
-          ranges.push({ key: `${a.surah?.number}:${a.numberInSurah}`, start: off,
-            weights: ws.map(w => Math.max(1, tarteelNormalize(w).replace(/\s/g, "").length)) });
-          off += ws.length;
-        });
-        const live = new LiveRecitationSession(stream, {
-          referenceWords: refWords,
-          onStatus: setLiveStatus,
-          onReveal: ({ revealed }) => {
-            setLiveRevealed(revealed);
-            // Per ayah: how many of its words were actually HEARD (m of n) and what share of its letters that is,
-            // so the printed page uncovers only what was recited (skipped words stay hidden).
-            const prog: Record<string, { m: number; n: number; f: number }> = {};
-            let sig = "";
-            ranges.forEach(r => {
-              const n = r.weights.length;
-              let m = 0, got = 0;
-              for (let k = 0; k < n; k++) if (revealed[r.start + k]) { m++; got += r.weights[k]; }
-              if (m <= 0) return;
-              const tot = r.weights.reduce((x, y) => x + y, 0);
-              prog[r.key] = { m, n, f: got / tot };
-              sig += `${r.key}:${m};`;
-            });
-            if (sig !== revealKeyRef.current) { revealKeyRef.current = sig; setRevealProgress(prog); }
-          },
-        });
-        liveSessionRef.current = live;
-        live.start();
-        tarteelEngine.load(true).catch(() => {});
-      } catch (e) {
-        console.warn("[HifdhDaily] live reveal unavailable:", e);
-        liveSessionRef.current = null;
-      }
+      // No live transcription: the audio is only recorded now and transcribed once, on Stop.
       mr.start(200);
       mediaRecRef.current = mr;
       setIsRecording(true);
@@ -2060,101 +1957,31 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         setRecSecs(s => s + 1);
       }, 1000);
 
-      // Rolling background transcription removed per request — transcription
-      // now happens once, on the whole recording, when the student taps
-      // Stop/Finished (see finalizeTranscript / mr.onstop above).
-      stylePromptRef.current = buildStylePrompt(pageAyahsRef.current);
     } catch {
       alert("Mic access denied. Please allow microphone access and try again.");
     }
   }, []);
 
-  // ── Vocabulary-hint prompt builder (shared by rolling chunks + fallback) ──
-  // Style/script hint ONLY — never the page's verses. Feeding the reference text to Whisper as a
-  // prompt makes it continue/echo that text (e.g. repeating the previous surah's opening words)
-  // and swallow the first words actually recited.
-  const buildStylePrompt = (_ayahs?: Ayah[]): string =>
-    "تلاوة القرآن الكريم بالتشكيل الكامل.";
-
   const lastTranscribeErrorRef = useRef<string>("");
+  const transcribeMsRef = useRef<number | null>(null);
 
-  // Groq-only, single-shot transcription of one audio blob. Used for:
-  //   - each rolling chunk during recording (segment-sized blobs, via RollingTranscriber)
-  //   - the short "answer this question" recordings elsewhere on this page
-  //   - the one-off fallback inside finalizeTranscript if no chunk ever succeeded
-  // Deepgram has been removed: Groq alone was already the preferred/winning
-  // result almost every time, and racing two providers on every short chunk
-  // would double the API calls for no real accuracy benefit.
-  // `promptOverride` lets rolling chunks reuse a prompt built once per segment
-  // instead of recomputing it from `ayahs` on every call.
-  const transcribeAudio = async (blob: Blob, ayahs?: Ayah[], promptOverride?: string, timeoutMs: number = 15000): Promise<string> => {
+  // Tarteel on-device transcription of one audio blob. Returns "__NO_API__" if the model could not
+  // load/run (unsupported browser, download failed, audio could not be decoded) — callers show a
+  // soft "couldn't score this" message instead of a silent 0%.
+  const transcribeAudio = async (blob: Blob): Promise<string> => {
     lastTranscribeErrorRef.current = "";
-    const ext = blob.type.includes("mp4") ? "mp4"
-      : blob.type.includes("ogg") ? "ogg"
-      : "webm";
-    const stylePrompt = promptOverride ?? buildStylePrompt(ayahs);
-
-    const SUPABASE_URL = (import.meta as any).env?.VITE_SUPABASE_URL;
-    const SUPABASE_KEY =
-      (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
-      (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY;
-    if (!SUPABASE_URL || !SUPABASE_KEY) {
-      lastTranscribeErrorRef.current = "groq_supabase_env_missing";
+    transcribeMsRef.current = null;
+    const res = await tarteelEngine.transcribeBlob(blob);
+    if (res.error) {
+      lastTranscribeErrorRef.current = `tarteel_${res.error}`;
+      console.error("[HifdhDaily] tarteel transcription failed:", res.error);
       return "__NO_API__";
     }
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const fd = new FormData();
-      fd.append("file", new File([blob], `recitation.${ext}`, { type: blob.type || "audio/webm" }));
-      fd.append("prompt", stylePrompt);
-      const r = await fetch(`${SUPABASE_URL}/functions/v1/groq-transcribe`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${SUPABASE_KEY}`,
-          apikey: SUPABASE_KEY,
-        },
-        body: fd,
-        signal: controller.signal,
-      });
-      const json = await r.json().catch(() => ({}));
-      if (r.ok) {
-        const txt = (json.text ?? "").trim();
-        return txt; // may legitimately be "" (silence) — caller decides what to do
-      }
-      lastTranscribeErrorRef.current = `groq_http_${r.status}`;
-      console.error(`[HifdhDaily] groq-transcribe failed: HTTP ${r.status}`, json?.error ?? "");
-      return "__NO_API__";
-    } catch (e: any) {
-      lastTranscribeErrorRef.current = e?.name === "AbortError" ? "groq_timeout" : "groq_network_or_cors_error";
-      console.error("[HifdhDaily] groq-transcribe fetch failed:", e);
-      return "__NO_API__";
-    } finally {
-      clearTimeout(timeout);
-    }
+    transcribeMsRef.current = res.ms ?? null;
+    return (res.text ?? "").trim(); // may legitimately be "" (silence) — caller decides what to do
   };
 
-  // Result of the rolling chunks (already transcribed during recitation). Falls back to one
-  // whole-recording call only if a chunk failed or nothing came back, keeping whichever is longer.
-  const finalizeTranscript = async (fullBlob: Blob, ayahs?: Ayah[]): Promise<string> => {
-    let rolled = "";
-    if (rollFinalRef.current) {
-      try { rolled = (await rollFinalRef.current).trim(); } catch { rolled = ""; }
-    } else if (rollerRef.current) {
-      rollerRef.current.cancel(); rollerRef.current = null;
-    }
-    rollFinalRef.current = null;
-    const wc = (t: string) => t.split(/\s+/).filter(Boolean).length;
-    if (rolled.length > 5 && rollFailRef.current === 0) return rolled;
-    const whole = await transcribeAudio(fullBlob, ayahs, undefined, 60000);
-    const wholeOk = whole && whole !== "__NO_API__" && whole.length > 5 ? whole : "";
-    const best = wc(wholeOk) > wc(rolled) ? wholeOk : rolled;
-    if (best.length > 5) return best;
-    // Server transcription gave nothing: fall back to what the on-device model heard, if it heard enough.
-    let onDevice = "";
-    try { onDevice = liveFinalRef.current ? (await liveFinalRef.current).trim() : ""; } catch { onDevice = ""; }
-    return wc(onDevice) >= 3 ? onDevice : "__NO_API__";
-  };
+  const finalizeTranscript = (fullBlob: Blob): Promise<string> => transcribeAudio(fullBlob);
 
   const lastResultRef = useRef<{ tx: string; ayahCorrectness: boolean[] } | null>(null);
 
@@ -2162,16 +1989,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     stopTsRef.current = performance.now();
     setIsRecording(false);
     clearInterval(timerRef.current);
-    // Stop the chunk recorders FIRST (while the mic stream is still live) so every in-flight
-    // chunk is flushed and awaited before the stream tracks are released in mr.onstop.
-    if (rollerRef.current) { rollFinalRef.current = rollerRef.current.finalize(); rollerRef.current = null; }
-    if (liveSessionRef.current) {
-      const live = liveSessionRef.current;
-      liveSessionRef.current = null;
-      liveFinalRef.current = live.finish().then(() => live.getRevealedText()).catch(() => "");
-    }
     if (mediaRecRef.current && mediaRecRef.current.state !== "inactive") {
-      mediaRecRef.current.stop(); // triggers mr.onstop → finalizeTranscript → setScore
+      mediaRecRef.current.stop(); // triggers mr.onstop → Tarteel transcribe → setScore
     }
     mediaRecRef.current = null;
     // mr.onstop handles setPhase("page_result") + setScore(null) + fill
@@ -2208,7 +2027,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         clearInterval(qRecTimerRef.current);
         setQRecording(false);
         const blob = new Blob(chunks, { type: mime || "audio/webm" });
-        const tx = await transcribeAudio(blob, pageAyahsRef.current);
+        const tx0 = await transcribeAudio(blob);
+        const tx = tx0 === "__NO_API__" ? "" : tx0;
         const q = questions[qIdx];
         // Score against the expected answer
         const expected = q.correctText || "";
@@ -3013,7 +2833,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         <>
           <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:"14px 16px",
             display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
-            <BackBtn onClick={()=>{rollerRef.current?.cancel();rollerRef.current=null;rollFinalRef.current=null;if(mediaRecRef.current&&mediaRecRef.current.state!=="inactive"){mediaRecRef.current.stop();mediaRecRef.current=null;}setIsRecording(false);clearInterval(timerRef.current);setPhase("intro");}}/>
+            <BackBtn onClick={()=>{if(mediaRecRef.current&&mediaRecRef.current.state!=="inactive"){mediaRecRef.current.stop();mediaRecRef.current=null;}setIsRecording(false);clearInterval(timerRef.current);setPhase("intro");}}/>
             <div style={{flex:1}}>
               <p style={{margin:0,fontWeight:800,fontSize:14,color:W}}>
                 {isGroup ? `Pages ${todayPages[0]} – ${todayPages[todayPages.length-1]}` : `Page ${todayPages[pageIdx]}`} — Recite Aloud
@@ -3052,57 +2872,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 is intentionally hidden during recitation: the student should be
                 reciting from memory, not reading along with a blurred page, and
                 the previous blurred-word layout was confusing/distracting. */}
-            {showCoverPage && (
-              <div>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,padding:"0 0 8px",flexWrap:"wrap"}}>
-                  <span style={{padding:"4px 14px",borderRadius:20,background:`${PASS}18`,border:`1px solid ${PASS}50`,
-                    fontSize:13,fontWeight:900,color:PASS,fontVariantNumeric:"tabular-nums"}}>
-                    🔴 {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
-                  </span>
-                  <span style={{fontSize:11,fontWeight:700,color:"#6B7280"}}>
-                    {Object.values(revealProgress).filter(v => v.m >= v.n).length} / {pageAyahs.length} ayahs · recite from memory, words appear as you read them
-                  </span>
-                </div>
-                {/* Live feedback: what the model is hearing right now, so the student can see it is working before the first ayah is complete. */}
-                <div dir="rtl" style={{margin:"0 0 8px",padding:"6px 12px",borderRadius:10,background:"#fdf8ee",border:`1px solid ${GOLD}44`,
-                  fontFamily:"'Amiri Quran','Amiri',serif",fontSize:17,lineHeight:1.9,textAlign:"center",minHeight:34,color:"#15803d",
-                  overflow:"hidden",maxHeight:70}}>
-                  {liveStatus?.heard
-                    ? liveStatus.heard.split(/\s+/).slice(-8).join(" ")
-                    : <span style={{fontFamily:"system-ui,sans-serif",fontSize:11,color:"#9CA3AF",direction:"ltr"}}>
-                        {liveStatus && liveStatus.silent > 0 && liveStatus.windows === 0
-                          ? "Not hearing any sound — speak closer to the microphone"
-                          : recSecs > 12 && !liveStatus?.windows ? "Model is processing the first few seconds…" : "Listening…"}
-                      </span>}
-                </div>
-                {liveStatus && (
-                  <p style={{margin:"0 0 8px",fontSize:10,color:"#9CA3AF",textAlign:"center",fontVariantNumeric:"tabular-nums"}}>
-                    heard {liveStatus.windows} · quiet {liveStatus.silent} · {liveStatus.lastMs != null ? `${(liveStatus.lastMs/1000).toFixed(1)}s per check` : "—"} · words matched {liveStatus.matchedWords}/{liveWordList.length}{liveStatus.lagSec > 3 ? ` · catching up ${Math.round(liveStatus.lagSec)}s` : ""}{liveStatus.device ? ` · ${liveStatus.device}` : ""}
-                    {liveStatus.error ? ` · error: ${liveStatus.error}` : ""}
-                  </p>
-                )}
-                {/* Recited words as plain text: always works, even if the printed-page cover can't uncover the glyphs. */}
-                {liveRevealed.some(Boolean) && (
-                  <div dir="rtl" ref={el => { if (el) el.scrollTop = el.scrollHeight; }}
-                    style={{margin:"0 0 8px",padding:"6px 12px",borderRadius:10,background:"#f3faf5",border:`1px solid ${PASS}33`,
-                      fontFamily:"'Amiri Quran','Amiri',serif",fontSize:19,lineHeight:2,textAlign:"right",maxHeight:84,overflowY:"auto",color:"#15803d"}}>
-                    {liveWordList.map((w,i)=> liveRevealed[i] ? <span key={i} style={{marginInlineStart:6,display:"inline-block"}}>{w}</span> : null)}
-                  </div>
-                )}
-                {isGroup ? (
-                  <SwipePages pages={todayPages} height={Math.max(300, winH-290)} viewIdx={viewIdx}
-                    onView={setViewIdx} onBg={setPrintedBg} clipFor={clipFor}
-                    coverUnrevealed revealProgress={revealProgress} onUnavailable={()=>setCoverFailed(true)}/>
-                ) : todayPages[pageIdx] ? (
-                  <div style={{margin:"0 -16px"}}>
-                    <MushafPageView page={todayPages[pageIdx]} seamless pureWhite availableHeight={Math.max(300, winH-250)} maxStretch={1.4}
-                      onlySurahs={clipFor(todayPages[pageIdx])??undefined} onBackground={setPrintedBg}
-                      coverUnrevealed revealProgress={revealProgress} onUnavailable={()=>setCoverFailed(true)}/>
-                  </div>
-                ) : null}
-              </div>
-            )}
-            {isRecording && !showCoverPage && (
+            {isRecording && (
               <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
                 gap:22,padding:"48px 20px",minHeight:"50vh"}}>
                 <div style={{position:"relative",width:128,height:128,display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -3124,49 +2894,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                   fontSize:14,fontWeight:900,color:PASS,fontVariantNumeric:"tabular-nums"}}>
                   🔴 {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
                 </span>
-                {/* Live word reveal — each word appears as the on-device model hears it recited. */}
-                {(() => {
-                  const total = liveWordList.length;
-                  const done = liveRevealed.filter(Boolean).length;
-                  const loading = tarteelState.status === "loading" || tarteelState.status === "idle";
-                  const unavailable = tarteelState.status === "error" || tarteelState.status === "unsupported";
-                  return (
-                    <div style={{width:"100%",maxWidth:420}}>
-                      {loading && (
-                        <p style={{margin:"0 0 8px",fontSize:11,color:"#9CA3AF",textAlign:"center"}}>
-                          Preparing live reveal{tarteelState.totalMB ? ` — ${Math.round(tarteelState.loadedMB ?? 0)} of ${Math.round(tarteelState.totalMB)} MB` : "…"} (keep reciting, you will still be scored)
-                        </p>
-                      )}
-                      {unavailable && (
-                        <p style={{margin:"0 0 8px",fontSize:11,color:"#9CA3AF",textAlign:"center"}}>
-                          Live reveal isn't available on this device — keep reciting, you will still be scored.
-                        </p>
-                      )}
-                      {!loading && !unavailable && total > 0 && (
-                        <>
-                          <div style={{height:6,borderRadius:99,background:`${PASS}22`,overflow:"hidden",marginBottom:6}}>
-                            <div style={{height:"100%",width:`${Math.round(100*done/total)}%`,background:PASS,transition:"width .4s ease"}}/>
-                          </div>
-                          <p style={{margin:"0 0 8px",fontSize:11,fontWeight:700,color:PASS,textAlign:"center"}}>
-                            {done} / {total} words
-                          </p>
-                          <div dir="rtl" ref={el => { if (el) el.scrollTop = el.scrollHeight; }}
-                            style={{maxHeight:170,overflowY:"auto",padding:"10px 12px",borderRadius:12,
-                              background:"#fdf8ee",border:`1px solid ${GOLD}55`,
-                              fontFamily:"'Amiri Quran','Amiri',serif",fontSize:22,lineHeight:2.2,textAlign:"right"}}>
-                            {liveWordList.map((w,i)=> liveRevealed[i]
-                              ? <span key={i} style={{color:"#15803d",marginInlineStart:6,display:"inline-block",animation:"slideUp .3s ease"}}>{w}</span>
-                              : null)}
-                            {done===0 && <span style={{color:"#b8a98a",fontSize:13,fontFamily:"inherit"}}>Your words will appear here as you recite…</span>}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  );
-                })()}
                 <p style={{margin:0,fontSize:11,color:"#9CA3AF",textAlign:"center",maxWidth:260,lineHeight:1.6}}>
                   {isGroup
-                    ? `Recite pages ${todayPages[0]} – ${todayPages[todayPages.length-1]} from memory, in order, in one go. Tap below when finished to get your score.`
+                    ? `Recite pages ${todayPages[0]} – ${todayPages[todayPages.length-1]} from memory, in order, in one go. Nothing is shown while you recite. Tap below when finished to get your score.`
                     : `Recite Page ${todayPages[pageIdx]} from memory. Tap below when finished to get your score.`}
                 </p>
               </div>
@@ -3240,6 +2970,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
           {/* Sticky bottom */}
           <div style={{padding:"12px 16px",background:W,borderTop:`1px solid ${BRD}`,flexShrink:0}}>
+            {!isRecording && (tarteelState.status==="loading"||tarteelState.status==="idle") && (
+              <p style={{margin:"0 0 8px",fontSize:11,color:"#9CA3AF",textAlign:"center"}}>
+                Preparing the Quran checker{tarteelState.totalMB?` — ${Math.round(tarteelState.loadedMB??0)} of ${Math.round(tarteelState.totalMB)} MB`:"…"} (first time only — you can start reciting now)
+              </p>
+            )}
+            {!isRecording && (tarteelState.status==="error"||tarteelState.status==="unsupported") && (
+              <p style={{margin:"0 0 8px",fontSize:11,color:"#B45309",textAlign:"center"}}>
+                The Quran checker couldn't load on this device. Check your connection and reopen this page.
+              </p>
+            )}
             {!isRecording
               ?(
                 <button onClick={startRecording} disabled={fetchingPage||!pageAyahs.length}
@@ -3269,8 +3009,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           <p style={{margin:0,color:"#e5c76b",fontWeight:700,fontSize:15,textAlign:"center"}}>
             Checking your recitation…
           </p>
-          <p style={{margin:0,color:"#6B7280",fontSize:12,textAlign:"center"}}>
-            Just a moment
+          <p style={{margin:0,color:"#9CA3AF",fontSize:12,textAlign:"center",lineHeight:1.7,maxWidth:280}}>
+            {tarteelState.status==="loading"
+              ? `Getting the Quran checker ready${tarteelState.totalMB?` — ${Math.round(tarteelState.loadedMB??0)} of ${Math.round(tarteelState.totalMB)} MB`:"…"} (first time only)`
+              : "Listening back to your whole recitation on your device. This can take up to a minute for a long recitation."}
           </p>
         </div>
       )}
