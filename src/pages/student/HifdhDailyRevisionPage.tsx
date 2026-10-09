@@ -2017,19 +2017,19 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         const live = new LiveRecitationSession(stream, {
           referenceWords: refWords,
           onStatus: setLiveStatus,
-          onReveal: ({ revealed, frontier }) => {
+          onReveal: ({ revealed }) => {
             setLiveRevealed(revealed);
-            // Per ayah: how many of its words have been recited (m of n) and what share of its letters that is,
-            // so the printed page can uncover the ayah word by word as it is read.
+            // Per ayah: how many of its words were actually HEARD (m of n) and what share of its letters that is,
+            // so the printed page uncovers only what was recited (skipped words stay hidden).
             const prog: Record<string, { m: number; n: number; f: number }> = {};
             let sig = "";
             ranges.forEach(r => {
               const n = r.weights.length;
-              const m = Math.max(0, Math.min(n, frontier - r.start));
+              let m = 0, got = 0;
+              for (let k = 0; k < n; k++) if (revealed[r.start + k]) { m++; got += r.weights[k]; }
               if (m <= 0) return;
               const tot = r.weights.reduce((x, y) => x + y, 0);
-              const f = r.weights.slice(0, m).reduce((x, y) => x + y, 0) / tot;
-              prog[r.key] = { m, n, f };
+              prog[r.key] = { m, n, f: got / tot };
               sig += `${r.key}:${m};`;
             });
             if (sig !== revealKeyRef.current) { revealKeyRef.current = sig; setRevealProgress(prog); }
@@ -3067,9 +3067,17 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 </div>
                 {liveStatus && (
                   <p style={{margin:"0 0 8px",fontSize:10,color:"#9CA3AF",textAlign:"center",fontVariantNumeric:"tabular-nums"}}>
-                    heard {liveStatus.windows} · quiet {liveStatus.silent} · {liveStatus.lastMs != null ? `${(liveStatus.lastMs/1000).toFixed(1)}s per check` : "—"} · words matched {liveStatus.matchedWords}/{liveWordList.length}
+                    heard {liveStatus.windows} · quiet {liveStatus.silent} · {liveStatus.lastMs != null ? `${(liveStatus.lastMs/1000).toFixed(1)}s per check` : "—"} · words matched {liveStatus.matchedWords}/{liveWordList.length}{liveStatus.lagSec > 3 ? ` · catching up ${Math.round(liveStatus.lagSec)}s` : ""}{liveStatus.device ? ` · ${liveStatus.device}` : ""}
                     {liveStatus.error ? ` · error: ${liveStatus.error}` : ""}
                   </p>
+                )}
+                {/* Recited words as plain text: always works, even if the printed-page cover can't uncover the glyphs. */}
+                {liveRevealed.some(Boolean) && (
+                  <div dir="rtl" ref={el => { if (el) el.scrollTop = el.scrollHeight; }}
+                    style={{margin:"0 0 8px",padding:"6px 12px",borderRadius:10,background:"#f3faf5",border:`1px solid ${PASS}33`,
+                      fontFamily:"'Amiri Quran','Amiri',serif",fontSize:19,lineHeight:2,textAlign:"right",maxHeight:84,overflowY:"auto",color:"#15803d"}}>
+                    {liveWordList.map((w,i)=> liveRevealed[i] ? <span key={i} style={{marginInlineStart:6,display:"inline-block"}}>{w}</span> : null)}
+                  </div>
                 )}
                 {isGroup ? (
                   <SwipePages pages={todayPages} height={Math.max(300, winH-290)} viewIdx={viewIdx}
