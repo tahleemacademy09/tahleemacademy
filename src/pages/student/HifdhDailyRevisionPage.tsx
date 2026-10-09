@@ -38,6 +38,7 @@ import { audioUrl as quranAyahAudioUrl, SURAHS } from "@/components/hifdh/surahD
 import { useProctoring } from "@/hooks/useProctoring";
 import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
 import MushafPageView from "@/components/hifdh/MushafPageView";
+import RecitationResultGrid from "@/components/hifdh/RecitationResultGrid";
 // RollingTranscriber import removed — transcription is now a single whole-recording Groq call on Stop
 
 // ── Lazy surah lookup ─────────────────────────────────────────────────────
@@ -1509,6 +1510,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [submitting,   setSubmitting]  = useState(false);
   const [audioUrl,     setAudioUrl]    = useState<string|null>(null);
   const [lastTranscript, setLastTranscript] = useState("");
+  // Seconds from tapping Stop to the result appearing (shown on the result grid).
+  const stopTsRef = useRef<number | null>(null);
+  const [checkSecs, setCheckSecs] = useState<number | null>(null);
   const [ayahCorrectness, setAyahCorrectness] = useState<boolean[]>([]);
   // True when transcription returned nothing because no API key is configured
   const [noApiWarning, setNoApiWarning] = useState(false);
@@ -1572,7 +1576,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   useEffect(() => tarteelEngine.subscribe(setTarteelState), []);
   // While recording with the model ready, the printed page is shown covered and uncovers ayah by ayah.
   // Until then (model still loading / unsupported / page can't be covered) the plain "Listening…" screen is used.
-  const showCoverPage = isRecording && tarteelState.status === "ready" && !coverFailed;
+  // Live word-by-word reveal while reciting. OFF: the student just recites and the full result appears after Submit.
+  // The on-device model still runs in the background as the fallback transcript. Set to true to bring the reveal back.
+  const LIVE_REVEAL_ENABLED = false;
+  const showCoverPage = LIVE_REVEAL_ENABLED && isRecording && tarteelState.status === "ready" && !coverFailed;
   // Start downloading/loading the model as soon as the student reaches the recite screen, so it is
   // ready by the time they tap Start Reciting (first visit ≈100 MB, cached afterwards).
   useEffect(() => {
@@ -1966,6 +1973,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           const errs = getErrorWords(tx, ayahs);
           const corr = getAyahCorrectness(tx, ayahs, capturedSecs);
           setLastTranscript(tx);
+          setCheckSecs(stopTsRef.current != null ? (performance.now() - stopTsRef.current) / 1000 : null);
+          stopTsRef.current = null;
           lastResultRef.current = { tx, ayahCorrectness: corr };
           setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
           // Partial blob no longer needed — clean up IDB and reset carry-over
@@ -2150,6 +2159,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const lastResultRef = useRef<{ tx: string; ayahCorrectness: boolean[] } | null>(null);
 
   const handleStop = () => {
+    stopTsRef.current = performance.now();
     setIsRecording(false);
     clearInterval(timerRef.current);
     // Stop the chunk recorders FIRST (while the mic stream is still live) so every in-flight
@@ -3333,58 +3343,14 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 </div>
               )}
 
-              {/* 3 ── Word-by-Word Analysis (exact مراجعة layout) */}
+              {/* 3 ── Word-by-word result: correct / close / wrong / missed, word error rate, what the model heard */}
               {wordRes.length>0&&(
-                <div style={{borderRadius:14,padding:"14px",
-                  background:"#ffffff08",border:`1px solid ${GOLD}22`,backgroundColor:"#fff"}}>
-                  <p style={{margin:"0 0 10px",fontSize:12,fontWeight:800,color:GOLD}}>
-                    Word-by-Word Analysis
-                  </p>
-                  {/* Parchment word-pill container — direction rtl, exact مراجعة */}
-                  <div style={{display:"flex",flexWrap:"wrap",gap:6,padding:"12px",
-                    borderRadius:12,background:"#fffdf6",direction:"rtl"}}>
-                    {wordRes.map((w,i)=>(
-                      <span key={i} style={{
-                        padding:"4px 10px",borderRadius:6,
-                        fontFamily:"'Amiri Quran','Amiri',serif",
-                        fontSize:17,fontWeight:600,
-                        background: w.status==="correct" ? "#dcfce7" : "#fee2e2",
-                        color:      w.status==="correct" ? "#166534" : "#dc2626",
-                      }}>
-                        {w.word}
-                      </span>
-                    ))}
-                  </div>
-                  {/* Legend */}
-                  <div style={{display:"flex",gap:14,marginTop:8,fontSize:11,color:"#6B7280"}}>
-                    <span style={{display:"flex",alignItems:"center",gap:5}}>
-                      <span style={{width:9,height:9,borderRadius:"50%",display:"inline-block",
-                        background:"#16a34a"}}/>Correct
-                    </span>
-                    <span style={{display:"flex",alignItems:"center",gap:5}}>
-                      <span style={{width:9,height:9,borderRadius:"50%",display:"inline-block",
-                        background:"#dc2626"}}/>Missing
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* 4 ── Your Recitation transcript (exact مراجعة) —
-                   rendered from the matched MUSHAF words (origRef, full tashkeel),
-                   not the raw STT output, so the script matches the Qur'an exactly.
-                   Missing words are simply omitted here (they're already shown
-                   in red above); only what you actually said is shown, in Quran script. */}
-              {lastTranscript&&(
-                <div style={{borderRadius:14,padding:"14px",
-                  background:"#ffffff",border:`1px solid ${GOLD}22`}}>
-                  <p style={{margin:"0 0 8px",fontSize:12,fontWeight:800,color:GOLD}}>
-                    Your Recitation (matched words)
-                  </p>
-                  <p style={{margin:0,fontSize:14,lineHeight:2.1,direction:"rtl",
-                    fontFamily:"'Amiri Quran','Amiri',serif",color:"#1a1a1a",wordBreak:"break-word"}}>
-                    {wordRes.filter(w=>w.status==="correct").map(w=>w.word).join(" ")}
-                  </p>
-                </div>
+                <RecitationResultGrid
+                  words={wordRes.map(w=>w.word)}
+                  matched={wordRes.map(w=>w.status==="correct")}
+                  heardText={lastTranscript}
+                  checkSecs={checkSecs}
+                />
               )}
 
               {/* 5 ── Transcription unavailable — student-friendly message only.
