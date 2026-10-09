@@ -1300,9 +1300,11 @@ function PreTestReview({audioUrl,pageResults,onContinue}:{audioUrl:string|null;p
 }
 
 /* ── Swipeable pager: one Mushaf page per slide, dots at the bottom ── */
-function SwipePages({ pages, height, viewIdx, onView, onFull, onBg, clipFor }: {
+function SwipePages({ pages, height, viewIdx, onView, onFull, onBg, clipFor, coverUnrevealed, revealedAyahs, onUnavailable }: {
   pages: number[]; height: number; viewIdx: number; clipFor?: (page: number) => number[] | null;
-  onView: (i: number) => void; onFull: () => void; onBg?: (css: string) => void;
+  onView: (i: number) => void; onFull?: () => void; onBg?: (css: string) => void;
+  /** live recitation: hide the printed page and uncover only the ayahs in `revealedAyahs` ("surah:ayah") */
+  coverUnrevealed?: boolean; revealedAyahs?: string[]; onUnavailable?: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   // Restore the slide we were on (e.g. coming back from recording / full screen)
@@ -1324,12 +1326,14 @@ function SwipePages({ pages, height, viewIdx, onView, onFull, onBg, clipFor }: {
   };
   return (
     <div style={{ position: "relative", margin: "0 -16px" }}>
+      {onFull && (
       <button onClick={onFull} aria-label="Full page"
         style={{ position: "absolute", top: 6, right: 22, zIndex: 5, width: 34, height: 34, borderRadius: 99,
           border: "1px solid #C9A84C", background: "rgba(255,255,255,.92)", color: "#78350F",
           display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
         <Maximize2 size={16} />
       </button>
+      )}
       <div ref={ref} onScroll={onScroll}
         style={{ display: "flex", direction: "rtl", overflowX: "auto", overflowY: "hidden", scrollSnapType: "x mandatory",
           WebkitOverflowScrolling: "touch", scrollbarWidth: "none" as any, msOverflowStyle: "none" as any }}>
@@ -1337,6 +1341,7 @@ function SwipePages({ pages, height, viewIdx, onView, onFull, onBg, clipFor }: {
           <div key={pn} style={{ flex: "0 0 100%", direction: "ltr", scrollSnapAlign: "center", scrollSnapStop: "always" }}>
             <MushafPageView page={pn} seamless pureWhite availableHeight={height} maxStretch={1.4}
               onlySurahs={clipFor?.(pn) ?? undefined}
+              coverUnrevealed={coverUnrevealed} revealedAyahs={revealedAyahs} onUnavailable={onUnavailable}
               onBackground={i === 0 ? onBg : undefined} />
           </div>
         ))}
@@ -1557,9 +1562,15 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [tarteelState, setTarteelState] = useState<TarteelProgress>(tarteelEngine.state);
   const [liveWordList, setLiveWordList] = useState<string[]>([]);
   const [liveRevealed, setLiveRevealed] = useState<boolean[]>([]);
+  // Ayahs uncovered so far on the printed page ("surah:ayah"), and whether the printed page can't be covered (→ word panel instead).
+  const [revealedAyahs, setRevealedAyahs] = useState<string[]>([]);
+  const [coverFailed, setCoverFailed] = useState(false);
   const liveSessionRef = useRef<LiveRecitationSession | null>(null);
   const liveFinalRef   = useRef<Promise<string> | null>(null);
   useEffect(() => tarteelEngine.subscribe(setTarteelState), []);
+  // While recording with the model ready, the printed page is shown covered and uncovers ayah by ayah.
+  // Until then (model still loading / unsupported / page can't be covered) the plain "Listening…" screen is used.
+  const showCoverPage = isRecording && tarteelState.status === "ready" && !coverFailed;
   // Start downloading/loading the model as soon as the student reaches the recite screen, so it is
   // ready by the time they tap Start Reciting (first visit ≈100 MB, cached afterwards).
   useEffect(() => {
@@ -1989,9 +2000,24 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           .filter(w => tarteelWordKey(w));
         setLiveWordList(refWords);
         setLiveRevealed(refWords.map(() => false));
+        setRevealedAyahs([]);
+        setCoverFailed(false);
+        // Where each ayah ends in the flat word list, so a word-level frontier can uncover whole ayahs.
+        const ranges: { key: string; end: number; len: number }[] = [];
+        let off = 0;
+        pageAyahsRef.current.forEach(a => {
+          const len = (a.text ?? "").split(/\s+/).filter(w => tarteelWordKey(w)).length;
+          off += len;
+          ranges.push({ key: `${a.surah?.number}:${a.numberInSurah}`, end: off, len });
+        });
         const live = new LiveRecitationSession(stream, {
           referenceWords: refWords,
-          onReveal: ({ revealed }) => setLiveRevealed(revealed),
+          onReveal: ({ revealed, frontier }) => {
+            setLiveRevealed(revealed);
+            // An ayah is uncovered once the recitation has reached its end (one missed last word is forgiven on longer ayahs).
+            const keys = ranges.filter(r => frontier >= r.end - (r.len >= 5 ? 1 : 0)).map(r => r.key);
+            setRevealedAyahs(prev => (prev.length === keys.length ? prev : keys));
+          },
         });
         liveSessionRef.current = live;
         live.start();
@@ -3000,7 +3026,31 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 is intentionally hidden during recitation: the student should be
                 reciting from memory, not reading along with a blurred page, and
                 the previous blurred-word layout was confusing/distracting. */}
-            {isRecording && (
+            {showCoverPage && (
+              <div>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,padding:"0 0 8px",flexWrap:"wrap"}}>
+                  <span style={{padding:"4px 14px",borderRadius:20,background:`${PASS}18`,border:`1px solid ${PASS}50`,
+                    fontSize:13,fontWeight:900,color:PASS,fontVariantNumeric:"tabular-nums"}}>
+                    🔴 {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
+                  </span>
+                  <span style={{fontSize:11,fontWeight:700,color:"#6B7280"}}>
+                    {revealedAyahs.length} / {pageAyahs.length} ayahs · recite from memory, each ayah appears as you finish it
+                  </span>
+                </div>
+                {isGroup ? (
+                  <SwipePages pages={todayPages} height={Math.max(300, winH-290)} viewIdx={viewIdx}
+                    onView={setViewIdx} onBg={setPrintedBg} clipFor={clipFor}
+                    coverUnrevealed revealedAyahs={revealedAyahs} onUnavailable={()=>setCoverFailed(true)}/>
+                ) : todayPages[pageIdx] ? (
+                  <div style={{margin:"0 -16px"}}>
+                    <MushafPageView page={todayPages[pageIdx]} seamless pureWhite availableHeight={Math.max(300, winH-250)} maxStretch={1.4}
+                      onlySurahs={clipFor(todayPages[pageIdx])??undefined} onBackground={setPrintedBg}
+                      coverUnrevealed revealedAyahs={revealedAyahs} onUnavailable={()=>setCoverFailed(true)}/>
+                  </div>
+                ) : null}
+              </div>
+            )}
+            {isRecording && !showCoverPage && (
               <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
                 gap:22,padding:"48px 20px",minHeight:"50vh"}}>
                 <div style={{position:"relative",width:128,height:128,display:"flex",alignItems:"center",justifyContent:"center"}}>
