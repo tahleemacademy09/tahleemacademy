@@ -18,7 +18,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { RollingTranscriber } from "@/lib/rollingTranscription";
-import { tarteelEngine, LiveRecitationSession, tarteelWordKey, type TarteelProgress, type LiveStatus } from "@/lib/tarteelOnDevice";
+import { tarteelEngine, LiveRecitationSession, tarteelWordKey, tarteelNormalize, type TarteelProgress, type LiveStatus } from "@/lib/tarteelOnDevice";
 import { uploadHifdhAudio, resolveHifdhSessionAudio, HIFDH_R2_PREFIX } from "@/lib/hifdhAudio";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
 import HifdhLiveClass from "@/components/hifdh/HifdhLiveClass";
@@ -1300,11 +1300,11 @@ function PreTestReview({audioUrl,pageResults,onContinue}:{audioUrl:string|null;p
 }
 
 /* ── Swipeable pager: one Mushaf page per slide, dots at the bottom ── */
-function SwipePages({ pages, height, viewIdx, onView, onFull, onBg, clipFor, coverUnrevealed, revealedAyahs, onUnavailable }: {
+function SwipePages({ pages, height, viewIdx, onView, onFull, onBg, clipFor, coverUnrevealed, revealProgress, onUnavailable }: {
   pages: number[]; height: number; viewIdx: number; clipFor?: (page: number) => number[] | null;
   onView: (i: number) => void; onFull?: () => void; onBg?: (css: string) => void;
-  /** live recitation: hide the printed page and uncover only the ayahs in `revealedAyahs` ("surah:ayah") */
-  coverUnrevealed?: boolean; revealedAyahs?: string[]; onUnavailable?: () => void;
+  /** live recitation: hide the printed page and uncover it word by word following `revealProgress` ("surah:ayah" keys) */
+  coverUnrevealed?: boolean; revealProgress?: Record<string, { m: number; n: number; f: number }>; onUnavailable?: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   // Restore the slide we were on (e.g. coming back from recording / full screen)
@@ -1341,7 +1341,7 @@ function SwipePages({ pages, height, viewIdx, onView, onFull, onBg, clipFor, cov
           <div key={pn} style={{ flex: "0 0 100%", direction: "ltr", scrollSnapAlign: "center", scrollSnapStop: "always" }}>
             <MushafPageView page={pn} seamless pureWhite availableHeight={height} maxStretch={1.4}
               onlySurahs={clipFor?.(pn) ?? undefined}
-              coverUnrevealed={coverUnrevealed} revealedAyahs={revealedAyahs} onUnavailable={onUnavailable}
+              coverUnrevealed={coverUnrevealed} revealProgress={revealProgress} onUnavailable={onUnavailable}
               onBackground={i === 0 ? onBg : undefined} />
           </div>
         ))}
@@ -1563,7 +1563,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [liveWordList, setLiveWordList] = useState<string[]>([]);
   const [liveRevealed, setLiveRevealed] = useState<boolean[]>([]);
   // Ayahs uncovered so far on the printed page ("surah:ayah"), and whether the printed page can't be covered (→ word panel instead).
-  const [revealedAyahs, setRevealedAyahs] = useState<string[]>([]);
+  const [revealProgress, setRevealProgress] = useState<Record<string, { m: number; n: number; f: number }>>({});
+  const revealKeyRef = useRef("");
   const [coverFailed, setCoverFailed] = useState(false);
   const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
   const liveSessionRef = useRef<LiveRecitationSession | null>(null);
@@ -2001,25 +2002,37 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           .filter(w => tarteelWordKey(w));
         setLiveWordList(refWords);
         setLiveRevealed(refWords.map(() => false));
-        setRevealedAyahs([]);
+        setRevealProgress({}); revealKeyRef.current = "";
         setCoverFailed(false);
         setLiveStatus(null);
         // Where each ayah ends in the flat word list, so a word-level frontier can uncover whole ayahs.
-        const ranges: { key: string; end: number; len: number }[] = [];
+        const ranges: { key: string; start: number; weights: number[] }[] = [];
         let off = 0;
         pageAyahsRef.current.forEach(a => {
-          const len = (a.text ?? "").split(/\s+/).filter(w => tarteelWordKey(w)).length;
-          off += len;
-          ranges.push({ key: `${a.surah?.number}:${a.numberInSurah}`, end: off, len });
+          const ws = (a.text ?? "").split(/\s+/).filter(w => tarteelWordKey(w));
+          ranges.push({ key: `${a.surah?.number}:${a.numberInSurah}`, start: off,
+            weights: ws.map(w => Math.max(1, tarteelNormalize(w).replace(/\s/g, "").length)) });
+          off += ws.length;
         });
         const live = new LiveRecitationSession(stream, {
           referenceWords: refWords,
           onStatus: setLiveStatus,
           onReveal: ({ revealed, frontier }) => {
             setLiveRevealed(revealed);
-            // An ayah is uncovered once the recitation has reached its end (one missed last word is forgiven on longer ayahs).
-            const keys = ranges.filter(r => frontier >= r.end - (r.len >= 5 ? 1 : 0)).map(r => r.key);
-            setRevealedAyahs(prev => (prev.length === keys.length ? prev : keys));
+            // Per ayah: how many of its words have been recited (m of n) and what share of its letters that is,
+            // so the printed page can uncover the ayah word by word as it is read.
+            const prog: Record<string, { m: number; n: number; f: number }> = {};
+            let sig = "";
+            ranges.forEach(r => {
+              const n = r.weights.length;
+              const m = Math.max(0, Math.min(n, frontier - r.start));
+              if (m <= 0) return;
+              const tot = r.weights.reduce((x, y) => x + y, 0);
+              const f = r.weights.slice(0, m).reduce((x, y) => x + y, 0) / tot;
+              prog[r.key] = { m, n, f };
+              sig += `${r.key}:${m};`;
+            });
+            if (sig !== revealKeyRef.current) { revealKeyRef.current = sig; setRevealProgress(prog); }
           },
         });
         liveSessionRef.current = live;
@@ -3037,7 +3050,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                     🔴 {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
                   </span>
                   <span style={{fontSize:11,fontWeight:700,color:"#6B7280"}}>
-                    {revealedAyahs.length} / {pageAyahs.length} ayahs · recite from memory, each ayah appears as you finish it
+                    {Object.values(revealProgress).filter(v => v.m >= v.n).length} / {pageAyahs.length} ayahs · recite from memory, words appear as you read them
                   </span>
                 </div>
                 {/* Live feedback: what the model is hearing right now, so the student can see it is working before the first ayah is complete. */}
@@ -3061,12 +3074,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 {isGroup ? (
                   <SwipePages pages={todayPages} height={Math.max(300, winH-290)} viewIdx={viewIdx}
                     onView={setViewIdx} onBg={setPrintedBg} clipFor={clipFor}
-                    coverUnrevealed revealedAyahs={revealedAyahs} onUnavailable={()=>setCoverFailed(true)}/>
+                    coverUnrevealed revealProgress={revealProgress} onUnavailable={()=>setCoverFailed(true)}/>
                 ) : todayPages[pageIdx] ? (
                   <div style={{margin:"0 -16px"}}>
                     <MushafPageView page={todayPages[pageIdx]} seamless pureWhite availableHeight={Math.max(300, winH-250)} maxStretch={1.4}
                       onlySurahs={clipFor(todayPages[pageIdx])??undefined} onBackground={setPrintedBg}
-                      coverUnrevealed revealedAyahs={revealedAyahs} onUnavailable={()=>setCoverFailed(true)}/>
+                      coverUnrevealed revealProgress={revealProgress} onUnavailable={()=>setCoverFailed(true)}/>
                   </div>
                 ) : null}
               </div>
