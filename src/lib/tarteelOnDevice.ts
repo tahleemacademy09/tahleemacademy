@@ -306,7 +306,25 @@ function resampleTo16k(input: Float32Array, srcRate: number): Float32Array {
   return out;
 }
 
+export interface LiveStatus {
+  /** windows the model has finished transcribing */
+  windows: number;
+  /** windows skipped because the mic was near-silent */
+  silent: number;
+  /** how long the last window took to transcribe (ms) */
+  lastMs: number | null;
+  /** latest raw text the model produced for the newest window */
+  heard: string;
+  /** reference words matched so far */
+  matchedWords: number;
+  /** loudness of the newest audio window (0 = silence) */
+  level: number;
+  error?: string;
+}
+
 export interface LiveSessionOptions {
+  /** Diagnostics for an on-screen status line (what the model hears, speed, mic level). */
+  onStatus?: (s: LiveStatus) => void;
   /** Reference words of the page(s) being recited, in reading order (original, with diacritics). */
   referenceWords: string[];
   /** Called whenever the reveal moves: `frontier` words are revealed, `revealed` is a per-word boolean array. */
@@ -333,7 +351,18 @@ export class LiveRecitationSession {
   private revealed: boolean[];
   private frontier = 0;
   private lastHeard = "";
-  private opts: Required<Omit<LiveSessionOptions, "referenceWords" | "onReveal">> & Pick<LiveSessionOptions, "referenceWords" | "onReveal">;
+  private opts: Required<Omit<LiveSessionOptions, "referenceWords" | "onReveal" | "onStatus">> & Pick<LiveSessionOptions, "referenceWords" | "onReveal" | "onStatus">;
+  private windows = 0;
+  private silent = 0;
+  private lastMs: number | null = null;
+  private lastLevel = 0;
+  private lastError: string | undefined;
+  private emitStatus() {
+    this.opts.onStatus?.({
+      windows: this.windows, silent: this.silent, lastMs: this.lastMs, heard: this.lastHeard,
+      matchedWords: this.revealed.filter(Boolean).length, level: this.lastLevel, error: this.lastError,
+    });
+  }
   /** Every window's text, kept as a rough live transcript (used only as a fallback score source). */
   private windowTexts: string[] = [];
 
@@ -389,7 +418,8 @@ export class LiveRecitationSession {
     const step = 16;
     for (let i = 0; i < out.length; i += step) sum += out[i] * out[i];
     const rms = Math.sqrt(sum / (out.length / step));
-    if (rms < 0.004) return null;
+    this.lastLevel = rms;
+    if (rms < 0.004) { this.silent++; this.emitStatus(); return null; }
     return resampleTo16k(out, this.srcRate);
   }
 
@@ -400,10 +430,15 @@ export class LiveRecitationSession {
     if (!audio) return;
     this.busy = true;
     try {
-      const { text } = await tarteelEngine.transcribe(audio);
+      const res = await tarteelEngine.transcribe(audio);
+      const text = res.text;
+      this.windows++;
+      this.lastMs = res.ms ?? null;
+      this.lastError = res.error;
+      if (text) this.lastHeard = text;
+      this.emitStatus();
       if (!text || this.stopped && !final) return;
       this.windowTexts.push(text);
-      this.lastHeard = text;
       let heard = tarteelWords(text).map(tarteelWordKey);
       // The newest word of a window is often half-heard; only trust it once the window is final.
       if (!final && heard.length > 3) heard = heard.slice(0, -1);
@@ -413,6 +448,7 @@ export class LiveRecitationSession {
         matched.forEach((i) => { this.revealed[i] = true; });
         this.frontier = frontier;
         this.opts.onReveal({ frontier: this.frontier, revealed: [...this.revealed], heardText: this.lastHeard });
+        this.emitStatus();
       }
     } finally {
       this.busy = false;
