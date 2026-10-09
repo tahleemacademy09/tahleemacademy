@@ -409,8 +409,12 @@ function mvPrefetchAround(page: number, white = false): () => void {
 }
 
 /** fitHeight: pixels of screen NOT available to the page (bars, buttons). When set, the whole page is fitted to the screen height. */
-export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, onUnavailable, onlySurahs }: {
+export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, onUnavailable, onlySurahs, coverUnrevealed, revealedAyahs }: {
   page: number; fontSize?: number; halves?: [number, number]; fitHeight?: number;
+  /** live-recitation mode: hide the whole printed page and uncover only the ayahs listed in `revealedAyahs` */
+  coverUnrevealed?: boolean;
+  /** ayahs to uncover, as "surah:ayah" keys (e.g. "9:1") */
+  revealedAyahs?: string[];
   /** blur everything on the page that does not belong to these surahs (e.g. the end of the previous surah above where the assigned surah starts) */
   onlySurahs?: number[];
   /** force a pure white page with pure black ink (recolours the printed SVG) */
@@ -569,6 +573,59 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
     if (fillH) { svg.setAttribute("preserveAspectRatio", "none"); svg.style.height = `${fillH}px`; }
     else { svg.setAttribute("preserveAspectRatio", "xMidYMid meet"); svg.style.height = "auto"; }
   }, [fillH, mode, aspect, src]);
+
+  // Live-recitation cover: a page-sized background-coloured sheet with holes cut in the exact shape of each
+  // revealed ayah's polygon (an SVG mask), so the real printed page appears ayah by ayah as it is recited.
+  const revealKey = revealedAyahs ? revealedAyahs.join(",") : "";
+  useEffect(() => {
+    const root = hostRef.current?.shadowRoot;
+    if (!root || mode !== "inline") return;
+    const svg = root.querySelector("svg") as SVGSVGElement | null;
+    if (!svg) return;
+    root.querySelectorAll("[data-cover]").forEach((n) => n.remove());
+    if (!coverUnrevealed) return;
+    const NS = "http://www.w3.org/2000/svg";
+    const revealed = new Set(revealKey ? revealKey.split(",") : []);
+    const BIG = 200000;
+    const mask = document.createElementNS(NS, "mask");
+    mask.setAttribute("id", "mv-cover-mask");
+    mask.setAttribute("maskUnits", "userSpaceOnUse");
+    mask.setAttribute("x", String(-BIG)); mask.setAttribute("y", String(-BIG));
+    mask.setAttribute("width", String(BIG * 2)); mask.setAttribute("height", String(BIG * 2));
+    const white = document.createElementNS(NS, "rect");
+    white.setAttribute("x", String(-BIG)); white.setAttribute("y", String(-BIG));
+    white.setAttribute("width", String(BIG * 2)); white.setAttribute("height", String(BIG * 2));
+    white.setAttribute("fill", "#fff");
+    mask.appendChild(white);
+    const svgInv = svg.getScreenCTM()?.inverse();
+    root.querySelectorAll(MV_POLY).forEach((el) => {
+      const a = mvAyahOf(el);
+      if (!a || !revealed.has(`${a.surah}:${a.ayah}`)) return;
+      const c = el.cloneNode(false) as SVGElement;
+      c.removeAttribute("class");
+      c.removeAttribute("transform");
+      c.setAttribute("style", "fill:#000;fill-opacity:1;stroke:none;pointer-events:none");
+      // keep the polygon where it is even if it sits inside a transformed group
+      const m = svgInv && (el as SVGGraphicsElement).getScreenCTM ? (el as SVGGraphicsElement).getScreenCTM() : null;
+      if (svgInv && m) {
+        const r = svgInv.multiply(m);
+        c.setAttribute("transform", `matrix(${r.a} ${r.b} ${r.c} ${r.d} ${r.e} ${r.f})`);
+      }
+      mask.appendChild(c);
+    });
+    const defs = document.createElementNS(NS, "defs");
+    defs.setAttribute("data-cover", "1");
+    defs.appendChild(mask);
+    const sheet = document.createElementNS(NS, "rect");
+    sheet.setAttribute("data-cover", "1");
+    sheet.setAttribute("x", String(-BIG)); sheet.setAttribute("y", String(-BIG));
+    sheet.setAttribute("width", String(BIG * 2)); sheet.setAttribute("height", String(BIG * 2));
+    sheet.setAttribute("style", `fill:${pureWhite ? "#ffffff" : bg};pointer-events:none`);
+    sheet.setAttribute("mask", "url(#mv-cover-mask)");
+    svg.appendChild(defs);
+    svg.appendChild(sheet);
+    return () => { root.querySelectorAll("[data-cover]").forEach((n) => n.remove()); };
+  }, [coverUnrevealed, revealKey, mode, src, bg, pureWhite, aspect, boxW, fillH, fillW]);
 
   // blur the unassigned part of the page (above / below the assigned surah)
   const [clipBands, setClipBands] = useState<{ top: number; bottom: number } | null>(null);
