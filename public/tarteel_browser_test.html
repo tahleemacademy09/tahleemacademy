@@ -320,6 +320,16 @@ async function loadModel() {
         opts = { device: "wasm", dtype: "q8" };
       } else { throw e; }
     }
+    // The exported generation config has no multilingual markers, so language/task are rejected.
+    // Whisper-base multilingual token ids: Arabic 50272, transcribe 50359, translate 50358.
+    const gc = asr.model && asr.model.generation_config;
+    if (gc) {
+      gc.is_multilingual = true;
+      gc.lang_to_id = Object.assign({ "<|ar|>": 50272 }, gc.lang_to_id || {});
+      gc.task_to_id = Object.assign({ transcribe: 50359, translate: 50358 }, gc.task_to_id || {});
+      if (gc.decoder_start_token_id == null) gc.decoder_start_token_id = 50258;
+      if (gc.no_timestamps_token_id == null) gc.no_timestamps_token_id = 50363;
+    }
     $("bar").style.width = "100%";
     setLoad(`Model ready (${opts.device}, ${opts.dtype}) in ${((performance.now() - t0) / 1000).toFixed(1)} s.`);
     return asr;
