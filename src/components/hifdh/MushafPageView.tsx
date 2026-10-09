@@ -671,6 +671,13 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
     };
     const prog = revealProgress ?? {};
     if (glyphMode) {
+      // Sanity check: if every fully-recited ayah of 4+ words has at most 1 glyph mapped (just the end marker),
+      // the word glyphs were not found — tell the page so it can switch to the plain-text reveal.
+      let checked = 0, broken = 0;
+      Object.entries(prog).forEach(([key, v]) => {
+        if (v.n >= 4 && v.m >= v.n) { checked++; if ((byAyah.get(key)?.length ?? 0) <= 1) broken++; }
+      });
+      if (checked > 0 && broken === checked) setTimeout(() => unavailRef.current?.(), 0);
       Object.entries(prog).forEach(([key, v]) => {
         const gl = byAyah.get(key);
         if (!gl || !gl.length || v.m <= 0) return;
