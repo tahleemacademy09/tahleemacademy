@@ -334,9 +334,9 @@ export interface LiveSessionOptions {
   referenceWords: string[];
   /** Called whenever the reveal moves: `frontier` words are revealed, `revealed` is a per-word boolean array. */
   onReveal: (state: { frontier: number; revealed: boolean[]; heardText: string }) => void;
-  /** Window of audio re-transcribed each tick. Default 8 s. */
+  /** Rolling audio window re-transcribed each tick. Shorter windows reduce reveal latency. */
   windowSec?: number;
-  /** Minimum gap between ticks (a tick also waits for the previous one to finish). Default 1.2 s. */
+  /** Desired polling interval; actual cadence is also limited by model inference time. */
   tickMs?: number;
 }
 
@@ -375,7 +375,9 @@ export class LiveRecitationSession {
     this.ref = opts.referenceWords;
     this.refKeys = opts.referenceWords.map(tarteelWordKey);
     this.revealed = opts.referenceWords.map(() => false);
-    this.opts = { windowSec: 8, tickMs: 1200, ...opts };
+    // Whisper inference cost scales with audio duration. Reprocessing 8 seconds every 1.2 seconds
+    // creates avoidable lag on phones; a 4.5-second rolling context is a practical first tuning step.
+    this.opts = { windowSec: 4.5, tickMs: 800, ...opts };
   }
 
   start() {
