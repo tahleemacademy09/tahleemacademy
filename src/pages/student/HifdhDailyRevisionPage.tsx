@@ -18,7 +18,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { RollingTranscriber } from "@/lib/rollingTranscription";
-import { tarteelEngine, LiveRecitationSession, tarteelWordKey, type TarteelProgress } from "@/lib/tarteelOnDevice";
+import { tarteelEngine, LiveRecitationSession, tarteelWordKey, type TarteelProgress, type LiveStatus } from "@/lib/tarteelOnDevice";
 import { uploadHifdhAudio, resolveHifdhSessionAudio, HIFDH_R2_PREFIX } from "@/lib/hifdhAudio";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
 import HifdhLiveClass from "@/components/hifdh/HifdhLiveClass";
@@ -1565,6 +1565,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // Ayahs uncovered so far on the printed page ("surah:ayah"), and whether the printed page can't be covered (→ word panel instead).
   const [revealedAyahs, setRevealedAyahs] = useState<string[]>([]);
   const [coverFailed, setCoverFailed] = useState(false);
+  const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
   const liveSessionRef = useRef<LiveRecitationSession | null>(null);
   const liveFinalRef   = useRef<Promise<string> | null>(null);
   useEffect(() => tarteelEngine.subscribe(setTarteelState), []);
@@ -2002,6 +2003,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         setLiveRevealed(refWords.map(() => false));
         setRevealedAyahs([]);
         setCoverFailed(false);
+        setLiveStatus(null);
         // Where each ayah ends in the flat word list, so a word-level frontier can uncover whole ayahs.
         const ranges: { key: string; end: number; len: number }[] = [];
         let off = 0;
@@ -2012,6 +2014,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         });
         const live = new LiveRecitationSession(stream, {
           referenceWords: refWords,
+          onStatus: setLiveStatus,
           onReveal: ({ revealed, frontier }) => {
             setLiveRevealed(revealed);
             // An ayah is uncovered once the recitation has reached its end (one missed last word is forgiven on longer ayahs).
@@ -3037,6 +3040,24 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                     {revealedAyahs.length} / {pageAyahs.length} ayahs · recite from memory, each ayah appears as you finish it
                   </span>
                 </div>
+                {/* Live feedback: what the model is hearing right now, so the student can see it is working before the first ayah is complete. */}
+                <div dir="rtl" style={{margin:"0 0 8px",padding:"6px 12px",borderRadius:10,background:"#fdf8ee",border:`1px solid ${GOLD}44`,
+                  fontFamily:"'Amiri Quran','Amiri',serif",fontSize:17,lineHeight:1.9,textAlign:"center",minHeight:34,color:"#15803d",
+                  overflow:"hidden",maxHeight:70}}>
+                  {liveStatus?.heard
+                    ? liveStatus.heard.split(/\s+/).slice(-8).join(" ")
+                    : <span style={{fontFamily:"system-ui,sans-serif",fontSize:11,color:"#9CA3AF",direction:"ltr"}}>
+                        {liveStatus && liveStatus.silent > 0 && liveStatus.windows === 0
+                          ? "Not hearing any sound — speak closer to the microphone"
+                          : recSecs > 12 && !liveStatus?.windows ? "Model is processing the first few seconds…" : "Listening…"}
+                      </span>}
+                </div>
+                {liveStatus && (
+                  <p style={{margin:"0 0 8px",fontSize:10,color:"#9CA3AF",textAlign:"center",fontVariantNumeric:"tabular-nums"}}>
+                    heard {liveStatus.windows} · quiet {liveStatus.silent} · {liveStatus.lastMs != null ? `${(liveStatus.lastMs/1000).toFixed(1)}s per check` : "—"} · words matched {liveStatus.matchedWords}/{liveWordList.length}
+                    {liveStatus.error ? ` · error: ${liveStatus.error}` : ""}
+                  </p>
+                )}
                 {isGroup ? (
                   <SwipePages pages={todayPages} height={Math.max(300, winH-290)} viewIdx={viewIdx}
                     onView={setViewIdx} onBg={setPrintedBg} clipFor={clipFor}
