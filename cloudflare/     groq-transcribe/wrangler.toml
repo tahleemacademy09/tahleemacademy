@@ -1,1 +1,9 @@
+name = "groq-transcribe"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
 
+# Secret (not stored here):  npx wrangler secret put GROQ_API_KEY
+
+# Backup transcription when Groq is rate-limited (Workers AI free allowance, no key needed)
+[ai]
+binding = "AI"
