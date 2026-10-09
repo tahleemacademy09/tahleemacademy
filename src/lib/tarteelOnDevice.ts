@@ -112,8 +112,13 @@ export function advanceReveal(
         Math.abs(start - frontier) < Math.abs((best.idxs[0] ?? start) - frontier));
     if (better) best = { score: idxs.length, idxs };
   }
-  // A single stray hit is too weak to move the frontier (noise, a common word).
-  if (best.score < 2 && !(best.score === 1 && heard.length === 1)) return { frontier, matched: [] };
+  // A single stray hit is too weak to move the frontier (noise, a common word) — unless it is the very word
+  // we were waiting for (right at the frontier), which is how the first word of a recitation gets revealed.
+  if (best.score < 2) {
+    const only = best.idxs[0];
+    const nearFrontier = best.score === 1 && only !== undefined && only >= frontier && only <= frontier + 1 && ref[only].length >= 3;
+    if (!nearFrontier) return { frontier, matched: [] };
+  }
   const newMatches = best.idxs.filter((i) => i >= frontier);
   if (!newMatches.length) return { frontier, matched: [] };
   const last = newMatches[newMatches.length - 1];
