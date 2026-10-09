@@ -187,7 +187,10 @@ self.onmessage = async (ev) => {
     } else if (m.type === "transcribe") {
       if (!asr) { self.postMessage({ type: "result", id: m.id, text: "", error: "not_loaded" }); return; }
       const t0 = Date.now();
-      const out = await asr(m.audio, { language: "arabic", task: "transcribe" });
+      const opts = { language: "arabic", task: "transcribe" };
+      // Whole recordings: Whisper sees 30 s at a time with a 5 s stride so no word is lost at a cut.
+      if (m.full) { opts.chunk_length_s = 30; opts.stride_length_s = 5; }
+      const out = await asr(m.audio, opts);
       self.postMessage({ type: "result", id: m.id, text: (out && out.text || "").trim(), ms: Date.now() - t0 });
     }
   } catch (e) {
@@ -284,13 +287,36 @@ class TarteelEngine {
   isReady() { return this.state.status === "ready"; }
 
   /** audio: mono Float32 at 16 kHz. Ownership of the buffer is transferred to the worker. */
-  transcribe(audio: Float32Array): Promise<{ text: string; error?: string; ms?: number }> {
+  transcribe(audio: Float32Array, full = false): Promise<{ text: string; error?: string; ms?: number }> {
     if (!this.worker || this.state.status !== "ready") return Promise.resolve({ text: "", error: "not_ready" });
     const id = this.nextId++;
     return new Promise((resolve) => {
       this.pending.set(id, resolve);
-      this.worker!.postMessage({ type: "transcribe", id, audio }, [audio.buffer]);
+      this.worker!.postMessage({ type: "transcribe", id, audio, full }, [audio.buffer]);
     });
+  }
+
+  /**
+   * Transcribe a finished recording (any format the browser can decode). Waits for the model to
+   * finish loading first, so it is safe to call straight after the student taps Stop.
+   * Runs in 30 s windows with a 5 s stride, exactly like public/tarteel_browser_test.html.
+   */
+  async transcribeBlob(blob: Blob): Promise<{ text: string; error?: string; ms?: number; audioSecs?: number }> {
+    try {
+      await this.load(true);
+    } catch (e: any) {
+      return { text: "", error: String(e?.message ?? e ?? "load_failed") };
+    }
+    let audio: Float32Array;
+    try {
+      audio = await decodeBlobTo16k(blob);
+    } catch (e: any) {
+      return { text: "", error: "decode_failed: " + String(e?.message ?? e) };
+    }
+    const audioSecs = audio.length / TARGET_SR;
+    if (audio.length < TARGET_SR * 0.4) return { text: "", ms: 0, audioSecs };
+    const res = await this.transcribe(audio, true);
+    return { ...res, audioSecs };
   }
 }
 
@@ -314,6 +340,29 @@ function resampleTo16k(input: Float32Array, srcRate: number): Float32Array {
   }
   return out;
 }
+/** Decode a recorded blob (webm/opus, mp4, ogg…) to mono 16 kHz Float32 samples. */
+export async function decodeBlobTo16k(blob: Blob): Promise<Float32Array> {
+  const AC: typeof AudioContext = (window as any).AudioContext || (window as any).webkitAudioContext;
+  const data = await blob.arrayBuffer();
+  let ctx: AudioContext;
+  try { ctx = new AC({ sampleRate: TARGET_SR }); } catch { ctx = new AC(); }
+  try {
+    const buf = await new Promise<AudioBuffer>((resolve, reject) => {
+      // The callback form is the only one older Safari/WebViews support.
+      const p = ctx.decodeAudioData(data, resolve, reject);
+      if (p && typeof (p as any).catch === "function") (p as Promise<AudioBuffer>).catch(reject);
+    });
+    const mono = new Float32Array(buf.length);
+    for (let c = 0; c < buf.numberOfChannels; c++) {
+      const ch = buf.getChannelData(c);
+      for (let k = 0; k < ch.length; k++) mono[k] += ch[k] / buf.numberOfChannels;
+    }
+    return buf.sampleRate === TARGET_SR ? mono : resampleTo16k(mono, buf.sampleRate);
+  } finally {
+    try { void ctx.close(); } catch { /* noop */ }
+  }
+}
+
 /**
  * Sequential audio segmenter. Every sample the microphone produces is handed to the model exactly once
  * (plus a short overlap so a word cut at a boundary is heard whole). Because Whisper always processes a
