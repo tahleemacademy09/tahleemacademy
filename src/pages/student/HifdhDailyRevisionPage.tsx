@@ -1577,7 +1577,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // ready by the time they tap Start Reciting (first visit ≈100 MB, cached afterwards).
   useEffect(() => {
     if (phase !== "reading") return;
-    tarteelEngine.load(false).catch(() => { /* status is shown in the UI; recording still works without it */ });
+    tarteelEngine.load(true).catch(() => { /* status is shown in the UI; recording still works without it */ });
   }, [phase]);
   useEffect(() => () => { liveSessionRef.current?.cancel(); liveSessionRef.current = null; }, []);
 
@@ -2037,7 +2037,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         });
         liveSessionRef.current = live;
         live.start();
-        tarteelEngine.load(false).catch(() => {});
+        tarteelEngine.load(true).catch(() => {});
       } catch (e) {
         console.warn("[HifdhDaily] live reveal unavailable:", e);
         liveSessionRef.current = null;
