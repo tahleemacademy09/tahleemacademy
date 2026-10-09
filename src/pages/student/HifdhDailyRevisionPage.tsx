@@ -18,6 +18,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { RollingTranscriber } from "@/lib/rollingTranscription";
+import { tarteelEngine, LiveRecitationSession, tarteelWordKey, type TarteelProgress } from "@/lib/tarteelOnDevice";
 import { uploadHifdhAudio, resolveHifdhSessionAudio, HIFDH_R2_PREFIX } from "@/lib/hifdhAudio";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
 import HifdhLiveClass from "@/components/hifdh/HifdhLiveClass";
@@ -1548,6 +1549,25 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // chunk) still needs transcribing.
   const stylePromptRef = useRef<string>("");
 
+  // ── ON-DEVICE TARTEEL MODEL + LIVE WORD REVEAL ────────────────────────────
+  // The Tarteel Quran model runs inside the student's browser (Web Worker, nothing uploaded).
+  // While recording it re-transcribes the last few seconds every ~1.5 s and "unveils" each
+  // reference word as it is recited. It only drives the on-screen reveal; the final score still
+  // comes from the Groq transcript above, and the on-device text is the fallback if Groq fails.
+  const [tarteelState, setTarteelState] = useState<TarteelProgress>(tarteelEngine.state);
+  const [liveWordList, setLiveWordList] = useState<string[]>([]);
+  const [liveRevealed, setLiveRevealed] = useState<boolean[]>([]);
+  const liveSessionRef = useRef<LiveRecitationSession | null>(null);
+  const liveFinalRef   = useRef<Promise<string> | null>(null);
+  useEffect(() => tarteelEngine.subscribe(setTarteelState), []);
+  // Start downloading/loading the model as soon as the student reaches the recite screen, so it is
+  // ready by the time they tap Start Reciting (first visit ≈100 MB, cached afterwards).
+  useEffect(() => {
+    if (phase !== "reading") return;
+    tarteelEngine.load(false).catch(() => { /* status is shown in the UI; recording still works without it */ });
+  }, [phase]);
+  useEffect(() => () => { liveSessionRef.current?.cancel(); liveSessionRef.current = null; }, []);
+
   // ── WAKE LOCK: keep screen on for entire session ─────────────────────────
   useEffect(() => {
     const acquire = async () => {
@@ -1959,6 +1979,27 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       });
       rollerRef.current = roller;
       roller.start();
+      // Live word reveal (on-device model). Starts listening immediately; words begin unveiling as soon
+      // as the model has finished loading. Any failure here is non-fatal — recording and scoring go on.
+      try {
+        liveSessionRef.current?.cancel();
+        liveFinalRef.current = null;
+        const refWords = pageAyahsRef.current
+          .flatMap(a => (a.text ?? "").split(/\s+/))
+          .filter(w => tarteelWordKey(w));
+        setLiveWordList(refWords);
+        setLiveRevealed(refWords.map(() => false));
+        const live = new LiveRecitationSession(stream, {
+          referenceWords: refWords,
+          onReveal: ({ revealed }) => setLiveRevealed(revealed),
+        });
+        liveSessionRef.current = live;
+        live.start();
+        tarteelEngine.load(false).catch(() => {});
+      } catch (e) {
+        console.warn("[HifdhDaily] live reveal unavailable:", e);
+        liveSessionRef.current = null;
+      }
       mr.start(200);
       mediaRecRef.current = mr;
       setIsRecording(true);
@@ -2057,7 +2098,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     const whole = await transcribeAudio(fullBlob, ayahs, undefined, 60000);
     const wholeOk = whole && whole !== "__NO_API__" && whole.length > 5 ? whole : "";
     const best = wc(wholeOk) > wc(rolled) ? wholeOk : rolled;
-    return best.length > 5 ? best : "__NO_API__";
+    if (best.length > 5) return best;
+    // Server transcription gave nothing: fall back to what the on-device model heard, if it heard enough.
+    let onDevice = "";
+    try { onDevice = liveFinalRef.current ? (await liveFinalRef.current).trim() : ""; } catch { onDevice = ""; }
+    return wc(onDevice) >= 3 ? onDevice : "__NO_API__";
   };
 
   const lastResultRef = useRef<{ tx: string; ayahCorrectness: boolean[] } | null>(null);
@@ -2068,6 +2113,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     // Stop the chunk recorders FIRST (while the mic stream is still live) so every in-flight
     // chunk is flushed and awaited before the stream tracks are released in mr.onstop.
     if (rollerRef.current) { rollFinalRef.current = rollerRef.current.finalize(); rollerRef.current = null; }
+    if (liveSessionRef.current) {
+      const live = liveSessionRef.current;
+      liveSessionRef.current = null;
+      liveFinalRef.current = live.finish().then(() => live.getRevealedText()).catch(() => "");
+    }
     if (mediaRecRef.current && mediaRecRef.current.state !== "inactive") {
       mediaRecRef.current.stop(); // triggers mr.onstop → finalizeTranscript → setScore
     }
@@ -2972,6 +3022,46 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                   fontSize:14,fontWeight:900,color:PASS,fontVariantNumeric:"tabular-nums"}}>
                   🔴 {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
                 </span>
+                {/* Live word reveal — each word appears as the on-device model hears it recited. */}
+                {(() => {
+                  const total = liveWordList.length;
+                  const done = liveRevealed.filter(Boolean).length;
+                  const loading = tarteelState.status === "loading" || tarteelState.status === "idle";
+                  const unavailable = tarteelState.status === "error" || tarteelState.status === "unsupported";
+                  return (
+                    <div style={{width:"100%",maxWidth:420}}>
+                      {loading && (
+                        <p style={{margin:"0 0 8px",fontSize:11,color:"#9CA3AF",textAlign:"center"}}>
+                          Preparing live reveal{tarteelState.totalMB ? ` — ${Math.round(tarteelState.loadedMB ?? 0)} of ${Math.round(tarteelState.totalMB)} MB` : "…"} (keep reciting, you will still be scored)
+                        </p>
+                      )}
+                      {unavailable && (
+                        <p style={{margin:"0 0 8px",fontSize:11,color:"#9CA3AF",textAlign:"center"}}>
+                          Live reveal isn't available on this device — keep reciting, you will still be scored.
+                        </p>
+                      )}
+                      {!loading && !unavailable && total > 0 && (
+                        <>
+                          <div style={{height:6,borderRadius:99,background:`${PASS}22`,overflow:"hidden",marginBottom:6}}>
+                            <div style={{height:"100%",width:`${Math.round(100*done/total)}%`,background:PASS,transition:"width .4s ease"}}/>
+                          </div>
+                          <p style={{margin:"0 0 8px",fontSize:11,fontWeight:700,color:PASS,textAlign:"center"}}>
+                            {done} / {total} words
+                          </p>
+                          <div dir="rtl" ref={el => { if (el) el.scrollTop = el.scrollHeight; }}
+                            style={{maxHeight:170,overflowY:"auto",padding:"10px 12px",borderRadius:12,
+                              background:"#fdf8ee",border:`1px solid ${GOLD}55`,
+                              fontFamily:"'Amiri Quran','Amiri',serif",fontSize:22,lineHeight:2.2,textAlign:"right"}}>
+                            {liveWordList.map((w,i)=> liveRevealed[i]
+                              ? <span key={i} style={{color:"#15803d",marginInlineStart:6,display:"inline-block",animation:"slideUp .3s ease"}}>{w}</span>
+                              : null)}
+                            {done===0 && <span style={{color:"#b8a98a",fontSize:13,fontFamily:"inherit"}}>Your words will appear here as you recite…</span>}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
                 <p style={{margin:0,fontSize:11,color:"#9CA3AF",textAlign:"center",maxWidth:260,lineHeight:1.6}}>
                   {isGroup
                     ? `Recite pages ${todayPages[0]} – ${todayPages[todayPages.length-1]} from memory, in order, in one go. Tap below when finished to get your score.`
