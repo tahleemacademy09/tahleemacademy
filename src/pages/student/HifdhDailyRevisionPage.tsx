@@ -17,7 +17,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { tarteelEngine, BackgroundTranscriber, type TarteelProgress } from "@/lib/tarteelOnDevice";
+import { tarteelEngine, ChunkTranscriber, type TarteelProgress } from "@/lib/tarteelOnDevice";
 import { playbackGainFor } from "@/lib/audioEnhance";
 import { stripWaqf, normalizeArabic, wordsMatch, compareWords, type WordResult } from "@/lib/recitationCompare";
 import { uploadHifdhAudio, resolveHifdhSessionAudio, HIFDH_R2_PREFIX } from "@/lib/hifdhAudio";
@@ -1807,7 +1807,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       // Transcribe in the background AS the student recites (nothing is shown until Finished), so only
       // the last few seconds are left to process at Stop.
       try { bgRef.current?.cancel(); } catch { /* noop */ }
-      try { const bg = new BackgroundTranscriber(stream); bg.start(); bgRef.current = bg; } catch { bgRef.current = null; }
+      try { const bg = new ChunkTranscriber(stream, mime); bg.start(); bgRef.current = bg; } catch { bgRef.current = null; }
       setIsRecording(true);
       setRecSecs(carryOverSecs);           // resume from previous session's elapsed time
       recSecsRef.current = carryOverSecs;
@@ -1839,7 +1839,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     return (res.text ?? "").trim(); // may legitimately be "" (silence) — caller decides what to do
   };
 
-  const bgRef = useRef<BackgroundTranscriber | null>(null);
+  const bgRef = useRef<ChunkTranscriber | null>(null);
   const finalizeTranscript = async (fullBlob: Blob): Promise<string> => {
     const bg = bgRef.current;
     bgRef.current = null;
