@@ -17,7 +17,9 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { tarteelEngine, type TarteelProgress } from "@/lib/tarteelOnDevice";
+import { tarteelEngine, BackgroundTranscriber, type TarteelProgress } from "@/lib/tarteelOnDevice";
+import { playbackGainFor } from "@/lib/audioEnhance";
+import { stripWaqf, normalizeArabic, wordsMatch, compareWords, type WordResult } from "@/lib/recitationCompare";
 import { uploadHifdhAudio, resolveHifdhSessionAudio, HIFDH_R2_PREFIX } from "@/lib/hifdhAudio";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
 import HifdhLiveClass from "@/components/hifdh/HifdhLiveClass";
@@ -353,173 +355,8 @@ async function fetchPageAyahs(page: number): Promise<Ayah[]> {
   return (j?.data?.ayahs ?? []) as Ayah[];
 }
 
-/* ── Arabic scoring ─────────────────────────────────────────────── */
-
-/* ── Strip Waqf stop/pause signs from Arabic ─────────────────── */
-const WAQF_REGEX = /[\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED۝\u06DE\u0615]/g;
-function stripWaqf(text: string): string {
-  return text.replace(WAQF_REGEX, "").replace(/\s+/g, " ").trim();
-}
-
-
-/**
- * normalizeArabic — strips tashkeel and unifies character variants so that
- * the ar.uthmani API text and Groq/Whisper transcripts can be compared reliably.
- *
- * Key fixes vs the naïve stripDiacritics approach:
- *  • Dagger Alef \u0670 → Alef \u0627 (represents a long-vowel 'a' in Uthmani script).
- *  • Alef Wasla ٱ \u0671 → \u0627  (every definite article "ال").
- *  • Alef Hamza Above/Below / Alef Madda → \u0627.
- *  • Hamzated Waw ؤ \u0624 → و  (Whisper often drops or swaps the hamza over waw).
- *  • Hamzated Ya  ئ \u0626 → ي  (same reason).
- *  • Standalone Hamza ء \u0621 → removed (frequently not captured in recitation).
- *  • Alef Maqsura ى → Ya ي  (Groq always uses Ya).
- *  • Ta Marbuta ة → Ha ه.
- *  • Small Waw ۥ / Small Ya ۦ (Uthmani-only) → their full counterparts.
- *  • Tatweel / Kashida ـ stripped.
- *  • Quranic stop/pause/ayah-end markers stripped.
- */
-function normalizeArabic(t: string): string {
-  return stripWaqf(t)
-    // 1. Dagger alef → regular alef FIRST (before bulk strip removes it)
-    .replace(/\u0670/g, "\u0627")
-    // 2. Strip tashkeel + Quranic annotation combining characters
-    .replace(/[\u064B-\u065F\u0610-\u061A\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "")
-    // 3. All Alef variants → plain Alef ا
-    .replace(/[\u0671\u0622\u0623\u0625]/g, "\u0627")
-    // 4. Hamzated Waw ؤ → و  (Whisper may omit the hamza component)
-    .replace(/\u0624/g, "\u0648")
-    // 5. Hamzated Ya  ئ → ي
-    .replace(/\u0626/g, "\u064A")
-    // 6. Standalone Hamza ء → remove (often dropped in natural recitation / STT)
-    .replace(/\u0621/g, "")
-    // 7. Alef Maqsura ى → Ya ي
-    .replace(/\u0649/g, "\u064A")
-    // 8. Ta Marbuta ة → Ha ه
-    .replace(/\u0629/g, "\u0647")
-    // 9. Strip Tatweel / Kashida ـ
-    .replace(/\u0640/g, "")
-    // 10. Uthmani small Waw ۥ → و  and small Ya ۦ → ي
-    .replace(/\u06E5/g, "\u0648")
-    .replace(/\u06E6/g, "\u064A")
-    // 11. Strip Quranic end-of-ayah ۝ and rub-el-hizb ۞ markers
-    .replace(/[۝\u06DE]/g, "");
-}
-
-// Keep the old name as an alias so nothing else in the file needs to change
+/* ── Arabic scoring: helpers live in @/lib/recitationCompare ── */
 function stripDiacritics(t: string): string { return normalizeArabic(t); }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Levenshtein edit distance — used for fuzzy matching of Quranic words.
-// Whisper often produces a 1-2 character difference from the written form due
-// to tajweed rules (idgham, ikhfaa, qalqalah) or emphatic letter substitution.
-// This lets us match those close-but-not-identical pairs as correct.
-// ─────────────────────────────────────────────────────────────────────────────
-function levenshtein(a: string, b: string): number {
-  if (a === b) return 0;
-  if (!a.length) return b.length;
-  if (!b.length) return a.length;
-  // Rolling two-row DP — O(n) space
-  let prev = Array.from({length: b.length + 1}, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    const curr: number[] = [i];
-    for (let j = 1; j <= b.length; j++) {
-      curr[j] = a[i-1] === b[j-1]
-        ? prev[j-1]
-        : 1 + Math.min(prev[j], curr[j-1], prev[j-1]);
-    }
-    prev = curr;
-  }
-  return prev[b.length];
-}
-
-/**
- * wordsMatch — single source of truth for whether two normalised Arabic words
- * are considered the same.  Strategy (in priority order):
- *
- *  1. Exact match after normalisation.
- *  2. 3-char prefix overlap — handles long-vowel insertions, e.g.
- *     "الرحمان" (ref, after dagger-alef expand) vs "الرحمن" (Whisper).
- *  3. Edit distance ≤ 1 for words ≥ 4 chars — handles single char drop/swap
- *     due to tajweed rules (e.g. idgham drops the nun: "منهم" → "مهم").
- *  4. Edit distance ≤ 2 for words ≥ 7 chars — handles two-char differences
- *     that commonly arise from emphatic-letter substitution in STT output.
- */
-function wordsMatch(rw: string, gw: string): boolean {
-  if (rw === gw) return true;
-  const minLen = Math.min(rw.length, gw.length);
-  // 3-char prefix (existing behaviour, kept)
-  if (minLen >= 3 &&
-      (rw.startsWith(gw.slice(0, 3)) || gw.startsWith(rw.slice(0, 3)))) return true;
-  // Edit distance
-  if (minLen >= 4) {
-    const d = levenshtein(rw, gw);
-    if (d <= 1) return true;
-    if (minLen >= 7 && d <= 2) return true;
-  }
-  return false;
-}
-
-// ── Word-by-word comparison ───────────────────────────────────────────────────
-// Stores the ORIGINAL diacritic form of each reference word so the result
-// grid can display full tashkeel while still using normalised text for matching.
-interface WordResult { word: string; status: "correct" | "missing"; }
-// FIX: order-aware global LCS alignment (ported from the fix already applied
-// in HifdhRevision.tsx). The previous version scanned normGot from index 0
-// for EVERY reference word, restarting each time. For words that repeat on a
-// page (e.g. "ذٰلِكَ", "ضُحَاهَا", "أَنتَ" — each appears twice on p.584), if
-// Whisper's transcript was missing the FIRST occurrence but did capture the
-// SECOND (the one actually recited), the greedy scan handed that single
-// available match to the EARLIER reference position — marking it correct —
-// while the LATER position (genuinely recited) lost its match and was wrongly
-// flagged as missing. A true LCS alignment considers the whole sequence at
-// once, so a repeated word can only bind to the occurrence that is actually
-// consistent with its neighbours in both texts.
-function compareWords(refText: string, gotText: string): WordResult[] {
-  // Split on whitespace — keep originals for display, normalize for matching.
-  // FILTER OUT waqf-only tokens (e.g. a lone "صلے", "ۚ", "ۖ" that ended up as
-  // its own whitespace-separated token in the source text). These are pause/stop
-  // marks, not actual recited words — a reciter cannot "say" them, so they must
-  // never be scored as missing/incorrect. We detect them by checking that
-  // stripping waqf characters from the token leaves nothing behind.
-  const origRef = refText.split(/\s+/).filter(Boolean).filter(w => stripWaqf(w).length > 0);
-  const normRef = origRef.map(w => normalizeArabic(w));
-  const normGot = normalizeArabic(gotText).split(/\s+/).filter(Boolean);
-
-  if (!normGot.length) return origRef.map(w => ({ word: w, status: "missing" as const }));
-
-  const R = normRef.length;
-  const G = normGot.length;
-
-  // Build LCS length table (fuzzy equality via wordsMatch)
-  const dp: number[][] = Array.from({ length: R + 1 }, () => new Array(G + 1).fill(0));
-  for (let r = 1; r <= R; r++) {
-    for (let g = 1; g <= G; g++) {
-      dp[r][g] = wordsMatch(normRef[r - 1], normGot[g - 1])
-        ? dp[r - 1][g - 1] + 1
-        : Math.max(dp[r - 1][g], dp[r][g - 1]);
-    }
-  }
-
-  // Backtrack to find which ref positions actually matched
-  const matched = new Set<number>();
-  let r = R, g = G;
-  while (r > 0 && g > 0) {
-    if (wordsMatch(normRef[r - 1], normGot[g - 1])) {
-      matched.add(r - 1);
-      r--; g--;
-    } else if (dp[r - 1][g] >= dp[r][g - 1]) {
-      r--;
-    } else {
-      g--;
-    }
-  }
-
-  return origRef.map((word, i) => ({
-    word,
-    status: matched.has(i) ? ("correct" as const) : ("missing" as const),
-  }));
-}
 
 /**
  * scoreFromCompareWords — the score % shown to the student MUST come from
@@ -942,6 +779,8 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
   const [loaded,   setLoaded]   = useState(false);
   const [error,    setError]    = useState(false);
   const [speed,    setSpeed]    = useState(1);
+  const speedRef = useRef(1);       // always-current speed for the RAF loop / position maths
+  const gainRef  = useRef(1);       // auto volume boost for quiet recordings
 
   const getCtx = () => {
     if (!ctxRef.current || ctxRef.current.state === "closed") {
@@ -957,7 +796,7 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
 
   const startRAF = useCallback((ctx: AudioContext, buffer: AudioBuffer) => {
     const tick = () => {
-      const elapsed = (ctx.currentTime - startedAtRef.current) * speed;
+      const elapsed = (ctx.currentTime - startedAtRef.current) * speedRef.current;
       const current = Math.min(offsetRef.current + elapsed, buffer.duration);
       setCurTime(current);
       setProgress(buffer.duration > 0 ? current / buffer.duration : 0);
@@ -1028,6 +867,7 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
         const decoded = await ctx.decodeAudioData(arrayBuf);
         if (cancelled) return;
         bufferRef.current = decoded;
+        gainRef.current = playbackGainFor(decoded);
         setDuration(decoded.duration);
         setLoaded(true);
       } catch (e) {
@@ -1055,7 +895,7 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
     if (playing) {
       // Pause: record current offset so resume starts from here
       const ctx = getCtx();
-      const elapsed = (ctx.currentTime - startedAtRef.current) * speed;
+      const elapsed = (ctx.currentTime - startedAtRef.current) * speedRef.current;
       offsetRef.current = Math.min(offsetRef.current + elapsed, buffer.duration);
       stopSource(); stopRAF();
       setPlaying(false);
@@ -1070,8 +910,14 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
 
       const src = ctx.createBufferSource();
       src.buffer = buffer;
-      src.playbackRate.value = speed;
-      src.connect(ctx.destination);
+      src.playbackRate.value = speedRef.current;
+      // Quiet recitation? lift it to a comfortable level, with a gentle compressor so peaks never clip.
+      const gain = ctx.createGain();
+      gain.gain.value = gainRef.current;
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -18; comp.knee.value = 24; comp.ratio.value = 4;
+      comp.attack.value = 0.005; comp.release.value = 0.2;
+      src.connect(gain); gain.connect(comp); comp.connect(ctx.destination);
       src.onended = () => {
         // Only reset if this source wasn't manually stopped
         if (sourceRef.current === src) {
@@ -1094,7 +940,7 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
     const buffer = bufferRef.current; if (!buffer) return;
     const ctx = getCtx();
     if (playing) {
-      const elapsed = (ctx.currentTime - startedAtRef.current) * speed;
+      const elapsed = (ctx.currentTime - startedAtRef.current) * speedRef.current;
       offsetRef.current = Math.max(0, Math.min(buffer.duration, offsetRef.current + elapsed + secs));
       stopSource(); stopRAF(); setPlaying(false);
       // Restart from new position
@@ -1119,9 +965,17 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
 
   const cycleSpeed = () => {
     const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
-    const next = speeds[(speeds.indexOf(speed) + 1) % speeds.length];
+    const next = speeds[(speeds.indexOf(speedRef.current) + 1) % speeds.length];
+    const buffer = bufferRef.current;
+    if (sourceRef.current && buffer && ctxRef.current) {
+      // re-base the position so the seek bar doesn't jump when the speed changes mid-playback
+      const ctx = ctxRef.current;
+      offsetRef.current = Math.min(offsetRef.current + (ctx.currentTime - startedAtRef.current) * speedRef.current, buffer.duration);
+      startedAtRef.current = ctx.currentTime;
+      sourceRef.current.playbackRate.value = next;
+    }
+    speedRef.current = next;
     setSpeed(next);
-    if (sourceRef.current) sourceRef.current.playbackRate.value = next;
   };
 
   const fmt = (s: number) =>
@@ -1950,6 +1804,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       // No live transcription: the audio is only recorded now and transcribed once, on Stop.
       mr.start(200);
       mediaRecRef.current = mr;
+      // Transcribe in the background AS the student recites (nothing is shown until Finished), so only
+      // the last few seconds are left to process at Stop.
+      try { bgRef.current?.cancel(); } catch { /* noop */ }
+      try { const bg = new BackgroundTranscriber(stream); bg.start(); bgRef.current = bg; } catch { bgRef.current = null; }
       setIsRecording(true);
       setRecSecs(carryOverSecs);           // resume from previous session's elapsed time
       recSecsRef.current = carryOverSecs;
@@ -1981,7 +1839,23 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     return (res.text ?? "").trim(); // may legitimately be "" (silence) — caller decides what to do
   };
 
-  const finalizeTranscript = (fullBlob: Blob): Promise<string> => transcribeAudio(fullBlob);
+  const bgRef = useRef<BackgroundTranscriber | null>(null);
+  const finalizeTranscript = async (fullBlob: Blob): Promise<string> => {
+    const bg = bgRef.current;
+    bgRef.current = null;
+    if (bg) {
+      try {
+        const r = await bg.finish();
+        // Good background result → use it. Anything went wrong (or nothing heard) → transcribe the whole recording.
+        if (r.ok && r.text.trim()) {
+          lastTranscribeErrorRef.current = "";
+          transcribeMsRef.current = null;   // "transcribe time" = wait after Stop
+          return r.text.trim();
+        }
+      } catch (e) { console.warn("[HifdhDaily] background transcription failed, falling back:", e); }
+    }
+    return transcribeAudio(fullBlob);
+  };
 
   const lastResultRef = useRef<{ tx: string; ayahCorrectness: boolean[] } | null>(null);
 
@@ -3012,7 +2886,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           <p style={{margin:0,color:"#9CA3AF",fontSize:12,textAlign:"center",lineHeight:1.7,maxWidth:280}}>
             {tarteelState.status==="loading"
               ? `Getting the Quran checker ready${tarteelState.totalMB?` — ${Math.round(tarteelState.loadedMB??0)} of ${Math.round(tarteelState.totalMB)} MB`:"…"} (first time only)`
-              : "Listening back to your whole recitation on your device. This can take up to a minute for a long recitation."}
+              : "Finishing the last part of your recitation on your device — almost done."}
           </p>
         </div>
       )}
