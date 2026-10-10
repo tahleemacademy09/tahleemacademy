@@ -1847,7 +1847,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       try {
         const r = await bg.finish();
         // Good background result → use it. Anything went wrong (or nothing heard) → transcribe the whole recording.
-        if (r.ok && r.text.trim()) {
+        // A repeated phrase ("إلى الذي إلى الذي إلى الذي …") is the model looping, not the student.
+        const looped = /(\S+\s+\S+)(\s+\1){2,}/.test(normalizeArabic(r.text));
+        if (r.ok && r.text.trim() && !looped) {
           lastTranscribeErrorRef.current = "";
           transcribeMsRef.current = null;   // "transcribe time" = wait after Stop
           return r.text.trim();
