@@ -18,7 +18,11 @@
 // need to update the session object. No spinner, no profile re-fetch.
 
 import React, { createContext, useContext, useState, useEffect, useRef } from "react";
-import { supabase, hasPersistedSupabaseSession } from "@/integrations/supabase/client";
+import {
+  supabase, hasPersistedSupabaseSession,
+  markUserSignOut, clearUserSignOutMark, wasUserSignOut,
+  backupSession, readSessionBackup, clearSessionBackup,
+} from "@/integrations/supabase/client";
 import { logDiag } from "@/lib/diagnostics";
 import type { User, Session } from "@supabase/supabase-js";
 
@@ -63,6 +67,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Guards against stale state from unmounted component or concurrent fetches
   const mountedRef  = useRef(true);
+  const lastRecoveryAt = useRef(0);   // throttles automatic session recovery
   const fetchingRef = useRef<string | null>(null); // userId currently being fetched
   const profileRef  = useRef<UserProfile | null>(null); // mirrors profile state for use in closures
 
@@ -247,6 +252,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }, ms);
     safetyTimeout = scheduleSafetyTimeout(8000, false);
 
+    const applySignedOut = () => {
+      // Signed out — clear everything immediately
+      fetchingRef.current = null;
+      profileRef.current  = null;
+      initialLoadDoneRef.current = false;
+      setSession(null);
+      setUser(null);
+      setRoles([]);
+      setProfile(null);
+      setMustChangePassword(false);
+      setLoading(false);
+    };
+
     // ── Single source of truth: onAuthStateChange ─────────────────────────────
     // In Supabase JS v2 this fires immediately (synchronously) with INITIAL_SESSION
     // so we do NOT need getSession() — calling both causes a double-fetch race.
@@ -286,6 +304,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
+      // Remember the latest good refresh token, and note that the student is signed in again.
+      if (sess?.refresh_token) { void backupSession(sess.refresh_token); clearUserSignOutMark(); }
+
+      // STAY SIGNED IN: only the student's own Sign out may end the session. If the session vanished
+      // for any other reason (failed background refresh, wiped storage, another tab racing a refresh),
+      // quietly try to restore it from the last good refresh token instead of showing the login page.
+      if (_event === "SIGNED_OUT" && !sess && !wasUserSignOut()) {
+        logDiag("auth_unexpected_signed_out", {});
+        const now = Date.now();
+        if (now - lastRecoveryAt.current > 15000) {
+          lastRecoveryAt.current = now;
+          void (async () => {
+            try {
+              const rt = await readSessionBackup();
+              if (rt) {
+                const { data, error } = await supabase.auth.refreshSession({ refresh_token: rt });
+                if (!error && data?.session) { logDiag("auth_session_recovered", {}); return; }
+              }
+            } catch { /* fall through to signed-out */ }
+            if (mountedRef.current && !wasUserSignOut()) applySignedOut();
+          })();
+          return;   // keep the current user on screen while recovery runs
+        }
+      }
+
       setSession(sess);
       setUser(sess?.user ?? null);
 
@@ -301,14 +344,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!initialLoadDoneRef.current) setLoading(true);
         fetchUserData(sess.user.id);
       } else {
-        // Signed out — clear everything immediately
-        fetchingRef.current = null;
-        profileRef.current  = null;
-        initialLoadDoneRef.current = false;
-        setRoles([]);
-        setProfile(null);
-        setMustChangePassword(false);
-        setLoading(false);
+        applySignedOut();
       }
     });
 
@@ -332,9 +368,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     supabase.auth.signInWithPassword({ email, password });
 
   const signOut = async () => {
+    // The student chose to sign out: end the session on THIS device only (scope "local" — the default
+    // "global" would also log them out of their other devices) and drop the recovery copy.
+    markUserSignOut();
+    clearSessionBackup();
     fetchingRef.current = null;
     initialLoadDoneRef.current = false;
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: "local" });
     if (mountedRef.current) {
       setUser(null);
       setSession(null);
