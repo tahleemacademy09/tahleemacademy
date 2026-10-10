@@ -45,14 +45,79 @@ function flagStorageFallback(op: string, err: unknown) {
   });
 }
 
-const safeStorage = {
-  getItem(key: string): string | null {
+// ── IndexedDB mirror ──────────────────────────────────────────────────────
+// Some phones / in-app browsers / "clean up" apps wipe localStorage while the app is closed, which
+// silently logs the student out. The session is therefore ALSO kept in IndexedDB and restored from
+// there if localStorage comes back empty. It is removed from both only on a real sign-out.
+const IDB_NAME = "tahleem-auth";
+const IDB_STORE = "kv";
+let idbPromise: Promise<IDBDatabase | null> | null = null;
+function idbOpen(): Promise<IDBDatabase | null> {
+  if (idbPromise) return idbPromise;
+  idbPromise = new Promise((resolve) => {
     try {
-      return localStorage.getItem(key);
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => { req.result.createObjectStore(IDB_STORE); };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+      req.onblocked = () => resolve(null);
+    } catch { resolve(null); }
+  });
+  return idbPromise;
+}
+async function idbGet(key: string): Promise<string | null> {
+  const db = await idbOpen();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const r = db.transaction(IDB_STORE, "readonly").objectStore(IDB_STORE).get(key);
+      r.onsuccess = () => resolve(typeof r.result === "string" ? r.result : null);
+      r.onerror = () => resolve(null);
+    } catch { resolve(null); }
+  });
+}
+async function idbSet(key: string, value: string): Promise<void> {
+  const db = await idbOpen();
+  if (!db) return;
+  await new Promise<void>((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+      tx.onabort = () => resolve();
+    } catch { resolve(); }
+  });
+}
+async function idbDel(key: string): Promise<void> {
+  const db = await idbOpen();
+  if (!db) return;
+  await new Promise<void>((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+      tx.onabort = () => resolve();
+    } catch { resolve(); }
+  });
+}
+
+const safeStorage = {
+  async getItem(key: string): Promise<string | null> {
+    try {
+      const v = localStorage.getItem(key);
+      if (v !== null) return v;
     } catch (err) {
       flagStorageFallback("getItem", err);
-      return memoryStore[key] ?? null;
+      if (memoryStore[key] != null) return memoryStore[key];
     }
+    // localStorage empty (wiped?) -> restore from the IndexedDB mirror
+    const mirrored = await idbGet(key);
+    if (mirrored != null) {
+      try { localStorage.setItem(key, mirrored); } catch { memoryStore[key] = mirrored; }
+    }
+    return mirrored;
   },
   setItem(key: string, value: string): void {
     try {
@@ -61,6 +126,7 @@ const safeStorage = {
       flagStorageFallback("setItem", err);
       memoryStore[key] = value;
     }
+    void idbSet(key, value);
   },
   removeItem(key: string): void {
     try {
@@ -69,8 +135,30 @@ const safeStorage = {
       flagStorageFallback("removeItem", err);
       delete memoryStore[key];
     }
+    void idbDel(key);
   },
 };
+
+// ── "Was this sign-out the student's own choice?" ──────────────────────────
+// A SIGNED_OUT event can also come from a failed background token refresh or another tab. Only an
+// explicit Sign out should end the session; AuthContext uses these to tell the two apart.
+let userInitiatedSignOut = false;
+export const markUserSignOut = () => { userInitiatedSignOut = true; };
+export const clearUserSignOutMark = () => { userInitiatedSignOut = false; };
+export const wasUserSignOut = () => userInitiatedSignOut;
+
+// Last known-good refresh token, kept separately so an unexpected sign-out can be recovered from.
+const SESSION_BACKUP_KEY = "tahleem-session-backup";
+export async function backupSession(refreshToken: string | null | undefined): Promise<void> {
+  if (!refreshToken) return;
+  safeStorage.setItem(SESSION_BACKUP_KEY, refreshToken);
+}
+export async function readSessionBackup(): Promise<string | null> {
+  return safeStorage.getItem(SESSION_BACKUP_KEY);
+}
+export function clearSessionBackup(): void {
+  safeStorage.removeItem(SESSION_BACKUP_KEY);
+}
 
 export const supabase = createClient<Database>(
   SUPABASE_URL,
