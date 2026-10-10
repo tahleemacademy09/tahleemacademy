@@ -21,8 +21,6 @@
   dependency is needed.
 */
 
-import { enhanceForAsr } from "@/lib/audioEnhance";
-
 export const TARTEEL_MODEL = "iqbalaesthetic/Basira"; // ONNX export of tarteel-ai/whisper-base-ar-quran
 const TRANSFORMERS_CDN = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.0";
 
@@ -319,7 +317,6 @@ class TarteelEngine {
     }
     const audioSecs = audio.length / TARGET_SR;
     if (audio.length < TARGET_SR * 0.4) return { text: "", ms: 0, audioSecs };
-    audio = enhanceForAsr(audio, TARGET_SR);   // high-pass + level-normalise the speech
     const res = await this.transcribe(audio, true);
     return { ...res, audioSecs };
   }
@@ -559,7 +556,7 @@ export class LiveRecitationSession {
     const rms = Math.sqrt(sum / Math.max(1, out.length / step));
     this.lastLevel = rms;
     if (rms < 0.004) { this.silent++; this.emitStatus(); return null; }
-    return enhanceForAsr(resampleTo16k(out, this.srcRate), TARGET_SR);
+    return resampleTo16k(out, this.srcRate);
   }
 
   private async tick(final: boolean) {
@@ -682,7 +679,7 @@ export class BackgroundTranscriber {
   private texts: string[] = [];
   private samplesSeen = 0;
 
-  constructor(private stream: MediaStream, private targetSec = 16, private maxSec = 28) {}
+  constructor(private stream: MediaStream, private targetSec = 22, private maxSec = 29) {}
 
   start() {
     const AC: typeof AudioContext = (window as any).AudioContext || (window as any).webkitAudioContext;
@@ -717,7 +714,7 @@ export class BackgroundTranscriber {
     if (Math.sqrt(sum / Math.max(1, raw.length / 16)) < 0.004) { this.texts[mySeq] = ""; return; } // silence
     this.busy = true;
     try {
-      const audio = enhanceForAsr(resampleTo16k(raw, this.srcRate), TARGET_SR);
+      const audio = resampleTo16k(raw, this.srcRate);   // untouched audio, exactly as the mic gave it
       const res = await tarteelEngine.transcribe(audio);
       if (res.error) this.failed = true; else this.texts[mySeq] = res.text;
     } catch { this.failed = true; }
