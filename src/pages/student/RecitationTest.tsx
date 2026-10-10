@@ -15,7 +15,6 @@ import { useToast } from "@/hooks/use-toast";
 import { useRecitationSettings } from "@/hooks/useRecitationSettings";
 import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 import MushafPageView from "@/components/hifdh/MushafPageView";
-import { openRawMic } from "@/lib/rawMic";
 import {
   Mic, CheckCircle2, Video, Clock,
   Star, ArrowRight, Loader2, RotateCcw, BookOpen,
@@ -559,9 +558,9 @@ const RecitationTest = () => {
   const startRec = async () => {
     try {
       cancelRef.current = false;
-      // RAW mic (no echo-cancel / noise-suppress / auto-gain) + gentle level lift — see src/lib/rawMic.ts
-      const mic = await openRawMic();
-      const stream = mic.stream;
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+      });
       const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t => {
         try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
       }) || "";
@@ -569,7 +568,7 @@ const RecitationTest = () => {
       chunksRef.current = [];
       mr.ondataavailable = e => { if (e.data?.size > 0) chunksRef.current.push(e.data); };
       mr.onstop = () => {
-        mic.close();
+        stream.getTracks().forEach(t => t.stop());
         clearInterval(timerRef.current);
         const secs = recSecsRef.current;
         setRecTime(0);

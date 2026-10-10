@@ -18,7 +18,6 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { tarteelEngine, ChunkTranscriber, type TarteelProgress } from "@/lib/tarteelOnDevice";
-import { openRawMic, type RawMic } from "@/lib/rawMic";
 import { playbackGainFor } from "@/lib/audioEnhance";
 import { stripWaqf, normalizeArabic, wordsMatch, compareWords, type WordResult } from "@/lib/recitationCompare";
 import { uploadHifdhAudio, resolveHifdhSessionAudio, HIFDH_R2_PREFIX } from "@/lib/hifdhAudio";
@@ -1626,17 +1625,21 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignment, todayPages, juzAyahs]);
 
-  const micRef = useRef<RawMic | null>(null);
-  useEffect(() => () => { try { micRef.current?.close(); } catch { /* noop */ } }, []);   // leaving the page releases the mic
+  const micRef = useRef<MediaStream | null>(null);
+  useEffect(() => () => { try { micRef.current?.getTracks().forEach(t => t.stop()); } catch { /* noop */ } }, []);   // leaving the page releases the mic
   const startRecording = useCallback(async () => {
     try {
       setAudioUrl(null); setSavedAudioUrl(null); audioChunks.current = []; audioBlobRef.current = null; audioStorageUrlRef.current = null;
-      // RAW mic: echo-cancel / noise-suppress / auto-gain / voice-isolation all OFF (verified), then a
-      // gentle level lift to match a normal recorder clip. See src/lib/rawMic.ts for why.
-      const mic: RawMic = await openRawMic();
-      micRef.current = mic;
-      const stream = mic.stream;
-      console.info("[HifdhDaily] mic settings:", mic.settings);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: false,  // OFF: it fades elongations (madd) and ghunnah
+          autoGainControl: true,    // ON: without it the recording is very quiet (and Android routes playback badly)
+          sampleRate: 48000,
+          channelCount: 1,
+        }
+      });
+      micRef.current = stream;
       const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t => {
         try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
       }) || "";
@@ -1655,7 +1658,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         }
       };
       mr.onstop = () => {
-        mic.close();
+        stream.getTracks().forEach(t => t.stop());
         micRef.current = null;
         clearInterval(timerRef.current);
 
