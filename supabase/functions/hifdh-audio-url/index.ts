@@ -4,6 +4,7 @@
 //   path must look like  hifdh-daily/<student-uid>/<file>
 //   - "upload": only the student whose uid is in the path may upload.
 //               Returns a presigned PUT URL (audio goes browser -> R2 directly).
+//   - "delete": staff only (admin / teacher). Removes the recording from R2 once it has been reviewed.
 //   - "sign":   returns a short-lived presigned GET URL. Allowed for the owning
 //               student, and for teachers/admins. Nobody else.
 //
@@ -38,8 +39,8 @@ Deno.serve(async (req) => {
 
     const { path, action, contentType, expiresIn } = await req.json();
     if (!path || !action) return json({ error: "path and action are required" }, 400);
-    if (action !== "upload" && action !== "sign") {
-      return json({ error: "action must be 'upload' or 'sign'" }, 400);
+    if (action !== "upload" && action !== "sign" && action !== "delete") {
+      return json({ error: "action must be 'upload', 'sign' or 'delete'" }, 400);
     }
     const m = typeof path === "string" ? PATH_RE.exec(path) : null;
     if (!m || path.includes("..")) return json({ error: "Invalid path" }, 400);
@@ -57,7 +58,7 @@ Deno.serve(async (req) => {
 
     if (action === "upload") {
       if (!isOwner) return json({ error: "Not authorized for this path" }, 403);
-    } else if (!isOwner) {
+    } else if (action === "delete" || !isOwner) {
       const [{ data: isAdmin }, { data: isTeacher }] = await Promise.all([
         userClient.rpc("has_role", { _user_id: user.id, _role: "admin" }),
         userClient.rpc("has_role", { _user_id: user.id, _role: "teacher" }),
@@ -73,6 +74,13 @@ Deno.serve(async (req) => {
     });
     const endpoint = `https://${Deno.env.get("R2_ACCOUNT_ID")!}.r2.cloudflarestorage.com`;
     const objectUrl = `${endpoint}/${Deno.env.get("R2_BUCKET_NAME")!}/${encodeURI(path)}`;
+
+    if (action === "delete") {
+      const del = await client.fetch(objectUrl, { method: "DELETE" });
+      // 204 = deleted, 404 = already gone — both mean "no recording left"
+      if (!del.ok && del.status !== 404) return json({ error: `R2 delete failed (${del.status})` }, 502);
+      return json({ ok: true });
+    }
 
     // Upload links: 15 minutes. Playback links: default 1 hour, max 7 days.
     const ttl = action === "upload"
