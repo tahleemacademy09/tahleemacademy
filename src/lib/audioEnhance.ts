@@ -25,7 +25,7 @@ export function speechRms(x: Float32Array, frame = FRAME): number {
   }
   const sorted = Array.from(rms).sort((a, b) => a - b);
   const floor = sorted[Math.floor(n * 0.2)];
-  const thr = Math.max(floor * 3, 0.006);
+  const thr = Math.max(floor * 3, 0.0015);
   let sum = 0, cnt = 0;
   for (let f = 0; f < n; f++) if (rms[f] > thr) { sum += rms[f] * rms[f]; cnt++; }
   return cnt ? Math.sqrt(sum / cnt) : 0;
@@ -67,8 +67,13 @@ export function playbackGainFor(buf: AudioBuffer): number {
   try {
     const ch = buf.getChannelData(0);
     const frame = Math.max(1, Math.round(buf.sampleRate * 0.02));
+    let peak = 0;
+    for (let i = 0; i < ch.length; i += 7) { const a = Math.abs(ch[i]); if (a > peak) peak = a; }
+    if (peak <= 0) return 1;
     const r = speechRms(ch, frame);
-    if (r <= 0) return 1;
-    return Math.min(6, Math.max(1, 0.12 / r));
+    // aim for a comfortable speech level; if the level can't be measured, fall back to peak-normalising
+    let g = r > 0 ? 0.15 / r : 0.9 / peak;
+    g = Math.min(g, 2.5 / peak);          // the compressor in the player tames peaks above full scale
+    return Math.min(12, Math.max(1, g));
   } catch { return 1; }
 }
