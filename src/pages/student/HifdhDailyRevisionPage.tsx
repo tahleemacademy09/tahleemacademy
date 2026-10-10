@@ -18,10 +18,10 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { playbackGainFor } from "@/lib/audioEnhance";
+import { playbackGainFor, decodeForPlayback, freshPlaybackContext, preferSpeaker } from "@/lib/audioEnhance";
 import { tarteelEngine, ChunkTranscriber, type TarteelProgress } from "@/lib/tarteelOnDevice";
 import { stripWaqf, normalizeArabic, wordsMatch, compareWords, type WordResult } from "@/lib/recitationCompare";
-import { uploadHifdhAudio, resolveHifdhSessionAudio, HIFDH_R2_PREFIX } from "@/lib/hifdhAudio";
+import { saveHifdhRecording, resolveHifdhSessionAudio } from "@/lib/hifdhAudio";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
 import HifdhLiveClass from "@/components/hifdh/HifdhLiveClass";
 import {
@@ -875,10 +875,8 @@ function FullAudioPlayer({ url, label = "Your Recitation", miniHost }: { url: st
         }
 
         if (cancelled) return;
-        const ctx = getCtx();
-        // Resume context so decodeAudioData works (required on some mobile browsers)
-        if (ctx.state === "suspended") await ctx.resume();
-        const decoded = await ctx.decodeAudioData(arrayBuf);
+        // Decode offline: opens no audio output while the mic is still being released (keeps the speaker route clean).
+        const decoded = await decodeForPlayback(arrayBuf);
         if (cancelled) return;
         bufferRef.current = decoded;
         gainRef.current = playbackGainFor(decoded);
@@ -914,10 +912,11 @@ function FullAudioPlayer({ url, label = "Your Recitation", miniHost }: { url: st
       stopSource(); stopRAF();
       setPlaying(false);
     } else {
-      // Play (or resume)
-      const ctx = getCtx();
-      if (ctx.state === "suspended") await ctx.resume();
+      // Play (or resume). A brand-new AudioContext every time, opened inside this tap, always plays through the
+      // LOUDSPEAKER — one created earlier (right after recording) can stay stuck on the earpiece/call route.
       stopSource(); // clean up any lingering source
+      const ctx = await freshPlaybackContext(ctxRef.current);
+      ctxRef.current = ctx;
 
       // If at end, restart from beginning
       if (offsetRef.current >= buffer.duration - 0.05) offsetRef.current = 0;
@@ -1514,7 +1513,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   useEffect(() => {
     const handleReturn = () => {
       if (document.visibilityState !== "visible") return;
-      if (isRecording) { handleStop(); return; } // banner removed — recording just stops silently; student re-taps Start Reciting
+      // Coming back to the tab must NEVER end the recording (a notification, a call or a quick app
+      // switch used to cut long recitations short). The timer is wall-clock based, so it is already right.
+      if (isRecording) return;
       if (phase === "testing") setReturnBanner("test");
     };
     document.addEventListener("visibilitychange", handleReturn);
@@ -1559,16 +1560,21 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   /* ── keep recSecsRef in sync so mr.onstop can read it ── */
   useEffect(() => { recSecsRef.current = recSecs; }, [recSecs]);
 
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   /* ── save partial log whenever a page evaluation lands ── */
   /* This lets the admin see the attempt even if the student never passes */
   useEffect(() => {
-    if (phase !== "page_result" || score === null) return;
+    // Saved as soon as the recording lands (score still null → "analysing"), not only when a score exists, so
+    // staff see the attempt and hear the recording even if the student leaves or the analysis never finishes.
+    if (phase !== "page_result") return;
+    const analysing = score === null;
     const today = todayISO();
     const last  = lastResultRef.current;
     // Build word-level results using compareWords (same as مراجعة)
     const ref       = pageAyahsRef.current.map((a:any)=>a.text).join(" ");
     const wordRes   = compareWords(ref, last?.tx ?? "");
-    (async () => {
+    // one save at a time, in order — an "analysing" save must never land after the scored one
+    saveChainRef.current = saveChainRef.current.then(async () => {
       try {
         // Preserve teacher override: if teacher already reviewed this log, keep their score and override flag
         const existingTeacherOverride = todayLog?.session_data?.teacher_override;
@@ -1577,17 +1583,20 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           assignment_id: assignment?.id,
           log_date:      today,
           pages_revised: todayPages.length,
-          avg_score:     existingTeacherOverride ? existingTeacherOverride.score : score,
+          avg_score:     existingTeacherOverride ? existingTeacherOverride.score : (score ?? 0),
           duration_secs: recSecsRef.current,
           completed:     false,          // always save — even on failed/retry attempts
           session_data: {
             recitation_score: score,
             test_score:       null,
+            ...(analysing ? { analysing: true } : {}),
+            // R2 AND the fallback both failed → staff are told instead of silently seeing nothing
+            ...(!audioStorageUrlRef.current && audioBlobRef.current ? { audio_pending_upload: true } : {}),
             pages_done:       isGroup ? todayPages : todayPages.slice(0, pageIdx + 1),
             // audioStorageUrlRef is guaranteed populated before setScore fires (see mr.onstop fix)
             audio_url:        null,
             audio_path:       audioStorageUrlRef.current,
-            page_results: isGroup
+            page_results: analysing ? [] : isGroup
               // One recording for all pages: full transcript + word detail on the first
               // entry, per-page ayah correctness / errors split out for each page.
               ? buildGroupResults(last?.tx ?? "", last?.ayahCorrectness ?? [], score).map((r, i) => ({
@@ -1617,7 +1626,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         }, { onConflict: "student_id,log_date" });
         if (error) console.warn("[HifdhDaily] interim save error:", error);
       } catch(e) { console.warn("[HifdhDaily] interim save exception:", e); }
-    })();
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, score, audioReadyTick]);
 
@@ -1729,19 +1738,29 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       }) || "";
       const mr = new MediaRecorder(stream, mime ? {
         mimeType: mime,
-        audioBitsPerSecond: 192000,   // 192 kbps — clearer audio for Quranic evaluation & playback
-      } : { audioBitsPerSecond: 192000 });
+        audioBitsPerSecond: 128000,   // 128 kbps — transparent for speech, and a 5-page recitation stays small
+      } : { audioBitsPerSecond: 128000 });
       const blobKey = `${userId}_${todayISO()}_partial`;
+      let lastPartialSave = 0;
+      const savePartial = () => {
+        lastPartialSave = Date.now();
+        idbSaveBlob(blobKey, new Blob(audioChunks.current, { type: mime || "audio/webm" }));
+      };
       mr.ondataavailable = (e) => {
         if (e.data?.size > 0) {
           audioChunks.current.push(e.data);
-          // Persist the accumulated blob to IndexedDB after each chunk so that
-          // a page refresh doesn't lose partial audio (IDB survives navigation).
-          const partial = new Blob(audioChunks.current, { type: mime || "audio/webm" });
-          idbSaveBlob(blobKey, partial);
+          // Persist the accumulated recording to IndexedDB so a page refresh doesn't lose it — but only
+          // every 15 s. (It used to be rewritten 5× a second, which grows quadratically and froze or
+          // crashed long recordings.)
+          if (Date.now() - lastPartialSave > 15000) savePartial();
         }
       };
+      const flushPartial = () => { if (mr.state !== "inactive") savePartial(); };
+      window.addEventListener("pagehide", flushPartial);
+      document.addEventListener("visibilitychange", flushPartial);
       mr.onstop = () => {
+        window.removeEventListener("pagehide", flushPartial);
+        document.removeEventListener("visibilitychange", flushPartial);
         stream.getTracks().forEach(t => t.stop());
         micRef.current = null;
         clearInterval(timerRef.current);
@@ -1762,24 +1781,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         // Returns a signed URL (time-limited, auth-independent) so admin playback works
         // even on private buckets. The local blob URL is kept for immediate student playback
         // and is NEVER replaced with the storage URL (avoids 403 on private buckets).
-        const uploadAudioToStorage = async (): Promise<string|null> => {
-          const today = todayISO();
-          const ext   = blob.type.includes("mp4") ? "mp4" : "webm";
-          const path  = `${HIFDH_R2_PREFIX}${userId}/${today}_${Date.now()}.${ext}`;
-          // Retry a few times: a flaky mobile connection is the usual reason an upload fails.
-          // Recordings go to Cloudflare R2 (private). Only the path is stored; teachers and
-          // admins get a fresh playback link each time they open the recording.
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-              return await uploadHifdhAudio(path, blob);
-            } catch (e: any) {
-              console.warn(`[HifdhDaily] audio upload attempt ${attempt}/3 failed:`, e?.message ?? e);
-              if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));
-            }
-          }
-          console.error("[HifdhDaily] audio upload failed after 3 attempts — check the hifdh-audio-url function and R2 secrets");
-          return null;
-        };
+        // Straight to R2 (6 tries, then the Supabase fallback bucket) so staff always get the recording —
+        // whatever the score. If nothing works the recording stays on the device and is retried (see below).
+        const uploadAudioToStorage = (): Promise<string|null> => saveHifdhRecording(userId, todayISO(), blob);
 
         // Run transcription AND storage upload in parallel.
         // setScore must only fire AFTER both resolve — otherwise the interim-save
@@ -1835,18 +1839,23 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       };
       attemptRef.current++;
       // No live transcription: the audio is only recorded now and transcribed once, on Stop.
-      mr.start(200);
+      mr.start(1000);
       mediaRecRef.current = mr;
+      // If the phone takes the microphone away (a call, another app) keep everything recited so far and
+      // go to the result instead of leaving a dead recording running.
+      try { stream.getAudioTracks().forEach(t => { t.onended = () => { if (mediaRecRef.current === mr) handleStop(); }; }); } catch { /* noop */ }
       // Transcribe in the background AS the student recites (nothing is shown until Finished), so only
       // the last few seconds are left to process at Stop.
       try { bgRef.current?.cancel(); } catch { /* noop */ }
-      try { const bg = new ChunkTranscriber(stream, mime); bg.start(); bgRef.current = bg; } catch { bgRef.current = null; }
+      try { const bg = new ChunkTranscriber(stream, mime, 8000, 2500, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(carryOverSecs > 0); bgRef.current = bg; } catch { bgRef.current = null; }
       setIsRecording(true);
       setRecSecs(carryOverSecs);           // resume from previous session's elapsed time
       recSecsRef.current = carryOverSecs;
+      // Wall-clock timer: browsers slow setInterval down while the tab is in the background.
+      const t0 = Date.now() - carryOverSecs * 1000;
       timerRef.current = setInterval(() => {
-        setRecSecs(s => s + 1);
-      }, 1000);
+        setRecSecs(Math.floor((Date.now() - t0) / 1000));
+      }, 500);
 
     } catch {
       alert("Mic access denied. Please allow microphone access and try again.");
@@ -1882,7 +1891,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         // Good background result → use it. Anything went wrong (or nothing heard) → transcribe the whole recording.
         // A repeated phrase ("إلى الذي إلى الذي إلى الذي …") is the model looping, not the student.
         const looped = /(\S+\s+\S+)(\s+\1){2,}/.test(normalizeArabic(r.text));
-        if (r.ok && r.text.trim() && !looped) {
+        // A long recording (> ~10 MB) is never re-decoded as one piece (that needs gigabytes of memory on a
+        // phone): the chunk transcripts are used even if one chunk failed.
+        const long = fullBlob.size > 10 * 1048576;
+        if (r.text.trim() && (long || (r.ok && !looped))) {
           lastTranscribeErrorRef.current = "";
           transcribeMsRef.current = null;   // "transcribe time" = wait after Stop
           return r.text.trim();
@@ -1915,7 +1927,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     stopTsRef.current = performance.now();
     try { await tarteelEngine.load(true); } catch { /* transcribeAudio reports it */ }
     const ayahs = pageAyahsRef.current;
-    const tx = await transcribeAudio(blob);
+    const savedChunks = ChunkTranscriber.saved(`hifdh_chunks_${userId}_${todayISO()}`);
+    const tx = savedChunks?.complete && savedChunks.text.trim() ? (transcribeMsRef.current = null, savedChunks.text.trim()) : await transcribeAudio(blob);
     if (tx === "__NO_API__") { softFailTranscript(); return; }
     const refFullText = ayahs.map(a => a.text).join(" ");
     const sc   = scoreFromCompareWords(refFullText, tx);
@@ -1931,19 +1944,27 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
   // Upload the saved recording again (the first upload had not finished before the reload).
   const reuploadAudio = async (blob: Blob) => {
-    const ext  = blob.type.includes("mp4") ? "mp4" : "webm";
-    const path = `${HIFDH_R2_PREFIX}${userId}/${todayISO()}_${Date.now()}.${ext}`;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        audioStorageUrlRef.current = await uploadHifdhAudio(path, blob);
-        setAudioReadyTick(t => t + 1);
-        return;
-      } catch (e: any) {
-        console.warn(`[HifdhDaily] re-upload attempt ${attempt}/3 failed:`, e?.message ?? e);
-        if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));
-      }
-    }
+    const path = await saveHifdhRecording(userId, todayISO(), blob);
+    if (path) { audioStorageUrlRef.current = path; setAudioReadyTick(t => t + 1); }
   };
+
+  // Upload still missing (offline / flaky network)? Keep trying while the result screen is open and as
+  // soon as the phone is back online — the recording is safe in IndexedDB meanwhile.
+  useEffect(() => {
+    if (phase !== "page_result" || score === null || audioStorageUrlRef.current) return;
+    let stopped = false, busy = false, tries = 0;
+    const attempt = async () => {
+      if (stopped || busy || audioStorageUrlRef.current || tries >= 12) return;
+      const blob = audioBlobRef.current; if (!blob) return;
+      busy = true; tries++;
+      try { await reuploadAudio(blob); } finally { busy = false; }
+    };
+    const iv = setInterval(attempt, 30000);
+    window.addEventListener("online", attempt);
+    attempt();
+    return () => { stopped = true; clearInterval(iv); window.removeEventListener("online", attempt); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, score, audioReadyTick]);
 
   // ── SAVE on every change ─────────────────────────────────────────────────
   useEffect(() => {
@@ -3746,9 +3767,7 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
           ab=await resp.arrayBuffer();
         }
         if(cancelled) return;
-        const ctx=getCtx();
-        if(ctx.state==="suspended") await ctx.resume();
-        const decoded=await ctx.decodeAudioData(ab);
+        const decoded=await decodeForPlayback(ab);
         if(cancelled) return;
         bufferRef.current=decoded; gainRef.current=playbackGainFor(decoded);
         setDuration(decoded.duration);setLoaded(true);
@@ -3768,9 +3787,9 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
       offsetRef.current=Math.min(offsetRef.current+elapsed,buffer.duration);
       stopSource();stopRAF();setPlaying(false);
     }else{
-      const ctx=getCtx();
-      if(ctx.state==="suspended") await ctx.resume();
       stopSource();
+      const ctx=await freshPlaybackContext(ctxRef.current);
+      ctxRef.current=ctx;
       if(offsetRef.current>=buffer.duration-0.05) offsetRef.current=0;
       const src=ctx.createBufferSource();
       src.buffer=buffer; src.playbackRate.value=speed; { const g=ctx.createGain(); g.gain.value=gainRef.current; src.connect(g); g.connect(ctx.destination); }
