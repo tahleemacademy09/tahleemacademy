@@ -62,18 +62,22 @@ export function enhanceForAsr(input: Float32Array, sr = 16000, targetRms = 0.1, 
   return y;
 }
 
-/** Gain to apply when PLAYING a recording so quiet speech is comfortably audible (1 = leave as is). */
+/**
+ * Voice booster for PLAYBACK only (a plain gain — no compressor). Quiet speech is lifted to a comfortable
+ * level; the gain is capped so the loudest peak lands at 0.98 of full scale, i.e. it can never clip, and
+ * a recording that is already loud gets 1 (untouched).
+ */
 export function playbackGainFor(buf: AudioBuffer): number {
   try {
     const ch = buf.getChannelData(0);
     const frame = Math.max(1, Math.round(buf.sampleRate * 0.02));
     let peak = 0;
-    for (let i = 0; i < ch.length; i += 7) { const a = Math.abs(ch[i]); if (a > peak) peak = a; }
+    for (let i = 0; i < ch.length; i++) { const a = Math.abs(ch[i]); if (a > peak) peak = a; }
     if (peak <= 0) return 1;
     const r = speechRms(ch, frame);
     // aim for a comfortable speech level; if the level can't be measured, fall back to peak-normalising
     let g = r > 0 ? 0.15 / r : 0.9 / peak;
-    g = Math.min(g, 2.5 / peak);          // the compressor in the player tames peaks above full scale
+    g = Math.min(g, 0.98 / peak);         // no compressor downstream — never push a peak past full scale
     return Math.min(12, Math.max(1, g));
   } catch { return 1; }
 }
