@@ -21,6 +21,8 @@
   dependency is needed.
 */
 
+import { enhanceForAsr } from "@/lib/audioEnhance";
+
 export const TARTEEL_MODEL = "iqbalaesthetic/Basira"; // ONNX export of tarteel-ai/whisper-base-ar-quran
 const TRANSFORMERS_CDN = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.0";
 
@@ -315,6 +317,7 @@ class TarteelEngine {
     }
     const audioSecs = audio.length / TARGET_SR;
     if (audio.length < TARGET_SR * 0.4) return { text: "", ms: 0, audioSecs };
+    audio = enhanceForAsr(audio, TARGET_SR);   // high-pass + level-normalise the speech
     const res = await this.transcribe(audio, true);
     return { ...res, audioSecs };
   }
@@ -388,6 +391,24 @@ export class SegmentBuffer {
   /** Seconds of audio received but not yet handed to the model. */
   pendingSec(): number { return (this.total - this.procEnd) / this.rate; }
 
+  private slice(from: number, to: number): Float32Array {
+    const out = new Float32Array(Math.max(0, to - from));
+    for (const c of this.chunks) {
+      const cs = c.start, ce = c.start + c.data.length;
+      if (ce <= from || cs >= to) continue;
+      const a = Math.max(from, cs), b = Math.min(to, ce);
+      out.set(c.data.subarray(a - cs, b - cs), a - from);
+    }
+    return out;
+  }
+
+  private commit(to: number) {
+    const overlap = Math.floor(this.overlapSec * this.rate);
+    this.procEnd = to;
+    const keepFrom = to - overlap;
+    while (this.chunks.length && this.chunks[0].start + this.chunks[0].data.length <= keepFrom) this.chunks.shift();
+  }
+
   /** The next segment (overlap + new audio), or null if there is not enough new audio yet. */
   next(final = false): Float32Array | null {
     const newSamples = this.total - this.procEnd;
@@ -395,16 +416,38 @@ export class SegmentBuffer {
     const overlap = Math.floor(this.overlapSec * this.rate);
     const from = Math.max(0, this.procEnd - overlap);
     const to = Math.min(this.total, from + Math.floor(this.maxSec * this.rate));
-    const out = new Float32Array(to - from);
-    for (const c of this.chunks) {
-      const cs = c.start, ce = c.start + c.data.length;
-      if (ce <= from || cs >= to) continue;
-      const a = Math.max(from, cs), b = Math.min(to, ce);
-      out.set(c.data.subarray(a - cs, b - cs), a - from);
+    const out = this.slice(from, to);
+    this.commit(to);
+    return out;
+  }
+
+  /**
+   * Like next(), but waits until `targetSec` of new audio has built up and then cuts at the QUIETEST
+   * moment (a breath / pause between words) so no word is split across two segments. When the model is
+   * behind, the segment grows up to maxSec. `final` flushes whatever is left.
+   */
+  nextAtPause(targetSec: number, final = false): Float32Array | null {
+    if (final) return this.next(true);
+    const newSamples = this.total - this.procEnd;
+    if (newSamples < this.rate * targetSec) return null;
+    const overlap = Math.floor(this.overlapSec * this.rate);
+    const from = Math.max(0, this.procEnd - overlap);
+    const hardTo = Math.min(this.total, from + Math.floor(this.maxSec * this.rate));
+    const winStart = Math.max(this.procEnd + Math.floor(Math.max(1, targetSec - 4) * this.rate), hardTo - Math.floor(5 * this.rate));
+    let to = hardTo;
+    if (winStart < hardTo - this.rate * 0.5) {
+      const win = this.slice(winStart, hardTo);
+      const fr = Math.floor(0.12 * this.rate), hop = Math.floor(0.04 * this.rate);
+      let bestE = Infinity, bestAt = win.length;
+      for (let i = 0; i + fr <= win.length; i += hop) {
+        let e = 0;
+        for (let k = i; k < i + fr; k += 4) e += win[k] * win[k];
+        if (e < bestE) { bestE = e; bestAt = i + (fr >> 1); }
+      }
+      to = winStart + bestAt;
     }
-    this.procEnd = to;
-    const keepFrom = to - overlap;
-    while (this.chunks.length && this.chunks[0].start + this.chunks[0].data.length <= keepFrom) this.chunks.shift();
+    const out = this.slice(from, to);
+    this.commit(to);
     return out;
   }
 
@@ -514,7 +557,7 @@ export class LiveRecitationSession {
     const rms = Math.sqrt(sum / Math.max(1, out.length / step));
     this.lastLevel = rms;
     if (rms < 0.004) { this.silent++; this.emitStatus(); return null; }
-    return resampleTo16k(out, this.srcRate);
+    return enhanceForAsr(resampleTo16k(out, this.srcRate), TARGET_SR);
   }
 
   private async tick(final: boolean) {
@@ -569,6 +612,140 @@ export class LiveRecitationSession {
     }
     this.stopped = true;
     this.teardown();
+  }
+
+  cancel() {
+    this.stopped = true;
+    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+    this.teardown();
+  }
+
+  private teardown() {
+    try { this.proc && (this.proc.onaudioprocess = null); } catch { /* noop */ }
+    try { this.src?.disconnect(); } catch { /* noop */ }
+    try { this.proc?.disconnect(); } catch { /* noop */ }
+    try { this.sink?.disconnect(); } catch { /* noop */ }
+    try { void this.ctx?.close(); } catch { /* noop */ }
+    this.ctx = null; this.proc = null; this.src = null; this.sink = null;
+    this.seg?.clear();
+  }
+}
+
+
+/* ───────────────── Background transcription while the student recites ───────────────── */
+
+/** Merge two consecutive segment transcripts that share a little overlapping audio (fuzzy, word level). */
+export function mergeHeard(prev: string, next: string): string {
+  const a = prev.trim().split(/\s+/).filter(Boolean);
+  const b = next.trim().split(/\s+/).filter(Boolean);
+  if (!a.length) return b.join(" ");
+  if (!b.length) return a.join(" ");
+  const ak = a.map(tarteelWordKey), bk = b.map(tarteelWordKey);
+  for (let k = Math.min(6, a.length, b.length); k >= 1; k--) {
+    let ok = true;
+    for (let i = 0; i < k && ok; i++) {
+      const x = ak[a.length - k + i], y = bk[i];
+      ok = k === 1 ? x === y && x.length >= 3 : keysMatch(x, y);
+    }
+    if (ok) return [...a, ...b.slice(k)].join(" ");
+  }
+  return [...a, ...b].join(" ");
+}
+
+export interface BackgroundResult {
+  text: string;
+  /** false if any segment failed — the caller should then fall back to transcribing the whole recording */
+  ok: boolean;
+  audioSecs: number;
+}
+
+/**
+ * Transcribes the recording WHILE the student is still reciting. Audio is cut into ~16 s segments at
+ * natural pauses; each is sent to the on-device model as soon as it is complete, so by the time the
+ * student taps Finished only the last few seconds are left to process. Nothing is shown live — the
+ * caller just awaits finish() and then shows the full result.
+ */
+export class BackgroundTranscriber {
+  private ctx: AudioContext | null = null;
+  private proc: ScriptProcessorNode | null = null;
+  private src: MediaStreamAudioSourceNode | null = null;
+  private sink: GainNode | null = null;
+  private seg: SegmentBuffer | null = null;
+  private srcRate = 48000;
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private busy = false;
+  private stopped = false;
+  private failed = false;
+  private seq = 0;
+  private texts: string[] = [];
+  private samplesSeen = 0;
+
+  constructor(private stream: MediaStream, private targetSec = 16, private maxSec = 28) {}
+
+  start() {
+    const AC: typeof AudioContext = (window as any).AudioContext || (window as any).webkitAudioContext;
+    this.ctx = new AC();
+    this.srcRate = this.ctx.sampleRate;
+    this.seg = new SegmentBuffer(this.srcRate, 0.8, this.maxSec, 0.4);
+    this.src = this.ctx.createMediaStreamSource(this.stream);
+    this.proc = this.ctx.createScriptProcessor(4096, 1, 1);
+    this.sink = this.ctx.createGain();
+    this.sink.gain.value = 0;
+    this.proc.onaudioprocess = (e) => {
+      if (this.stopped || !this.seg) return;
+      const d = new Float32Array(e.inputBuffer.getChannelData(0));
+      this.samplesSeen += d.length;
+      this.seg.push(d);
+    };
+    this.src.connect(this.proc);
+    this.proc.connect(this.sink);
+    this.sink.connect(this.ctx.destination);
+    if (this.ctx.state === "suspended") this.ctx.resume().catch(() => {});
+    tarteelEngine.load(true).catch(() => { this.failed = true; });
+    this.timer = setInterval(() => { void this.tick(false); }, 1000);
+  }
+
+  private async tick(final: boolean): Promise<void> {
+    if (this.busy || !this.seg || !tarteelEngine.isReady()) return;
+    const raw = this.seg.nextAtPause(this.targetSec, final);
+    if (!raw) return;
+    const mySeq = this.seq++;
+    let sum = 0;
+    for (let i = 0; i < raw.length; i += 16) sum += raw[i] * raw[i];
+    if (Math.sqrt(sum / Math.max(1, raw.length / 16)) < 0.004) { this.texts[mySeq] = ""; return; } // silence
+    this.busy = true;
+    try {
+      const audio = enhanceForAsr(resampleTo16k(raw, this.srcRate), TARGET_SR);
+      const res = await tarteelEngine.transcribe(audio);
+      if (res.error) this.failed = true; else this.texts[mySeq] = res.text;
+    } catch { this.failed = true; }
+    finally {
+      this.busy = false;
+      // Behind (slow phone)? keep going straight away instead of waiting for the next timer tick.
+      if (!this.stopped && this.seg && this.seg.pendingSec() >= this.targetSec) setTimeout(() => { void this.tick(false); }, 0);
+    }
+  }
+
+  /** Stop listening, transcribe whatever is left, and return the merged transcript. */
+  async finish(): Promise<BackgroundResult> {
+    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+    this.stopped = true;
+    try { await tarteelEngine.load(true); } catch { this.failed = true; }
+    while (this.busy) await new Promise((r) => setTimeout(r, 100));
+    // Drain: any full segments still queued (model was behind), then the final tail.
+    for (let i = 0; i < 20 && this.seg && this.seg.pendingSec() >= this.targetSec && !this.failed; i++) {
+      await this.tick(false);
+      while (this.busy) await new Promise((r) => setTimeout(r, 100));
+    }
+    if (this.seg && this.seg.pendingSec() > 0.4 && !this.failed) {
+      await this.tick(true);
+      while (this.busy) await new Promise((r) => setTimeout(r, 100));
+    }
+    const audioSecs = this.samplesSeen / this.srcRate;
+    this.teardown();
+    let text = "";
+    for (const t of this.texts) if (t) text = mergeHeard(text, t);
+    return { text, ok: !this.failed, audioSecs };
   }
 
   cancel() {
