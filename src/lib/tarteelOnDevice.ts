@@ -21,6 +21,8 @@
   dependency is needed.
 */
 
+import { prepareForAsr } from "@/lib/audioEnhance";
+
 export const TARTEEL_MODEL = "iqbalaesthetic/Basira"; // ONNX export of tarteel-ai/whisper-base-ar-quran
 const TRANSFORMERS_CDN = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.0";
 
@@ -323,8 +325,12 @@ class TarteelEngine {
     }
     const audioSecs = audio.length / TARGET_SR;
     if (audio.length < TARGET_SR * 0.4) return { text: "", ms: 0, audioSecs };
-    const res = await this.transcribe(audio, true);
-    return { ...res, audioSecs };
+    // Only real speech reaches the model — silence / room noise / long pauses make it invent words.
+    let gated: Float32Array | null = null;
+    try { gated = prepareForAsr(audio, TARGET_SR); } catch { gated = audio; }
+    if (!gated) return { text: "", ms: 0, audioSecs };
+    const res = await this.transcribe(gated, true);
+    return { ...res, text: collapseLoops(res.text || ""), audioSecs };
   }
 }
 
@@ -676,6 +682,31 @@ export function mergeHeard(prev: string, next: string): string {
   return [...a, ...b].join(" ");
 }
 
+/** A model that loops repeats the same 1–6 word phrase over and over — keep it once. */
+export function collapseLoops(text: string): string {
+  const w = text.trim().split(/\s+/).filter(Boolean);
+  if (w.length < 6) return w.join(" ");
+  const k = w.map(tarteelWordKey);
+  const out: string[] = [];
+  let i = 0;
+  while (i < w.length) {
+    let done = false;
+    for (let n = 1; n <= 6 && !done; n++) {
+      if (i + n * 3 > w.length) break;
+      let reps = 1;
+      while (i + (reps + 1) * n <= w.length) {
+        let same = true;
+        for (let j = 0; j < n && same; j++) same = k[i + j] === k[i + reps * n + j];
+        if (!same) break;
+        reps++;
+      }
+      if (reps >= 3) { for (let j = 0; j < n; j++) out.push(w[i + j]); i += reps * n; done = true; }
+    }
+    if (!done) { out.push(w[i]); i++; }
+  }
+  return out.join(" ");
+}
+
 export interface BackgroundResult {
   text: string;
   /** false if any chunk failed — the caller should then transcribe the whole recording instead */
@@ -686,78 +717,142 @@ export interface BackgroundResult {
  * Transcribes the recording WHILE the student is still reciting, using exactly the same proven path as
  * a whole-recording transcription (a real recorded file → the browser's own decoder/resampler → model).
  *
- * Two MediaRecorders take turns on the same microphone stream: a new ~20 s chunk starts every
+ * Two MediaRecorders take turns on the same microphone stream: a new short chunk starts every
  * `intervalMs`, and each chunk keeps recording `overlapMs` longer so every word is heard whole in at
- * least one chunk. Each finished chunk is transcribed immediately; at Stop only the last chunk is left.
+ * least one chunk. Each finished chunk is transcribed immediately, so at Stop only the last few seconds
+ * are left. If the phone cannot keep up (chunks queue), the chunk length grows by itself. Recording
+ * length is unlimited: only ~10 s of audio is ever held for the model at a time.
  * Nothing is shown live — the caller awaits finish() and then shows the full result.
+ *
+ * `persistKey`: every chunk's text is also saved in localStorage so a long recording's transcript
+ * survives a refresh (see ChunkTranscriber.saved()).
  */
 export class ChunkTranscriber {
-  private active: MediaRecorder[] = [];
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private active: { mr: MediaRecorder; startedAt: number }[] = [];
+  private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
   private failed = false;
   private seq = 0;
   private inflight = 0;
   private results = new Map<number, string>();
   private waiter: (() => void) | null = null;
+  private nextInterval: number;
 
-  constructor(private stream: MediaStream, private mime: string, private intervalMs = 15000, private overlapMs = 2500) {}
+  constructor(
+    private stream: MediaStream,
+    private mime: string,
+    private intervalMs = 8000,
+    private overlapMs = 2500,
+    private persistKey: string | null = null,
+  ) { this.nextInterval = intervalMs; }
 
-  start() {
+  /** Transcript saved by a previous page load (complete = the recording had been fully processed). */
+  static saved(key: string): { text: string; complete: boolean } | null {
+    try {
+      const d = JSON.parse(localStorage.getItem(key) || "null");
+      if (!d || !d.r) return null;
+      let text = "";
+      Object.keys(d.r).map(Number).sort((a, b) => a - b).forEach((k) => { text = mergeHeard(text, d.r[k]); });
+      return { text, complete: !!d.complete };
+    } catch { return null; }
+  }
+  static clearSaved(key: string) { try { localStorage.removeItem(key); } catch { /* noop */ } }
+
+  private save(complete = false) {
+    if (!this.persistKey) return;
+    try {
+      const r: Record<number, string> = {};
+      this.results.forEach((v, k) => { r[k] = v; });
+      localStorage.setItem(this.persistKey, JSON.stringify({ r, complete }));
+    } catch { /* storage full — non-critical */ }
+  }
+
+  /** resume = continue a recording that was interrupted by a refresh (keeps the text already heard). */
+  start(resume = false) {
+    if (this.persistKey) {
+      if (resume) {
+        try {
+          const d = JSON.parse(localStorage.getItem(this.persistKey) || "null");
+          if (d?.r) {
+            Object.keys(d.r).map(Number).forEach((k) => { this.results.set(k, d.r[k]); this.seq = Math.max(this.seq, k + 1); });
+          }
+        } catch { /* noop */ }
+      } else ChunkTranscriber.clearSaved(this.persistKey);
+    }
     tarteelEngine.load(true).catch(() => { this.failed = true; });
     this.spawn();
-    this.timer = setInterval(() => this.spawn(), this.intervalMs);
+    this.schedule();
+  }
+
+  private schedule() {
+    if (this.stopped) return;
+    this.timer = setTimeout(() => {
+      // Falling behind (two or more chunks waiting)? make the next chunk longer so the queue drains.
+      this.nextInterval = this.inflight >= 2 ? Math.min(20000, this.nextInterval + 4000) : Math.max(this.intervalMs, this.nextInterval - 2000);
+      this.spawn();
+      this.schedule();
+    }, this.nextInterval);
   }
 
   private spawn() {
     if (this.stopped) return;
     let mr: MediaRecorder;
     try {
-      mr = new MediaRecorder(this.stream, this.mime ? { mimeType: this.mime, audioBitsPerSecond: 128000 } : { audioBitsPerSecond: 128000 });
+      mr = new MediaRecorder(this.stream, this.mime ? { mimeType: this.mime, audioBitsPerSecond: 96000 } : { audioBitsPerSecond: 96000 });
     } catch { this.failed = true; return; }
     const chunks: Blob[] = [];
     const mySeq = this.seq++;
+    const entry = { mr, startedAt: Date.now() };
     mr.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
     mr.onstop = () => {
-      this.active = this.active.filter((m) => m !== mr);
+      this.active = this.active.filter((a) => a.mr !== mr);
       const blob = new Blob(chunks, { type: this.mime || "audio/webm" });
+      chunks.length = 0;
       if (blob.size < 3000) { this.check(); return; }          // empty / near-silent
       this.inflight++;
       tarteelEngine.transcribeBlob(blob)
-        .then((r) => { if (r.error) this.failed = true; else if (r.text) this.results.set(mySeq, r.text); })
+        .then((r) => { if (r.error) this.failed = true; else if (r.text) { this.results.set(mySeq, r.text); this.save(); } })
         .catch(() => { this.failed = true; })
         .finally(() => { this.inflight--; this.check(); });
     };
     try { mr.start(1000); } catch { this.failed = true; return; }
-    this.active.push(mr);
-    // keeps recording for interval + overlap; the next chunk starts `interval` after this one
-    setTimeout(() => { if (mr.state !== "inactive") { try { mr.stop(); } catch { /* noop */ } } }, this.intervalMs + this.overlapMs);
+    this.active.push(entry);
+    // keeps recording for this chunk's length + overlap; the next chunk starts when the interval ends
+    setTimeout(() => { if (mr.state !== "inactive") { try { mr.stop(); } catch { /* noop */ } } }, this.nextInterval + this.overlapMs);
   }
 
   private check() {
     if (this.waiter && this.active.length === 0 && this.inflight === 0) { const w = this.waiter; this.waiter = null; w(); }
   }
 
-  /** Stop recording, wait for the chunks still being transcribed, and return the merged transcript. */
+  /** Stop recording, wait for the chunk(s) still being transcribed, and return the merged transcript. */
   finish(): Promise<BackgroundResult> {
     this.stopped = true;
-    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
     return new Promise((resolve) => {
       const done = () => {
         let text = "";
         [...this.results.keys()].sort((a, b) => a - b).forEach((k) => { text = mergeHeard(text, this.results.get(k)!); });
+        this.save(!this.failed);
         resolve({ text, ok: !this.failed });
       };
       if (this.active.length === 0 && this.inflight === 0) { done(); return; }
       this.waiter = done;
-      [...this.active].forEach((m) => { if (m.state !== "inactive") { try { m.stop(); } catch { /* noop */ } } });
+      // If an older chunk is still running (inside its overlap), the newest chunk is only a few seconds
+      // old and is entirely contained in it → skip it, so only ONE short job is left to run.
+      const list = [...this.active].sort((a, b) => a.startedAt - b.startedAt);
+      if (list.length >= 2) {
+        const newest = list[list.length - 1];
+        newest.mr.onstop = () => { this.active = this.active.filter((a) => a !== newest); this.check(); };
+      }
+      list.forEach((a) => { if (a.mr.state !== "inactive") { try { a.mr.stop(); } catch { /* noop */ } } });
     });
   }
 
   cancel() {
     this.stopped = true;
-    if (this.timer) { clearInterval(this.timer); this.timer = null; }
-    [...this.active].forEach((m) => { m.onstop = null as any; if (m.state !== "inactive") { try { m.stop(); } catch { /* noop */ } } });
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    [...this.active].forEach((a) => { a.mr.onstop = null as any; if (a.mr.state !== "inactive") { try { a.mr.stop(); } catch { /* noop */ } } });
     this.active = [];
   }
 }
