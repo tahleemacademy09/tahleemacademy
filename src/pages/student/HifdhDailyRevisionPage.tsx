@@ -1686,9 +1686,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       setAudioUrl(null); setSavedAudioUrl(null); audioChunks.current = []; audioBlobRef.current = null; audioStorageUrlRef.current = null;
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: false,
+          echoCancellation: true,
           noiseSuppression: false,  // OFF: it fades elongations (madd) and ghunnah
-          autoGainControl: false,   // OFF: raw, unprocessed mic
+          autoGainControl: true,    // ON: without it the recording is very quiet (and Android routes playback badly)
           sampleRate: 48000,
           channelCount: 1,
         }
