@@ -653,113 +653,86 @@ export function mergeHeard(prev: string, next: string): string {
 
 export interface BackgroundResult {
   text: string;
-  /** false if any segment failed — the caller should then fall back to transcribing the whole recording */
+  /** false if any chunk failed — the caller should then transcribe the whole recording instead */
   ok: boolean;
-  audioSecs: number;
 }
 
 /**
- * Transcribes the recording WHILE the student is still reciting. Audio is cut into ~16 s segments at
- * natural pauses; each is sent to the on-device model as soon as it is complete, so by the time the
- * student taps Finished only the last few seconds are left to process. Nothing is shown live — the
- * caller just awaits finish() and then shows the full result.
+ * Transcribes the recording WHILE the student is still reciting, using exactly the same proven path as
+ * a whole-recording transcription (a real recorded file → the browser's own decoder/resampler → model).
+ *
+ * Two MediaRecorders take turns on the same microphone stream: a new ~20 s chunk starts every
+ * `intervalMs`, and each chunk keeps recording `overlapMs` longer so every word is heard whole in at
+ * least one chunk. Each finished chunk is transcribed immediately; at Stop only the last chunk is left.
+ * Nothing is shown live — the caller awaits finish() and then shows the full result.
  */
-export class BackgroundTranscriber {
-  private ctx: AudioContext | null = null;
-  private proc: ScriptProcessorNode | null = null;
-  private src: MediaStreamAudioSourceNode | null = null;
-  private sink: GainNode | null = null;
-  private seg: SegmentBuffer | null = null;
-  private srcRate = 48000;
+export class ChunkTranscriber {
+  private active: MediaRecorder[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
-  private busy = false;
   private stopped = false;
   private failed = false;
   private seq = 0;
-  private texts: string[] = [];
-  private samplesSeen = 0;
+  private inflight = 0;
+  private results = new Map<number, string>();
+  private waiter: (() => void) | null = null;
 
-  constructor(private stream: MediaStream, private targetSec = 22, private maxSec = 29) {}
+  constructor(private stream: MediaStream, private mime: string, private intervalMs = 20000, private overlapMs = 4000) {}
 
   start() {
-    const AC: typeof AudioContext = (window as any).AudioContext || (window as any).webkitAudioContext;
-    this.ctx = new AC();
-    this.srcRate = this.ctx.sampleRate;
-    this.seg = new SegmentBuffer(this.srcRate, 0.8, this.maxSec, 0.4);
-    this.src = this.ctx.createMediaStreamSource(this.stream);
-    this.proc = this.ctx.createScriptProcessor(4096, 1, 1);
-    this.sink = this.ctx.createGain();
-    this.sink.gain.value = 0;
-    this.proc.onaudioprocess = (e) => {
-      if (this.stopped || !this.seg) return;
-      const d = new Float32Array(e.inputBuffer.getChannelData(0));
-      this.samplesSeen += d.length;
-      this.seg.push(d);
-    };
-    this.src.connect(this.proc);
-    this.proc.connect(this.sink);
-    this.sink.connect(this.ctx.destination);
-    if (this.ctx.state === "suspended") this.ctx.resume().catch(() => {});
     tarteelEngine.load(true).catch(() => { this.failed = true; });
-    this.timer = setInterval(() => { void this.tick(false); }, 1000);
+    this.spawn();
+    this.timer = setInterval(() => this.spawn(), this.intervalMs);
   }
 
-  private async tick(final: boolean): Promise<void> {
-    if (this.busy || !this.seg || !tarteelEngine.isReady()) return;
-    const raw = this.seg.nextAtPause(this.targetSec, final);
-    if (!raw) return;
-    const mySeq = this.seq++;
-    let sum = 0;
-    for (let i = 0; i < raw.length; i += 16) sum += raw[i] * raw[i];
-    if (Math.sqrt(sum / Math.max(1, raw.length / 16)) < 0.004) { this.texts[mySeq] = ""; return; } // silence
-    this.busy = true;
+  private spawn() {
+    if (this.stopped) return;
+    let mr: MediaRecorder;
     try {
-      const audio = resampleTo16k(raw, this.srcRate);   // untouched audio, exactly as the mic gave it
-      const res = await tarteelEngine.transcribe(audio);
-      if (res.error) this.failed = true; else this.texts[mySeq] = res.text;
-    } catch { this.failed = true; }
-    finally {
-      this.busy = false;
-      // Behind (slow phone)? keep going straight away instead of waiting for the next timer tick.
-      if (!this.stopped && this.seg && this.seg.pendingSec() >= this.targetSec) setTimeout(() => { void this.tick(false); }, 0);
-    }
+      mr = new MediaRecorder(this.stream, this.mime ? { mimeType: this.mime, audioBitsPerSecond: 128000 } : { audioBitsPerSecond: 128000 });
+    } catch { this.failed = true; return; }
+    const chunks: Blob[] = [];
+    const mySeq = this.seq++;
+    mr.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
+    mr.onstop = () => {
+      this.active = this.active.filter((m) => m !== mr);
+      const blob = new Blob(chunks, { type: this.mime || "audio/webm" });
+      if (blob.size < 3000) { this.check(); return; }          // empty / near-silent
+      this.inflight++;
+      tarteelEngine.transcribeBlob(blob)
+        .then((r) => { if (r.error) this.failed = true; else if (r.text) this.results.set(mySeq, r.text); })
+        .catch(() => { this.failed = true; })
+        .finally(() => { this.inflight--; this.check(); });
+    };
+    try { mr.start(1000); } catch { this.failed = true; return; }
+    this.active.push(mr);
+    // keeps recording for interval + overlap; the next chunk starts `interval` after this one
+    setTimeout(() => { if (mr.state !== "inactive") { try { mr.stop(); } catch { /* noop */ } } }, this.intervalMs + this.overlapMs);
   }
 
-  /** Stop listening, transcribe whatever is left, and return the merged transcript. */
-  async finish(): Promise<BackgroundResult> {
-    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+  private check() {
+    if (this.waiter && this.active.length === 0 && this.inflight === 0) { const w = this.waiter; this.waiter = null; w(); }
+  }
+
+  /** Stop recording, wait for the chunks still being transcribed, and return the merged transcript. */
+  finish(): Promise<BackgroundResult> {
     this.stopped = true;
-    try { await tarteelEngine.load(true); } catch { this.failed = true; }
-    while (this.busy) await new Promise((r) => setTimeout(r, 100));
-    // Drain: any full segments still queued (model was behind), then the final tail.
-    for (let i = 0; i < 20 && this.seg && this.seg.pendingSec() >= this.targetSec && !this.failed; i++) {
-      await this.tick(false);
-      while (this.busy) await new Promise((r) => setTimeout(r, 100));
-    }
-    if (this.seg && this.seg.pendingSec() > 0.4 && !this.failed) {
-      await this.tick(true);
-      while (this.busy) await new Promise((r) => setTimeout(r, 100));
-    }
-    const audioSecs = this.samplesSeen / this.srcRate;
-    this.teardown();
-    let text = "";
-    for (const t of this.texts) if (t) text = mergeHeard(text, t);
-    return { text, ok: !this.failed, audioSecs };
+    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+    return new Promise((resolve) => {
+      const done = () => {
+        let text = "";
+        [...this.results.keys()].sort((a, b) => a - b).forEach((k) => { text = mergeHeard(text, this.results.get(k)!); });
+        resolve({ text, ok: !this.failed });
+      };
+      if (this.active.length === 0 && this.inflight === 0) { done(); return; }
+      this.waiter = done;
+      [...this.active].forEach((m) => { if (m.state !== "inactive") { try { m.stop(); } catch { /* noop */ } } });
+    });
   }
 
   cancel() {
     this.stopped = true;
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
-    this.teardown();
-  }
-
-  private teardown() {
-    try { this.proc && (this.proc.onaudioprocess = null); } catch { /* noop */ }
-    try { this.src?.disconnect(); } catch { /* noop */ }
-    try { this.proc?.disconnect(); } catch { /* noop */ }
-    try { this.sink?.disconnect(); } catch { /* noop */ }
-    try { void this.ctx?.close(); } catch { /* noop */ }
-    this.ctx = null; this.proc = null; this.src = null; this.sink = null;
-    this.seg?.clear();
+    [...this.active].forEach((m) => { m.onstop = null as any; if (m.state !== "inactive") { try { m.stop(); } catch { /* noop */ } } });
+    this.active = [];
   }
 }
