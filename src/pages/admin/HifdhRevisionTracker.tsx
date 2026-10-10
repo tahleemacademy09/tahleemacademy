@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "@/integrations/supabase/storageClient";
-import { isHifdhR2Path, getHifdhAudioUrl } from "@/lib/hifdhAudio";
+import { isHifdhR2Path, getHifdhAudioUrl, discardReviewedAudio } from "@/lib/hifdhAudio";
 import SegmentPicker from "@/components/hifdh/SegmentPicker";
 import { Segment, parseSegments, withSegments, legacyFieldsFromSegments, segmentsSummary } from "@/lib/hifdhSegments";
 import {
@@ -468,6 +468,7 @@ export default function HifdhRevisionTracker() {
 
   // ── Actions ─────────────────────────────────────────────────────────────────
   const acknowledge = async (log: DailyLog, studentId: string) => {
+    if (log.session_data?.audio_path && !window.confirm("Acknowledging marks this session as reviewed and deletes the student's recording. Continue?")) return;
     setAckLoading(log.id);
     try {
       await (supabase as any).rpc("acknowledge_hifdh_log",
@@ -477,6 +478,12 @@ export default function HifdhRevisionTracker() {
           ? {...s, todayLog:{...s.todayLog!, acknowledged_by:userId!, acknowledged_at:new Date().toISOString(), ack_note:ackNote[log.id]||null}}
           : s
       ));
+      // Reviewed → the recording is no longer needed: delete it from storage.
+      const sd = log.session_data;
+      if (sd?.audio_path) {
+        const next = await discardReviewedAudio(log.id, sd);
+        if (next) setStudents(prev => prev.map(s => s.user_id===studentId && s.todayLog ? {...s, todayLog:{...s.todayLog, session_data:next}} : s));
+      }
     } catch(e){ console.error(e); }
     setAckLoading(null);
   };
