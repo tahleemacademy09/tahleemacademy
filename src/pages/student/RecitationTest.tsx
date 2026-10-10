@@ -1,6 +1,6 @@
 /*  src/pages/student/RecitationTest.tsx
     3-Stage Recitation Proficiency Test
-    Stage 1: Record audio
+    Stage 1: Record audio (scored on-device by Tarteel — same engine + scoring as Daily Hifdh Revision)
     Stage 2: Scoring — score shown as PREVIEW only (not saved)
              User must press "Submit Score" to confirm and advance.
              Refreshing before submit = back to Stage 1 (re-record).
@@ -11,6 +11,8 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { resolveRecitationAudioUrl, uploadExamAudioToR2 } from "@/lib/examAudioUpload";
+import { tarteelEngine, type TarteelProgress } from "@/lib/tarteelOnDevice";
+import { compareWords } from "@/lib/recitationCompare";
 import { useToast } from "@/hooks/use-toast";
 import { useRecitationSettings } from "@/hooks/useRecitationSettings";
 import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
@@ -25,11 +27,9 @@ const G    = "#064E3B";
 const GM   = "#075E54";
 const GOLD = "#D4A843";
 // Recitation recordings are stored in Cloudflare R2 (via the exam-audio-url edge function).
-// Transcription goes through the `groq-transcribe` edge function — the same one the
-// Daily Hifdh Revision uses — so no API key ever lives in the browser.
-const QURAN_STYLE_PROMPT =
-  "قرآن كريم بالتشكيل الكامل. تلاوة قرآنية بالرسم العثماني. صَ ضَ طَ ظَ إِ أَ ئَ ؤَ";
-const TRANSCRIBE_TIMEOUT_MS = 90_000;
+// Transcription is 100% on-device Tarteel (the same Quran model + the same word comparison the
+// Daily Hifdh Revision uses) — nothing is uploaded for scoring, no API key, no server round-trip.
+const TRANSCRIBE_TIMEOUT_MS = 5 * 60_000;   // first visit also downloads the ~100 MB model
 const UPLOAD_TIMEOUT_MS     = 30_000;
 
 const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =>
@@ -38,33 +38,19 @@ const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =
     p.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
   });
 
-/** Transcribes one recording. Returns "" for silence, null if the service failed. */
+/** Transcribes one recording with on-device Tarteel. Returns "" for silence, null if the model failed. */
 async function transcribeRecitation(blob: Blob): Promise<string | null> {
-  const url = (import.meta as any).env?.VITE_SUPABASE_URL;
-  const key = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY;
-  if (!url || !key) return null;
-  const ext = blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : "webm";
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), TRANSCRIBE_TIMEOUT_MS);
-    try {
-      const fd = new FormData();
-      fd.append("file", new File([blob], `recitation.${ext}`, { type: blob.type || "audio/webm" }));
-      fd.append("prompt", QURAN_STYLE_PROMPT);
-      const r = await fetch(`${url}/functions/v1/groq-transcribe`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${key}`, apikey: key },
-        body: fd,
-        signal: ctrl.signal,
-      });
-      if (r.ok) {
-        const j = await r.json().catch(() => ({}));
-        return String(j.text ?? "").trim();
-      }
-    } catch { /* retry once */ }
-    finally { clearTimeout(timer); }
+  try {
+    const res = await withTimeout(tarteelEngine.transcribeBlob(blob), TRANSCRIBE_TIMEOUT_MS, "Tarteel transcription");
+    if (res.error) {
+      console.error("[RecitationTest] tarteel transcription failed:", res.error);
+      return null;
+    }
+    return (res.text ?? "").trim();
+  } catch (e) {
+    console.error("[RecitationTest] tarteel transcription failed:", e);
+    return null;
   }
-  return null;
 }
 
 // ── Local playback ──────────────────────────────────────────────────────────
@@ -204,150 +190,26 @@ function LocalAudioPlayer({ blob, fallbackSecs }: { blob: Blob; fallbackSecs: nu
 
 const WAVE_H = [4,8,14,10,18,12,6,16,9,13,7,15,11,5,17,8,12,6,14,10];
 
-// ── Arabic text utilities ────────────────────────────────────────────────────
-function normalizeArabic(s: string): string {
-  return s
-    // Remove all tashkeel / diacritics
-    .replace(/[\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "")
-    // Normalize Alef variants
-    .replace(/[أإآٱ]/g, "ا")
-    // Normalize Ta marbuta → Ha
-    .replace(/ة/g, "ه")
-    // Normalize Alef maqsura → Ya
-    .replace(/ى/g, "ي")
-    // Normalize Waw variants
-    .replace(/ؤ/g, "و")
-    // Normalize Ya variants
-    .replace(/ئ/g, "ي")
-    // Strip non-Arabic chars (keep spaces)
-    .replace(/[^\u0600-\u06FF\s]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function editDistance(a: string, b: string): number {
-  const m = a.length, n = b.length;
-  if (!m) return n;
-  if (!n) return m;
-  // Rolling array O(n) space
-  const dp = Array.from({ length: n + 1 }, (_, i) => i);
-  for (let i = 1; i <= m; i++) {
-    let prev = i - 1;
-    dp[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const tmp = dp[j];
-      dp[j] = a[i - 1] === b[j - 1]
-        ? prev
-        : 1 + Math.min(prev, dp[j - 1], dp[j]);
-      prev = tmp;
-    }
-  }
-  return dp[n];
-}
-
+// ── Scoring ──────────────────────────────────────────────────────────────────
+// Same rule as the Daily Hifdh Revision: the score is the % of the page's words that Tarteel heard
+// correctly, using the shared global-alignment comparison in @/lib/recitationCompare.
 interface ScoreBreakdown {
-  total: number;
-  coverage: number;   // % of reference words recited
-  accuracy: number;   // precision of what was heard
-  fluency: number;    // pronunciation similarity
-  recitationMarks?: number; // out of 70 — how much of the page was recited correctly
-  qualityMarks?: number;    // out of 30 — accuracy (20) + fluency (10), scaled by coverage
+  total: number;        // % of the page's words recited correctly — this is the saved score
+  correct: number;      // words heard correctly
+  missing: number;      // words missed / misread
+  totalWords: number;   // words on the page
 }
 
-/**
- * Score a recitation against a reference text.
- * Uses LCS (Longest Common Subsequence) for order-aware word matching,
- * fuzzy edit-distance fallback, and Deepgram per-word confidence for fluency.
- */
-function scoreRecitation(
-  transcript: string,
-  reference: string,
-  wordConfidences: number[] = []
-): ScoreBreakdown {
-  const refNorm = normalizeArabic(reference);
-  const gotNorm = normalizeArabic(transcript);
-
-  const refWords = refNorm.split(" ").filter(w => w.length >= 2);
-  const gotWords = gotNorm.split(" ").filter(w => w.length >= 2);
-
-  if (!refWords.length || !gotWords.length) {
-    return { total: 0, coverage: 0, accuracy: 0, fluency: 0 };
-  }
-
-  // ── LCS with fuzzy fallback ──────────────────────────────────────────────
-  // dp[i][j] = best match count for refWords[0..i-1] vs gotWords[0..j-1]
-  const R = refWords.length, G2 = gotWords.length;
-  // Use flat array for speed
-  const dp = new Float32Array((R + 1) * (G2 + 1));
-  for (let i = 1; i <= R; i++) {
-    for (let j = 1; j <= G2; j++) {
-      const exact = refWords[i - 1] === gotWords[j - 1];
-      if (exact) {
-        dp[i * (G2 + 1) + j] = dp[(i - 1) * (G2 + 1) + (j - 1)] + 1;
-      } else {
-        // Fuzzy: within 1 edit AND word length > 2 → 0.7 credit
-        const ed = editDistance(refWords[i - 1], gotWords[j - 1]);
-        const len = Math.min(refWords[i - 1].length, gotWords[j - 1].length);
-        const fuzzyCredit = (ed <= 1 && len > 2) ? 0.7 : (ed <= 2 && len > 4) ? 0.4 : 0;
-        const skip = Math.max(
-          dp[(i - 1) * (G2 + 1) + j],
-          dp[i * (G2 + 1) + (j - 1)]
-        );
-        dp[i * (G2 + 1) + j] = Math.max(
-          skip,
-          dp[(i - 1) * (G2 + 1) + (j - 1)] + fuzzyCredit
-        );
-      }
-    }
-  }
-
-  const lcsLen = dp[R * (G2 + 1) + G2];
-  const coverage  = Math.round((lcsLen / R) * 100);   // recall
-  const precision = Math.round((lcsLen / G2) * 100);  // precision
-  // Accuracy = of the words the student actually said, how many matched the page.
-  // It is shown for information only — it does NOT lift the score (see `total` below).
-  const accuracy  = precision;
-
-  // ── Fluency score ─────────────────────────────────────────────────────────
-  let fluency: number;
-  if (wordConfidences.length > 0) {
-    // Deepgram gives per-word confidence 0–1 → scale to 0–100
-    fluency = Math.round(
-      (wordConfidences.reduce((a, b) => a + b, 0) / wordConfidences.length) * 100
-    );
-  } else {
-    // Estimate: for each recited word, find closest reference word
-    // and compute 1 - (editDist / wordLen) similarity
-    let simSum = 0, simCount = 0;
-    gotWords.forEach(got => {
-      let bestSim = 0;
-      for (const ref of refWords) {
-        const ed  = editDistance(got, ref);
-        const len = Math.max(got.length, ref.length, 1);
-        const sim = Math.max(0, 1 - ed / len);
-        if (sim > bestSim) bestSim = sim;
-      }
-      if (bestSim > 0.4) { simSum += bestSim; simCount++; }
-    });
-    fluency = simCount > 0 ? Math.round((simSum / simCount) * 100) : 55;
-  }
-
-  // MARKING: 70 marks for the recitation itself, 30 for quality.
-  //   • Recitation (70) = share of the page recited correctly (coverage, order-aware).
-  //   • Quality (30)    = accuracy of what was said (20) + fluency (10).
-  // Quality marks are scaled by coverage, so a short recitation can't earn them:
-  // reciting 12% of the page can score at most ~12/100, never 50+.
-  const C = coverage / 100;
-  const recitationMarks = 70 * C;
-  const qualityMarks    = 30 * C * ((accuracy * 2 / 3 + fluency / 3) / 100);
-  const total = Math.round(recitationMarks + qualityMarks);
+function scoreRecitation(transcript: string, reference: string): ScoreBreakdown {
+  const res = compareWords(reference, transcript);
+  const totalWords = res.length;
+  if (!totalWords) return { total: 0, correct: 0, missing: 0, totalWords: 0 };
+  const correct = res.filter(w => w.status === "correct").length;
   return {
-    total:    Math.min(100, Math.max(0, total)),
-    coverage: Math.min(100, coverage),
-    accuracy: Math.min(100, accuracy),
-    fluency:  Math.min(100, fluency),
-    recitationMarks: Math.round(recitationMarks * 10) / 10,
-    qualityMarks:    Math.round(qualityMarks * 10) / 10,
+    total: Math.min(100, Math.max(0, Math.round((correct / totalWords) * 100))),
+    correct,
+    missing: totalWords - correct,
+    totalWords,
   };
 }
 
@@ -550,9 +412,14 @@ const RecitationTest = () => {
   // Rebuild the breakdown tiles for a score restored from the database
   useEffect(() => {
     if (scoreBreakdown || aiScore === null || !aiTranscript || quranAyahs.length === 0) return;
-    const b = scoreRecitation(aiTranscript, quranAyahs.map(a => a.text).join(" "), []);
+    const b = scoreRecitation(aiTranscript, quranAyahs.map(a => a.text).join(" "));
     setScoreBreakdown(b);
   }, [aiScore, aiTranscript, scoreBreakdown, quranAyahs]);
+
+  // ── On-device Tarteel: start loading the model as soon as the page opens ───
+  const [tarteelState, setTarteelState] = useState<TarteelProgress>(tarteelEngine.state);
+  useEffect(() => tarteelEngine.subscribe(setTarteelState), []);
+  useEffect(() => { tarteelEngine.load(true).catch(() => { /* status is shown under the Start button */ }); }, []);
 
   // ── Recording ────────────────────────────────────────────────────────────
   const startRec = async () => {
@@ -690,7 +557,7 @@ const RecitationTest = () => {
   const goToScore = () => setStage(2);
 
   // ── Scoring ───────────────────────────────────────────────────────────────
-  // Transcribes via the groq-transcribe edge function and scores against the
+  // Transcribes on-device with Tarteel and scores against the
   // mushaf page shown to the student. This is a PREVIEW: nothing is written to
   // the database until the student presses "Submit Score" (handleSubmitScore).
   const runScoring = async (blob: Blob, runId: number) => {
@@ -707,8 +574,8 @@ const RecitationTest = () => {
 
     const refText = quranRef.current.map(a => a.text).join(" ");
     const breakdown: ScoreBreakdown = refText
-      ? scoreRecitation(transcript, refText, [])
-      : { total: 0, coverage: 0, accuracy: 0, fluency: 0 };
+      ? scoreRecitation(transcript, refText)
+      : { total: 0, correct: 0, missing: 0, totalWords: 0 };
 
     setAiTranscript(transcript);
     setScoreBreakdown(breakdown);
@@ -1068,6 +935,16 @@ const RecitationTest = () => {
         {/* Bottom recorder bar */}
         <div style={{ flexShrink:0, background:"#fff", borderTop:"1px solid #E8D5A3", boxShadow:"0 -6px 24px rgba(0,0,0,.08)", padding:"12px 16px calc(env(safe-area-inset-bottom,0px) + 14px)" }}>
           <div style={{ maxWidth:560, margin:"0 auto" }}>
+            {substage === "idle" && (tarteelState.status === "loading" || tarteelState.status === "idle") && (
+              <p style={{ margin:"0 0 8px", fontSize:11, color:"#9CA3AF", textAlign:"center" }}>
+                Preparing the Quran checker{tarteelState.totalMB ? ` — ${Math.round(tarteelState.loadedMB ?? 0)} of ${Math.round(tarteelState.totalMB)} MB` : "…"} (first time only — you can start reciting now)
+              </p>
+            )}
+            {substage === "idle" && (tarteelState.status === "error" || tarteelState.status === "unsupported") && (
+              <p style={{ margin:"0 0 8px", fontSize:11, color:"#B45309", textAlign:"center" }}>
+                The Quran checker couldn't load on this device. You can still record — if it can't score you, an instructor will evaluate you live.
+              </p>
+            )}
             {substage === "idle" && (
               <button onClick={startRec} disabled={quranAyahs.length === 0}
                 style={{ width:"100%", padding:"14px", borderRadius:16, border:"none", background: quranAyahs.length === 0 ? "#d1d5db" : `linear-gradient(135deg,${G},${GM})`, color:"#fff", fontSize:15, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center", gap:10, boxShadow:"0 6px 18px rgba(6,78,59,.28)" }}>
@@ -1175,7 +1052,11 @@ const RecitationTest = () => {
                   <div style={{ padding:"30px 0" }}>
                     <Loader2 style={{ width:48, height:48, color:GM, animation:"spin .8s linear infinite", margin:"0 auto 16px" }} />
                     <div style={{ fontSize:15, fontWeight:700, color:G, marginBottom:6 }}>Checking your recitation…</div>
-                    <div style={{ fontSize:13, color:"#9ca3af" }}>Just a few seconds</div>
+                    <div style={{ fontSize:13, color:"#9ca3af" }}>
+                      {tarteelState.status === "loading"
+                        ? `Getting the Quran checker ready${tarteelState.totalMB ? ` — ${Math.round(tarteelState.loadedMB ?? 0)} of ${Math.round(tarteelState.totalMB)} MB` : "…"} (first time only)`
+                        : "Just a few seconds"}
+                    </div>
                   </div>
                 )}
 
@@ -1213,23 +1094,16 @@ const RecitationTest = () => {
                       <div style={{ fontSize:11, color:scoreColor(aiScore), fontWeight:700, marginTop:2 }}>{scoreLabel(aiScore)}</div>
                     </div>
 
-                    {scoreBreakdown?.recitationMarks !== undefined && (
-                      <div style={{ display:"flex", justifyContent:"center", gap:18, fontSize:12, fontWeight:700, color:"#374151", marginBottom:14 }}>
-                        <span>Recitation <span style={{ color:G }}>{Math.round(scoreBreakdown.recitationMarks)}/70</span></span>
-                        <span>Quality <span style={{ color:G }}>{Math.round(scoreBreakdown.qualityMarks ?? 0)}/30</span></span>
-                      </div>
-                    )}
-
                     {/* Score breakdown */}
-                    {scoreBreakdown && (
+                    {scoreBreakdown && scoreBreakdown.totalWords > 0 && (
                       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:16 }}>
                         {[
-                          { label:"Coverage", value:scoreBreakdown.coverage, tip:"Of the page recited" },
-                          { label:"Accuracy", value:scoreBreakdown.accuracy, tip:"Of what you said" },
-                          { label:"Fluency",  value:scoreBreakdown.fluency,  tip:"Pronunciation" },
+                          { label:"Correct", value:scoreBreakdown.correct,    tip:"Words heard right",  color:"#16A34A" },
+                          { label:"Missed",  value:scoreBreakdown.missing,    tip:"Missing or unclear", color: scoreBreakdown.missing ? "#DC2626" : "#16A34A" },
+                          { label:"On page", value:scoreBreakdown.totalWords, tip:"Total words",        color:"#374151" },
                         ].map((m,i) => (
                           <div key={i} style={{ background:"#f9fafb", borderRadius:12, padding:"10px 8px", border:"1px solid #e5e7eb", textAlign:"center" as const }}>
-                            <div style={{ fontSize:18, fontWeight:900, color: m.value >= 70 ? "#16A34A" : m.value >= 50 ? "#D97706" : "#DC2626" }}>{m.value}%</div>
+                            <div style={{ fontSize:18, fontWeight:900, color:m.color }}>{m.value}</div>
                             <div style={{ fontSize:10, fontWeight:700, color:"#6b7280", marginTop:2 }}>{m.label}</div>
                             <div style={{ fontSize:9, color:"#9ca3af" }}>{m.tip}</div>
                           </div>
