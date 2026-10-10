@@ -179,7 +179,10 @@ async function load(useGpu) {
   self.postMessage({ type: "ready", device: opts.device, dtype: opts.dtype });
 }
 
-self.onmessage = async (ev) => {
+let chain = Promise.resolve();
+// One job at a time: two overlapping runs on the same model session can corrupt each other's output.
+self.onmessage = (ev) => { chain = chain.then(() => handle(ev)).catch(() => {}); };
+async function handle(ev) {
   const m = ev.data;
   try {
     if (m.type === "load") {
@@ -190,13 +193,16 @@ self.onmessage = async (ev) => {
       const opts = { language: "arabic", task: "transcribe" };
       // Whole recordings: Whisper sees 30 s at a time with a 5 s stride so no word is lost at a cut.
       if (m.full) { opts.chunk_length_s = 30; opts.stride_length_s = 5; }
+      // Cap the output length to what real recitation needs (~14 tokens per second at the very most).
+      // A model that starts looping ("إلى الذي إلى الذي …") would otherwise run to the 448-token limit — slow.
+      opts.max_new_tokens = Math.min(440, Math.ceil(Math.min(30, m.audio.length / 16000) * 14) + 24);
       const out = await asr(m.audio, opts);
       self.postMessage({ type: "result", id: m.id, text: (out && out.text || "").trim(), ms: Date.now() - t0 });
     }
   } catch (e) {
     self.postMessage({ type: m.type === "load" ? "load_error" : "result", id: m.id, text: "", error: String((e && e.message) || e) });
-  }
-};
+  }}
+
 `;
 
 export type TarteelStatus = "idle" | "loading" | "ready" | "error" | "unsupported";
@@ -633,21 +639,40 @@ export class LiveRecitationSession {
 
 /* ───────────────── Background transcription while the student recites ───────────────── */
 
-/** Merge two consecutive segment transcripts that share a little overlapping audio (fuzzy, word level). */
+/**
+ * Merge two consecutive chunk transcripts that share a few seconds of overlapping audio.
+ * The words right at a cut are unreliable (a word sliced in half is heard as another word, or the
+ * next chunk starts with a stray word), so we allow up to 2 trailing words of `prev` and 2 leading
+ * words of `next` to be discarded as boundary noise, and look for the longest run of (fuzzy-equal)
+ * words that the two transcripts share. Everything before the run comes from `prev`, everything after
+ * it from `next`. If no shared run of 2+ words is found (e.g. the overlap was silence) the texts are
+ * simply joined and nothing is thrown away.
+ */
 export function mergeHeard(prev: string, next: string): string {
   const a = prev.trim().split(/\s+/).filter(Boolean);
   const b = next.trim().split(/\s+/).filter(Boolean);
   if (!a.length) return b.join(" ");
   if (!b.length) return a.join(" ");
   const ak = a.map(tarteelWordKey), bk = b.map(tarteelWordKey);
-  for (let k = Math.min(6, a.length, b.length); k >= 1; k--) {
-    let ok = true;
-    for (let i = 0; i < k && ok; i++) {
-      const x = ak[a.length - k + i], y = bk[i];
-      ok = k === 1 ? x === y && x.length >= 3 : keysMatch(x, y);
+  let best: { k: number; drops: number; dt: number; sh: number } | null = null;
+  for (let dt = 0; dt <= 2; dt++) {
+    for (let sh = 0; sh <= 2; sh++) {
+      const aEnd = a.length - dt;
+      const maxK = Math.min(10, aEnd, b.length - sh);
+      for (let k = maxK; k >= 2; k--) {
+        let ok = true;
+        for (let i = 0; i < k && ok; i++) ok = keysMatch(ak[aEnd - k + i], bk[sh + i]);
+        if (ok) {
+          const drops = dt + sh;
+          if (!best || k > best.k || (k === best.k && drops < best.drops)) best = { k, drops, dt, sh };
+          break;
+        }
+      }
     }
-    if (ok) return [...a, ...b.slice(k)].join(" ");
   }
+  if (best) return [...a.slice(0, a.length - best.dt), ...b.slice(best.sh + best.k)].join(" ");
+  // single exact shared word at the very seam
+  if (ak[ak.length - 1].length >= 3 && ak[ak.length - 1] === bk[0]) return [...a, ...b.slice(1)].join(" ");
   return [...a, ...b].join(" ");
 }
 
@@ -676,7 +701,7 @@ export class ChunkTranscriber {
   private results = new Map<number, string>();
   private waiter: (() => void) | null = null;
 
-  constructor(private stream: MediaStream, private mime: string, private intervalMs = 20000, private overlapMs = 4000) {}
+  constructor(private stream: MediaStream, private mime: string, private intervalMs = 15000, private overlapMs = 2500) {}
 
   start() {
     tarteelEngine.load(true).catch(() => { this.failed = true; });
