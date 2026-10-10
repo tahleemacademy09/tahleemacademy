@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, markUserSignOut, clearSessionBackup } from "@/integrations/supabase/client";
 import { Shield, Loader2, Lock, Mail, Eye, EyeOff } from "lucide-react";
 
 const AdminLogin = () => {
@@ -59,7 +59,8 @@ const AdminLogin = () => {
       navigate("/teacher");
     } else {
       // Not admin or teacher - sign them out and show error
-      await supabase.auth.signOut();
+      markUserSignOut(); clearSessionBackup();
+      await supabase.auth.signOut({ scope: "local" });
       toast({
         title: t("Access Denied", "تم رفض الوصول"),
         description: t("You do not have admin privileges.", "ليس لديك صلاحيات المدير."),
