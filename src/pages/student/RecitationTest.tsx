@@ -10,11 +10,12 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { resolveRecitationAudioUrl } from "@/lib/examAudioUpload";
+import { resolveRecitationAudioUrl, uploadExamAudioToR2 } from "@/lib/examAudioUpload";
 import { useToast } from "@/hooks/use-toast";
 import { useRecitationSettings } from "@/hooks/useRecitationSettings";
 import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 import MushafPageView from "@/components/hifdh/MushafPageView";
+import { openRawMic } from "@/lib/rawMic";
 import {
   Mic, CheckCircle2, Video, Clock,
   Star, ArrowRight, Loader2, RotateCcw, BookOpen,
@@ -558,9 +559,9 @@ const RecitationTest = () => {
   const startRec = async () => {
     try {
       cancelRef.current = false;
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
-      });
+      // RAW mic (no echo-cancel / noise-suppress / auto-gain) + gentle level lift — see src/lib/rawMic.ts
+      const mic = await openRawMic();
+      const stream = mic.stream;
       const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t => {
         try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
       }) || "";
@@ -568,7 +569,7 @@ const RecitationTest = () => {
       chunksRef.current = [];
       mr.ondataavailable = e => { if (e.data?.size > 0) chunksRef.current.push(e.data); };
       mr.onstop = () => {
-        stream.getTracks().forEach(t => t.stop());
+        mic.close();
         clearInterval(timerRef.current);
         const secs = recSecsRef.current;
         setRecTime(0);
@@ -634,30 +635,40 @@ const RecitationTest = () => {
     uploadRef.current = saveRecording(blob, runId);
   };
 
-  // Saves the audio (Supabase storage) and records the
+  // Saves the audio (Cloudflare R2) and records the
   // stage-1 row. Never blocks scoring. Resolves to the stored path, or null.
   const saveRecording = async (blob: Blob, runId: number): Promise<string|null> => {
     if (!user) return null;
     const ext = blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : "webm";
     let finalPath: string | null = null;
 
-    // Supabase storage only (R2 removed to avoid upload errors)
+    // Cloudflare R2 first (via the exam-audio-url function), 3 tries. Path = recitation-test/<uid>/<file>.
+    // Only if R2 keeps failing is the recording kept in Supabase storage instead, so it is never lost.
     {
+      const r2Path = `recitation-test/${user.id}/${Date.now()}.${ext}`;
+      for (let attempt = 1; attempt <= 3 && !finalPath; attempt++) {
+        try {
+          const res = await withTimeout(uploadExamAudioToR2(r2Path, blob), UPLOAD_TIMEOUT_MS * 2, "R2 upload");
+          if (!("error" in res)) finalPath = res.storagePath;
+          else console.warn(`[RecitationTest] R2 upload attempt ${attempt}/3 failed:`, res.error);
+        } catch (e) {
+          console.warn(`[RecitationTest] R2 upload attempt ${attempt}/3 slow:`, e);
+        }
+        if (!finalPath && attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));
+        if (runId !== runIdRef.current) return null;
+      }
+    }
+    if (!finalPath) {
       // storage RLS on this bucket requires the uid as the 2nd folder segment
       const path = `fallback/${user.id}/${Date.now()}.${ext}`;
       const upload = (supabase as any).storage.from("recitation-audio")
         .upload(path, blob, { contentType: blob.type || "audio/webm", upsert: true }) as Promise<any>;
       try {
-        // A slow phone connection can take longer than the timeout while the upload still
-        // completes on the server. Giving up there left the file stored but never linked to
-        // the student's record, so wait much longer than the R2 attempt did.
         const { error } = await withTimeout(upload, UPLOAD_TIMEOUT_MS * 4, "Storage upload");
         if (!error) finalPath = path;
         else console.warn("[RecitationTest] storage fallback failed:", error.message);
       } catch (e) {
         console.warn("[RecitationTest] storage fallback slow:", e);
-        // Still in flight after the long wait. The path is fixed, so link it now rather than
-        // orphaning the file; if the upload ends up failing, the admin player shows no audio.
         if (String((e as any)?.message || "").includes("timed out")) finalPath = path;
         upload.catch(() => {});
       }

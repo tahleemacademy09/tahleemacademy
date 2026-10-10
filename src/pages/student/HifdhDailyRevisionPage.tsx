@@ -18,6 +18,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { tarteelEngine, ChunkTranscriber, type TarteelProgress } from "@/lib/tarteelOnDevice";
+import { openRawMic, type RawMic } from "@/lib/rawMic";
 import { playbackGainFor } from "@/lib/audioEnhance";
 import { stripWaqf, normalizeArabic, wordsMatch, compareWords, type WordResult } from "@/lib/recitationCompare";
 import { uploadHifdhAudio, resolveHifdhSessionAudio, HIFDH_R2_PREFIX } from "@/lib/hifdhAudio";
@@ -1422,66 +1423,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     };
   }, []);
 
-  const SESSION_KEY = `hifdh_session_${userId}_${todayISO()}`;
-
-  // ── PERSIST progress to sessionStorage ───────────────────────────────────
-  // IMPORTANT: Skip the very first run so the RESTORE effect below can read
-  // the saved session before this effect clears it (React runs effects in
-  // definition order — persist fires before restore on the initial mount).
-  const isFirstPersistRun = useRef(true);
-  useEffect(() => {
-    if (isFirstPersistRun.current) { isFirstPersistRun.current = false; return; }
-    if (phase === "intro" || phase === "complete") { sessionStorage.removeItem(SESSION_KEY); return; }
-    try {
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-        phase, pageIdx, pageResults, recitationScore,
-        recSecs: recSecsRef.current,          // ← timer continuity
-        savedAudioUrl: savedAudioUrl ?? null,
-        questions: questions.length > 0 ? questions : undefined,
-        juzAyahs:  juzAyahs.length  > 0 ? juzAyahs  : undefined,
-        savedAt: Date.now(),
-      }));
-    } catch { /* quota exceeded */ }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, pageIdx, pageResults, recitationScore]);
+  // (session persistence lives further down, after the recording/analysis functions it uses)
 
   // ── RETURN BANNER state ───────────────────────────────────────────────────
   const [returnBanner, setReturnBanner] = useState<"recitation"|"test"|null>(null);
-
-  // ── RESTORE SESSION on mount ─────────────────────────────────────────────
-  useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem(SESSION_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw);
-      if (Date.now() - saved.savedAt > 2 * 60 * 60 * 1000) { sessionStorage.removeItem(SESSION_KEY); return; }
-      if (["reading","page_result","pre_test_review","proctor_intro"].includes(saved.phase)) {
-        setPageIdx(saved.pageIdx ?? 0);
-        setPageResults(saved.pageResults ?? []);
-        if (saved.recitationScore) setRecitationScore(saved.recitationScore);
-        if (saved.savedAudioUrl) setSavedAudioUrl(saved.savedAudioUrl);
-        if (saved.recSecs)   setCarryOverSecs(saved.recSecs);   // ← resume timer
-        setPhase("reading");
-        // (Welcome Back / resume-recording banner removed — session data is still restored above,
-        // student just sees the normal recite screen and can tap Start Reciting.)
-        // Attempt to restore the partial audio blob saved to IndexedDB mid-recording
-        const blobKey = `${userId}_${todayISO()}_partial`;
-        idbLoadBlob(blobKey).then(blob => {
-          if (blob) { audioChunks.current = [blob]; }
-        });
-      } else if (["testing","test_result"].includes(saved.phase)) {
-        setPageIdx(saved.pageIdx ?? 0);
-        setPageResults(saved.pageResults ?? []);
-        if (saved.recitationScore) setRecitationScore(saved.recitationScore);
-        if (saved.savedAudioUrl) setSavedAudioUrl(saved.savedAudioUrl);
-        if (saved.questions) { setQuestions(saved.questions); setAnswers(new Array(saved.questions.length).fill(null)); }
-        if (saved.juzAyahs) setJuzAyahs(saved.juzAyahs);
-        setPhase("proctor_intro");
-        setReturnBanner("test");
-      }
-    } catch { sessionStorage.removeItem(SESSION_KEY); }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // ── VISIBILITY CHANGE during session: stop recording, show resume banner ─
   useEffect(() => {
@@ -1681,18 +1626,17 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignment, todayPages, juzAyahs]);
 
+  const micRef = useRef<RawMic | null>(null);
+  useEffect(() => () => { try { micRef.current?.close(); } catch { /* noop */ } }, []);   // leaving the page releases the mic
   const startRecording = useCallback(async () => {
     try {
       setAudioUrl(null); setSavedAudioUrl(null); audioChunks.current = []; audioBlobRef.current = null; audioStorageUrlRef.current = null;
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: false,  // OFF: it fades elongations (madd) and ghunnah
-          autoGainControl: true,    // ON: without it the recording is very quiet (and Android routes playback badly)
-          sampleRate: 48000,
-          channelCount: 1,
-        }
-      });
+      // RAW mic: echo-cancel / noise-suppress / auto-gain / voice-isolation all OFF (verified), then a
+      // gentle level lift to match a normal recorder clip. See src/lib/rawMic.ts for why.
+      const mic: RawMic = await openRawMic();
+      micRef.current = mic;
+      const stream = mic.stream;
+      console.info("[HifdhDaily] mic settings:", mic.settings);
       const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t => {
         try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
       }) || "";
@@ -1711,12 +1655,14 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         }
       };
       mr.onstop = () => {
-        stream.getTracks().forEach(t => t.stop());
+        mic.close();
+        micRef.current = null;
         clearInterval(timerRef.current);
 
         // Audio routing is handled inside FullAudioPlayer/AudioPlayerWidget via AudioContext.decodeAudioData().
         const blob = new Blob(audioChunks.current, { type: mime || "audio/webm" });
         audioBlobRef.current = blob;
+        idbSaveBlob(`${userId}_${todayISO()}_final`, blob);   // survives a refresh (result page rebuilds from it)
         const localUrl = URL.createObjectURL(blob);
         setAudioUrl(localUrl);
         setSavedAudioUrl(localUrl);
@@ -1860,6 +1806,155 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   };
 
   const lastResultRef = useRef<{ tx: string; ayahCorrectness: boolean[] } | null>(null);
+
+  // ══ REFRESH-PROOF SESSION ═══════════════════════════════════════════════════
+  // Every screen of today's session (recite → result → pre-test review → test → results → complete)
+  // is saved as it changes and put back exactly on reload. Small data → localStorage; the recording
+  // → IndexedDB. A result that was still being analysed when the page reloaded is re-analysed from the
+  // saved recording, and an upload that had not finished is retried.
+  const SESSION_KEY = `hifdh_session_v2_${userId}_${todayISO()}`;
+  const FINAL_BLOB_KEY = `${userId}_${todayISO()}_final`;
+  const [hydrated, setHydrated] = useState(false);
+
+  const softFailTranscript = () => {
+    setLastTranscript("");
+    lastResultRef.current = { tx: "", ayahCorrectness: [] };
+    setScore(0); setErrorWords([]); setAyahCorrectness([]);
+    setNoApiWarning(true);
+  };
+
+  // Re-run scoring from the saved recording (page reloaded while "analysing").
+  const reanalyse = async (blob: Blob) => {
+    stopTsRef.current = performance.now();
+    try { await tarteelEngine.load(true); } catch { /* transcribeAudio reports it */ }
+    const ayahs = pageAyahsRef.current;
+    const tx = await transcribeAudio(blob);
+    if (tx === "__NO_API__") { softFailTranscript(); return; }
+    const refFullText = ayahs.map(a => a.text).join(" ");
+    const sc   = scoreFromCompareWords(refFullText, tx);
+    const errs = getErrorWords(tx, ayahs);
+    const corr = getAyahCorrectness(tx, ayahs, recSecsRef.current);
+    setLastTranscript(tx);
+    setCheckSecs(transcribeMsRef.current != null ? transcribeMsRef.current / 1000
+      : stopTsRef.current != null ? (performance.now() - stopTsRef.current) / 1000 : null);
+    stopTsRef.current = null;
+    lastResultRef.current = { tx, ayahCorrectness: corr };
+    setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
+  };
+
+  // Upload the saved recording again (the first upload had not finished before the reload).
+  const reuploadAudio = async (blob: Blob) => {
+    const ext  = blob.type.includes("mp4") ? "mp4" : "webm";
+    const path = `${HIFDH_R2_PREFIX}${userId}/${todayISO()}_${Date.now()}.${ext}`;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        audioStorageUrlRef.current = await uploadHifdhAudio(path, blob);
+        setAudioReadyTick(t => t + 1);
+        return;
+      } catch (e: any) {
+        console.warn(`[HifdhDaily] re-upload attempt ${attempt}/3 failed:`, e?.message ?? e);
+        if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));
+      }
+    }
+  };
+
+  // ── SAVE on every change ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!hydrated || !userId) return;
+    if (phase === "intro") { try { localStorage.removeItem(SESSION_KEY); } catch { /* noop */ } return; }
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify({
+        v: 2, savedAt: Date.now(),
+        phase, pageIdx, viewIdx, pageResults, recitationScore, retryCount,
+        recSecs: recSecsRef.current,
+        score, errorWords, lastTranscript, ayahCorrectness, checkSecs, noApiWarning,
+        pageAyahs: pageAyahs.length ? pageAyahs : undefined,
+        pageGroups: isGroup && pageGroupsRef.current.length ? pageGroupsRef.current : undefined,
+        lastResult: lastResultRef.current ?? undefined,
+        audioPath: audioStorageUrlRef.current,
+        questions: questions.length ? questions : undefined,
+        answers: questions.length ? answers : undefined,
+        qIdx, juzAyahs: juzAyahs.length ? juzAyahs : undefined,
+        testScore, sectionAScore, sectionBScore, finalScore,
+      }));
+    } catch { /* storage full / private mode — non-critical */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, phase, pageIdx, viewIdx, pageResults, recitationScore, retryCount, score, errorWords,
+      lastTranscript, ayahCorrectness, checkSecs, noApiWarning, pageAyahs, questions, answers, qIdx,
+      juzAyahs, testScore, sectionAScore, sectionBScore, finalScore, audioReadyTick]);
+
+  // The saved recording is only needed until the day is complete.
+  useEffect(() => { if (phase === "complete") idbDeleteBlob(FINAL_BLOB_KEY); }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── RESTORE on mount ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!userId) { setHydrated(true); return; }
+    try {
+      // leftovers from other days
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith("hifdh_session_v2_") && k !== SESSION_KEY) localStorage.removeItem(k);
+      }
+      const raw = localStorage.getItem(SESSION_KEY);
+      const d = raw ? JSON.parse(raw) : null;
+      if (d && d.v === 2 && d.phase && d.phase !== "intro") {
+        // The "complete" screen is only brought back after a quick reload, not on a later visit.
+        const nav = (performance.getEntriesByType?.("navigation")?.[0] as any)?.type;
+        if (d.phase === "complete" && !(nav === "reload" && Date.now() - d.savedAt < 30 * 60 * 1000)) {
+          localStorage.removeItem(SESSION_KEY);
+        } else {
+          setPageIdx(d.pageIdx ?? 0);
+          setViewIdx(d.viewIdx ?? 0);
+          if (d.pageResults) setPageResults(d.pageResults);
+          if (d.recitationScore != null) setRecitationScore(d.recitationScore);
+          setRetryCount(d.retryCount ?? 0);
+          recSecsRef.current = d.recSecs ?? 0;
+          if (Array.isArray(d.pageAyahs)) { setPageAyahs(d.pageAyahs); pageAyahsRef.current = d.pageAyahs; }
+          if (Array.isArray(d.pageGroups)) pageGroupsRef.current = d.pageGroups;
+          if (d.lastResult) lastResultRef.current = d.lastResult;
+          audioStorageUrlRef.current = d.audioPath ?? null;
+          setScore(d.score ?? null); setErrorWords(d.errorWords ?? []);
+          setLastTranscript(d.lastTranscript ?? ""); setAyahCorrectness(d.ayahCorrectness ?? []);
+          setCheckSecs(d.checkSecs ?? null); setNoApiWarning(!!d.noApiWarning);
+          if (Array.isArray(d.questions)) { setQuestions(d.questions); setAnswers(d.answers ?? new Array(d.questions.length).fill(null)); }
+          setQIdx(d.qIdx ?? 0);
+          if (Array.isArray(d.juzAyahs)) setJuzAyahs(d.juzAyahs);
+          setTestScore(d.testScore ?? null);
+          setSectionAScore(d.sectionAScore ?? null); setSectionBScore(d.sectionBScore ?? null);
+          setFinalScore(d.finalScore ?? 0);
+
+          if (d.phase === "reading") {
+            if (d.recSecs) setCarryOverSecs(d.recSecs);   // resume timer
+            idbLoadBlob(`${userId}_${todayISO()}_partial`).then(blob => { if (blob) audioChunks.current = [blob]; });
+            setPhase("reading");
+          } else if (d.phase === "testing") {
+            // Proctored test: the camera/permission screen must be passed again, but nothing answered is lost.
+            setPhase("proctor_intro"); setReturnBanner("test");
+          } else {
+            const wasAnalysing = d.phase === "page_result" && d.score == null;
+            setPhase(d.phase);
+            idbLoadBlob(FINAL_BLOB_KEY).then(blob => {
+              if (!blob) {
+                // Nothing to rebuild the result from → let the student recite this page again.
+                if (wasAnalysing) setPhase("reading");
+                return;
+              }
+              audioBlobRef.current = blob;
+              const url = URL.createObjectURL(blob);
+              setAudioUrl(url); setSavedAudioUrl(url);
+              if (d.phase === "page_result") {
+                if (wasAnalysing) reanalyse(blob);
+                else if (!d.audioPath) reuploadAudio(blob);
+              }
+            });
+          }
+        }
+      }
+    } catch { try { localStorage.removeItem(SESSION_KEY); } catch { /* noop */ } }
+    setHydrated(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
 
   const handleStop = () => {
     stopTsRef.current = performance.now();
