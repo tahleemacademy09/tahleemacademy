@@ -15,6 +15,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { playbackGainFor } from "@/lib/audioEnhance";
@@ -28,7 +29,7 @@ import {
   Star, CheckCircle, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
   Flame, Target, TrendingUp, Play, RefreshCcw, Heart, Loader2,
   BookMarked, BarChart2, Lock, ShieldCheck, Bell, Eye,
-  SkipBack, SkipForward, Timer as TimerIcon, Camera, Maximize2, X as XIcon,
+  SkipBack, SkipForward, Timer as TimerIcon, Camera,
 } from "lucide-react";
 // Per-surah CDN audio (everyayah.com) — keyed by (surahNum, verseNumInSurah), NOT the
 // global 1-6236 ayah id. Using this avoids the "wrong page audio" bug where the old
@@ -751,7 +752,9 @@ function scoreColor(s:number): string {
 // flipped the audio session to earpiece mode.  RAF-based progress gives smooth
 // seek bar updates.  Speed control + ±15 s skip match standard player UX.
 // ─────────────────────────────────────────────────────────────────────────────
-function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; label?: string }) {
+function FullAudioPlayer({ url, label = "Your Recitation", miniHost }: { url: string; label?: string;
+  /** Optional element to show a slim sticky mini-player in once this card has scrolled out of view. */
+  miniHost?: HTMLElement | null }) {
   // ── AudioContext-based player ─────────────────────────────────────────────
   // We deliberately avoid HTMLAudioElement for post-recording playback on Android.
   // After getUserMedia(), Android Chrome locks the audio session to
@@ -781,6 +784,17 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
   const [error,    setError]    = useState(false);
   const [speed,    setSpeed]    = useState(1);
   const speedRef = useRef(1);       // always-current speed for the RAF loop / position maths
+
+  // Sticky mini-player: when the big card scrolls out of view, the same controls stay on screen as a slim bar.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [offscreen, setOffscreen] = useState(false);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!miniHost || !el || typeof IntersectionObserver === "undefined") { setOffscreen(false); return; }
+    const io = new IntersectionObserver(([e]) => setOffscreen(e.intersectionRatio < 0.2), { threshold: [0, 0.2, 0.5, 1] });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [miniHost]);
 
   const getCtx = () => {
     if (!ctxRef.current || ctxRef.current.state === "closed") {
@@ -980,8 +994,43 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
       : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
   return (
-    <div style={{ background: `linear-gradient(135deg,${G1}08,${G2}14)`,
+    <div ref={rootRef} style={{ background: `linear-gradient(135deg,${G1}08,${G2}14)`,
       border: `1.5px solid ${GOLD}55`, borderRadius: 16, padding: "14px 16px" }}>
+
+      {/* Sticky mini-player — a slim bar pinned to the top while the big card is scrolled away */}
+      {miniHost && offscreen && createPortal(
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, display: "flex", alignItems: "center", gap: 10,
+          padding: "6px 14px", background: `linear-gradient(160deg,${G1},${G2})`, borderBottom: `1px solid ${GOLD}66`,
+          boxShadow: "0 3px 12px rgba(0,0,0,.28)", animation: "fadeIn .2s ease" }}>
+          <button onClick={toggle} disabled={!loaded && !error} aria-label={playing ? "Pause recording" : "Play recording"}
+            style={{ width: 34, height: 34, borderRadius: "50%", border: "none", flexShrink: 0,
+              cursor: loaded ? "pointer" : "not-allowed",
+              background: loaded ? `linear-gradient(135deg,${GOLD},${GOLD_L})` : "#4B5563",
+              display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {playing
+              ? <span style={{ display: "flex", gap: 3 }}>
+                  <span style={{ width: 3.5, height: 13, background: "#1C3A2F", borderRadius: 2 }}/>
+                  <span style={{ width: 3.5, height: 13, background: "#1C3A2F", borderRadius: 2 }}/>
+                </span>
+              : <Play size={15} color={loaded ? "#1C3A2F" : "#9CA3AF"} style={{ marginLeft: 2 }}/>}
+          </button>
+          <span style={{ fontSize: 11, fontWeight: 700, color: W, minWidth: 32, fontVariantNumeric: "tabular-nums" }}>{fmt(curTime)}</span>
+          <div onClick={seek} onTouchStart={seek}
+            style={{ flex: 1, height: 26, display: "flex", alignItems: "center", cursor: loaded ? "pointer" : "default" }}>
+            <div style={{ width: "100%", height: 5, borderRadius: 3, background: "rgba(255,255,255,.25)", overflow: "hidden" }}>
+              <div style={{ height: "100%", borderRadius: 3, background: `linear-gradient(to right,${GOLD},${GOLD_L})`,
+                width: `${progress * 100}%`, transition: "width 0.05s linear" }}/>
+            </div>
+          </div>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,.65)", minWidth: 32, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{loaded ? fmt(duration) : "--:--"}</span>
+          <button onClick={cycleSpeed}
+            style={{ padding: "3px 9px", borderRadius: 20, border: `1.5px solid ${GOLD}88`, background: "transparent",
+              color: GOLD, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
+            {speed}×
+          </button>
+        </div>,
+        miniHost
+      )}
 
       {/* Header row */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
@@ -1150,65 +1199,103 @@ function PreTestReview({audioUrl,pageResults,onContinue}:{audioUrl:string|null;p
   );
 }
 
-/* ── Swipeable pager: one Mushaf page per slide, dots at the bottom ── */
-function SwipePages({ pages, height, viewIdx, onView, onFull, onBg, clipFor, coverUnrevealed, revealProgress, onUnavailable }: {
-  pages: number[]; height: number; viewIdx: number; clipFor?: (page: number) => number[] | null;
-  onView: (i: number) => void; onFull?: () => void; onBg?: (css: string) => void;
+/* ── Swipeable pager: one Mushaf page per slide. Fills whatever space it is given; swipe only (no buttons/dots) ── */
+// Each slide is memoised, and only the pages next to the current one are mounted, so a swipe never has to
+// re-render the whole session screen or paint 20 pages at once — that was what made the swipe stutter.
+const SwipeSlide = React.memo(function SwipeSlide({ page, height, show, only, first, onBg, coverUnrevealed, revealProgress, onUnavailable }: {
+  page: number; height: number; show: boolean; only?: number[]; first: boolean; onBg?: (css: string) => void;
+  coverUnrevealed?: boolean; revealProgress?: Record<string, { m: number; n: number; f: number }>; onUnavailable?: () => void;
+}) {
+  return (
+    <div style={{ flex: "0 0 100%", height: "100%", direction: "ltr", scrollSnapAlign: "center", scrollSnapStop: "always",
+      display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", contain: "layout paint" }}>
+      {show && (
+        <div style={{ width: "100%" }}>
+          <MushafPageView page={page} seamless pureWhite availableHeight={height} maxStretch={1.4}
+            onlySurahs={only}
+            coverUnrevealed={coverUnrevealed} revealProgress={revealProgress} onUnavailable={onUnavailable}
+            onBackground={first ? onBg : undefined} />
+        </div>
+      )}
+    </div>
+  );
+});
+
+function SwipePages({ pages, viewIdx, onView, onBg, clipFor, coverUnrevealed, revealProgress, onUnavailable }: {
+  pages: number[]; viewIdx: number; clipFor?: (page: number) => number[] | null;
+  onView: (i: number) => void; onBg?: (css: string) => void;
   /** live recitation: hide the printed page and uncover it word by word following `revealProgress` ("surah:ayah" keys) */
   coverUnrevealed?: boolean; revealProgress?: Record<string, { m: number; n: number; f: number }>; onUnavailable?: () => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  // Restore the slide we were on (e.g. coming back from recording / full screen)
+  const boxRef = useRef<HTMLDivElement>(null);   // fills the space the screen gives us (measured)
+  const ref = useRef<HTMLDivElement>(null);      // the horizontal scroller
+  const [h, setH] = useState(0);
+  const [cur, setCur] = useState(viewIdx);       // slide in view — local state, so a swipe only re-renders this pager
+  const curRef = useRef(viewIdx);
+  const notifiedRef = useRef(viewIdx);           // last index reported to the parent
+  const timerRef = useRef<number | null>(null);
+  const lastW = useRef(0);
+  const clipRef = useRef(clipFor); clipRef.current = clipFor;
+  const pagesKey = pages.join(",");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const only = React.useMemo(() => pages.map(pn => clipRef.current?.(pn) ?? undefined), [pagesKey]);
+
+  // The page uses ALL the height available between the top bar and the Start button.
+  useLayoutEffect(() => {
+    const box = boxRef.current; if (!box) return;
+    const measure = () => {
+      setH(Math.round(box.clientHeight));
+      const sc = ref.current;
+      if (sc && sc.clientWidth && sc.clientWidth !== lastW.current) {      // width changed (rotate) → stay on the same page
+        lastW.current = sc.clientWidth;
+        sc.scrollLeft = -curRef.current * sc.clientWidth;
+      }
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") { window.addEventListener("resize", measure); return () => window.removeEventListener("resize", measure); }
+    const ro = new ResizeObserver(measure); ro.observe(box);
+    return () => ro.disconnect();
+  }, []);
+
+  // Restore the slide we were on (e.g. coming back from recording)
   useLayoutEffect(() => {
     const el = ref.current;
-    if (el) el.scrollLeft = -viewIdx * el.clientWidth; // RTL scroller: page 1 on the right, scrollLeft goes negative
+    if (el) { lastW.current = el.clientWidth; el.scrollLeft = -viewIdx * el.clientWidth; } // RTL scroller: page 1 on the right, scrollLeft goes negative
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The parent moved us (e.g. a restored session) — jump there; ignore echoes of our own reports.
   useEffect(() => {
+    if (viewIdx === notifiedRef.current) return;
+    notifiedRef.current = viewIdx; curRef.current = viewIdx; setCur(viewIdx);
     const el = ref.current;
-    if (el && Math.round(Math.abs(el.scrollLeft) / el.clientWidth) !== viewIdx)
-      el.scrollTo({ left: -viewIdx * el.clientWidth, behavior: "smooth" });
+    if (el) el.scrollTo({ left: -viewIdx * el.clientWidth, behavior: "auto" });
   }, [viewIdx]);
+
+  useEffect(() => () => { if (timerRef.current) window.clearTimeout(timerRef.current); }, []);
+
   const onScroll = () => {
     const el = ref.current;
     if (!el || !el.clientWidth) return;
     const i = Math.round(Math.abs(el.scrollLeft) / el.clientWidth);
-    if (i !== viewIdx && i >= 0 && i < pages.length) onView(i);
+    if (i !== curRef.current && i >= 0 && i < pages.length) { curRef.current = i; setCur(i); }
+    // Tell the parent only once the swipe has settled, so the big session screen is not re-rendered mid-swipe.
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => {
+      if (notifiedRef.current !== curRef.current) { notifiedRef.current = curRef.current; onView(curRef.current); }
+    }, 120);
   };
+
   return (
-    <div style={{ position: "relative", margin: "0 -16px" }}>
-      {onFull && (
-      <button onClick={onFull} aria-label="Full page"
-        style={{ position: "absolute", top: 6, right: 22, zIndex: 5, width: 34, height: 34, borderRadius: 99,
-          border: "1px solid #C9A84C", background: "rgba(255,255,255,.92)", color: "#78350F",
-          display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-        <Maximize2 size={16} />
-      </button>
-      )}
+    <div ref={boxRef} style={{ position: "absolute", inset: 0 }}>
       <div ref={ref} onScroll={onScroll}
-        style={{ display: "flex", direction: "rtl", overflowX: "auto", overflowY: "hidden", scrollSnapType: "x mandatory",
+        style={{ position: "absolute", inset: 0, display: "flex", direction: "rtl", overflowX: "auto", overflowY: "hidden",
+          scrollSnapType: "x mandatory", overscrollBehaviorX: "contain",
           WebkitOverflowScrolling: "touch", scrollbarWidth: "none" as any, msOverflowStyle: "none" as any }}>
         {pages.map((pn, i) => (
-          <div key={pn} style={{ flex: "0 0 100%", direction: "ltr", scrollSnapAlign: "center", scrollSnapStop: "always" }}>
-            <MushafPageView page={pn} seamless pureWhite availableHeight={height} maxStretch={1.4}
-              onlySurahs={clipFor?.(pn) ?? undefined}
-              coverUnrevealed={coverUnrevealed} revealProgress={revealProgress} onUnavailable={onUnavailable}
-              onBackground={i === 0 ? onBg : undefined} />
-          </div>
+          <SwipeSlide key={pn} page={pn} height={h} show={h > 0 && Math.abs(i - cur) <= 2} only={only[i]} first={i === 0}
+            onBg={onBg} coverUnrevealed={coverUnrevealed} revealProgress={revealProgress} onUnavailable={onUnavailable} />
         ))}
-      </div>
-      {/* Dots + label */}
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, padding: "8px 0 2px" }}>
-        <div style={{ display: "flex", gap: 8, direction: "rtl" }}>
-          {pages.map((pn, i) => (
-            <button key={pn} onClick={() => onView(i)} aria-label={`Page ${pn}`}
-              style={{ width: i === viewIdx ? 22 : 9, height: 9, borderRadius: 6, border: "none", padding: 0, cursor: "pointer",
-                background: i === viewIdx ? GOLD : "#d1d5db", transition: "all .2s" }} />
-          ))}
-        </div>
-        <span style={{ fontSize: 10, fontWeight: 700, color: "#6B7280" }}>
-          Page {pages[viewIdx]} · {viewIdx + 1} of {pages.length} · swipe right for the next page
-        </span>
       </div>
     </div>
   );
@@ -1268,14 +1355,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // pageIdx stays 0; viewIdx is only which page the student is looking at (swipe).
   const isGroup = todayPages.length > 1;
   const [viewIdx, setViewIdx] = useState(0);
-  const swipeStart = useRef<{ x: number; y: number } | null>(null);
   const pageGroupsRef = useRef<Ayah[][]>([]);
   const pagesKey = todayPages.join(",");
   const curViewPage = todayPages[isGroup ? viewIdx : pageIdx];
   const [pageAyahs,    setPageAyahs]   = useState<Ayah[]>([]);
   const [fetchingPage, setFetchingPage] = useState(false);
   const [printedBg, setPrintedBg] = useState("#fffdf6");
-  const [showFull, setShowFull] = useState(false);
+  const [resultMiniHost, setResultMiniHost] = useState<HTMLElement | null>(null);   // where the result page pins its mini audio bar
   const [winH, setWinH] = useState(typeof window !== "undefined" ? window.innerHeight : 800);
   useEffect(() => {
     const onR = () => setWinH(window.innerHeight);
@@ -2803,9 +2889,21 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       {/* ══ READING ══ */}
       {phase==="reading"&&(
         <>
-          <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:"14px 16px",
+          <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:isRecording?"14px 16px":"10px 14px",
             display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
             <BackBtn onClick={()=>{if(mediaRecRef.current&&mediaRecRef.current.state!=="inactive"){mediaRecRef.current.stop();mediaRecRef.current=null;}setIsRecording(false);clearInterval(timerRef.current);setPhase("intro");}}/>
+            {!isRecording && (
+              <div style={{flex:1,minWidth:0,display:"flex",alignItems:"center",gap:8}}>
+                <Target size={15} color={GOLD} style={{flexShrink:0}}/>
+                <span style={{fontSize:12,fontWeight:700,color:W,lineHeight:1.4}}>
+                  {isGroup
+                    ? `Recite all ${todayPages.length} pages in one recording — need ≥${PASS_THRESHOLD}% to proceed`
+                    : `Recite Page ${todayPages[pageIdx]} clearly — need ≥${PASS_THRESHOLD}% to proceed`}
+                  {retryCount>0?` · Attempt ${retryCount+1}`:""}
+                </span>
+              </div>
+            )}
+            {isRecording && (
             <div style={{flex:1}}>
               <p style={{margin:0,fontWeight:800,fontSize:14,color:W}}>
                 {isGroup ? `Pages ${todayPages[0]} – ${todayPages[todayPages.length-1]}` : `Page ${todayPages[pageIdx]}`} — Recite Aloud
@@ -2816,8 +2914,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                   : `Page ${pageIdx+1} of ${todayPages.length}${retryCount>0?` · Attempt ${retryCount+1}`:""}`}
               </p>
             </div>
-            {/* Page dots (single-page flow only — multi-page days use the swipe dots under the page) */}
-            {!isGroup && (
+            )}
+            {/* Page dots while recording (single-page flow only) */}
+            {isRecording && !isGroup && (
             <div style={{display:"flex",gap:4}}>
               {todayPages.map((_,i)=>(
                 <div key={i} style={{width:8,height:8,borderRadius:"50%",
@@ -2827,11 +2926,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             )}
           </div>
 
-          <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",
-            padding:"10px 14px 90px"}}>
+          <div style={isRecording
+            ? {flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"10px 14px 90px"}
+            : {flex:1,minHeight:0,overflow:"hidden",display:"flex",flexDirection:"column",background:"#fff"}}>
 
             {retryMsg&&retryCount>0&&(
-              <div style={{marginBottom:10,padding:"10px 12px",borderRadius:12,background:`${GOLD}12`,
+              <div style={{margin:isRecording?"0 0 10px":"8px 14px 6px",flexShrink:0,padding:"10px 12px",borderRadius:12,background:`${GOLD}12`,
                 border:`1.5px solid ${GOLD}44`,animation:"slideUp .3s ease"}}>
                 <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
                   <Heart size={16} color={GOLD} style={{flexShrink:0,marginTop:1}}/>
@@ -2873,69 +2973,14 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 </p>
               </div>
             )}
-            {/* Quran page — visible only BEFORE recording starts, for preview */}
-            {!isRecording && !retryCount && (
-              <div style={{marginBottom:10,padding:"8px 12px",borderRadius:10,
-                background:"#FFFBEB",border:"1px solid #FDE68A",
-                display:"flex",alignItems:"center",gap:8}}>
-                <Target size={13} color={AMBER}/>
-                <span style={{fontSize:11,fontWeight:700,color:AMBER}}>
-                  {isGroup
-                    ? `Recite all ${todayPages.length} pages in one recording — need ≥${PASS_THRESHOLD}% to proceed`
-                    : `Recite the full page clearly — need ≥${PASS_THRESHOLD}% to proceed`}
-                </span>
-              </div>
-            )}
-            {/* Printed Madinah Mushaf page — fills the screen like the Quran reader; Start Reciting stays visible below */}
-            {!isRecording && isGroup && (
-              <SwipePages pages={todayPages} height={Math.max(300, winH-250)} viewIdx={viewIdx}
-                onView={setViewIdx} onFull={()=>setShowFull(true)} onBg={setPrintedBg} clipFor={clipFor}/>
-            )}
-            {!isRecording && !isGroup && todayPages[pageIdx] && (
-              <div style={{position:"relative",margin:"0 -16px"}}>
-                <button onClick={()=>setShowFull(true)} aria-label="Full page"
-                  style={{position:"absolute",top:6,right:22,zIndex:5,width:34,height:34,borderRadius:99,border:"1px solid #C9A84C",background:"rgba(255,255,255,.92)",color:"#78350F",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
-                  <Maximize2 size={16}/>
-                </button>
-                <MushafPageView page={todayPages[pageIdx]} seamless pureWhite availableHeight={Math.max(300, winH-215)} maxStretch={1.4} onlySurahs={clipFor(todayPages[pageIdx])??undefined} onBackground={setPrintedBg}/>
-              </div>
-            )}
-            {showFull && curViewPage && (
-              <div style={{position:"fixed",inset:0,zIndex:500,background:"#fff",display:"flex",flexDirection:"column"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",paddingTop:"calc(8px + env(safe-area-inset-top, 0px))",borderBottom:"1px solid rgba(0,0,0,.06)",flexShrink:0}}>
-                  <button onClick={()=>setShowFull(false)} style={{display:"inline-flex",alignItems:"center",gap:6,border:"1px solid #e3e9e5",background:"#fff",borderRadius:99,padding:"6px 14px",fontSize:12,fontWeight:800,cursor:"pointer"}}><XIcon size={14}/> Close</button>
-                  {isGroup ? (
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <button onClick={()=>setViewIdx(i=>Math.max(0,i-1))} disabled={viewIdx===0} aria-label="Previous page"
-                        style={{border:"1px solid #e3e9e5",background:"#fff",borderRadius:99,width:30,height:30,fontSize:16,fontWeight:800,cursor:"pointer",opacity:viewIdx===0?.35:1}}>‹</button>
-                      <span style={{fontSize:13,fontWeight:800,color:"#1a1a2e"}}>Page {curViewPage} · {viewIdx+1}/{todayPages.length}</span>
-                      <button onClick={()=>setViewIdx(i=>Math.min(todayPages.length-1,i+1))} disabled={viewIdx===todayPages.length-1} aria-label="Next page"
-                        style={{border:"1px solid #e3e9e5",background:"#fff",borderRadius:99,width:30,height:30,fontSize:16,fontWeight:800,cursor:"pointer",opacity:viewIdx===todayPages.length-1?.35:1}}>›</button>
-                    </div>
-                  ) : (
-                    <span style={{fontSize:13,fontWeight:800,color:"#1a1a2e"}}>Page {curViewPage}</span>
-                  )}
-                </div>
-                <div
-                  onTouchStart={e=>{ const t=e.touches[0]; swipeStart.current={x:t.clientX,y:t.clientY}; }}
-                  onTouchEnd={e=>{
-                    const st=swipeStart.current; swipeStart.current=null;
-                    if(!st||!isGroup) return;
-                    const t=e.changedTouches[0]; const dx=t.clientX-st.x; const dy=t.clientY-st.y;
-                    if(Math.abs(dx)<50||Math.abs(dx)<Math.abs(dy)*1.5) return;
-                    setViewIdx(i=>dx>0?Math.min(todayPages.length-1,i+1):Math.max(0,i-1)); // swipe right = next page (Mushaf direction)
-                  }}
-                  style={{flex:1,minHeight:0,overflowY:"auto",display:"flex",alignItems:"center",justifyContent:"center",touchAction:"pan-y"}}>
-                  <div style={{width:"100%"}}>
-                    <MushafPageView key={curViewPage} page={curViewPage} seamless pureWhite availableHeight={Math.max(300, winH-125)} maxStretch={1.4} onlySurahs={clipFor(curViewPage)??undefined}/>
-                  </div>
-                </div>
-                <div style={{padding:"10px 16px",paddingBottom:"calc(10px + env(safe-area-inset-bottom, 0px))",borderTop:`1px solid ${BRD}`,flexShrink:0}}>
-                  <button onClick={()=>{setShowFull(false);startRecording();}} disabled={fetchingPage||!pageAyahs.length}
-                    style={{width:"100%",padding:"14px",borderRadius:14,border:"none",cursor:(fetchingPage||!pageAyahs.length)?"wait":"pointer",opacity:(fetchingPage||!pageAyahs.length)?.55:1,background:`linear-gradient(135deg,${G2},${G3})`,color:W,fontWeight:900,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"inherit"}}>
-                    <Mic size={17}/> Start Reciting
-                  </button>
-                </div>
+            {/* Printed Madinah Mushaf page — ALWAYS full page: it takes all the room between the top bar and
+                Start Reciting. Multi-page days swipe left/right (no buttons). */}
+            {!isRecording && (todayPages[isGroup?0:pageIdx]) && (
+              <div style={{flex:1,minHeight:0,position:"relative"}}>
+                <SwipePages key={isGroup?"group":String(todayPages[pageIdx])}
+                  pages={isGroup?todayPages:[todayPages[pageIdx]]}
+                  viewIdx={isGroup?viewIdx:0} onView={isGroup?setViewIdx:()=>{}}
+                  onBg={setPrintedBg} clipFor={clipFor}/>
               </div>
             )}
           </div>
@@ -3032,6 +3077,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               </div>
             </div>
 
+            {/* Zero-height anchor right under the header: the recording's mini player is pinned here while scrolling
+                (it overlays the top of the body, so showing/hiding it never shifts the content) */}
+            <div ref={setResultMiniHost} style={{position:"relative",height:0,flexShrink:0,zIndex:20}}/>
+
             {/* Scrollable body — exact مراجعة card sequence */}
             <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",
               padding:"14px 14px 100px",display:"flex",flexDirection:"column",gap:12,
@@ -3053,7 +3102,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               {(savedAudioUrl||audioUrl)&&(
                 <div style={{marginBottom:4}}>
                   <p style={{margin:"0 0 6px",fontSize:10,fontWeight:800,color:G3,textTransform:"uppercase",letterSpacing:.5}}>🎙️ Your Recitation — Listen & Review</p>
-                  <FullAudioPlayer url={savedAudioUrl||audioUrl||""} label={isGroup ? `Pages ${todayPages[0]} – ${todayPages[todayPages.length-1]} Recitation` : `Page ${todayPages[pageIdx]} Recitation`}/>
+                  <FullAudioPlayer url={savedAudioUrl||audioUrl||""} miniHost={resultMiniHost} label={isGroup ? `Pages ${todayPages[0]} – ${todayPages[todayPages.length-1]} Recitation` : `Page ${todayPages[pageIdx]} Recitation`}/>
                 </div>
               )}
 
