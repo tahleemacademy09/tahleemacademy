@@ -17,8 +17,8 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { tarteelEngine, ChunkTranscriber, type TarteelProgress } from "@/lib/tarteelOnDevice";
 import { playbackGainFor } from "@/lib/audioEnhance";
+import { tarteelEngine, ChunkTranscriber, type TarteelProgress } from "@/lib/tarteelOnDevice";
 import { stripWaqf, normalizeArabic, wordsMatch, compareWords, type WordResult } from "@/lib/recitationCompare";
 import { uploadHifdhAudio, resolveHifdhSessionAudio, HIFDH_R2_PREFIX } from "@/lib/hifdhAudio";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
@@ -768,6 +768,7 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
   const ctxRef    = useRef<AudioContext | null>(null);
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
   const bufferRef = useRef<AudioBuffer | null>(null);
+  const gainRef   = useRef(1);       // voice booster (plain gain, no compressor)
   const startedAtRef  = useRef<number>(0);   // ctx.currentTime when playback started
   const offsetRef     = useRef<number>(0);   // seconds into buffer at last pause
   const rafRef        = useRef<number | null>(null);
@@ -780,7 +781,6 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
   const [error,    setError]    = useState(false);
   const [speed,    setSpeed]    = useState(1);
   const speedRef = useRef(1);       // always-current speed for the RAF loop / position maths
-  const gainRef  = useRef(1);       // auto volume boost for quiet recordings
 
   const getCtx = () => {
     if (!ctxRef.current || ctxRef.current.state === "closed") {
@@ -911,13 +911,10 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
       const src = ctx.createBufferSource();
       src.buffer = buffer;
       src.playbackRate.value = speedRef.current;
-      // Quiet recitation? lift it to a comfortable level, with a gentle compressor so peaks never clip.
+      // Voice booster only: a plain gain (peak-safe), no compressor.
       const gain = ctx.createGain();
       gain.gain.value = gainRef.current;
-      const comp = ctx.createDynamicsCompressor();
-      comp.threshold.value = -18; comp.knee.value = 24; comp.ratio.value = 4;
-      comp.attack.value = 0.005; comp.release.value = 0.2;
-      src.connect(gain); gain.connect(comp); comp.connect(ctx.destination);
+      src.connect(gain); gain.connect(ctx.destination);
       src.onended = () => {
         // Only reset if this source wasn't manually stopped
         if (sourceRef.current === src) {
@@ -1632,9 +1629,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       setAudioUrl(null); setSavedAudioUrl(null); audioChunks.current = []; audioBlobRef.current = null; audioStorageUrlRef.current = null;
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: true,
-          noiseSuppression: false,  // OFF: it fades elongations (madd) and ghunnah
-          autoGainControl: true,    // ON: without it the recording is very quiet (and Android routes playback badly)
+          // Raw microphone — no browser processing at all (no echo cancel, noise suppression or auto-gain/compression)
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
           sampleRate: 48000,
           channelCount: 1,
         }
@@ -3638,6 +3636,7 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
   const ctxRef       = useRef<AudioContext|null>(null);
   const sourceRef    = useRef<AudioBufferSourceNode|null>(null);
   const bufferRef    = useRef<AudioBuffer|null>(null);
+  const gainRef      = useRef(1);   // voice booster (plain gain, no compressor)
   const startedAtRef = useRef<number>(0);
   const offsetRef    = useRef<number>(0);
   const rafRef       = useRef<number|null>(null);
@@ -3702,7 +3701,7 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
         if(ctx.state==="suspended") await ctx.resume();
         const decoded=await ctx.decodeAudioData(ab);
         if(cancelled) return;
-        bufferRef.current=decoded;
+        bufferRef.current=decoded; gainRef.current=playbackGainFor(decoded);
         setDuration(decoded.duration);setLoaded(true);
       }catch(e){if(!cancelled){console.warn("AudioPlayerWidget decode error:",e);setError(true);}}
     })();
@@ -3725,7 +3724,7 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
       stopSource();
       if(offsetRef.current>=buffer.duration-0.05) offsetRef.current=0;
       const src=ctx.createBufferSource();
-      src.buffer=buffer; src.playbackRate.value=speed; src.connect(ctx.destination);
+      src.buffer=buffer; src.playbackRate.value=speed; { const g=ctx.createGain(); g.gain.value=gainRef.current; src.connect(g); g.connect(ctx.destination); }
       src.onended=()=>{if(sourceRef.current===src){stopRAF();setPlaying(false);setCurTime(0);setProgress(0);offsetRef.current=0;sourceRef.current=null;}};
       src.start(0,offsetRef.current);
       sourceRef.current=src; startedAtRef.current=ctx.currentTime;

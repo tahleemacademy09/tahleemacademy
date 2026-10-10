@@ -11,8 +11,9 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { resolveRecitationAudioUrl, uploadExamAudioToR2 } from "@/lib/examAudioUpload";
-import { tarteelEngine, type TarteelProgress } from "@/lib/tarteelOnDevice";
-import { compareWords } from "@/lib/recitationCompare";
+import { tarteelEngine, ChunkTranscriber, type TarteelProgress } from "@/lib/tarteelOnDevice";
+import { playbackGainFor } from "@/lib/audioEnhance";
+import { compareWords, normalizeArabic } from "@/lib/recitationCompare";
 import { useToast } from "@/hooks/use-toast";
 import { useRecitationSettings } from "@/hooks/useRecitationSettings";
 import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
@@ -53,6 +54,22 @@ async function transcribeRecitation(blob: Blob): Promise<string | null> {
   }
 }
 
+/**
+ * Same strategy as Daily Hifdh Revision: the recording was already being transcribed in ~15 s chunks
+ * WHILE the student recited, so on Stop only the last chunk is left. If anything went wrong (a chunk
+ * failed, nothing heard, or the model looped) the whole recording is transcribed instead.
+ */
+async function finalizeTranscript(blob: Blob, bg: ChunkTranscriber | null): Promise<string | null> {
+  if (bg) {
+    try {
+      const r = await withTimeout(bg.finish(), TRANSCRIBE_TIMEOUT_MS, "Background transcription");
+      const looped = /(\S+\s+\S+)(\s+\1){2,}/.test(normalizeArabic(r.text));
+      if (r.ok && r.text.trim() && !looped) return r.text.trim();
+    } catch (e) { console.warn("[RecitationTest] background transcription failed, falling back:", e); }
+  }
+  return transcribeRecitation(blob);
+}
+
 // ── Local playback ──────────────────────────────────────────────────────────
 // Android Chrome locks the audio session to the earpiece after getUserMedia(), so a
 // plain <audio> element plays silently. Decoding to PCM and playing through the Web
@@ -61,6 +78,7 @@ function LocalAudioPlayer({ blob, fallbackSecs }: { blob: Blob; fallbackSecs: nu
   const ctxRef     = useRef<AudioContext | null>(null);
   const srcRef     = useRef<AudioBufferSourceNode | null>(null);
   const bufRef     = useRef<AudioBuffer | null>(null);
+  const gainRef    = useRef(1);      // voice booster (plain gain, no compressor)
   const startedRef = useRef(0);      // ctx.currentTime when this source started
   const offsetRef  = useRef(0);      // seconds into the buffer where it started
   const rafRef     = useRef<number | null>(null);
@@ -102,6 +120,7 @@ function LocalAudioPlayer({ blob, fallbackSecs }: { blob: Blob; fallbackSecs: nu
         const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
         if (cancelled) return;
         bufRef.current = decoded;
+        gainRef.current = playbackGainFor(decoded);
         setDur(decoded.duration);
         setReady(true);
       } catch (e) {
@@ -124,7 +143,9 @@ function LocalAudioPlayer({ blob, fallbackSecs }: { blob: Blob; fallbackSecs: nu
     stopSource(); stopRaf();
     const src = ctx.createBufferSource();
     src.buffer = b;
-    src.connect(ctx.destination);
+    const gain = ctx.createGain();
+    gain.gain.value = gainRef.current;
+    src.connect(gain); gain.connect(ctx.destination);
     src.onended = () => { if (srcRef.current === src) finish(); };
     offsetRef.current = offset;
     startedRef.current = ctx.currentTime;
@@ -417,6 +438,8 @@ const RecitationTest = () => {
   }, [aiScore, aiTranscript, scoreBreakdown, quranAyahs]);
 
   // ── On-device Tarteel: start loading the model as soon as the page opens ───
+  const bgRef = useRef<ChunkTranscriber | null>(null);
+  useEffect(() => () => { try { bgRef.current?.cancel(); } catch { /* noop */ } }, []);   // leaving the page stops background work
   const [tarteelState, setTarteelState] = useState<TarteelProgress>(tarteelEngine.state);
   useEffect(() => tarteelEngine.subscribe(setTarteelState), []);
   useEffect(() => { tarteelEngine.load(true).catch(() => { /* status is shown under the Start button */ }); }, []);
@@ -426,7 +449,8 @@ const RecitationTest = () => {
     try {
       cancelRef.current = false;
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+        // Raw microphone — no echo cancel, noise suppression or auto-gain/compression
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
       });
       const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t => {
         try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
@@ -435,22 +459,26 @@ const RecitationTest = () => {
       chunksRef.current = [];
       mr.ondataavailable = e => { if (e.data?.size > 0) chunksRef.current.push(e.data); };
       mr.onstop = () => {
+        const bg = bgRef.current; bgRef.current = null;
         stream.getTracks().forEach(t => t.stop());
         clearInterval(timerRef.current);
         const secs = recSecsRef.current;
         setRecTime(0);
-        if (cancelRef.current) return;
+        if (cancelRef.current) { try { bg?.cancel(); } catch { /* noop */ } return; }
         const blob = new Blob(chunksRef.current, { type: mime || "audio/webm" });
-        if (blob.size < 1000) { toast({ title: "Recording too short", description: "Please recite the page and try again.", variant: "destructive" }); setSubstage("idle"); return; }
+        if (blob.size < 1000) { toast({ title: "Recording too short", description: "Please recite the page and try again.", variant: "destructive" }); setSubstage("idle"); try { bg?.cancel(); } catch { /* noop */ } return; }
         setRecSecs(secs);
         setAudioBlob(blob);
         setAudioUrl(URL.createObjectURL(blob));
         setSubstage("recorded");
         // Start scoring + saving the instant recording stops — the student can
         // listen back while this runs, so the result is ready when they tap "See My Score".
-        beginBackgroundWork(blob);
+        beginBackgroundWork(blob, bg);
       };
       mr.start(200); mediaRef.current = mr;
+      // Transcribe in the background AS the student recites, so only the last few seconds are left at Stop.
+      try { bgRef.current?.cancel(); } catch { /* noop */ }
+      try { const bg = new ChunkTranscriber(stream, mime); bg.start(); bgRef.current = bg; } catch { bgRef.current = null; }
       recSecsRef.current = 0;
       setSubstage("recording");
       timerRef.current = setInterval(() => { recSecsRef.current += 1; setRecTime(t => t + 1); }, 1000);
@@ -470,6 +498,8 @@ const RecitationTest = () => {
   };
   const cancelRec = () => {
     cancelRef.current = true;
+    try { bgRef.current?.cancel(); } catch { /* noop */ }
+    bgRef.current = null;
     mediaRef.current?.stop();
     clearInterval(timerRef.current);
     discardWork();
@@ -493,11 +523,11 @@ const RecitationTest = () => {
   };
 
   // ── Background work: score + save, started the moment recording stops ─────
-  const beginBackgroundWork = (blob: Blob) => {
+  const beginBackgroundWork = (blob: Blob, bg: ChunkTranscriber | null = null) => {
     const runId = ++runIdRef.current;
     submittedRef.current = false;
     setAiScore(null); setAiTranscript(null); setScoreBreakdown(null); setScoreIssue(null);
-    runScoring(blob, runId);
+    runScoring(blob, runId, bg);
     uploadRef.current = saveRecording(blob, runId);
   };
 
@@ -560,9 +590,9 @@ const RecitationTest = () => {
   // Transcribes on-device with Tarteel and scores against the
   // mushaf page shown to the student. This is a PREVIEW: nothing is written to
   // the database until the student presses "Submit Score" (handleSubmitScore).
-  const runScoring = async (blob: Blob, runId: number) => {
+  const runScoring = async (blob: Blob, runId: number, bg: ChunkTranscriber | null = null) => {
     setScoring(true);
-    const transcript = await transcribeRecitation(blob);
+    const transcript = await finalizeTranscript(blob, bg);
     if (runId !== runIdRef.current) return;          // discarded — ignore result
 
     if (transcript === null) {
