@@ -244,6 +244,8 @@ class TarteelEngine {
       return Promise.reject(new Error("unsupported"));
     }
     this.emit({ status: "loading", loadedMB: 0, totalMB: 0 });
+    // Ask the browser to keep the downloaded model (~100 MB) instead of evicting it when storage is tight.
+    try { void navigator.storage?.persist?.(); } catch { /* noop */ }
     this.loadPromise = new Promise<void>((resolve, reject) => {
       let url = "";
       try {
