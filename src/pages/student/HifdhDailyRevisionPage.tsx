@@ -1686,9 +1686,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       setAudioUrl(null); setSavedAudioUrl(null); audioChunks.current = []; audioBlobRef.current = null; audioStorageUrlRef.current = null;
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,    // boosts quiet recitation to an audible level
+          echoCancellation: false,
+          noiseSuppression: false,  // OFF: it fades elongations (madd) and ghunnah
+          autoGainControl: false,   // OFF: raw, unprocessed mic
           sampleRate: 48000,
           channelCount: 1,
         }
