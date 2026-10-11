@@ -6,6 +6,9 @@
 
       - slots come from subject_timetable, is_active, term_id = viewing term
       - general students: slot.levels empty / "all" / includes student's level
+      - general students: only subjects they are ENROLLED in (student_subject_enrollments):
+        compulsory subjects always show, optional ones only while the student is enrolled
+        (opted-out / "disenrolled" subjects are hidden)
       - private students: only slots assigned to them through
         private_student_timetable (+ their one-off private_sessions)
 
@@ -45,6 +48,37 @@ export function useTermInfo(termId?: string | null) {
 export const slotMatchesLevel = (slot: any, level: string) => {
   const lvs: string[] = slot?.levels || [];
   return lvs.length === 0 || lvs.includes(level) || lvs.includes("all");
+};
+
+/** One student's subject enrollments — same query/key as the Courses page, so toggling a course there refreshes the timetable. */
+export type SubjectEnrollmentMap = Record<string, { status: "active" | "disenrolled"; is_compulsory: boolean }>;
+export function useSubjectEnrollmentMap(userId?: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ["subject-enrollments", userId],
+    enabled: enabled && !!userId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("student_subject_enrollments" as any)
+        .select("subject_id, status, is_compulsory")
+        .eq("student_id", userId as string);
+      if (error) throw error;
+      const map: SubjectEnrollmentMap = {};
+      ((data as any[]) || []).forEach((r: any) => { map[r.subject_id] = { status: r.status, is_compulsory: r.is_compulsory }; });
+      return map;
+    },
+  });
+}
+
+/**
+ * Does a general student take this slot's subject?
+ *  - has an enrollment record → only if it is active (an optional course they opted out of is hidden)
+ *  - no record                → only if the subject is compulsory (an optional course they never joined is hidden)
+ */
+export const slotMatchesEnrollment = (slot: any, enrollments: SubjectEnrollmentMap | null | undefined) => {
+  if (!enrollments) return true; // enrollments unavailable → don't hide anything
+  const e = enrollments[slot?.subject_id];
+  if (e) return e.status === "active";
+  return slot?.subjects?.is_compulsory !== false;
 };
 
 const teacherNames = async (slots: any[]) => {
@@ -100,12 +134,17 @@ export function useStudentSchedule({ userId, termId, level, isPrivateStudent, en
       }
       const { data: slots } = await (supabase as any)
         .from("subject_timetable")
-        .select("*, subjects(id, title, title_ar, image_url)")
+        .select("*, subjects(id, title, title_ar, image_url, is_compulsory)")
         .eq("is_active", true).eq("term_id", termId)
         .order("day_of_week").order("start_time");
       return teacherNames((slots || []).filter((s: any) => slotMatchesLevel(s, studentLevel)));
     },
   });
+
+  const enrQ = useSubjectEnrollmentMap(userId, enabled && !isPrivateStudent);
+  const slots = isPrivateStudent
+    ? ((slotsQ.data || []) as any[])
+    : ((slotsQ.data || []) as any[]).filter((s) => slotMatchesEnrollment(s, enrQ.isError ? null : enrQ.data));
 
   const sessionsQ = useQuery({
     queryKey: ["student-schedule", "private-sessions", userId],
@@ -123,9 +162,9 @@ export function useStudentSchedule({ userId, termId, level, isPrivateStudent, en
   });
 
   return {
-    slots: (slotsQ.data || []) as any[],
+    slots,
     privateSessions: (sessionsQ.data || []) as any[],
-    isLoading: slotsQ.isLoading || (isPrivateStudent && sessionsQ.isLoading),
+    isLoading: slotsQ.isLoading || (!isPrivateStudent && enrQ.isLoading) || (isPrivateStudent && sessionsQ.isLoading),
     isError: slotsQ.isError,
   };
 }
