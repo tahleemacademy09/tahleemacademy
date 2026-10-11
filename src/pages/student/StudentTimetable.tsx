@@ -17,6 +17,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { useViewingTermId } from "@/hooks/useCurrentTermId";
+import { useSubjectEnrollmentMap, slotMatchesEnrollment } from "@/hooks/useStudentSchedule";
 import ProgramsTimetableSection from "@/components/majlis/ProgramsTimetableSection";
 import { Video, Calendar, BookOpen, Bell, Users, Lock, UserCheck, LayoutGrid, ClipboardList, MapPin } from "lucide-react";
 
@@ -256,10 +257,15 @@ function ExamScheduleSection({ studentLevel, isPrivileged, navigate, t, language
   // rest of the Timetable page when timetable_module_enabled is off.
   if (!isExamsModuleEnabled) return null;
 
+  // Only the subjects this student is enrolled in: compulsory ones always, optional ones only while enrolled.
+  const enrQ = useSubjectEnrollmentMap(profile?.user_id, !isPrivileged);
+  const loadingAll = isLoading || (!isPrivileged && enrQ.isLoading);   // don't flash optional courses before enrollments load
+
   const slots = (allSlots || []).filter((s: any) => {
     if (isPrivileged) return true;
     const lvs: string[] = s.levels || [];
-    return lvs.length === 0 || lvs.includes(studentLevel) || lvs.includes("all");
+    if (!(lvs.length === 0 || lvs.includes(studentLevel) || lvs.includes("all"))) return false;
+    return slotMatchesEnrollment(s, enrQ.isError ? null : enrQ.data);
   });
 
   // Tests aren't a daily/recurring thing, so the tab strip isn't a rolling
@@ -287,7 +293,7 @@ function ExamScheduleSection({ studentLevel, isPrivileged, navigate, t, language
         {t("Exam & Test Schedule", "جدول الامتحانات والاختبارات")}
       </h3>
 
-      {isLoading ? (
+      {loadingAll ? (
         <div style={{ textAlign: "center", padding: 30, color: "#9ca3af", fontSize: 12 }}>{t("Loading…", "جارٍ التحميل…")}</div>
       ) : distinctDates.length === 0 ? (
         <div style={{ background: "#fff", borderRadius: 16, padding: "24px 18px", textAlign: "center", border: "1px solid #e5e7eb" }}>
@@ -615,7 +621,7 @@ function GeneralTimetable({ profile, hasRole, t, language, navigate, showBanner 
     queryFn: async () => {
       const { data: slots, error } = await supabase
         .from("subject_timetable")
-        .select(`*, subjects(id, title, title_ar, image_url)`)
+        .select(`*, subjects(id, title, title_ar, image_url, is_compulsory)`)
         .eq("is_active", true).eq("term_id", viewingTermId).order("day_of_week").order("start_time");
       if (error || !slots?.length) return [];
 
