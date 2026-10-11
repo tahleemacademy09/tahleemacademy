@@ -20,7 +20,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { playbackGainFor, decodeForPlayback, freshPlaybackContext, preferSpeaker } from "@/lib/audioEnhance";
 import { tarteelEngine, ChunkTranscriber, type TarteelProgress } from "@/lib/tarteelOnDevice";
-import { stripWaqf, normalizeArabic, wordsMatch, compareWords, type WordResult } from "@/lib/recitationCompare";
+import { stripWaqf, normalizeArabic, wordsMatch, compareWords, scoreAgainstAyahs, type WordResult, type AyahScoring } from "@/lib/recitationCompare";
 import { saveHifdhRecording, resolveHifdhSessionAudio } from "@/lib/hifdhAudio";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
 import HifdhLiveClass from "@/components/hifdh/HifdhLiveClass";
@@ -423,47 +423,35 @@ function scoreText(transcript: string, ayahs: Ayah[], _recSecs: number): number 
   return totalRef > 0 ? Math.round((totalMatched / totalRef) * 100) : 0;
 }
 
-// getErrorWords — uses per-ayah comparison so a skipped verse in the
-// transcript doesn't flag every word in it as an error
+// ONE alignment of the transcript against all the ayahs feeds the score, the word grid, the red words and
+// the green/red ayahs (see scoreAgainstAyahs). The last result is remembered, so the three calls the page
+// makes right after a recitation (score, errors, per-ayah) cost one alignment, not three.
+let _alignMemo: { ayahs: Ayah[]; tx: string; res: AyahScoring } | null = null;
+function alignAyahs(transcript: string, ayahs: Ayah[]): AyahScoring {
+  if (_alignMemo && _alignMemo.ayahs === ayahs && _alignMemo.tx === transcript) return _alignMemo.res;
+  const res = scoreAgainstAyahs(ayahs.map(a => a.text), transcript);
+  _alignMemo = { ayahs, tx: transcript, res };
+  return res;
+}
+
+// getErrorWords — the words of each ayah that were not found IN ORDER in the transcript.
 function getErrorWords(transcript: string, ayahs: Ayah[]): string[] {
   const errors: string[] = [];
-  for (const ayah of ayahs) {
-    const words = compareWords(ayah.text, transcript);
-    // Only flag words that genuinely weren't found anywhere in the transcript
-    const missing = words.filter(w => w.status === "missing").map(w => w.word);
-    // If >90% of the ayah is missing, Whisper likely just skipped the verse —
-    // treat it as partially heard (soft error) rather than total miss
-    const missFrac = words.length > 0 ? missing.length / words.length : 0;
-    if (missFrac < 0.9) {
-      errors.push(...missing);
-    } else {
-      // Verse fully skipped by Whisper — only flag the first few words as errors
-      errors.push(...missing.slice(0, 2));
-    }
+  for (const a of alignAyahs(transcript, ayahs).perAyah) {
+    const missing = a.words.filter(w => w.status === "missing").map(w => w.word);
+    const missFrac = a.total > 0 ? missing.length / a.total : 0;
+    // If >90% of the ayah is missing the model most likely skipped the verse — flag only its first
+    // few words as errors instead of the whole verse.
+    if (missFrac < 0.9) errors.push(...missing);
+    else errors.push(...missing.slice(0, 2));
   }
   return errors;
 }
 
-/* Per-ayah correctness: true (green) / false (red).
-   Uses the same forward-only window as scoreText so a skipped ayah
-   doesn't steal matches from the ayahs that follow it. */
+/* Per-ayah correctness: true (green) / false (red), from the same alignment as the score and the grid. */
+const AYAH_GREEN_FRACTION = 0.4;
 function getAyahCorrectness(transcript: string, ayahs: Ayah[], _recSecs?: number): boolean[] {
-  const gotWords = normalizeArabic(transcript).split(/\s+/).filter(Boolean);
-  let gotSearchStart = 0;
-  return ayahs.map(a => {
-    const refW = normalizeArabic(a.text).split(/\s+/).filter(Boolean);
-    if (!refW.length) return true;
-    const searchEnd = Math.min(gotWords.length, gotSearchStart + refW.length * 4 + 20);
-    const window    = gotWords.slice(gotSearchStart, searchEnd);
-    let matched = 0; let gj = 0; let lastHit = -1;
-    for (const rw of refW) {
-      for (let k = gj; k < window.length; k++) {
-        if (wordsMatch(rw, window[k])) { matched++; lastHit = k; gj = k + 1; break; }
-      }
-    }
-    if (lastHit >= 0) gotSearchStart += lastHit + 1;
-    return refW.length > 0 && (matched / refW.length) >= 0.4;
-  });
+  return alignAyahs(transcript, ayahs).perAyah.map(a => a.total === 0 || (a.correct / a.total) >= AYAH_GREEN_FRACTION);
 }
 function shuffle<T>(arr:T[]): T[] {
   const a=[...arr];
@@ -1821,8 +1809,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             return;
           }
 
-          const refFullText = ayahs.map(a => a.text).join(" ");
-          const sc   = scoreFromCompareWords(refFullText, tx);
+          const sc   = alignAyahs(tx, ayahs).score;   // same alignment as the grid + red words + ayah colours
           const errs = getErrorWords(tx, ayahs);
           const corr = getAyahCorrectness(tx, ayahs, capturedSecs);
           setLastTranscript(tx);
@@ -1930,8 +1917,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     const savedChunks = ChunkTranscriber.saved(`hifdh_chunks_${userId}_${todayISO()}`);
     const tx = savedChunks?.complete && savedChunks.text.trim() ? (transcribeMsRef.current = null, savedChunks.text.trim()) : await transcribeAudio(blob);
     if (tx === "__NO_API__") { softFailTranscript(); return; }
-    const refFullText = ayahs.map(a => a.text).join(" ");
-    const sc   = scoreFromCompareWords(refFullText, tx);
+    const sc   = alignAyahs(tx, ayahs).score;   // same alignment as the grid + red words + ayah colours
     const errs = getErrorWords(tx, ayahs);
     const corr = getAyahCorrectness(tx, ayahs, recSecsRef.current);
     setLastTranscript(tx);
