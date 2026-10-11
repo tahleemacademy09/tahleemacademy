@@ -60,3 +60,55 @@ export async function resolveHifdhSessionAudio(
   if (isHifdhR2Path(sd.audio_path)) return getHifdhAudioUrl(sd.audio_path!);
   return sd.audio_url ?? null;
 }
+
+/**
+ * Saves a student's recording so staff can always hear it: straight to R2 (6 tries, growing back-off),
+ * then — only if R2 keeps failing — to the Supabase "recitation-audio" bucket (admins/teachers can play
+ * both). Returns the stored path, or null if nothing could be saved (the caller then keeps the recording
+ * on the device and retries later).
+ */
+export async function saveHifdhRecording(userId: string, day: string, blob: Blob): Promise<string | null> {
+  const ext = blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : "webm";
+  const path = `${HIFDH_R2_PREFIX}${userId}/${day}_${Date.now()}.${ext}`;
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    try { return await uploadHifdhAudio(path, blob); }
+    catch (e: any) {
+      console.warn(`[hifdh audio] R2 upload attempt ${attempt}/6 failed:`, e?.message ?? e);
+      if (attempt < 6) await new Promise((r) => setTimeout(r, 1000 * attempt));
+    }
+  }
+  try {
+    const fallback = `${userId}/hifdh-daily/${day}_${Date.now()}.${ext}`;
+    const { error } = await supabase.storage.from("recitation-audio").upload(fallback, blob, { contentType: blob.type || "audio/webm", upsert: true });
+    if (!error) return fallback;
+    console.error("[hifdh audio] fallback upload failed:", error.message);
+  } catch (e) { console.error("[hifdh audio] fallback upload failed:", e); }
+  return null;
+}
+
+/**
+ * Removes a recording once staff have reviewed it (R2 recordings only; the function checks the caller
+ * is an admin or teacher). Returns true when the file is gone.
+ */
+export async function deleteHifdhAudio(path?: string | null): Promise<boolean> {
+  if (!isHifdhR2Path(path)) return false;
+  try {
+    const { data, error } = await supabase.functions.invoke("hifdh-audio-url", { body: { path, action: "delete" } });
+    return !error && !!data?.ok;
+  } catch { return false; }
+}
+
+/** Reviewed → delete the stored recording and clear the pointer on the log, so nothing is kept needlessly. */
+export async function discardReviewedAudio(logId: string, sessionData: any): Promise<any | null> {
+  const path = sessionData?.audio_path;
+  if (!path) return null;
+  if (isHifdhR2Path(path)) {
+    if (!(await deleteHifdhAudio(path))) return null;
+  } else if (path.includes("/hifdh-daily/")) {
+    // recording saved by the Supabase fallback
+    try { const { error } = await supabase.storage.from("recitation-audio").remove([path]); if (error) return null; } catch { return null; }
+  } else return null;                                    // older recordings are left alone
+  const next = { ...sessionData, audio_path: null, audio_deleted_at: new Date().toISOString() };
+  try { await (supabase as any).from("hifdh_daily_logs").update({ session_data: next }).eq("id", logId); } catch { /* file is gone either way */ }
+  return next;
+}

@@ -15,9 +15,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { uploadHifdhAudio, resolveHifdhSessionAudio, HIFDH_R2_PREFIX } from "@/lib/hifdhAudio";
+import { playbackGainFor, decodeForPlayback, freshPlaybackContext, preferSpeaker } from "@/lib/audioEnhance";
+import { tarteelEngine, ChunkTranscriber, type TarteelProgress } from "@/lib/tarteelOnDevice";
+import { stripWaqf, normalizeArabic, wordsMatch, compareWords, type WordResult } from "@/lib/recitationCompare";
+import { saveHifdhRecording, resolveHifdhSessionAudio } from "@/lib/hifdhAudio";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
 import HifdhLiveClass from "@/components/hifdh/HifdhLiveClass";
 import {
@@ -25,7 +29,7 @@ import {
   Star, CheckCircle, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
   Flame, Target, TrendingUp, Play, RefreshCcw, Heart, Loader2,
   BookMarked, BarChart2, Lock, ShieldCheck, Bell, Eye,
-  SkipBack, SkipForward, Timer as TimerIcon, Camera, Maximize2, X as XIcon,
+  SkipBack, SkipForward, Timer as TimerIcon, Camera,
 } from "lucide-react";
 // Per-surah CDN audio (everyayah.com) — keyed by (surahNum, verseNumInSurah), NOT the
 // global 1-6236 ayah id. Using this avoids the "wrong page audio" bug where the old
@@ -36,7 +40,8 @@ import { audioUrl as quranAyahAudioUrl, SURAHS } from "@/components/hifdh/surahD
 import { useProctoring } from "@/hooks/useProctoring";
 import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
 import MushafPageView from "@/components/hifdh/MushafPageView";
-// RollingTranscriber import removed — transcription is now a single whole-recording Groq call on Stop
+import RecitationResultGrid from "@/components/hifdh/RecitationResultGrid";
+// Transcription is 100% on-device Tarteel (no Groq / no server upload): the whole recording is transcribed once on Stop.
 
 // ── Lazy surah lookup ─────────────────────────────────────────────────────
 // Building this map at module init time (`const X = Object.fromEntries(SURAHS.map(...))`)
@@ -210,6 +215,16 @@ function getAssignmentStartPage(a: Assignment): number {
 }
 
 /* ── Helpers ────────────────────────────────────────────────────── */
+/** Teacher's note shown to the student: only the free-text `custom` part of the notes JSON
+ *  (the rest — segments, programStart, etc. — is internal and must never be displayed). */
+function teacherNote(notes?: string | null): string {
+  if (!notes) return "";
+  try {
+    const o = JSON.parse(notes);
+    if (o && typeof o === "object") return typeof o.custom === "string" ? o.custom.trim() : "";
+  } catch { /* plain-text note */ }
+  return notes;
+}
 function getStartDate(a: Assignment): string|undefined {
   return a.program_start || a.starts_on || undefined;
 }
@@ -305,16 +320,21 @@ async function fetchPageAyahs(page: number): Promise<Ayah[]> {
       const verses: any[] = j?.verses ?? [];
       if (verses.length > 0) {
         return verses.map((v: any) => {
-          const meta = SURAH_NAME_BY_NUM[v.chapter_id ?? 0];
+          // The qdc by_page response has NO chapter_id — only verse_key ("29:1"). Reading
+          // chapter_id alone made surah.number 0, so the assigned-surah clip matched nothing and
+          // silently fell back to the WHOLE page (previous surah's verses scored as "missing").
+          const vkParts = String(v.verse_key ?? "").split(":");
+          const chapterNo = Number(v.chapter_id ?? vkParts[0]) || 0;
+          const meta = SURAH_NAME_BY_NUM[chapterNo];
           return {
           // NOTE: `number` here is the global 1-6236 ayah id when available from the API,
           // but we no longer rely on it for audio playback (see quranAyahAudioUrl below) —
           // audio is keyed off surah.number + numberInSurah instead, which is always correct.
           number: v.id ?? v.verse_number ?? 0,
-          numberInSurah: v.verse_number ?? 0,
+          numberInSurah: v.verse_number ?? (Number(vkParts[1]) || 0),
           text: v.text_uthmani ?? v.words?.map((w: any) => w.text_uthmani ?? w.text).join(" ") ?? "",
           surah: {
-            number: v.chapter_id ?? 0,
+            number: chapterNo,
             name: meta?.arabicName ?? "",
             englishName: meta?.name ?? "",
           },
@@ -336,173 +356,8 @@ async function fetchPageAyahs(page: number): Promise<Ayah[]> {
   return (j?.data?.ayahs ?? []) as Ayah[];
 }
 
-/* ── Arabic scoring ─────────────────────────────────────────────── */
-
-/* ── Strip Waqf stop/pause signs from Arabic ─────────────────── */
-const WAQF_REGEX = /[\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED۝\u06DE\u0615]/g;
-function stripWaqf(text: string): string {
-  return text.replace(WAQF_REGEX, "").replace(/\s+/g, " ").trim();
-}
-
-
-/**
- * normalizeArabic — strips tashkeel and unifies character variants so that
- * the ar.uthmani API text and Groq/Whisper transcripts can be compared reliably.
- *
- * Key fixes vs the naïve stripDiacritics approach:
- *  • Dagger Alef \u0670 → Alef \u0627 (represents a long-vowel 'a' in Uthmani script).
- *  • Alef Wasla ٱ \u0671 → \u0627  (every definite article "ال").
- *  • Alef Hamza Above/Below / Alef Madda → \u0627.
- *  • Hamzated Waw ؤ \u0624 → و  (Whisper often drops or swaps the hamza over waw).
- *  • Hamzated Ya  ئ \u0626 → ي  (same reason).
- *  • Standalone Hamza ء \u0621 → removed (frequently not captured in recitation).
- *  • Alef Maqsura ى → Ya ي  (Groq always uses Ya).
- *  • Ta Marbuta ة → Ha ه.
- *  • Small Waw ۥ / Small Ya ۦ (Uthmani-only) → their full counterparts.
- *  • Tatweel / Kashida ـ stripped.
- *  • Quranic stop/pause/ayah-end markers stripped.
- */
-function normalizeArabic(t: string): string {
-  return stripWaqf(t)
-    // 1. Dagger alef → regular alef FIRST (before bulk strip removes it)
-    .replace(/\u0670/g, "\u0627")
-    // 2. Strip tashkeel + Quranic annotation combining characters
-    .replace(/[\u064B-\u065F\u0610-\u061A\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "")
-    // 3. All Alef variants → plain Alef ا
-    .replace(/[\u0671\u0622\u0623\u0625]/g, "\u0627")
-    // 4. Hamzated Waw ؤ → و  (Whisper may omit the hamza component)
-    .replace(/\u0624/g, "\u0648")
-    // 5. Hamzated Ya  ئ → ي
-    .replace(/\u0626/g, "\u064A")
-    // 6. Standalone Hamza ء → remove (often dropped in natural recitation / STT)
-    .replace(/\u0621/g, "")
-    // 7. Alef Maqsura ى → Ya ي
-    .replace(/\u0649/g, "\u064A")
-    // 8. Ta Marbuta ة → Ha ه
-    .replace(/\u0629/g, "\u0647")
-    // 9. Strip Tatweel / Kashida ـ
-    .replace(/\u0640/g, "")
-    // 10. Uthmani small Waw ۥ → و  and small Ya ۦ → ي
-    .replace(/\u06E5/g, "\u0648")
-    .replace(/\u06E6/g, "\u064A")
-    // 11. Strip Quranic end-of-ayah ۝ and rub-el-hizb ۞ markers
-    .replace(/[۝\u06DE]/g, "");
-}
-
-// Keep the old name as an alias so nothing else in the file needs to change
+/* ── Arabic scoring: helpers live in @/lib/recitationCompare ── */
 function stripDiacritics(t: string): string { return normalizeArabic(t); }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Levenshtein edit distance — used for fuzzy matching of Quranic words.
-// Whisper often produces a 1-2 character difference from the written form due
-// to tajweed rules (idgham, ikhfaa, qalqalah) or emphatic letter substitution.
-// This lets us match those close-but-not-identical pairs as correct.
-// ─────────────────────────────────────────────────────────────────────────────
-function levenshtein(a: string, b: string): number {
-  if (a === b) return 0;
-  if (!a.length) return b.length;
-  if (!b.length) return a.length;
-  // Rolling two-row DP — O(n) space
-  let prev = Array.from({length: b.length + 1}, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    const curr: number[] = [i];
-    for (let j = 1; j <= b.length; j++) {
-      curr[j] = a[i-1] === b[j-1]
-        ? prev[j-1]
-        : 1 + Math.min(prev[j], curr[j-1], prev[j-1]);
-    }
-    prev = curr;
-  }
-  return prev[b.length];
-}
-
-/**
- * wordsMatch — single source of truth for whether two normalised Arabic words
- * are considered the same.  Strategy (in priority order):
- *
- *  1. Exact match after normalisation.
- *  2. 3-char prefix overlap — handles long-vowel insertions, e.g.
- *     "الرحمان" (ref, after dagger-alef expand) vs "الرحمن" (Whisper).
- *  3. Edit distance ≤ 1 for words ≥ 4 chars — handles single char drop/swap
- *     due to tajweed rules (e.g. idgham drops the nun: "منهم" → "مهم").
- *  4. Edit distance ≤ 2 for words ≥ 7 chars — handles two-char differences
- *     that commonly arise from emphatic-letter substitution in STT output.
- */
-function wordsMatch(rw: string, gw: string): boolean {
-  if (rw === gw) return true;
-  const minLen = Math.min(rw.length, gw.length);
-  // 3-char prefix (existing behaviour, kept)
-  if (minLen >= 3 &&
-      (rw.startsWith(gw.slice(0, 3)) || gw.startsWith(rw.slice(0, 3)))) return true;
-  // Edit distance
-  if (minLen >= 4) {
-    const d = levenshtein(rw, gw);
-    if (d <= 1) return true;
-    if (minLen >= 7 && d <= 2) return true;
-  }
-  return false;
-}
-
-// ── Word-by-word comparison ───────────────────────────────────────────────────
-// Stores the ORIGINAL diacritic form of each reference word so the result
-// grid can display full tashkeel while still using normalised text for matching.
-interface WordResult { word: string; status: "correct" | "missing"; }
-// FIX: order-aware global LCS alignment (ported from the fix already applied
-// in HifdhRevision.tsx). The previous version scanned normGot from index 0
-// for EVERY reference word, restarting each time. For words that repeat on a
-// page (e.g. "ذٰلِكَ", "ضُحَاهَا", "أَنتَ" — each appears twice on p.584), if
-// Whisper's transcript was missing the FIRST occurrence but did capture the
-// SECOND (the one actually recited), the greedy scan handed that single
-// available match to the EARLIER reference position — marking it correct —
-// while the LATER position (genuinely recited) lost its match and was wrongly
-// flagged as missing. A true LCS alignment considers the whole sequence at
-// once, so a repeated word can only bind to the occurrence that is actually
-// consistent with its neighbours in both texts.
-function compareWords(refText: string, gotText: string): WordResult[] {
-  // Split on whitespace — keep originals for display, normalize for matching.
-  // FILTER OUT waqf-only tokens (e.g. a lone "صلے", "ۚ", "ۖ" that ended up as
-  // its own whitespace-separated token in the source text). These are pause/stop
-  // marks, not actual recited words — a reciter cannot "say" them, so they must
-  // never be scored as missing/incorrect. We detect them by checking that
-  // stripping waqf characters from the token leaves nothing behind.
-  const origRef = refText.split(/\s+/).filter(Boolean).filter(w => stripWaqf(w).length > 0);
-  const normRef = origRef.map(w => normalizeArabic(w));
-  const normGot = normalizeArabic(gotText).split(/\s+/).filter(Boolean);
-
-  if (!normGot.length) return origRef.map(w => ({ word: w, status: "missing" as const }));
-
-  const R = normRef.length;
-  const G = normGot.length;
-
-  // Build LCS length table (fuzzy equality via wordsMatch)
-  const dp: number[][] = Array.from({ length: R + 1 }, () => new Array(G + 1).fill(0));
-  for (let r = 1; r <= R; r++) {
-    for (let g = 1; g <= G; g++) {
-      dp[r][g] = wordsMatch(normRef[r - 1], normGot[g - 1])
-        ? dp[r - 1][g - 1] + 1
-        : Math.max(dp[r - 1][g], dp[r][g - 1]);
-    }
-  }
-
-  // Backtrack to find which ref positions actually matched
-  const matched = new Set<number>();
-  let r = R, g = G;
-  while (r > 0 && g > 0) {
-    if (wordsMatch(normRef[r - 1], normGot[g - 1])) {
-      matched.add(r - 1);
-      r--; g--;
-    } else if (dp[r - 1][g] >= dp[r][g - 1]) {
-      r--;
-    } else {
-      g--;
-    }
-  }
-
-  return origRef.map((word, i) => ({
-    word,
-    status: matched.has(i) ? ("correct" as const) : ("missing" as const),
-  }));
-}
 
 /**
  * scoreFromCompareWords — the score % shown to the student MUST come from
@@ -897,7 +752,9 @@ function scoreColor(s:number): string {
 // flipped the audio session to earpiece mode.  RAF-based progress gives smooth
 // seek bar updates.  Speed control + ±15 s skip match standard player UX.
 // ─────────────────────────────────────────────────────────────────────────────
-function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; label?: string }) {
+function FullAudioPlayer({ url, label = "Your Recitation", miniHost }: { url: string; label?: string;
+  /** Optional element to show a slim sticky mini-player in once this card has scrolled out of view. */
+  miniHost?: HTMLElement | null }) {
   // ── AudioContext-based player ─────────────────────────────────────────────
   // We deliberately avoid HTMLAudioElement for post-recording playback on Android.
   // After getUserMedia(), Android Chrome locks the audio session to
@@ -914,6 +771,7 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
   const ctxRef    = useRef<AudioContext | null>(null);
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
   const bufferRef = useRef<AudioBuffer | null>(null);
+  const gainRef   = useRef(1);       // voice booster (plain gain, no compressor)
   const startedAtRef  = useRef<number>(0);   // ctx.currentTime when playback started
   const offsetRef     = useRef<number>(0);   // seconds into buffer at last pause
   const rafRef        = useRef<number | null>(null);
@@ -925,6 +783,18 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
   const [loaded,   setLoaded]   = useState(false);
   const [error,    setError]    = useState(false);
   const [speed,    setSpeed]    = useState(1);
+  const speedRef = useRef(1);       // always-current speed for the RAF loop / position maths
+
+  // Sticky mini-player: when the big card scrolls out of view, the same controls stay on screen as a slim bar.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [offscreen, setOffscreen] = useState(false);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!miniHost || !el || typeof IntersectionObserver === "undefined") { setOffscreen(false); return; }
+    const io = new IntersectionObserver(([e]) => setOffscreen(e.intersectionRatio < 0.2), { threshold: [0, 0.2, 0.5, 1] });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [miniHost]);
 
   const getCtx = () => {
     if (!ctxRef.current || ctxRef.current.state === "closed") {
@@ -940,7 +810,7 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
 
   const startRAF = useCallback((ctx: AudioContext, buffer: AudioBuffer) => {
     const tick = () => {
-      const elapsed = (ctx.currentTime - startedAtRef.current) * speed;
+      const elapsed = (ctx.currentTime - startedAtRef.current) * speedRef.current;
       const current = Math.min(offsetRef.current + elapsed, buffer.duration);
       setCurTime(current);
       setProgress(buffer.duration > 0 ? current / buffer.duration : 0);
@@ -1005,12 +875,11 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
         }
 
         if (cancelled) return;
-        const ctx = getCtx();
-        // Resume context so decodeAudioData works (required on some mobile browsers)
-        if (ctx.state === "suspended") await ctx.resume();
-        const decoded = await ctx.decodeAudioData(arrayBuf);
+        // Decode offline: opens no audio output while the mic is still being released (keeps the speaker route clean).
+        const decoded = await decodeForPlayback(arrayBuf);
         if (cancelled) return;
         bufferRef.current = decoded;
+        gainRef.current = playbackGainFor(decoded);
         setDuration(decoded.duration);
         setLoaded(true);
       } catch (e) {
@@ -1038,23 +907,27 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
     if (playing) {
       // Pause: record current offset so resume starts from here
       const ctx = getCtx();
-      const elapsed = (ctx.currentTime - startedAtRef.current) * speed;
+      const elapsed = (ctx.currentTime - startedAtRef.current) * speedRef.current;
       offsetRef.current = Math.min(offsetRef.current + elapsed, buffer.duration);
       stopSource(); stopRAF();
       setPlaying(false);
     } else {
-      // Play (or resume)
-      const ctx = getCtx();
-      if (ctx.state === "suspended") await ctx.resume();
+      // Play (or resume). A brand-new AudioContext every time, opened inside this tap, always plays through the
+      // LOUDSPEAKER — one created earlier (right after recording) can stay stuck on the earpiece/call route.
       stopSource(); // clean up any lingering source
+      const ctx = await freshPlaybackContext(ctxRef.current);
+      ctxRef.current = ctx;
 
       // If at end, restart from beginning
       if (offsetRef.current >= buffer.duration - 0.05) offsetRef.current = 0;
 
       const src = ctx.createBufferSource();
       src.buffer = buffer;
-      src.playbackRate.value = speed;
-      src.connect(ctx.destination);
+      src.playbackRate.value = speedRef.current;
+      // Voice booster only: a plain gain (peak-safe), no compressor.
+      const gain = ctx.createGain();
+      gain.gain.value = gainRef.current;
+      src.connect(gain); gain.connect(ctx.destination);
       src.onended = () => {
         // Only reset if this source wasn't manually stopped
         if (sourceRef.current === src) {
@@ -1077,7 +950,7 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
     const buffer = bufferRef.current; if (!buffer) return;
     const ctx = getCtx();
     if (playing) {
-      const elapsed = (ctx.currentTime - startedAtRef.current) * speed;
+      const elapsed = (ctx.currentTime - startedAtRef.current) * speedRef.current;
       offsetRef.current = Math.max(0, Math.min(buffer.duration, offsetRef.current + elapsed + secs));
       stopSource(); stopRAF(); setPlaying(false);
       // Restart from new position
@@ -1102,9 +975,17 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
 
   const cycleSpeed = () => {
     const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
-    const next = speeds[(speeds.indexOf(speed) + 1) % speeds.length];
+    const next = speeds[(speeds.indexOf(speedRef.current) + 1) % speeds.length];
+    const buffer = bufferRef.current;
+    if (sourceRef.current && buffer && ctxRef.current) {
+      // re-base the position so the seek bar doesn't jump when the speed changes mid-playback
+      const ctx = ctxRef.current;
+      offsetRef.current = Math.min(offsetRef.current + (ctx.currentTime - startedAtRef.current) * speedRef.current, buffer.duration);
+      startedAtRef.current = ctx.currentTime;
+      sourceRef.current.playbackRate.value = next;
+    }
+    speedRef.current = next;
     setSpeed(next);
-    if (sourceRef.current) sourceRef.current.playbackRate.value = next;
   };
 
   const fmt = (s: number) =>
@@ -1112,8 +993,43 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
       : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
   return (
-    <div style={{ background: `linear-gradient(135deg,${G1}08,${G2}14)`,
+    <div ref={rootRef} style={{ background: `linear-gradient(135deg,${G1}08,${G2}14)`,
       border: `1.5px solid ${GOLD}55`, borderRadius: 16, padding: "14px 16px" }}>
+
+      {/* Sticky mini-player — a slim bar pinned to the top while the big card is scrolled away */}
+      {miniHost && offscreen && createPortal(
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, display: "flex", alignItems: "center", gap: 10,
+          padding: "6px 14px", background: `linear-gradient(160deg,${G1},${G2})`, borderBottom: `1px solid ${GOLD}66`,
+          boxShadow: "0 3px 12px rgba(0,0,0,.28)", animation: "fadeIn .2s ease" }}>
+          <button onClick={toggle} disabled={!loaded && !error} aria-label={playing ? "Pause recording" : "Play recording"}
+            style={{ width: 34, height: 34, borderRadius: "50%", border: "none", flexShrink: 0,
+              cursor: loaded ? "pointer" : "not-allowed",
+              background: loaded ? `linear-gradient(135deg,${GOLD},${GOLD_L})` : "#4B5563",
+              display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {playing
+              ? <span style={{ display: "flex", gap: 3 }}>
+                  <span style={{ width: 3.5, height: 13, background: "#1C3A2F", borderRadius: 2 }}/>
+                  <span style={{ width: 3.5, height: 13, background: "#1C3A2F", borderRadius: 2 }}/>
+                </span>
+              : <Play size={15} color={loaded ? "#1C3A2F" : "#9CA3AF"} style={{ marginLeft: 2 }}/>}
+          </button>
+          <span style={{ fontSize: 11, fontWeight: 700, color: W, minWidth: 32, fontVariantNumeric: "tabular-nums" }}>{fmt(curTime)}</span>
+          <div onClick={seek} onTouchStart={seek}
+            style={{ flex: 1, height: 26, display: "flex", alignItems: "center", cursor: loaded ? "pointer" : "default" }}>
+            <div style={{ width: "100%", height: 5, borderRadius: 3, background: "rgba(255,255,255,.25)", overflow: "hidden" }}>
+              <div style={{ height: "100%", borderRadius: 3, background: `linear-gradient(to right,${GOLD},${GOLD_L})`,
+                width: `${progress * 100}%`, transition: "width 0.05s linear" }}/>
+            </div>
+          </div>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,.65)", minWidth: 32, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{loaded ? fmt(duration) : "--:--"}</span>
+          <button onClick={cycleSpeed}
+            style={{ padding: "3px 9px", borderRadius: 20, border: `1.5px solid ${GOLD}88`, background: "transparent",
+              color: GOLD, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
+            {speed}×
+          </button>
+        </div>,
+        miniHost
+      )}
 
       {/* Header row */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
@@ -1282,60 +1198,103 @@ function PreTestReview({audioUrl,pageResults,onContinue}:{audioUrl:string|null;p
   );
 }
 
-/* ── Swipeable pager: one Mushaf page per slide, dots at the bottom ── */
-function SwipePages({ pages, height, viewIdx, onView, onFull, onBg, clipFor }: {
-  pages: number[]; height: number; viewIdx: number; clipFor?: (page: number) => number[] | null;
-  onView: (i: number) => void; onFull: () => void; onBg?: (css: string) => void;
+/* ── Swipeable pager: one Mushaf page per slide. Fills whatever space it is given; swipe only (no buttons/dots) ── */
+// Each slide is memoised, and only the pages next to the current one are mounted, so a swipe never has to
+// re-render the whole session screen or paint 20 pages at once — that was what made the swipe stutter.
+const SwipeSlide = React.memo(function SwipeSlide({ page, height, show, only, first, onBg, coverUnrevealed, revealProgress, onUnavailable }: {
+  page: number; height: number; show: boolean; only?: number[]; first: boolean; onBg?: (css: string) => void;
+  coverUnrevealed?: boolean; revealProgress?: Record<string, { m: number; n: number; f: number }>; onUnavailable?: () => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  // Restore the slide we were on (e.g. coming back from recording / full screen)
+  return (
+    <div style={{ flex: "0 0 100%", height: "100%", direction: "ltr", scrollSnapAlign: "center", scrollSnapStop: "always",
+      display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", contain: "layout paint" }}>
+      {show && (
+        <div style={{ width: "100%" }}>
+          <MushafPageView page={page} seamless pureWhite availableHeight={height} maxStretch={1.4}
+            onlySurahs={only}
+            coverUnrevealed={coverUnrevealed} revealProgress={revealProgress} onUnavailable={onUnavailable}
+            onBackground={first ? onBg : undefined} />
+        </div>
+      )}
+    </div>
+  );
+});
+
+function SwipePages({ pages, viewIdx, onView, onBg, clipFor, coverUnrevealed, revealProgress, onUnavailable }: {
+  pages: number[]; viewIdx: number; clipFor?: (page: number) => number[] | null;
+  onView: (i: number) => void; onBg?: (css: string) => void;
+  /** live recitation: hide the printed page and uncover it word by word following `revealProgress` ("surah:ayah" keys) */
+  coverUnrevealed?: boolean; revealProgress?: Record<string, { m: number; n: number; f: number }>; onUnavailable?: () => void;
+}) {
+  const boxRef = useRef<HTMLDivElement>(null);   // fills the space the screen gives us (measured)
+  const ref = useRef<HTMLDivElement>(null);      // the horizontal scroller
+  const [h, setH] = useState(0);
+  const [cur, setCur] = useState(viewIdx);       // slide in view — local state, so a swipe only re-renders this pager
+  const curRef = useRef(viewIdx);
+  const notifiedRef = useRef(viewIdx);           // last index reported to the parent
+  const timerRef = useRef<number | null>(null);
+  const lastW = useRef(0);
+  const clipRef = useRef(clipFor); clipRef.current = clipFor;
+  const pagesKey = pages.join(",");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const only = React.useMemo(() => pages.map(pn => clipRef.current?.(pn) ?? undefined), [pagesKey]);
+
+  // The page uses ALL the height available between the top bar and the Start button.
+  useLayoutEffect(() => {
+    const box = boxRef.current; if (!box) return;
+    const measure = () => {
+      setH(Math.round(box.clientHeight));
+      const sc = ref.current;
+      if (sc && sc.clientWidth && sc.clientWidth !== lastW.current) {      // width changed (rotate) → stay on the same page
+        lastW.current = sc.clientWidth;
+        sc.scrollLeft = -curRef.current * sc.clientWidth;
+      }
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") { window.addEventListener("resize", measure); return () => window.removeEventListener("resize", measure); }
+    const ro = new ResizeObserver(measure); ro.observe(box);
+    return () => ro.disconnect();
+  }, []);
+
+  // Restore the slide we were on (e.g. coming back from recording)
   useLayoutEffect(() => {
     const el = ref.current;
-    if (el) el.scrollLeft = viewIdx * el.clientWidth;
+    if (el) { lastW.current = el.clientWidth; el.scrollLeft = -viewIdx * el.clientWidth; } // RTL scroller: page 1 on the right, scrollLeft goes negative
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The parent moved us (e.g. a restored session) — jump there; ignore echoes of our own reports.
   useEffect(() => {
+    if (viewIdx === notifiedRef.current) return;
+    notifiedRef.current = viewIdx; curRef.current = viewIdx; setCur(viewIdx);
     const el = ref.current;
-    if (el && Math.round(el.scrollLeft / el.clientWidth) !== viewIdx)
-      el.scrollTo({ left: viewIdx * el.clientWidth, behavior: "smooth" });
+    if (el) el.scrollTo({ left: -viewIdx * el.clientWidth, behavior: "auto" });
   }, [viewIdx]);
+
+  useEffect(() => () => { if (timerRef.current) window.clearTimeout(timerRef.current); }, []);
+
   const onScroll = () => {
     const el = ref.current;
     if (!el || !el.clientWidth) return;
-    const i = Math.round(el.scrollLeft / el.clientWidth);
-    if (i !== viewIdx && i >= 0 && i < pages.length) onView(i);
+    const i = Math.round(Math.abs(el.scrollLeft) / el.clientWidth);
+    if (i !== curRef.current && i >= 0 && i < pages.length) { curRef.current = i; setCur(i); }
+    // Tell the parent only once the swipe has settled, so the big session screen is not re-rendered mid-swipe.
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => {
+      if (notifiedRef.current !== curRef.current) { notifiedRef.current = curRef.current; onView(curRef.current); }
+    }, 120);
   };
+
   return (
-    <div style={{ position: "relative", margin: "0 -16px" }}>
-      <button onClick={onFull} aria-label="Full page"
-        style={{ position: "absolute", top: 6, right: 22, zIndex: 5, width: 34, height: 34, borderRadius: 99,
-          border: "1px solid #C9A84C", background: "rgba(255,255,255,.92)", color: "#78350F",
-          display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-        <Maximize2 size={16} />
-      </button>
+    <div ref={boxRef} style={{ position: "absolute", inset: 0 }}>
       <div ref={ref} onScroll={onScroll}
-        style={{ display: "flex", overflowX: "auto", overflowY: "hidden", scrollSnapType: "x mandatory",
+        style={{ position: "absolute", inset: 0, display: "flex", direction: "rtl", overflowX: "auto", overflowY: "hidden",
+          scrollSnapType: "x mandatory", overscrollBehaviorX: "contain",
           WebkitOverflowScrolling: "touch", scrollbarWidth: "none" as any, msOverflowStyle: "none" as any }}>
         {pages.map((pn, i) => (
-          <div key={pn} style={{ flex: "0 0 100%", scrollSnapAlign: "center", scrollSnapStop: "always" }}>
-            <MushafPageView page={pn} seamless pureWhite availableHeight={height} maxStretch={1.4}
-              onlySurahs={clipFor?.(pn) ?? undefined}
-              onBackground={i === 0 ? onBg : undefined} />
-          </div>
+          <SwipeSlide key={pn} page={pn} height={h} show={h > 0 && Math.abs(i - cur) <= 2} only={only[i]} first={i === 0}
+            onBg={onBg} coverUnrevealed={coverUnrevealed} revealProgress={revealProgress} onUnavailable={onUnavailable} />
         ))}
-      </div>
-      {/* Dots + label */}
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, padding: "8px 0 2px" }}>
-        <div style={{ display: "flex", gap: 8 }}>
-          {pages.map((pn, i) => (
-            <button key={pn} onClick={() => onView(i)} aria-label={`Page ${pn}`}
-              style={{ width: i === viewIdx ? 22 : 9, height: 9, borderRadius: 6, border: "none", padding: 0, cursor: "pointer",
-                background: i === viewIdx ? GOLD : "#d1d5db", transition: "all .2s" }} />
-          ))}
-        </div>
-        <span style={{ fontSize: 10, fontWeight: 700, color: "#6B7280" }}>
-          Page {pages[viewIdx]} · {viewIdx + 1} of {pages.length} · swipe to see the next page
-        </span>
       </div>
     </div>
   );
@@ -1401,7 +1360,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [pageAyahs,    setPageAyahs]   = useState<Ayah[]>([]);
   const [fetchingPage, setFetchingPage] = useState(false);
   const [printedBg, setPrintedBg] = useState("#fffdf6");
-  const [showFull, setShowFull] = useState(false);
+  const [resultMiniHost, setResultMiniHost] = useState<HTMLElement | null>(null);   // where the result page pins its mini audio bar
   const [winH, setWinH] = useState(typeof window !== "undefined" ? window.innerHeight : 800);
   useEffect(() => {
     const onR = () => setWinH(window.innerHeight);
@@ -1486,6 +1445,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [submitting,   setSubmitting]  = useState(false);
   const [audioUrl,     setAudioUrl]    = useState<string|null>(null);
   const [lastTranscript, setLastTranscript] = useState("");
+  // Seconds from tapping Stop to the result appearing (shown on the result grid).
+  const stopTsRef = useRef<number | null>(null);
+  const [checkSecs, setCheckSecs] = useState<number | null>(null);
   const [ayahCorrectness, setAyahCorrectness] = useState<boolean[]>([]);
   // True when transcription returned nothing because no API key is configured
   const [noApiWarning, setNoApiWarning] = useState(false);
@@ -1496,6 +1458,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const audioChunks  = useRef<Blob[]>([]);
   const audioBlobRef       = useRef<Blob|null>(null);
   const audioStorageUrlRef = useRef<string|null>(null);
+  const attemptRef    = useRef(0);
+  const [audioReadyTick, setAudioReadyTick] = useState(0);
   const pageAyahsRef = useRef<Ayah[]>([]);
   // Pages where only part belongs to the assigned surah (e.g. Adh-Dhariyat starts half-way down):
   // the rest is blurred on screen and left out of the reference text used for scoring.
@@ -1510,21 +1474,17 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const recSecsRef   = useRef(0);
   const wakeLockRef  = useRef<any>(null);
 
-  // ── ROLLING TRANSCRIPTION (Groq) ──────────────────────────────────────────
-  // The Quran page is hidden while recording (see QuranPage render guard below),
-  // so there's no on-screen word reveal to drive anymore — WebSpeech-based live
-  // reveal has been removed entirely. What WebSpeech was never needed for (word
-  // reveal) is separate from what made scoring slow: uploading the WHOLE
-  // recording to Groq only after the student taps stop. To fix that we run a
-  // background rolling transcriber that chunks audio into OVERLAPPING ~18s
-  // windows (via the shared RollingTranscriber — see rollingTranscription.ts
-  // for why overlap matters: the old fixed 12s HARD-cut chunker, with no
-  // overlap and a brand-new MediaRecorder at every boundary, reliably clipped
-  // or dropped whatever word straddled each cut — a cut every 12 seconds
-  // through a multi-minute recitation added up to "skips a lot of words".
-  // By the time the student taps "Finished", only the last ~18-20s (one
-  // chunk) still needs transcribing.
-  const stylePromptRef = useRef<string>("");
+  // ── ON-DEVICE TARTEEL (the only transcription engine) ─────────────────────
+  // The student recites with NOTHING on screen. When they tap Finished, the whole recording is
+  // transcribed once by the Tarteel Quran model running inside their browser (Web Worker, nothing is
+  // uploaded) and the result is shown as a word-by-word grid. The model starts loading as soon as the
+  // student reaches the recite screen (first visit ≈100 MB, cached afterwards).
+  const [tarteelState, setTarteelState] = useState<TarteelProgress>(tarteelEngine.state);
+  useEffect(() => tarteelEngine.subscribe(setTarteelState), []);
+  useEffect(() => {
+    if (phase !== "reading") return;
+    tarteelEngine.load(true).catch(() => { /* status is shown under the Start button */ });
+  }, [phase]);
 
   // ── WAKE LOCK: keep screen on for entire session ─────────────────────────
   useEffect(() => {
@@ -1544,72 +1504,18 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     };
   }, []);
 
-  const SESSION_KEY = `hifdh_session_${userId}_${todayISO()}`;
-
-  // ── PERSIST progress to sessionStorage ───────────────────────────────────
-  // IMPORTANT: Skip the very first run so the RESTORE effect below can read
-  // the saved session before this effect clears it (React runs effects in
-  // definition order — persist fires before restore on the initial mount).
-  const isFirstPersistRun = useRef(true);
-  useEffect(() => {
-    if (isFirstPersistRun.current) { isFirstPersistRun.current = false; return; }
-    if (phase === "intro" || phase === "complete") { sessionStorage.removeItem(SESSION_KEY); return; }
-    try {
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-        phase, pageIdx, pageResults, recitationScore,
-        recSecs: recSecsRef.current,          // ← timer continuity
-        savedAudioUrl: savedAudioUrl ?? null,
-        questions: questions.length > 0 ? questions : undefined,
-        juzAyahs:  juzAyahs.length  > 0 ? juzAyahs  : undefined,
-        savedAt: Date.now(),
-      }));
-    } catch { /* quota exceeded */ }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, pageIdx, pageResults, recitationScore]);
+  // (session persistence lives further down, after the recording/analysis functions it uses)
 
   // ── RETURN BANNER state ───────────────────────────────────────────────────
   const [returnBanner, setReturnBanner] = useState<"recitation"|"test"|null>(null);
-
-  // ── RESTORE SESSION on mount ─────────────────────────────────────────────
-  useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem(SESSION_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw);
-      if (Date.now() - saved.savedAt > 2 * 60 * 60 * 1000) { sessionStorage.removeItem(SESSION_KEY); return; }
-      if (["reading","page_result","pre_test_review","proctor_intro"].includes(saved.phase)) {
-        setPageIdx(saved.pageIdx ?? 0);
-        setPageResults(saved.pageResults ?? []);
-        if (saved.recitationScore) setRecitationScore(saved.recitationScore);
-        if (saved.savedAudioUrl) setSavedAudioUrl(saved.savedAudioUrl);
-        if (saved.recSecs)   setCarryOverSecs(saved.recSecs);   // ← resume timer
-        setPhase("reading");
-        // (Welcome Back / resume-recording banner removed — session data is still restored above,
-        // student just sees the normal recite screen and can tap Start Reciting.)
-        // Attempt to restore the partial audio blob saved to IndexedDB mid-recording
-        const blobKey = `${userId}_${todayISO()}_partial`;
-        idbLoadBlob(blobKey).then(blob => {
-          if (blob) { audioChunks.current = [blob]; }
-        });
-      } else if (["testing","test_result"].includes(saved.phase)) {
-        setPageIdx(saved.pageIdx ?? 0);
-        setPageResults(saved.pageResults ?? []);
-        if (saved.recitationScore) setRecitationScore(saved.recitationScore);
-        if (saved.savedAudioUrl) setSavedAudioUrl(saved.savedAudioUrl);
-        if (saved.questions) { setQuestions(saved.questions); setAnswers(new Array(saved.questions.length).fill(null)); }
-        if (saved.juzAyahs) setJuzAyahs(saved.juzAyahs);
-        setPhase("proctor_intro");
-        setReturnBanner("test");
-      }
-    } catch { sessionStorage.removeItem(SESSION_KEY); }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // ── VISIBILITY CHANGE during session: stop recording, show resume banner ─
   useEffect(() => {
     const handleReturn = () => {
       if (document.visibilityState !== "visible") return;
-      if (isRecording) { handleStop(); return; } // banner removed — recording just stops silently; student re-taps Start Reciting
+      // Coming back to the tab must NEVER end the recording (a notification, a call or a quick app
+      // switch used to cut long recitations short). The timer is wall-clock based, so it is already right.
+      if (isRecording) return;
       if (phase === "testing") setReturnBanner("test");
     };
     document.addEventListener("visibilitychange", handleReturn);
@@ -1654,16 +1560,21 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   /* ── keep recSecsRef in sync so mr.onstop can read it ── */
   useEffect(() => { recSecsRef.current = recSecs; }, [recSecs]);
 
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   /* ── save partial log whenever a page evaluation lands ── */
   /* This lets the admin see the attempt even if the student never passes */
   useEffect(() => {
-    if (phase !== "page_result" || score === null) return;
+    // Saved as soon as the recording lands (score still null → "analysing"), not only when a score exists, so
+    // staff see the attempt and hear the recording even if the student leaves or the analysis never finishes.
+    if (phase !== "page_result") return;
+    const analysing = score === null;
     const today = todayISO();
     const last  = lastResultRef.current;
     // Build word-level results using compareWords (same as مراجعة)
     const ref       = pageAyahsRef.current.map((a:any)=>a.text).join(" ");
     const wordRes   = compareWords(ref, last?.tx ?? "");
-    (async () => {
+    // one save at a time, in order — an "analysing" save must never land after the scored one
+    saveChainRef.current = saveChainRef.current.then(async () => {
       try {
         // Preserve teacher override: if teacher already reviewed this log, keep their score and override flag
         const existingTeacherOverride = todayLog?.session_data?.teacher_override;
@@ -1672,17 +1583,20 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           assignment_id: assignment?.id,
           log_date:      today,
           pages_revised: todayPages.length,
-          avg_score:     existingTeacherOverride ? existingTeacherOverride.score : score,
+          avg_score:     existingTeacherOverride ? existingTeacherOverride.score : (score ?? 0),
           duration_secs: recSecsRef.current,
           completed:     false,          // always save — even on failed/retry attempts
           session_data: {
             recitation_score: score,
             test_score:       null,
+            ...(analysing ? { analysing: true } : {}),
+            // R2 AND the fallback both failed → staff are told instead of silently seeing nothing
+            ...(!audioStorageUrlRef.current && audioBlobRef.current ? { audio_pending_upload: true } : {}),
             pages_done:       isGroup ? todayPages : todayPages.slice(0, pageIdx + 1),
             // audioStorageUrlRef is guaranteed populated before setScore fires (see mr.onstop fix)
             audio_url:        null,
             audio_path:       audioStorageUrlRef.current,
-            page_results: isGroup
+            page_results: analysing ? [] : isGroup
               // One recording for all pages: full transcript + word detail on the first
               // entry, per-page ayah correctness / errors split out for each page.
               ? buildGroupResults(last?.tx ?? "", last?.ayahCorrectness ?? [], score).map((r, i) => ({
@@ -1712,9 +1626,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         }, { onConflict: "student_id,log_date" });
         if (error) console.warn("[HifdhDaily] interim save error:", error);
       } catch(e) { console.warn("[HifdhDaily] interim save exception:", e); }
-    })();
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, score]);
+  }, [phase, score, audioReadyTick]);
 
 
   /* ── Proctoring: detect tab switches during test ─────────────── */
@@ -1803,42 +1717,58 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignment, todayPages, juzAyahs]);
 
+  const micRef = useRef<MediaStream | null>(null);
+  useEffect(() => () => { try { micRef.current?.getTracks().forEach(t => t.stop()); } catch { /* noop */ } }, []);   // leaving the page releases the mic
   const startRecording = useCallback(async () => {
     try {
       setAudioUrl(null); setSavedAudioUrl(null); audioChunks.current = []; audioBlobRef.current = null; audioStorageUrlRef.current = null;
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,    // boosts quiet recitation to an audible level
+          // Raw microphone — no browser processing at all (no echo cancel, noise suppression or auto-gain/compression)
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
           sampleRate: 48000,
           channelCount: 1,
         }
       });
+      micRef.current = stream;
       const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t => {
         try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
       }) || "";
       const mr = new MediaRecorder(stream, mime ? {
         mimeType: mime,
-        audioBitsPerSecond: 192000,   // 192 kbps — clearer audio for Quranic evaluation & playback
-      } : { audioBitsPerSecond: 192000 });
+        audioBitsPerSecond: 128000,   // 128 kbps — transparent for speech, and a 5-page recitation stays small
+      } : { audioBitsPerSecond: 128000 });
       const blobKey = `${userId}_${todayISO()}_partial`;
+      let lastPartialSave = 0;
+      const savePartial = () => {
+        lastPartialSave = Date.now();
+        idbSaveBlob(blobKey, new Blob(audioChunks.current, { type: mime || "audio/webm" }));
+      };
       mr.ondataavailable = (e) => {
         if (e.data?.size > 0) {
           audioChunks.current.push(e.data);
-          // Persist the accumulated blob to IndexedDB after each chunk so that
-          // a page refresh doesn't lose partial audio (IDB survives navigation).
-          const partial = new Blob(audioChunks.current, { type: mime || "audio/webm" });
-          idbSaveBlob(blobKey, partial);
+          // Persist the accumulated recording to IndexedDB so a page refresh doesn't lose it — but only
+          // every 15 s. (It used to be rewritten 5× a second, which grows quadratically and froze or
+          // crashed long recordings.)
+          if (Date.now() - lastPartialSave > 15000) savePartial();
         }
       };
+      const flushPartial = () => { if (mr.state !== "inactive") savePartial(); };
+      window.addEventListener("pagehide", flushPartial);
+      document.addEventListener("visibilitychange", flushPartial);
       mr.onstop = () => {
+        window.removeEventListener("pagehide", flushPartial);
+        document.removeEventListener("visibilitychange", flushPartial);
         stream.getTracks().forEach(t => t.stop());
+        micRef.current = null;
         clearInterval(timerRef.current);
 
         // Audio routing is handled inside FullAudioPlayer/AudioPlayerWidget via AudioContext.decodeAudioData().
         const blob = new Blob(audioChunks.current, { type: mime || "audio/webm" });
         audioBlobRef.current = blob;
+        idbSaveBlob(`${userId}_${todayISO()}_final`, blob);   // survives a refresh (result page rebuilds from it)
         const localUrl = URL.createObjectURL(blob);
         setAudioUrl(localUrl);
         setSavedAudioUrl(localUrl);
@@ -1851,30 +1781,23 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         // Returns a signed URL (time-limited, auth-independent) so admin playback works
         // even on private buckets. The local blob URL is kept for immediate student playback
         // and is NEVER replaced with the storage URL (avoids 403 on private buckets).
-        const uploadAudioToStorage = async (): Promise<string|null> => {
-          const today = todayISO();
-          const ext   = blob.type.includes("mp4") ? "mp4" : "webm";
-          const path  = `${HIFDH_R2_PREFIX}${userId}/${today}_${Date.now()}.${ext}`;
-          // Retry a few times: a flaky mobile connection is the usual reason an upload fails.
-          // Recordings go to Cloudflare R2 (private). Only the path is stored; teachers and
-          // admins get a fresh playback link each time they open the recording.
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-              return await uploadHifdhAudio(path, blob);
-            } catch (e: any) {
-              console.warn(`[HifdhDaily] audio upload attempt ${attempt}/3 failed:`, e?.message ?? e);
-              if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));
-            }
-          }
-          console.error("[HifdhDaily] audio upload failed after 3 attempts — check the hifdh-audio-url function and R2 secrets");
-          return null;
-        };
+        // Straight to R2 (6 tries, then the Supabase fallback bucket) so staff always get the recording —
+        // whatever the score. If nothing works the recording stays on the device and is retried (see below).
+        const uploadAudioToStorage = (): Promise<string|null> => saveHifdhRecording(userId, todayISO(), blob);
 
         // Run transcription AND storage upload in parallel.
         // setScore must only fire AFTER both resolve — otherwise the interim-save
         // useEffect fires while audioStorageUrlRef is still null (the race condition).
-        Promise.all([finalizeTranscript(blob, pageAyahsRef.current), uploadAudioToStorage()]).then(([tx, storageUrl]) => {
+        // Upload runs in the BACKGROUND — the score no longer waits on it (a slow/retrying R2
+        // upload used to hold the "Analysing…" screen). When it lands, the interim save re-runs
+        // (audioReadyTick) so the log gets its audio_path.
+        const myAttempt = attemptRef.current;
+        uploadAudioToStorage().then((storageUrl) => {
+          if (attemptRef.current !== myAttempt) return;
           audioStorageUrlRef.current = storageUrl;
+          setAudioReadyTick(t => t + 1);
+        });
+        finalizeTranscript(blob).then((tx) => {
           // ── DO NOT call setSavedAudioUrl(storageUrl) here ────────────────────────────────────────
           // savedAudioUrl is already set to the local blob URL (line above Promise.all).
           // Replacing it with the remote URL caused silent playback failure:
@@ -1903,6 +1826,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           const errs = getErrorWords(tx, ayahs);
           const corr = getAyahCorrectness(tx, ayahs, capturedSecs);
           setLastTranscript(tx);
+          // "transcribe time" = how long the Tarteel model itself took (as in the test page).
+          setCheckSecs(transcribeMsRef.current != null ? transcribeMsRef.current / 1000
+            : stopTsRef.current != null ? (performance.now() - stopTsRef.current) / 1000 : null);
+          stopTsRef.current = null;
           lastResultRef.current = { tx, ayahCorrectness: corr };
           setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
           // Partial blob no longer needed — clean up IDB and reset carry-over
@@ -1910,109 +1837,239 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           setCarryOverSecs(0);
         });
       };
-      mr.start(200);
+      attemptRef.current++;
+      // No live transcription: the audio is only recorded now and transcribed once, on Stop.
+      mr.start(1000);
       mediaRecRef.current = mr;
+      // If the phone takes the microphone away (a call, another app) keep everything recited so far and
+      // go to the result instead of leaving a dead recording running.
+      try { stream.getAudioTracks().forEach(t => { t.onended = () => { if (mediaRecRef.current === mr) handleStop(); }; }); } catch { /* noop */ }
+      // Transcribe in the background AS the student recites (nothing is shown until Finished), so only
+      // the last few seconds are left to process at Stop.
+      try { bgRef.current?.cancel(); } catch { /* noop */ }
+      try { const bg = new ChunkTranscriber(stream, mime, 8000, 2500, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(carryOverSecs > 0); bgRef.current = bg; } catch { bgRef.current = null; }
       setIsRecording(true);
       setRecSecs(carryOverSecs);           // resume from previous session's elapsed time
       recSecsRef.current = carryOverSecs;
+      // Wall-clock timer: browsers slow setInterval down while the tab is in the background.
+      const t0 = Date.now() - carryOverSecs * 1000;
       timerRef.current = setInterval(() => {
-        setRecSecs(s => s + 1);
-      }, 1000);
+        setRecSecs(Math.floor((Date.now() - t0) / 1000));
+      }, 500);
 
-      // Rolling background transcription removed per request — transcription
-      // now happens once, on the whole recording, when the student taps
-      // Stop/Finished (see finalizeTranscript / mr.onstop above).
-      stylePromptRef.current = buildStylePrompt(pageAyahsRef.current);
     } catch {
       alert("Mic access denied. Please allow microphone access and try again.");
     }
   }, []);
 
-  // ── Vocabulary-hint prompt builder (shared by rolling chunks + fallback) ──
-  const buildStylePrompt = (ayahs?: Ayah[]): string => {
-    if (ayahs && ayahs.length > 0) {
-      const hint = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ " +
-        ayahs.slice(0, 4).map(a => a.text).join(" ");
-      return hint.slice(0, 220); // Whisper prompt cap — slice still enforces
-      // the limit, so this only adds coverage on pages with shorter ayahs
-      // (e.g. juz 'Amma) where 2 ayahs left the prompt well under budget.
-    }
-    return "قرآن كريم بالتشكيل الكامل. تلاوة قرآنية بالرسم العثماني.";
-  };
-
   const lastTranscribeErrorRef = useRef<string>("");
+  const transcribeMsRef = useRef<number | null>(null);
 
-  // Groq-only, single-shot transcription of one audio blob. Used for:
-  //   - each rolling chunk during recording (segment-sized blobs, via RollingTranscriber)
-  //   - the short "answer this question" recordings elsewhere on this page
-  //   - the one-off fallback inside finalizeTranscript if no chunk ever succeeded
-  // Deepgram has been removed: Groq alone was already the preferred/winning
-  // result almost every time, and racing two providers on every short chunk
-  // would double the API calls for no real accuracy benefit.
-  // `promptOverride` lets rolling chunks reuse a prompt built once per segment
-  // instead of recomputing it from `ayahs` on every call.
-  const transcribeAudio = async (blob: Blob, ayahs?: Ayah[], promptOverride?: string, timeoutMs: number = 15000): Promise<string> => {
+  // Tarteel on-device transcription of one audio blob. Returns "__NO_API__" if the model could not
+  // load/run (unsupported browser, download failed, audio could not be decoded) — callers show a
+  // soft "couldn't score this" message instead of a silent 0%.
+  const transcribeAudio = async (blob: Blob): Promise<string> => {
     lastTranscribeErrorRef.current = "";
-    const ext = blob.type.includes("mp4") ? "mp4"
-      : blob.type.includes("ogg") ? "ogg"
-      : "webm";
-    const stylePrompt = promptOverride ?? buildStylePrompt(ayahs);
-
-    const SUPABASE_URL = (import.meta as any).env?.VITE_SUPABASE_URL;
-    const SUPABASE_KEY =
-      (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
-      (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY;
-    if (!SUPABASE_URL || !SUPABASE_KEY) {
-      lastTranscribeErrorRef.current = "groq_supabase_env_missing";
+    transcribeMsRef.current = null;
+    const res = await tarteelEngine.transcribeBlob(blob);
+    if (res.error) {
+      lastTranscribeErrorRef.current = `tarteel_${res.error}`;
+      console.error("[HifdhDaily] tarteel transcription failed:", res.error);
       return "__NO_API__";
     }
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const fd = new FormData();
-      fd.append("file", new File([blob], `recitation.${ext}`, { type: blob.type || "audio/webm" }));
-      fd.append("prompt", stylePrompt);
-      const r = await fetch(`${SUPABASE_URL}/functions/v1/groq-transcribe`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${SUPABASE_KEY}`,
-          apikey: SUPABASE_KEY,
-        },
-        body: fd,
-        signal: controller.signal,
-      });
-      const json = await r.json().catch(() => ({}));
-      if (r.ok) {
-        const txt = (json.text ?? "").trim();
-        return txt; // may legitimately be "" (silence) — caller decides what to do
-      }
-      lastTranscribeErrorRef.current = `groq_http_${r.status}`;
-      console.error(`[HifdhDaily] groq-transcribe failed: HTTP ${r.status}`, json?.error ?? "");
-      return "__NO_API__";
-    } catch (e: any) {
-      lastTranscribeErrorRef.current = e?.name === "AbortError" ? "groq_timeout" : "groq_network_or_cors_error";
-      console.error("[HifdhDaily] groq-transcribe fetch failed:", e);
-      return "__NO_API__";
-    } finally {
-      clearTimeout(timeout);
-    }
+    transcribeMsRef.current = res.ms ?? null;
+    return (res.text ?? "").trim(); // may legitimately be "" (silence) — caller decides what to do
   };
 
-  // Single whole-recording transcription: one Groq call on the entire audio
-  // blob, no chunking. Longer timeout since a multi-minute recitation takes
-  // longer to upload/transcribe as one file than an 18s chunk did.
-  const finalizeTranscript = async (fullBlob: Blob, ayahs?: Ayah[]): Promise<string> => {
-    const tx = await transcribeAudio(fullBlob, ayahs, undefined, 120000);
-    return tx && tx !== "__NO_API__" && tx.length > 5 ? tx : "__NO_API__";
+  const bgRef = useRef<ChunkTranscriber | null>(null);
+  const finalizeTranscript = async (fullBlob: Blob): Promise<string> => {
+    const bg = bgRef.current;
+    bgRef.current = null;
+    if (bg) {
+      try {
+        const r = await bg.finish();
+        // Good background result → use it. Anything went wrong (or nothing heard) → transcribe the whole recording.
+        // A repeated phrase ("إلى الذي إلى الذي إلى الذي …") is the model looping, not the student.
+        const looped = /(\S+\s+\S+)(\s+\1){2,}/.test(normalizeArabic(r.text));
+        // A long recording (> ~10 MB) is never re-decoded as one piece (that needs gigabytes of memory on a
+        // phone): the chunk transcripts are used even if one chunk failed.
+        const long = fullBlob.size > 10 * 1048576;
+        if (r.text.trim() && (long || (r.ok && !looped))) {
+          lastTranscribeErrorRef.current = "";
+          transcribeMsRef.current = null;   // "transcribe time" = wait after Stop
+          return r.text.trim();
+        }
+      } catch (e) { console.warn("[HifdhDaily] background transcription failed, falling back:", e); }
+    }
+    return transcribeAudio(fullBlob);
   };
 
   const lastResultRef = useRef<{ tx: string; ayahCorrectness: boolean[] } | null>(null);
 
+  // ══ REFRESH-PROOF SESSION ═══════════════════════════════════════════════════
+  // Every screen of today's session (recite → result → pre-test review → test → results → complete)
+  // is saved as it changes and put back exactly on reload. Small data → localStorage; the recording
+  // → IndexedDB. A result that was still being analysed when the page reloaded is re-analysed from the
+  // saved recording, and an upload that had not finished is retried.
+  const SESSION_KEY = `hifdh_session_v2_${userId}_${todayISO()}`;
+  const FINAL_BLOB_KEY = `${userId}_${todayISO()}_final`;
+  const [hydrated, setHydrated] = useState(false);
+
+  const softFailTranscript = () => {
+    setLastTranscript("");
+    lastResultRef.current = { tx: "", ayahCorrectness: [] };
+    setScore(0); setErrorWords([]); setAyahCorrectness([]);
+    setNoApiWarning(true);
+  };
+
+  // Re-run scoring from the saved recording (page reloaded while "analysing").
+  const reanalyse = async (blob: Blob) => {
+    stopTsRef.current = performance.now();
+    try { await tarteelEngine.load(true); } catch { /* transcribeAudio reports it */ }
+    const ayahs = pageAyahsRef.current;
+    const savedChunks = ChunkTranscriber.saved(`hifdh_chunks_${userId}_${todayISO()}`);
+    const tx = savedChunks?.complete && savedChunks.text.trim() ? (transcribeMsRef.current = null, savedChunks.text.trim()) : await transcribeAudio(blob);
+    if (tx === "__NO_API__") { softFailTranscript(); return; }
+    const refFullText = ayahs.map(a => a.text).join(" ");
+    const sc   = scoreFromCompareWords(refFullText, tx);
+    const errs = getErrorWords(tx, ayahs);
+    const corr = getAyahCorrectness(tx, ayahs, recSecsRef.current);
+    setLastTranscript(tx);
+    setCheckSecs(transcribeMsRef.current != null ? transcribeMsRef.current / 1000
+      : stopTsRef.current != null ? (performance.now() - stopTsRef.current) / 1000 : null);
+    stopTsRef.current = null;
+    lastResultRef.current = { tx, ayahCorrectness: corr };
+    setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
+  };
+
+  // Upload the saved recording again (the first upload had not finished before the reload).
+  const reuploadAudio = async (blob: Blob) => {
+    const path = await saveHifdhRecording(userId, todayISO(), blob);
+    if (path) { audioStorageUrlRef.current = path; setAudioReadyTick(t => t + 1); }
+  };
+
+  // Upload still missing (offline / flaky network)? Keep trying while the result screen is open and as
+  // soon as the phone is back online — the recording is safe in IndexedDB meanwhile.
+  useEffect(() => {
+    if (phase !== "page_result" || score === null || audioStorageUrlRef.current) return;
+    let stopped = false, busy = false, tries = 0;
+    const attempt = async () => {
+      if (stopped || busy || audioStorageUrlRef.current || tries >= 12) return;
+      const blob = audioBlobRef.current; if (!blob) return;
+      busy = true; tries++;
+      try { await reuploadAudio(blob); } finally { busy = false; }
+    };
+    const iv = setInterval(attempt, 30000);
+    window.addEventListener("online", attempt);
+    attempt();
+    return () => { stopped = true; clearInterval(iv); window.removeEventListener("online", attempt); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, score, audioReadyTick]);
+
+  // ── SAVE on every change ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!hydrated || !userId) return;
+    if (phase === "intro") { try { localStorage.removeItem(SESSION_KEY); } catch { /* noop */ } return; }
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify({
+        v: 2, savedAt: Date.now(),
+        phase, pageIdx, viewIdx, pageResults, recitationScore, retryCount,
+        recSecs: recSecsRef.current,
+        score, errorWords, lastTranscript, ayahCorrectness, checkSecs, noApiWarning,
+        pageAyahs: pageAyahs.length ? pageAyahs : undefined,
+        pageGroups: isGroup && pageGroupsRef.current.length ? pageGroupsRef.current : undefined,
+        lastResult: lastResultRef.current ?? undefined,
+        audioPath: audioStorageUrlRef.current,
+        questions: questions.length ? questions : undefined,
+        answers: questions.length ? answers : undefined,
+        qIdx, juzAyahs: juzAyahs.length ? juzAyahs : undefined,
+        testScore, sectionAScore, sectionBScore, finalScore,
+      }));
+    } catch { /* storage full / private mode — non-critical */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, phase, pageIdx, viewIdx, pageResults, recitationScore, retryCount, score, errorWords,
+      lastTranscript, ayahCorrectness, checkSecs, noApiWarning, pageAyahs, questions, answers, qIdx,
+      juzAyahs, testScore, sectionAScore, sectionBScore, finalScore, audioReadyTick]);
+
+  // The saved recording is only needed until the day is complete.
+  useEffect(() => { if (phase === "complete") idbDeleteBlob(FINAL_BLOB_KEY); }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── RESTORE on mount ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!userId) { setHydrated(true); return; }
+    try {
+      // leftovers from other days
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith("hifdh_session_v2_") && k !== SESSION_KEY) localStorage.removeItem(k);
+      }
+      const raw = localStorage.getItem(SESSION_KEY);
+      const d = raw ? JSON.parse(raw) : null;
+      if (d && d.v === 2 && d.phase && d.phase !== "intro") {
+        // The "complete" screen is only brought back after a quick reload, not on a later visit.
+        const nav = (performance.getEntriesByType?.("navigation")?.[0] as any)?.type;
+        if (d.phase === "complete" && !(nav === "reload" && Date.now() - d.savedAt < 30 * 60 * 1000)) {
+          localStorage.removeItem(SESSION_KEY);
+        } else {
+          setPageIdx(d.pageIdx ?? 0);
+          setViewIdx(d.viewIdx ?? 0);
+          if (d.pageResults) setPageResults(d.pageResults);
+          if (d.recitationScore != null) setRecitationScore(d.recitationScore);
+          setRetryCount(d.retryCount ?? 0);
+          recSecsRef.current = d.recSecs ?? 0;
+          if (Array.isArray(d.pageAyahs)) { setPageAyahs(d.pageAyahs); pageAyahsRef.current = d.pageAyahs; }
+          if (Array.isArray(d.pageGroups)) pageGroupsRef.current = d.pageGroups;
+          if (d.lastResult) lastResultRef.current = d.lastResult;
+          audioStorageUrlRef.current = d.audioPath ?? null;
+          setScore(d.score ?? null); setErrorWords(d.errorWords ?? []);
+          setLastTranscript(d.lastTranscript ?? ""); setAyahCorrectness(d.ayahCorrectness ?? []);
+          setCheckSecs(d.checkSecs ?? null); setNoApiWarning(!!d.noApiWarning);
+          if (Array.isArray(d.questions)) { setQuestions(d.questions); setAnswers(d.answers ?? new Array(d.questions.length).fill(null)); }
+          setQIdx(d.qIdx ?? 0);
+          if (Array.isArray(d.juzAyahs)) setJuzAyahs(d.juzAyahs);
+          setTestScore(d.testScore ?? null);
+          setSectionAScore(d.sectionAScore ?? null); setSectionBScore(d.sectionBScore ?? null);
+          setFinalScore(d.finalScore ?? 0);
+
+          if (d.phase === "reading") {
+            if (d.recSecs) setCarryOverSecs(d.recSecs);   // resume timer
+            idbLoadBlob(`${userId}_${todayISO()}_partial`).then(blob => { if (blob) audioChunks.current = [blob]; });
+            setPhase("reading");
+          } else if (d.phase === "testing") {
+            // Proctored test: the camera/permission screen must be passed again, but nothing answered is lost.
+            setPhase("proctor_intro"); setReturnBanner("test");
+          } else {
+            const wasAnalysing = d.phase === "page_result" && d.score == null;
+            setPhase(d.phase);
+            idbLoadBlob(FINAL_BLOB_KEY).then(blob => {
+              if (!blob) {
+                // Nothing to rebuild the result from → let the student recite this page again.
+                if (wasAnalysing) setPhase("reading");
+                return;
+              }
+              audioBlobRef.current = blob;
+              const url = URL.createObjectURL(blob);
+              setAudioUrl(url); setSavedAudioUrl(url);
+              if (d.phase === "page_result") {
+                if (wasAnalysing) reanalyse(blob);
+                else if (!d.audioPath) reuploadAudio(blob);
+              }
+            });
+          }
+        }
+      }
+    } catch { try { localStorage.removeItem(SESSION_KEY); } catch { /* noop */ } }
+    setHydrated(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+
   const handleStop = () => {
+    stopTsRef.current = performance.now();
     setIsRecording(false);
     clearInterval(timerRef.current);
     if (mediaRecRef.current && mediaRecRef.current.state !== "inactive") {
-      mediaRecRef.current.stop(); // triggers mr.onstop → finalizeTranscript → setScore
+      mediaRecRef.current.stop(); // triggers mr.onstop → Tarteel transcribe → setScore
     }
     mediaRecRef.current = null;
     // mr.onstop handles setPhase("page_result") + setScore(null) + fill
@@ -2049,7 +2106,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         clearInterval(qRecTimerRef.current);
         setQRecording(false);
         const blob = new Blob(chunks, { type: mime || "audio/webm" });
-        const tx = await transcribeAudio(blob, pageAyahsRef.current);
+        const tx0 = await transcribeAudio(blob);
+        const tx = tx0 === "__NO_API__" ? "" : tx0;
         const q = questions[qIdx];
         // Score against the expected answer
         const expected = q.correctText || "";
@@ -2830,12 +2888,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               ))}
             </div>
 
-            {assignment.notes&&(
+            {teacherNote(assignment.notes)&&(
               <div style={{padding:"12px 14px",borderRadius:12,background:`${GOLD}10`,
                 border:`1px solid ${GOLD}33`}}>
                 <p style={{margin:"0 0 4px",fontSize:10,fontWeight:800,color:"#92400E",
                   textTransform:"uppercase",letterSpacing:.5}}>📝 Teacher's Note</p>
-                <p style={{margin:0,fontSize:12,color:"#78350F",lineHeight:1.6}}>{assignment.notes}</p>
+                <p style={{margin:0,fontSize:12,color:"#78350F",lineHeight:1.6}}>{teacherNote(assignment.notes)}</p>
               </div>
             )}
 
@@ -2852,9 +2910,21 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       {/* ══ READING ══ */}
       {phase==="reading"&&(
         <>
-          <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:"14px 16px",
+          <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:isRecording?"14px 16px":"10px 14px",
             display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
             <BackBtn onClick={()=>{if(mediaRecRef.current&&mediaRecRef.current.state!=="inactive"){mediaRecRef.current.stop();mediaRecRef.current=null;}setIsRecording(false);clearInterval(timerRef.current);setPhase("intro");}}/>
+            {!isRecording && (
+              <div style={{flex:1,minWidth:0,display:"flex",alignItems:"center",gap:8}}>
+                <Target size={15} color={GOLD} style={{flexShrink:0}}/>
+                <span style={{fontSize:12,fontWeight:700,color:W,lineHeight:1.4}}>
+                  {isGroup
+                    ? `Recite all ${todayPages.length} pages in one recording — need ≥${PASS_THRESHOLD}% to proceed`
+                    : `Recite Page ${todayPages[pageIdx]} clearly — need ≥${PASS_THRESHOLD}% to proceed`}
+                  {retryCount>0?` · Attempt ${retryCount+1}`:""}
+                </span>
+              </div>
+            )}
+            {isRecording && (
             <div style={{flex:1}}>
               <p style={{margin:0,fontWeight:800,fontSize:14,color:W}}>
                 {isGroup ? `Pages ${todayPages[0]} – ${todayPages[todayPages.length-1]}` : `Page ${todayPages[pageIdx]}`} — Recite Aloud
@@ -2865,8 +2935,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                   : `Page ${pageIdx+1} of ${todayPages.length}${retryCount>0?` · Attempt ${retryCount+1}`:""}`}
               </p>
             </div>
-            {/* Page dots (single-page flow only — multi-page days use the swipe dots under the page) */}
-            {!isGroup && (
+            )}
+            {/* Page dots while recording (single-page flow only) */}
+            {isRecording && !isGroup && (
             <div style={{display:"flex",gap:4}}>
               {todayPages.map((_,i)=>(
                 <div key={i} style={{width:8,height:8,borderRadius:"50%",
@@ -2876,11 +2947,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             )}
           </div>
 
-          <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",
-            padding:"10px 14px 90px"}}>
+          <div style={isRecording
+            ? {flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"10px 14px 90px"}
+            : {flex:1,minHeight:0,overflow:"hidden",display:"flex",flexDirection:"column",background:"#fff"}}>
 
             {retryMsg&&retryCount>0&&(
-              <div style={{marginBottom:10,padding:"10px 12px",borderRadius:12,background:`${GOLD}12`,
+              <div style={{margin:isRecording?"0 0 10px":"8px 14px 6px",flexShrink:0,padding:"10px 12px",borderRadius:12,background:`${GOLD}12`,
                 border:`1.5px solid ${GOLD}44`,animation:"slideUp .3s ease"}}>
                 <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
                   <Heart size={16} color={GOLD} style={{flexShrink:0,marginTop:1}}/>
@@ -2917,71 +2989,35 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 </span>
                 <p style={{margin:0,fontSize:11,color:"#9CA3AF",textAlign:"center",maxWidth:260,lineHeight:1.6}}>
                   {isGroup
-                    ? `Recite pages ${todayPages[0]} – ${todayPages[todayPages.length-1]} from memory, in order, in one go. Tap below when finished to get your score.`
+                    ? `Recite pages ${todayPages[0]} – ${todayPages[todayPages.length-1]} from memory, in order, in one go. Nothing is shown while you recite. Tap below when finished to get your score.`
                     : `Recite Page ${todayPages[pageIdx]} from memory. Tap below when finished to get your score.`}
                 </p>
               </div>
             )}
-            {/* Quran page — visible only BEFORE recording starts, for preview */}
-            {!isRecording && !retryCount && (
-              <div style={{marginBottom:10,padding:"8px 12px",borderRadius:10,
-                background:"#FFFBEB",border:"1px solid #FDE68A",
-                display:"flex",alignItems:"center",gap:8}}>
-                <Target size={13} color={AMBER}/>
-                <span style={{fontSize:11,fontWeight:700,color:AMBER}}>
-                  {isGroup
-                    ? `Recite all ${todayPages.length} pages in one recording — need ≥${PASS_THRESHOLD}% to proceed`
-                    : `Recite the full page clearly — need ≥${PASS_THRESHOLD}% to proceed`}
-                </span>
-              </div>
-            )}
-            {/* Printed Madinah Mushaf page — fills the screen like the Quran reader; Start Reciting stays visible below */}
-            {!isRecording && isGroup && (
-              <SwipePages pages={todayPages} height={Math.max(300, winH-250)} viewIdx={viewIdx}
-                onView={setViewIdx} onFull={()=>setShowFull(true)} onBg={setPrintedBg} clipFor={clipFor}/>
-            )}
-            {!isRecording && !isGroup && todayPages[pageIdx] && (
-              <div style={{position:"relative",margin:"0 -16px"}}>
-                <button onClick={()=>setShowFull(true)} aria-label="Full page"
-                  style={{position:"absolute",top:6,right:22,zIndex:5,width:34,height:34,borderRadius:99,border:"1px solid #C9A84C",background:"rgba(255,255,255,.92)",color:"#78350F",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
-                  <Maximize2 size={16}/>
-                </button>
-                <MushafPageView page={todayPages[pageIdx]} seamless pureWhite availableHeight={Math.max(300, winH-215)} maxStretch={1.4} onlySurahs={clipFor(todayPages[pageIdx])??undefined} onBackground={setPrintedBg}/>
-              </div>
-            )}
-            {showFull && curViewPage && (
-              <div style={{position:"fixed",inset:0,zIndex:500,background:"#fff",display:"flex",flexDirection:"column"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",paddingTop:"calc(8px + env(safe-area-inset-top, 0px))",borderBottom:"1px solid rgba(0,0,0,.06)",flexShrink:0}}>
-                  <button onClick={()=>setShowFull(false)} style={{display:"inline-flex",alignItems:"center",gap:6,border:"1px solid #e3e9e5",background:"#fff",borderRadius:99,padding:"6px 14px",fontSize:12,fontWeight:800,cursor:"pointer"}}><XIcon size={14}/> Close</button>
-                  {isGroup ? (
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <button onClick={()=>setViewIdx(i=>Math.max(0,i-1))} disabled={viewIdx===0} aria-label="Previous page"
-                        style={{border:"1px solid #e3e9e5",background:"#fff",borderRadius:99,width:30,height:30,fontSize:16,fontWeight:800,cursor:"pointer",opacity:viewIdx===0?.35:1}}>‹</button>
-                      <span style={{fontSize:13,fontWeight:800,color:"#1a1a2e"}}>Page {curViewPage} · {viewIdx+1}/{todayPages.length}</span>
-                      <button onClick={()=>setViewIdx(i=>Math.min(todayPages.length-1,i+1))} disabled={viewIdx===todayPages.length-1} aria-label="Next page"
-                        style={{border:"1px solid #e3e9e5",background:"#fff",borderRadius:99,width:30,height:30,fontSize:16,fontWeight:800,cursor:"pointer",opacity:viewIdx===todayPages.length-1?.35:1}}>›</button>
-                    </div>
-                  ) : (
-                    <span style={{fontSize:13,fontWeight:800,color:"#1a1a2e"}}>Page {curViewPage}</span>
-                  )}
-                </div>
-                <div style={{flex:1,minHeight:0,overflowY:"auto",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  <div style={{width:"100%"}}>
-                    <MushafPageView key={curViewPage} page={curViewPage} seamless pureWhite availableHeight={Math.max(300, winH-125)} maxStretch={1.4} onlySurahs={clipFor(curViewPage)??undefined}/>
-                  </div>
-                </div>
-                <div style={{padding:"10px 16px",paddingBottom:"calc(10px + env(safe-area-inset-bottom, 0px))",borderTop:`1px solid ${BRD}`,flexShrink:0}}>
-                  <button onClick={()=>{setShowFull(false);startRecording();}} disabled={fetchingPage||!pageAyahs.length}
-                    style={{width:"100%",padding:"14px",borderRadius:14,border:"none",cursor:(fetchingPage||!pageAyahs.length)?"wait":"pointer",opacity:(fetchingPage||!pageAyahs.length)?.55:1,background:`linear-gradient(135deg,${G2},${G3})`,color:W,fontWeight:900,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"inherit"}}>
-                    <Mic size={17}/> Start Reciting
-                  </button>
-                </div>
+            {/* Printed Madinah Mushaf page — ALWAYS full page: it takes all the room between the top bar and
+                Start Reciting. Multi-page days swipe left/right (no buttons). */}
+            {!isRecording && (todayPages[isGroup?0:pageIdx]) && (
+              <div style={{flex:1,minHeight:0,position:"relative"}}>
+                <SwipePages key={isGroup?"group":String(todayPages[pageIdx])}
+                  pages={isGroup?todayPages:[todayPages[pageIdx]]}
+                  viewIdx={isGroup?viewIdx:0} onView={isGroup?setViewIdx:()=>{}}
+                  onBg={setPrintedBg} clipFor={clipFor}/>
               </div>
             )}
           </div>
 
           {/* Sticky bottom */}
           <div style={{padding:"12px 16px",background:W,borderTop:`1px solid ${BRD}`,flexShrink:0}}>
+            {!isRecording && (tarteelState.status==="loading"||tarteelState.status==="idle") && (
+              <p style={{margin:"0 0 8px",fontSize:11,color:"#9CA3AF",textAlign:"center"}}>
+                Preparing the Quran checker{tarteelState.totalMB?` — ${Math.round(tarteelState.loadedMB??0)} of ${Math.round(tarteelState.totalMB)} MB`:"…"} (first time only — you can start reciting now)
+              </p>
+            )}
+            {!isRecording && (tarteelState.status==="error"||tarteelState.status==="unsupported") && (
+              <p style={{margin:"0 0 8px",fontSize:11,color:"#B45309",textAlign:"center"}}>
+                The Quran checker couldn't load on this device. Check your connection and reopen this page.
+              </p>
+            )}
             {!isRecording
               ?(
                 <button onClick={startRecording} disabled={fetchingPage||!pageAyahs.length}
@@ -3009,10 +3045,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           justifyContent:"center",gap:16,background:G0,padding:32}}>
           <Loader2 size={40} color={GOLD} style={{animation:"spin .9s linear infinite"}}/>
           <p style={{margin:0,color:"#e5c76b",fontWeight:700,fontSize:15,textAlign:"center"}}>
-            Analysing your recitation…
+            Checking your recitation…
           </p>
-          <p style={{margin:0,color:"#6B7280",fontSize:12,textAlign:"center"}}>
-            Using AI to check your Arabic — this takes a few seconds
+          <p style={{margin:0,color:"#9CA3AF",fontSize:12,textAlign:"center",lineHeight:1.7,maxWidth:280}}>
+            {tarteelState.status==="loading"
+              ? `Getting the Quran checker ready${tarteelState.totalMB?` — ${Math.round(tarteelState.loadedMB??0)} of ${Math.round(tarteelState.totalMB)} MB`:"…"} (first time only)`
+              : "Finishing the last part of your recitation on your device — almost done."}
           </p>
         </div>
       )}
@@ -3060,6 +3098,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               </div>
             </div>
 
+            {/* Zero-height anchor right under the header: the recording's mini player is pinned here while scrolling
+                (it overlays the top of the body, so showing/hiding it never shifts the content) */}
+            <div ref={setResultMiniHost} style={{position:"relative",height:0,flexShrink:0,zIndex:20}}/>
+
             {/* Scrollable body — exact مراجعة card sequence */}
             <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",
               padding:"14px 14px 100px",display:"flex",flexDirection:"column",gap:12,
@@ -3081,62 +3123,18 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               {(savedAudioUrl||audioUrl)&&(
                 <div style={{marginBottom:4}}>
                   <p style={{margin:"0 0 6px",fontSize:10,fontWeight:800,color:G3,textTransform:"uppercase",letterSpacing:.5}}>🎙️ Your Recitation — Listen & Review</p>
-                  <FullAudioPlayer url={savedAudioUrl||audioUrl||""} label={isGroup ? `Pages ${todayPages[0]} – ${todayPages[todayPages.length-1]} Recitation` : `Page ${todayPages[pageIdx]} Recitation`}/>
+                  <FullAudioPlayer url={savedAudioUrl||audioUrl||""} miniHost={resultMiniHost} label={isGroup ? `Pages ${todayPages[0]} – ${todayPages[todayPages.length-1]} Recitation` : `Page ${todayPages[pageIdx]} Recitation`}/>
                 </div>
               )}
 
-              {/* 3 ── Word-by-Word Analysis (exact مراجعة layout) */}
+              {/* 3 ── Word-by-word result: correct / close / wrong / missed, word error rate, what the model heard */}
               {wordRes.length>0&&(
-                <div style={{borderRadius:14,padding:"14px",
-                  background:"#ffffff08",border:`1px solid ${GOLD}22`,backgroundColor:"#fff"}}>
-                  <p style={{margin:"0 0 10px",fontSize:12,fontWeight:800,color:GOLD}}>
-                    Word-by-Word Analysis
-                  </p>
-                  {/* Parchment word-pill container — direction rtl, exact مراجعة */}
-                  <div style={{display:"flex",flexWrap:"wrap",gap:6,padding:"12px",
-                    borderRadius:12,background:"#fffdf6",direction:"rtl"}}>
-                    {wordRes.map((w,i)=>(
-                      <span key={i} style={{
-                        padding:"4px 10px",borderRadius:6,
-                        fontFamily:"'Amiri Quran','Amiri',serif",
-                        fontSize:17,fontWeight:600,
-                        background: w.status==="correct" ? "#dcfce7" : "#fee2e2",
-                        color:      w.status==="correct" ? "#166534" : "#dc2626",
-                      }}>
-                        {w.word}
-                      </span>
-                    ))}
-                  </div>
-                  {/* Legend */}
-                  <div style={{display:"flex",gap:14,marginTop:8,fontSize:11,color:"#6B7280"}}>
-                    <span style={{display:"flex",alignItems:"center",gap:5}}>
-                      <span style={{width:9,height:9,borderRadius:"50%",display:"inline-block",
-                        background:"#16a34a"}}/>Correct
-                    </span>
-                    <span style={{display:"flex",alignItems:"center",gap:5}}>
-                      <span style={{width:9,height:9,borderRadius:"50%",display:"inline-block",
-                        background:"#dc2626"}}/>Missing
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* 4 ── Your Recitation transcript (exact مراجعة) —
-                   rendered from the matched MUSHAF words (origRef, full tashkeel),
-                   not the raw STT output, so the script matches the Qur'an exactly.
-                   Missing words are simply omitted here (they're already shown
-                   in red above); only what you actually said is shown, in Quran script. */}
-              {lastTranscript&&(
-                <div style={{borderRadius:14,padding:"14px",
-                  background:"#ffffff",border:`1px solid ${GOLD}22`}}>
-                  <p style={{margin:"0 0 8px",fontSize:12,fontWeight:800,color:GOLD}}>
-                    Your Recitation (matched words)
-                  </p>
-                  <p style={{margin:0,fontSize:14,lineHeight:2.1,direction:"rtl",
-                    fontFamily:"'Amiri Quran','Amiri',serif",color:"#1a1a1a",wordBreak:"break-word"}}>
-                    {wordRes.filter(w=>w.status==="correct").map(w=>w.word).join(" ")}
-                  </p>
-                </div>
+                <RecitationResultGrid
+                  words={wordRes.map(w=>w.word)}
+                  matched={wordRes.map(w=>w.status==="correct")}
+                  heardText={lastTranscript}
+                  checkSecs={checkSecs}
+                />
               )}
 
               {/* 5 ── Transcription unavailable — student-friendly message only.
@@ -3708,6 +3706,7 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
   const ctxRef       = useRef<AudioContext|null>(null);
   const sourceRef    = useRef<AudioBufferSourceNode|null>(null);
   const bufferRef    = useRef<AudioBuffer|null>(null);
+  const gainRef      = useRef(1);   // voice booster (plain gain, no compressor)
   const startedAtRef = useRef<number>(0);
   const offsetRef    = useRef<number>(0);
   const rafRef       = useRef<number|null>(null);
@@ -3768,11 +3767,9 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
           ab=await resp.arrayBuffer();
         }
         if(cancelled) return;
-        const ctx=getCtx();
-        if(ctx.state==="suspended") await ctx.resume();
-        const decoded=await ctx.decodeAudioData(ab);
+        const decoded=await decodeForPlayback(ab);
         if(cancelled) return;
-        bufferRef.current=decoded;
+        bufferRef.current=decoded; gainRef.current=playbackGainFor(decoded);
         setDuration(decoded.duration);setLoaded(true);
       }catch(e){if(!cancelled){console.warn("AudioPlayerWidget decode error:",e);setError(true);}}
     })();
@@ -3790,12 +3787,12 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
       offsetRef.current=Math.min(offsetRef.current+elapsed,buffer.duration);
       stopSource();stopRAF();setPlaying(false);
     }else{
-      const ctx=getCtx();
-      if(ctx.state==="suspended") await ctx.resume();
       stopSource();
+      const ctx=await freshPlaybackContext(ctxRef.current);
+      ctxRef.current=ctx;
       if(offsetRef.current>=buffer.duration-0.05) offsetRef.current=0;
       const src=ctx.createBufferSource();
-      src.buffer=buffer; src.playbackRate.value=speed; src.connect(ctx.destination);
+      src.buffer=buffer; src.playbackRate.value=speed; { const g=ctx.createGain(); g.gain.value=gainRef.current; src.connect(g); g.connect(ctx.destination); }
       src.onended=()=>{if(sourceRef.current===src){stopRAF();setPlaying(false);setCurTime(0);setProgress(0);offsetRef.current=0;sourceRef.current=null;}};
       src.start(0,offsetRef.current);
       sourceRef.current=src; startedAtRef.current=ctx.currentTime;
@@ -4607,11 +4604,11 @@ export default function HifdhDailyRevisionPage() {
                       </div>
                     ))}
                   </div>
-                  {assignment.notes&&(
+                  {teacherNote(assignment.notes)&&(
                     <div style={{marginTop:10,padding:"10px 12px",borderRadius:10,
                       background:`${GOLD}0d`,border:`1px solid ${GOLD}33`}}>
                       <p style={{margin:0,fontSize:10,fontWeight:700,color:"#92400E"}}>📝 Teacher's Note</p>
-                      <p style={{margin:"3px 0 0",fontSize:12,color:"#78350F"}}>{assignment.notes}</p>
+                      <p style={{margin:"3px 0 0",fontSize:12,color:"#78350F"}}>{teacherNote(assignment.notes)}</p>
                     </div>
                   )}
                 </div>
