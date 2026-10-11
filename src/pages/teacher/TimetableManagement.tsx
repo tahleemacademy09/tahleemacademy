@@ -9,6 +9,7 @@ import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffTermId } from "@/hooks/useCurrentTermId";
 import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { toast } from "@/hooks/use-toast";
@@ -63,6 +64,8 @@ export default function TimetableManagement() {
   const { user } = useAuth();
   const { t, language } = useLanguage();
   const qc = useQueryClient();
+  // The timetable belongs to ONE term: staff see/edit only the term they are working in (not every term at once).
+  const staffTermId = useStaffTermId();
   const { data: academicLevels = [] } = useAcademicLevels();
   const LEVELS = academicLevels.map(l => ({ value: l.slug, label: l.name_en, ar: l.name_ar }));
   const levelColors = Object.fromEntries(academicLevels.map(l => {
@@ -82,7 +85,8 @@ export default function TimetableManagement() {
   // ── Data queries ─────────────────────────────────────────────────────────
 
   const { data: slots, isLoading } = useQuery({
-    queryKey: ["timetable-admin"],
+    queryKey: ["timetable-admin", staffTermId],
+    enabled: !!staffTermId,
     queryFn: async () => {
       // NOTE: subject_timetable has no FK to profiles for teacher_id (only
       // subject_id -> subjects), so `profiles!subject_timetable_teacher_id_fkey`
@@ -93,6 +97,7 @@ export default function TimetableManagement() {
       const { data, error } = await supabase
         .from("subject_timetable")
         .select(`*, subjects(id, title, title_ar)`)
+        .eq("term_id", staffTermId as string)
         .order("day_of_week")
         .order("start_time");
       if (error || !data) return [];
@@ -193,7 +198,7 @@ export default function TimetableManagement() {
       } else {
         const { error } = await supabase
           .from("subject_timetable")
-          .insert(payload);
+          .insert({ ...payload, term_id: staffTermId } as any);
         if (error) throw error;
       }
     },
@@ -208,6 +213,7 @@ export default function TimetableManagement() {
           .eq("subject_id", values.subject_id)
           .eq("day_of_week", values.day_of_week)
           .eq("start_time", values.start_time)
+          .eq("term_id", staffTermId as string)
           .order("created_at", { ascending: false })
           .limit(1)
           .maybeSingle();
