@@ -8,6 +8,7 @@ import {
   CheckCircle, Clock, Star, Mic, FileText, Users, Download, Volume2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { resolveStaffAudioUrl } from "@/lib/hifdhAudio";
 
 /* ── palette ── */
 const G    = "#064E3B";
@@ -28,7 +29,7 @@ interface PageResult {
 }
 interface SessionData {
   recitation_score?:number; test_score?:number; pages_done?:number[];
-  audio_url?:string|null; page_results?:PageResult[]; errors?:{word:string;page:number}[];
+  audio_url?:string|null; audio_path?:string|null; analysing?:boolean; audio_pending_upload?:boolean; page_results?:PageResult[]; errors?:{word:string;page:number}[];
   review?:{ teacher_score:number; teacher_feedback:string; reviewed_by:string; reviewed_at:string; };
   teacher_override?:{ score:number; teacher_feedback:string; reviewed_by:string; reviewed_at:string; };
 }
@@ -153,6 +154,30 @@ function SessionAudioPlayer({url,logDate}:{url:string;logDate:string}){
   );
 }
 
+/* ── Resolves audio_path (R2 / bucket) or audio_url into a playable URL ── */
+function ResolvedSessionAudio({sd,logDate}:{sd:any;logDate:string}){
+  const [url,setUrl]=useState<string|null>(null);
+  const [state,setState]=useState<"loading"|"ready"|"none">("loading");
+  useEffect(()=>{
+    let alive=true;
+    setState("loading");
+    resolveStaffAudioUrl(sd).then(u=>{ if(!alive) return; setUrl(u); setState(u?"ready":"none"); });
+    return()=>{alive=false;};
+  },[sd?.audio_path,sd?.audio_url]);
+  if(state==="ready"&&url) return <SessionAudioPlayer url={url} logDate={logDate}/>;
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderRadius:12,
+        background:"#F3F4F6",border:"1.5px dashed #D1D5DB"}}>
+      <Mic size={14} color="#9CA3AF"/>
+      <span style={{fontSize:11,color:"#9CA3AF",fontStyle:"italic"}}>
+        {state==="loading"?"Loading recording…"
+          :sd?.audio_pending_upload?"Recording is still uploading from the student's phone"
+          :"No audio recording for this session"}
+      </span>
+    </div>
+  );
+}
+
 /* ── Session detail (expanded) ────────────────────────────────────── */
 function SessionDetail({log,ov,saving,onOvChange,onSave,onClose}:{
   log:DailyLog; ov:{score:string;feedback:string}; saving:boolean;
@@ -198,13 +223,7 @@ function SessionDetail({log,ov,saving,onOvChange,onSave,onClose}:{
       )}
 
       {/* Audio player */}
-      {sd?.audio_url
-        ?<SessionAudioPlayer url={sd.audio_url} logDate={log.log_date}/>
-        :<div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderRadius:12,
-            background:"#F3F4F6",border:"1.5px dashed #D1D5DB"}}>
-           <Mic size={14} color="#9CA3AF"/>
-           <span style={{fontSize:11,color:"#9CA3AF",fontStyle:"italic"}}>No audio recording for this session</span>
-         </div>}
+      <ResolvedSessionAudio sd={sd} logDate={log.log_date}/>
 
       {/* Page tabs */}
       {pages.length>0&&(
@@ -608,7 +627,7 @@ export default function HifdhAdminReview(){
                             <div style={{fontSize:11,color:"#9CA3AF",marginTop:1}}>
                               {log.pages_revised??0} page{(log.pages_revised||0)!==1?"s":""}
                               {" · "}{fmtDur(log.duration_secs)}
-                              {log.session_data?.audio_url&&<span style={{marginLeft:6,color:GOLD}}>🎙</span>}
+                              {(log.session_data?.audio_url||log.session_data?.audio_path)&&<span style={{marginLeft:6,color:GOLD}}>🎙</span>}
                             </div>
                           </div>
                           <ScoreRing pct={displayScore} size={40}/>
@@ -617,6 +636,12 @@ export default function HifdhAdminReview(){
                             color:reviewed?PASS:"#854D0E"}}>
                             {reviewed?"✓ Reviewed":"⏳ Pending"}
                           </span>
+                          {!log.completed&&!reviewed&&(
+                            <span style={{padding:"3px 8px",borderRadius:20,fontSize:10,fontWeight:700,flexShrink:0,
+                              background:"#EFF6FF",color:"#1D4ED8"}}>
+                              {log.session_data?.analysing?"🎙 Analysing":"🎙 Not submitted"}
+                            </span>
+                          )}
                           {isSessionOpen?<ChevronUp size={14} color="#9CA3AF"/>:<ChevronDown size={14} color="#9CA3AF"/>}
                         </div>
 
