@@ -62,6 +62,26 @@ export async function resolveHifdhSessionAudio(
 }
 
 /**
+ * Playable URL for staff, covering every place a recording can live:
+ * R2 path, legacy Supabase link, or a path in the Supabase "recitation-audio" bucket
+ * (the fallback used when R2 is unreachable). Returns null when there is no recording.
+ */
+export async function resolveStaffAudioUrl(
+  sd?: { audio_url?: string | null; audio_path?: string | null } | null,
+): Promise<string | null> {
+  if (!sd) return null;
+  if (isHifdhR2Path(sd.audio_path)) return getHifdhAudioUrl(sd.audio_path!);
+  if (sd.audio_url) return sd.audio_url;
+  if (sd.audio_path) {
+    try {
+      const { data } = await supabase.storage.from("recitation-audio").createSignedUrl(sd.audio_path, 3600);
+      return data?.signedUrl ?? null;
+    } catch { return null; }
+  }
+  return null;
+}
+
+/**
  * Saves a student's recording so staff can always hear it: straight to R2 (6 tries, growing back-off),
  * then — only if R2 keeps failing — to the Supabase "recitation-audio" bucket (admins/teachers can play
  * both). Returns the stored path, or null if nothing could be saved (the caller then keeps the recording
