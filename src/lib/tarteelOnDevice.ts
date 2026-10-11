@@ -21,8 +21,6 @@
   dependency is needed.
 */
 
-import { prepareForAsr } from "@/lib/audioEnhance";
-
 export const TARTEEL_MODEL = "iqbalaesthetic/Basira"; // ONNX export of tarteel-ai/whisper-base-ar-quran
 const TRANSFORMERS_CDN = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.0";
 
@@ -325,12 +323,9 @@ class TarteelEngine {
     }
     const audioSecs = audio.length / TARGET_SR;
     if (audio.length < TARGET_SR * 0.4) return { text: "", ms: 0, audioSecs };
-    // Only real speech reaches the model — silence / room noise / long pauses make it invent words.
-    let gated: Float32Array | null = null;
-    try { gated = prepareForAsr(audio, TARGET_SR); } catch { gated = audio; }
-    if (!gated) return { text: "", ms: 0, audioSecs };
-    const res = await this.transcribe(gated, true);
-    return { ...res, text: collapseLoops(res.text || ""), audioSecs };
+    // Raw audio goes straight to the model, exactly as in the 7_15 version that transcribed well.
+    const res = await this.transcribe(audio, true);
+    return { ...res, audioSecs };
   }
 }
 
@@ -741,7 +736,7 @@ export class ChunkTranscriber {
   constructor(
     private stream: MediaStream,
     private mime: string,
-    private intervalMs = 8000,
+    private intervalMs = 15000,
     private overlapMs = 2500,
     private persistKey: string | null = null,
   ) { this.nextInterval = intervalMs; }
@@ -798,7 +793,7 @@ export class ChunkTranscriber {
     if (this.stopped) return;
     let mr: MediaRecorder;
     try {
-      mr = new MediaRecorder(this.stream, this.mime ? { mimeType: this.mime, audioBitsPerSecond: 96000 } : { audioBitsPerSecond: 96000 });
+      mr = new MediaRecorder(this.stream, this.mime ? { mimeType: this.mime, audioBitsPerSecond: 128000 } : { audioBitsPerSecond: 128000 });
     } catch { this.failed = true; return; }
     const chunks: Blob[] = [];
     const mySeq = this.seq++;
