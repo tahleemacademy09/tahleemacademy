@@ -1831,7 +1831,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             : stopTsRef.current != null ? (performance.now() - stopTsRef.current) / 1000 : null);
           stopTsRef.current = null;
           lastResultRef.current = { tx, ayahCorrectness: corr };
-          setNoApiWarning(false); // a good transcript → clear any "couldn't score" banner left by an earlier failed attempt
           setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
           // Partial blob no longer needed — clean up IDB and reset carry-over
           idbDeleteBlob(`${userId}_${todayISO()}_partial`);
@@ -1848,7 +1847,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       // Transcribe in the background AS the student recites (nothing is shown until Finished), so only
       // the last few seconds are left to process at Stop.
       try { bgRef.current?.cancel(); } catch { /* noop */ }
-      try { const bg = new ChunkTranscriber(stream, mime, 15000, 2500, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(carryOverSecs > 0); bgRef.current = bg; } catch { bgRef.current = null; }
+      try { const bg = new ChunkTranscriber(stream, mime, 8000, 2500, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(carryOverSecs > 0); bgRef.current = bg; } catch { bgRef.current = null; }
       setIsRecording(true);
       setRecSecs(carryOverSecs);           // resume from previous session's elapsed time
       recSecsRef.current = carryOverSecs;
@@ -1896,21 +1895,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         // phone): the chunk transcripts are used even if one chunk failed.
         const long = fullBlob.size > 10 * 1048576;
         if (r.text.trim() && (long || (r.ok && !looped))) {
-          const bgText = r.text.trim();
-          // Safety net: the short ~10 s chunks are decoded independently, and a chunk cut mid-word can make
-          // the model "hear" something else entirely (not a loop, just wrong words). If that transcript scores
-          // below the pass mark, also transcribe the WHOLE recording in one go (the proven path) and keep
-          // whichever matches the page better — a good recitation is never failed by a bad chunk.
-          const refText = pageAyahsRef.current.map((a: any) => a.text).join(" ");
-          if (!long && refText && scoreFromCompareWords(refText, bgText) < PASS_THRESHOLD) {
-            const full = await transcribeAudio(fullBlob);
-            if (full !== "__NO_API__" && full && scoreFromCompareWords(refText, full) > scoreFromCompareWords(refText, bgText)) {
-              return full;
-            }
-          }
           lastTranscribeErrorRef.current = "";
           transcribeMsRef.current = null;   // "transcribe time" = wait after Stop
-          return bgText;
+          return r.text.trim();
         }
       } catch (e) { console.warn("[HifdhDaily] background transcription failed, falling back:", e); }
     }
@@ -1935,24 +1922,15 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     setNoApiWarning(true);
   };
 
-  // (setNoApiWarning(false) is called whenever a real transcript is scored — see the Stop handler,
-  //  reanalyse() and retryPage() — so the banner can't linger from an earlier failed attempt.)
-
   // Re-run scoring from the saved recording (page reloaded while "analysing").
   const reanalyse = async (blob: Blob) => {
     stopTsRef.current = performance.now();
     try { await tarteelEngine.load(true); } catch { /* transcribeAudio reports it */ }
     const ayahs = pageAyahsRef.current;
     const savedChunks = ChunkTranscriber.saved(`hifdh_chunks_${userId}_${todayISO()}`);
-    const refFullText = ayahs.map(a => a.text).join(" ");
-    let tx = savedChunks?.complete && savedChunks.text.trim() ? (transcribeMsRef.current = null, savedChunks.text.trim()) : await transcribeAudio(blob);
-    // Saved chunk text below the pass mark → also try the whole recording and keep the better match.
-    if (tx !== "__NO_API__" && savedChunks?.complete && refFullText && blob.size <= 10 * 1048576 && scoreFromCompareWords(refFullText, tx) < PASS_THRESHOLD) {
-      const full = await transcribeAudio(blob);
-      if (full !== "__NO_API__" && full && scoreFromCompareWords(refFullText, full) > scoreFromCompareWords(refFullText, tx)) tx = full;
-    }
+    const tx = savedChunks?.complete && savedChunks.text.trim() ? (transcribeMsRef.current = null, savedChunks.text.trim()) : await transcribeAudio(blob);
     if (tx === "__NO_API__") { softFailTranscript(); return; }
-    setNoApiWarning(false);
+    const refFullText = ayahs.map(a => a.text).join(" ");
     const sc   = scoreFromCompareWords(refFullText, tx);
     const errs = getErrorWords(tx, ayahs);
     const corr = getAyahCorrectness(tx, ayahs, recSecsRef.current);
@@ -2303,7 +2281,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
   const retryPage = () => {
     setRetryMsg(RETRY_MSGS[retryCount%RETRY_MSGS.length]);
-    setScore(null); setNoApiWarning(false); setRetryCount(c=>c+1); setRecSecs(0); setPhase("reading");
+    setScore(null); setRetryCount(c=>c+1); setRecSecs(0); setPhase("reading");
   };
 
   const pickAnswer=(i:number)=>{ const a=[...answers]; a[qIdx]=i; setAnswers(a); };
