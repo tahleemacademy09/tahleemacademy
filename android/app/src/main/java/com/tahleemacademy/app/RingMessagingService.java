@@ -48,6 +48,19 @@ public class RingMessagingService extends FirebaseMessagingService {
         PushNotificationsPlugin.onNewToken(token);
     }
 
+    // send-notification sends absolute https URLs; the deep link needs a path
+    private static String toPath(String url) {
+        if (url == null || url.isEmpty()) return "/";
+        if (url.startsWith("http://") || url.startsWith("https://")) {
+            Uri u = Uri.parse(url);
+            String p = u.getEncodedPath();
+            if (p == null || p.isEmpty()) p = "/";
+            String q = u.getEncodedQuery();
+            return q != null ? p + "?" + q : p;
+        }
+        return url.startsWith("/") ? url : "/" + url;
+    }
+
     private PendingIntent buildJoinPendingIntent(String path, int requestCode) {
         Uri deepLinkUri = Uri.parse("tahleemacademy://ring" + path);
         Intent joinIntent = new Intent(Intent.ACTION_VIEW, deepLinkUri);
@@ -75,7 +88,7 @@ public class RingMessagingService extends FirebaseMessagingService {
     private void showRing(Map<String, String> data) {
         String title = data.get("title") != null ? data.get("title") : "Class is live now";
         String message = data.get("message") != null ? data.get("message") : "";
-        String path = data.get("url") != null ? data.get("url") : "/";
+        String path = toPath(data.get("url"));
 
         Uri ringUri = RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_RINGTONE);
         if (ringUri == null) {
@@ -142,7 +155,7 @@ public class RingMessagingService extends FirebaseMessagingService {
     private void showGeneral(Map<String, String> data) {
         String title = data.get("title") != null ? data.get("title") : "Tahleem Academy";
         String message = data.get("message") != null ? data.get("message") : "";
-        String path = data.get("url") != null ? data.get("url") : "/";
+        String path = toPath(data.get("url"));
 
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm != null) {
