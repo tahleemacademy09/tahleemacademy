@@ -9,6 +9,7 @@ import {
   CheckCircle, Clock, Star, RotateCcw, Mic, FileText,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { resolveStaffAudioUrl } from "@/lib/hifdhAudio";
 
 /* ── palette ── */
 const G    = "#064E3B";
@@ -30,7 +31,7 @@ interface PageResult {
 }
 interface SessionData {
   recitation_score?:number; test_score?:number; pages_done?:number[];
-  audio_url?:string|null; page_results?:PageResult[]; errors?:{word:string;page:number}[];
+  audio_url?:string|null; audio_path?:string|null; page_results?:PageResult[]; errors?:{word:string;page:number}[];
   review?:{ teacher_score:number; teacher_feedback:string; reviewed_by:string; reviewed_at:string; };
   teacher_override?:{ score:number; teacher_feedback:string; reviewed_by:string; reviewed_at:string; };
 }
@@ -72,6 +73,20 @@ function ScoreRing({pct,size=72}:{pct:number;size?:number}) {
         fill={col} fontSize={size*0.22} fontWeight={900}>{pct}%</text>
     </svg>
   );
+}
+
+/* Resolves audio_path (R2 / bucket) or audio_url into a playable URL */
+function ResolvedAudio({sd}:{sd:any}){
+  const [url,setUrl]=useState<string|null>(null);
+  const [loading,setLoading]=useState(true);
+  useEffect(()=>{
+    let alive=true; setLoading(true);
+    resolveStaffAudioUrl(sd).then(u=>{ if(!alive) return; setUrl(u); setLoading(false); });
+    return()=>{alive=false;};
+  },[sd?.audio_path,sd?.audio_url]);
+  if(loading) return <div style={{fontSize:11,color:"#9CA3AF",fontStyle:"italic"}}>Loading recording…</div>;
+  if(!url) return <div style={{fontSize:11,color:"#9CA3AF",fontStyle:"italic"}}>No audio recording for this session</div>;
+  return <audio controls src={url} style={{width:"100%",height:34,borderRadius:8}}/>;
 }
 
 export default function TeacherHifdhReview() {
@@ -350,7 +365,7 @@ export default function TeacherHifdhReview() {
                   </div>
 
                   {/* Audio player */}
-                  {sd?.audio_url&&(
+                  {(sd?.audio_url||sd?.audio_path)&&(
                     <div style={{background:W,borderRadius:12,border:"1px solid #E5E7EB",padding:"10px 14px"}}>
                       <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
                         <Mic size={12} color={G}/>
@@ -358,7 +373,7 @@ export default function TeacherHifdhReview() {
                           Recitation Audio
                         </span>
                       </div>
-                      <audio controls src={sd.audio_url} style={{width:"100%",height:34,borderRadius:8}}/>
+                      <ResolvedAudio sd={sd}/>
                     </div>
                   )}
 
