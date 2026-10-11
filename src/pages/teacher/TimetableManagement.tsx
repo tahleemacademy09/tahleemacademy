@@ -6,6 +6,7 @@
 */
 
 import { useState, useCallback } from "react";
+import { subjectOptionLabel } from "@/lib/subjectLabel";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -134,7 +135,7 @@ export default function TimetableManagement() {
     queryFn: async () => {
       const { data } = await supabase
         .from("subjects")
-        .select("id, title, title_ar, course_id")
+        .select("id, title, title_ar, course_id, level, levels")
         .eq("is_active", true)
         .order("title");
       return data || [];
@@ -373,7 +374,7 @@ export default function TimetableManagement() {
                   <option value="">{t("Select subject…", "اختر المادة…")}</option>
                   {(subjects || []).map((s: any) => (
                     <option key={s.id} value={s.id}>
-                      {language === "ar" ? s.title_ar || s.title : s.title}
+                      {subjectOptionLabel(s, language, academicLevels)}
                     </option>
                   ))}
                 </select>
