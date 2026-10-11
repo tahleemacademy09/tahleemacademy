@@ -2,7 +2,7 @@
   DashboardLayout.tsx — Tahleem Academy
   Mobile-first responsive layout with collapsible admin nav groups
 */
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import PageFallback from "@/components/layout/PageFallback";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -423,9 +423,47 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   // given route (or match any of the extra keywords in its type — used for
   // cross-cutting categories like "new-registration" that live at
   // /admin/students).
+  // Student sidebar: which notification links/types belong to which menu entry.
+  // Many notification links (live-classes, learning-hub, assignments, results…)
+  // are not nav routes themselves, so without this only the Dashboard lit up.
+  const NOTIF_ROOTS = ["/student", "/admin", "/teacher"];
+  const NOTIF_ALIASES: Record<string, { prefixes: string[]; types?: string[] }> = {
+    "/student":               { prefixes: ["/student/dashboard", "/dashboard"], types: ["announcement", "general"] },
+    "/student/courses":       { prefixes: ["/student/learning-hub", "/student/assignments"] },
+    "/student/live-now":      { prefixes: ["/student/live-classes"] },
+    "/student/hifdh-program": { prefixes: ["/student/hifdh"] },
+    "/student/exams":         { prefixes: ["/student/results", "/exams"], types: ["exam"] },
+    "/student/musabaqah":     { prefixes: ["/musabaqah"] },
+  };
+  const notifLinkPath = (l: any) => String(l || "").split(/[?#]/)[0];
+  const notifMatchesRoute = (n: any, route: string): boolean => {
+    const al = NOTIF_ALIASES[route];
+    const p = notifLinkPath(n.link);
+    const prefixes = NOTIF_ROOTS.includes(route) ? (al?.prefixes ?? []) : [route, ...(al?.prefixes ?? [])];
+    if (p) return prefixes.some(x => p === x || p.startsWith(x + "/"));
+    return !!al?.types?.includes(n.type);
+  };
+
+  // Student: a light list of ALL unread notifications (id/type/link only) — the
+  // bell list above is capped at 50 and daily content would crowd out the rest.
+  const [unreadIdx, setUnreadIdx] = useState<{ id: string; type: string; link: string | null; is_read: boolean }[]>([]);
+  useEffect(() => {
+    if (role !== "student" || !user) return;
+    let alive = true;
+    (async () => {
+      const { data } = await supabase.from("notifications").select("id,type,link")
+        .eq("user_id", user.id).eq("is_read", false).limit(1000);
+      if (alive) setUnreadIdx((data || []).map((n: any) => ({ ...n, is_read: false })));
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, role, unreadNotifs, location.pathname]);
+
   const unreadCountFor = (route: string, extraTypes: string[] = []): number => {
-    if (!notifList?.length) return 0;
-    return notifList.reduce((count: number, n: any) => {
+    const src: any[] = role === "student" ? unreadIdx : notifList;
+    if (!src?.length) return 0;
+    if (role === "student") return src.reduce((c, n) => (!n.is_read && notifMatchesRoute(n, route) ? c + 1 : c), 0);
+    return src.reduce((count: number, n: any) => {
       if (n.is_read) return count;
       const link = String(n.link || "");
       if (link.startsWith(route)) return count + 1;
@@ -433,6 +471,37 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       return count;
     }, 0);
   };
+
+  // Student: opening a section clears that section's notifications (the star goes away).
+  const clearingRef = useRef(false);
+  useEffect(() => {
+    if (role !== "student" || !user || clearingRef.current || unreadIdx.length === 0) return;
+    const entries: { to: string; match?: string[] }[] = [];
+    (studentNav as any[]).forEach(it => it.type === "group" ? entries.push(...it.children) : entries.push(it));
+    const here = location.pathname;
+    const isHere = (e: { to: string; match?: string[] }) => {
+      const al = NOTIF_ALIASES[e.to]?.prefixes ?? [];
+      const prefixes = NOTIF_ROOTS.includes(e.to) ? al : [e.to, ...(e.match ?? []), ...al];
+      if (NOTIF_ROOTS.includes(e.to) && here === e.to) return true;
+      return prefixes.some(x => here === x || here.startsWith(x + "/"));
+    };
+    const ids = new Set<string>();
+    entries.filter(isHere).forEach(e => unreadIdx.forEach(n => { if (notifMatchesRoute(n, e.to)) ids.add(n.id); }));
+    if (ids.size === 0) return;
+    clearingRef.current = true;
+    const list = Array.from(ids);
+    (async () => {
+      try {
+        for (let i = 0; i < list.length; i += 200) {
+          await supabase.from("notifications").update({ is_read: true }).eq("user_id", user.id).in("id", list.slice(i, i + 200));
+        }
+        setUnreadIdx(p => p.filter(n => !ids.has(n.id)));
+        setNotifList(p => p.map(n => ids.has(n.id) ? { ...n, is_read: true } : n));
+        setUnreadNotifs(p => Math.max(0, p - list.length));
+      } finally { clearingRef.current = false; }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, unreadIdx, role, user?.id]);
 
   // Gold numbered pill rendered inside nav items with unseen items — shows
   // exactly how many things are waiting rather than just a generic marker.
@@ -448,6 +517,25 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       {count > 99 ? "99+" : count}
     </span>
   );
+
+  // Student: a gold star marks a section with new notifications; staff keep the
+  // numbered pill. An explicit badge (e.g. Hifdh revision count) is always numeric.
+  const NotifMark = ({ count, explicit = 0 }: { count: number; explicit?: number }) => {
+    if (explicit <= 0 && count <= 0) return null;
+    return (
+      <span className="ms-auto flex shrink-0 items-center gap-1">
+        {explicit > 0 && <UnreadBadge count={explicit} />}
+        {count > 0 && (role === "student"
+          ? (
+            <span aria-label={`${count} new`} className="inline-flex shrink-0 items-center"
+              style={{ color: "#c9a84c", fontWeight: 800, fontSize: 12, lineHeight: 1 }}>
+              ({count > 99 ? "99+" : count})
+            </span>
+          )
+          : <UnreadBadge count={count} />)}
+      </span>
+    );
+  };
 
   // ── Detect whether a string is predominantly Arabic ──────────
   const isArabicText = (s: string) => /[\u0600-\u06FF]/.test(s ?? "");
@@ -528,14 +616,15 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   <item.icon className="h-4 w-4 shrink-0"/>
                   <span className="truncate">{item.label}</span>
                   {item.star && <Star aria-label="New update" className="ms-auto h-3.5 w-3.5 shrink-0" style={{ color: "#c9a84c", fill: "#c9a84c" }}/>}
-                  {(item.badge ?? unreadCountFor(item.to)) > 0 && <UnreadBadge count={item.badge ?? unreadCountFor(item.to)} />}
+                  <NotifMark explicit={item.badge ?? 0} count={unreadCountFor(item.to)} />
                 </Link>
               );
             }
             const isActive = groupActive(item.children.flatMap((c: any) => c.match ?? [c.to]));
             const isOpen   = expanded[item.key] ?? isActive; // auto-expand if a child is active
             const groupLocked = levelPending && item.children.every((c: any) => LOCKED_ROUTES.has(c.to));
-            const groupUnreadCount = item.children.reduce((sum: number, c: any) => sum + (c.badge ?? unreadCountFor(c.to)), 0);
+            const groupExplicit = item.children.reduce((sum: number, c: any) => sum + (c.badge ?? 0), 0);
+            const groupUnreadCount = item.children.reduce((sum: number, c: any) => sum + unreadCountFor(c.to), 0);
             return (
               <div key={item.key}>
                 <button onClick={() => !groupLocked && toggle(item.key)}
@@ -549,7 +638,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   )}>
                   <item.icon className="h-4 w-4 shrink-0"/>
                   <span className="flex-1 text-left truncate">{item.label}</span>
-                  {groupUnreadCount > 0 && <UnreadBadge count={groupUnreadCount} />}
+                  <NotifMark explicit={groupExplicit} count={groupUnreadCount} />
                   {isOpen
                     ? <ChevronDown className="h-3.5 w-3.5 opacity-50 shrink-0"/>
                     : <ChevronRight className="h-3.5 w-3.5 opacity-50 shrink-0"/>}
@@ -558,7 +647,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   <div className="ms-5 mt-0.5 mb-1 space-y-0.5 border-l border-sidebar-border/40 ps-3">
                     {item.children.map((child: any) => {
                       const ca = child.match ? child.match.some(pathMatches) : pathMatches(child.to);
-                      const cBadge = child.badge ?? unreadCountFor(child.to);
+                      const cBadge = child.badge ?? 0;
+                      const cCount = unreadCountFor(child.to);
                       return (                        <Link key={child.to} to={child.to} onClick={onNavigate}
                           className={cn(
                             "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors",
@@ -568,7 +658,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                           )}>
                           <child.icon className="h-3.5 w-3.5 shrink-0"/>
                           <span className="truncate">{child.label}</span>
-                          {cBadge > 0 && <UnreadBadge count={cBadge} />}
+                          <NotifMark explicit={cBadge} count={cCount} />
                         </Link>
                       );
                     })}
