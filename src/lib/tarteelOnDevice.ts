@@ -197,9 +197,17 @@ async function handle(ev) {
       if (m.full) { opts.chunk_length_s = 30; opts.stride_length_s = 5; }
       // Cap the output length to what real recitation needs (~14 tokens per second at the very most).
       // A model that starts looping ("إلى الذي إلى الذي …") would otherwise run to the 448-token limit — slow.
-      opts.max_new_tokens = Math.min(440, Math.ceil(Math.min(30, m.audio.length / 16000) * 14) + 24);
+      // ROOT-CAUSE FIX: the old cap (14 tokens/s) was lower than what diacritised Quran text needs at normal
+      // recitation speed, so the model was cut off mid-chunk and the tail words of EVERY chunk went missing.
+      // 30 tokens/s is a generous ceiling: it only costs time when the model really loops, and loops are
+      // removed afterwards by collapseLoops().
+      const cap = Math.min(440, Math.ceil(Math.min(30, m.audio.length / 16000) * 30) + 32);
+      opts.max_new_tokens = cap;
       const out = await asr(m.audio, opts);
-      self.postMessage({ type: "result", id: m.id, text: (out && out.text || "").trim(), ms: Date.now() - t0 });
+      const text = (out && out.text || "").trim();
+      let tokens = -1;
+      try { tokens = asr.tokenizer.encode(text, { add_special_tokens: false }).length; } catch (e) {}
+      self.postMessage({ type: "result", id: m.id, text, ms: Date.now() - t0, tokens, cap });
     }
   } catch (e) {
     self.postMessage({ type: m.type === "load" ? "load_error" : "result", id: m.id, text: "", error: String((e && e.message) || e) });
@@ -222,7 +230,7 @@ class TarteelEngine {
   private worker: Worker | null = null;
   private loadPromise: Promise<void> | null = null;
   private nextId = 1;
-  private pending = new Map<number, (r: { text: string; error?: string; ms?: number }) => void>();
+  private pending = new Map<number, (r: { text: string; error?: string; ms?: number; tokens?: number; cap?: number }) => void>();
   private listeners = new Set<(p: TarteelProgress) => void>();
   state: TarteelProgress = { status: "idle" };
 
@@ -277,7 +285,7 @@ class TarteelEngine {
           reject(new Error(m.error));
         } else if (m.type === "result") {
           const cb = this.pending.get(m.id);
-          if (cb) { this.pending.delete(m.id); cb({ text: m.text, error: m.error, ms: m.ms }); }
+          if (cb) { this.pending.delete(m.id); cb({ text: m.text, error: m.error, ms: m.ms, tokens: m.tokens, cap: m.cap }); }
         }
       };
       this.worker.onerror = (ev) => {
@@ -297,7 +305,7 @@ class TarteelEngine {
   isReady() { return this.state.status === "ready"; }
 
   /** audio: mono Float32 at 16 kHz. Ownership of the buffer is transferred to the worker. */
-  transcribe(audio: Float32Array, full = false): Promise<{ text: string; error?: string; ms?: number }> {
+  transcribe(audio: Float32Array, full = false): Promise<{ text: string; error?: string; ms?: number; tokens?: number; cap?: number }> {
     if (!this.worker || this.state.status !== "ready") return Promise.resolve({ text: "", error: "not_ready" });
     const id = this.nextId++;
     return new Promise((resolve) => {
@@ -330,6 +338,9 @@ class TarteelEngine {
     try { gated = prepareForAsr(audio, TARGET_SR); } catch { gated = audio; }
     if (!gated) return { text: "", ms: 0, audioSecs };
     const res = await this.transcribe(gated, true);
+    if (res.tokens != null && res.cap != null && res.tokens >= res.cap - 1) {
+      console.warn(`[Tarteel] output hit the token cap (${res.tokens}/${res.cap}) — the end of this chunk may be cut off`);
+    }
     return { ...res, text: collapseLoops(res.text || ""), audioSecs };
   }
 }
@@ -654,11 +665,14 @@ export class LiveRecitationSession {
  * it from `next`. If no shared run of 2+ words is found (e.g. the overlap was silence) the texts are
  * simply joined and nothing is thrown away.
  */
-export function mergeHeard(prev: string, next: string): string {
+export function mergeHeard(prev: string, next: string, overlapped = true): string {
   const a = prev.trim().split(/\s+/).filter(Boolean);
   const b = next.trim().split(/\s+/).filter(Boolean);
   if (!a.length) return b.join(" ");
   if (!b.length) return a.join(" ");
+  // The two chunks were cut inside a pause and share no audio: nothing is duplicated, so never drop a word
+  // (a legitimately repeated word/phrase across the pause must survive).
+  if (!overlapped) return [...a, ...b].join(" ");
   const ak = a.map(tarteelWordKey), bk = b.map(tarteelWordKey);
   let best: { k: number; drops: number; dt: number; sh: number } | null = null;
   for (let dt = 0; dt <= 2; dt++) {
@@ -713,30 +727,73 @@ export interface BackgroundResult {
   ok: boolean;
 }
 
+/* ───────────────────────── Pause detection (pure, unit-testable) ───────────────────────── */
+
+/**
+ * Level below which the microphone counts as "quiet" right now, learned from the recent levels themselves
+ * (one RMS value per 50 ms). Works for a quiet room and for a noisy one because it is relative to what this
+ * student's own speech and background look like.
+ */
+export function pauseThreshold(levels: number[]): number {
+  if (levels.length < 20) return 0.004;
+  const s = [...levels].sort((x, y) => x - y);
+  const floor = s[Math.floor(s.length * 0.15)];   // the room / mic noise
+  const loud = s[Math.floor(s.length * 0.9)];     // this student's speech
+  // "Quiet" = a little above the noise floor, but NEVER more than a quarter (-12 dB) of the speech level, so
+  // steady recitation (where floor ≈ loud) can never be mistaken for a pause and cut in the middle of a word.
+  return Math.min(Math.max(0.0025, floor * 2.2), loud * 0.25);
+}
+
+const LEVEL_MS = 50;          // how often the mic level is sampled
+const MIN_PAUSE_MS = 320;     // a quiet stretch this long (breath / end of ayah / waqf) is a safe place to cut
+const FORCE_EXTRA_MS = 6000;  // no pause found this long after the minimum length → cut anyway (with overlap)
+const PAUSE_TAIL_MS = 150;    // the finished chunk keeps recording this long past a pause cut (still silence)
+const HARD_MAX_MS = 24000;    // a chunk is never allowed to run longer than this (Whisper window = 30 s)
+
+type ChunkEntry = { mr: MediaRecorder; startedAt: number };
+
 /**
  * Transcribes the recording WHILE the student is still reciting, using exactly the same proven path as
  * a whole-recording transcription (a real recorded file → the browser's own decoder/resampler → model).
  *
- * Two MediaRecorders take turns on the same microphone stream: a new short chunk starts every
- * `intervalMs`, and each chunk keeps recording `overlapMs` longer so every word is heard whole in at
- * least one chunk. Each finished chunk is transcribed immediately, so at Stop only the last few seconds
- * are left. If the phone cannot keep up (chunks queue), the chunk length grows by itself. Recording
- * length is unlimited: only ~10 s of audio is ever held for the model at a time.
+ * WHY CHUNKS ARE NOW CUT AT PAUSES (root cause of "I recited correctly and it wrote rubbish"):
+ * the Tarteel model was trained on whole ayahs (one clean clip = one ayah, silence at both ends). The old
+ * code cut the recording on a stopwatch every 8 s, i.e. in the middle of an ayah and often in the middle of
+ * a word. A clip that starts or ends mid-word is nothing like its training data, so the model guessed —
+ * wrong words at both edges of every chunk, or a famous opening it knows by heart. Now a new chunk starts
+ * at the first natural pause (breath / end of ayah) after `intervalMs`, so chunks contain whole phrases. If
+ * no pause comes within FORCE_EXTRA_MS the old overlapping cut is used as a safety net, and if the
+ * microphone level cannot be read at all the whole class behaves exactly like before (timer mode).
+ *
+ * Each finished chunk is transcribed immediately, so at Stop only the last chunk is left. If the phone
+ * cannot keep up (chunks queue), the chunk length grows by itself. Recording length is unlimited.
  * Nothing is shown live — the caller awaits finish() and then shows the full result.
  *
  * `persistKey`: every chunk's text is also saved in localStorage so a long recording's transcript
  * survives a refresh (see ChunkTranscriber.saved()).
  */
 export class ChunkTranscriber {
-  private active: { mr: MediaRecorder; startedAt: number }[] = [];
+  private active: ChunkEntry[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
   private failed = false;
   private seq = 0;
   private inflight = 0;
   private results = new Map<number, string>();
+  /** seam N = "chunk N overlaps chunk N-1" (false when it was cut inside a pause) */
+  private seamOverlap = new Map<number, boolean>();
   private waiter: (() => void) | null = null;
   private nextInterval: number;
+  // pause-aware cutting
+  private actx: AudioContext | null = null;
+  private analyser: AnalyserNode | null = null;
+  private levelBuf: Float32Array | null = null;
+  private levelTimer: ReturnType<typeof setInterval> | null = null;
+  private levels: number[] = [];
+  private silentMs = 0;
+  private lastSpawnAt = 0;
+  /** "pause" = cuts at natural pauses; "timer" = fixed-time cuts (fallback when the mic level cannot be read) */
+  mode: "pause" | "timer" = "timer";
 
   constructor(
     private stream: MediaStream,
@@ -767,6 +824,14 @@ export class ChunkTranscriber {
     } catch { /* storage full — non-critical */ }
   }
 
+  private mergedText(): string {
+    let text = "";
+    [...this.results.keys()].sort((a, b) => a - b).forEach((k) => {
+      text = mergeHeard(text, this.results.get(k)!, this.seamOverlap.get(k) ?? true);
+    });
+    return text;
+  }
+
   /** resume = continue a recording that was interrupted by a refresh (keeps the text already heard). */
   start(resume = false) {
     if (this.persistKey) {
@@ -780,21 +845,79 @@ export class ChunkTranscriber {
       } else ChunkTranscriber.clearSaved(this.persistKey);
     }
     tarteelEngine.load(true).catch(() => { this.failed = true; });
-    this.spawn();
-    this.schedule();
+    this.mode = this.startMeter() ? "pause" : "timer";
+    this.spawn(this.overlapMs, true);
+    if (this.mode === "timer") this.schedule();
   }
 
+  /* ── microphone level meter (only reads the level; nothing is played or recorded by it) ── */
+  private startMeter(): boolean {
+    try {
+      const AC: typeof AudioContext = (window as any).AudioContext || (window as any).webkitAudioContext;
+      if (!AC) return false;
+      const ctx = new AC();
+      const src = ctx.createMediaStreamSource(this.stream);
+      const an = ctx.createAnalyser();
+      an.fftSize = 1024;
+      an.smoothingTimeConstant = 0;
+      if (typeof an.getFloatTimeDomainData !== "function") { try { void ctx.close(); } catch { /* noop */ } return false; }
+      src.connect(an);                       // NOT connected to the speakers
+      if (ctx.state === "suspended") ctx.resume().catch(() => {});
+      this.actx = ctx; this.analyser = an; this.levelBuf = new Float32Array(an.fftSize);
+      this.levelTimer = setInterval(() => this.tickLevel(), LEVEL_MS);
+      return true;
+    } catch { this.stopMeter(); return false; }
+  }
+
+  private stopMeter() {
+    if (this.levelTimer) { clearInterval(this.levelTimer); this.levelTimer = null; }
+    const c = this.actx;
+    this.actx = null; this.analyser = null; this.levelBuf = null;
+    if (c) { try { void c.close(); } catch { /* noop */ } }
+  }
+
+  private tickLevel() {
+    if (this.stopped || !this.analyser || !this.levelBuf) return;
+    this.analyser.getFloatTimeDomainData(this.levelBuf as any);
+    let e = 0;
+    for (let i = 0; i < this.levelBuf.length; i++) e += this.levelBuf[i] * this.levelBuf[i];
+    const rms = Math.sqrt(e / this.levelBuf.length);
+    this.levels.push(rms);
+    if (this.levels.length > 240) this.levels.shift();        // last ~12 s
+    this.silentMs = rms < pauseThreshold(this.levels) ? this.silentMs + LEVEL_MS : 0;
+
+    const age = Date.now() - this.lastSpawnAt;
+    const hardAt = Math.min(HARD_MAX_MS, this.nextInterval + FORCE_EXTRA_MS);
+    if (age >= this.nextInterval && this.silentMs >= MIN_PAUSE_MS) this.cut(false);
+    else if (age >= hardAt) this.cut(true);
+  }
+
+  private adaptInterval() {
+    // Falling behind (two or more chunks waiting)? make the next chunk longer so the queue drains.
+    this.nextInterval = this.inflight >= 2 ? Math.min(20000, this.nextInterval + 4000) : Math.max(this.intervalMs, this.nextInterval - 2000);
+  }
+
+  private cut(forced: boolean) {
+    this.adaptInterval();
+    this.silentMs = 0;
+    this.spawn(forced ? this.overlapMs : PAUSE_TAIL_MS, forced);
+  }
+
+  /** timer mode only (same behaviour as before pause-aware cutting existed) */
   private schedule() {
     if (this.stopped) return;
     this.timer = setTimeout(() => {
-      // Falling behind (two or more chunks waiting)? make the next chunk longer so the queue drains.
-      this.nextInterval = this.inflight >= 2 ? Math.min(20000, this.nextInterval + 4000) : Math.max(this.intervalMs, this.nextInterval - 2000);
-      this.spawn();
+      this.adaptInterval();
+      this.spawn(this.overlapMs, true);
       this.schedule();
     }, this.nextInterval);
   }
 
-  private spawn() {
+  /**
+   * Start a new chunk now. The chunk that was recording until now keeps going for `tailMs` more and then
+   * stops: 150 ms for a cut inside a pause (still silence), the full overlap for a forced / timer cut.
+   */
+  private spawn(tailMs: number, overlapped: boolean) {
     if (this.stopped) return;
     let mr: MediaRecorder;
     try {
@@ -802,7 +925,8 @@ export class ChunkTranscriber {
     } catch { this.failed = true; return; }
     const chunks: Blob[] = [];
     const mySeq = this.seq++;
-    const entry = { mr, startedAt: Date.now() };
+    const entry: ChunkEntry = { mr, startedAt: Date.now() };
+    this.seamOverlap.set(mySeq, overlapped);
     mr.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
     mr.onstop = () => {
       this.active = this.active.filter((a) => a.mr !== mr);
@@ -816,9 +940,16 @@ export class ChunkTranscriber {
         .finally(() => { this.inflight--; this.check(); });
     };
     try { mr.start(1000); } catch { this.failed = true; return; }
+
+    // the chunk that has been recording until now gets its tail and is then closed
+    const prev = this.active[this.active.length - 1];
     this.active.push(entry);
-    // keeps recording for this chunk's length + overlap; the next chunk starts when the interval ends
-    setTimeout(() => { if (mr.state !== "inactive") { try { mr.stop(); } catch { /* noop */ } } }, this.nextInterval + this.overlapMs);
+    this.lastSpawnAt = entry.startedAt;
+    if (prev) setTimeout(() => { if (prev.mr.state !== "inactive") { try { prev.mr.stop(); } catch { /* noop */ } } }, tailMs);
+    // Safety net: whatever happens, a chunk is closed before Whisper's 30 s window could be exceeded.
+    // (timer mode closes it by its own length + overlap; pause mode by the next cut or this limit)
+    const life = this.mode === "timer" ? this.nextInterval + this.overlapMs : HARD_MAX_MS + this.overlapMs + 2000;
+    setTimeout(() => { if (mr.state !== "inactive") { try { mr.stop(); } catch { /* noop */ } } }, life);
   }
 
   private check() {
@@ -829,29 +960,37 @@ export class ChunkTranscriber {
   finish(): Promise<BackgroundResult> {
     this.stopped = true;
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    this.stopMeter();
     return new Promise((resolve) => {
       const done = () => {
-        let text = "";
-        [...this.results.keys()].sort((a, b) => a - b).forEach((k) => { text = mergeHeard(text, this.results.get(k)!); });
+        const text = this.mergedText();
         this.save(!this.failed);
         resolve({ text, ok: !this.failed });
       };
       if (this.active.length === 0 && this.inflight === 0) { done(); return; }
       this.waiter = done;
-      // If an older chunk is still running (inside its overlap), the newest chunk is only a few seconds
-      // old and is entirely contained in it → skip it, so only ONE short job is left to run.
+      // If the previous chunk is STILL recording (inside its tail), stopping it now captures everything up
+      // to this moment, so the newest chunk (a few seconds old at most) is entirely contained in it → skip
+      // it and only ONE short job is left to run. If the previous chunk had already been closed, the newest
+      // chunk holds audio nobody else has, so it must be kept.
       const list = [...this.active].sort((a, b) => a.startedAt - b.startedAt);
       if (list.length >= 2) {
         const newest = list[list.length - 1];
-        newest.mr.onstop = () => { this.active = this.active.filter((a) => a !== newest); this.check(); };
+        const older = list[list.length - 2];
+        if (older.mr.state !== "inactive") {
+          newest.mr.onstop = () => { this.active = this.active.filter((a) => a !== newest); this.check(); };
+        }
       }
       list.forEach((a) => { if (a.mr.state !== "inactive") { try { a.mr.stop(); } catch { /* noop */ } } });
+      // everything may already have been closed and transcribed
+      this.check();
     });
   }
 
   cancel() {
     this.stopped = true;
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    this.stopMeter();
     [...this.active].forEach((a) => { a.mr.onstop = null as any; if (a.mr.state !== "inactive") { try { a.mr.stop(); } catch { /* noop */ } } });
     this.active = [];
   }

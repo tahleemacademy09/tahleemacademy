@@ -209,3 +209,33 @@ export function compareWords(refText: string, gotText: string): WordResult[] {
   const map = alignSequences(normRef.length, normGot.length, eq);
   return origRef.map((word, i) => ({ word, status: map[i] >= 0 ? ("correct" as const) : ("missing" as const) }));
 }
+
+/* ── One alignment for everything ─────────────────────────────────────────── */
+
+export interface AyahScoring {
+  /** every reference word with its status (the word grid) */
+  words: WordResult[];
+  /** per ayah: its words (same objects as in `words`), how many there are and how many were heard */
+  perAyah: { words: WordResult[]; total: number; correct: number }[];
+  /** % of reference words heard (0-100) */
+  score: number;
+}
+
+/**
+ * Aligns the transcript against ALL the ayahs once (compareWords) and then slices that single result per
+ * ayah. The page score, the word grid, the red words and the green/red ayahs are all derived from this one
+ * alignment, so they can never contradict each other (they used to come from three different algorithms).
+ */
+export function scoreAgainstAyahs(ayahTexts: string[], gotText: string): AyahScoring {
+  const counts = ayahTexts.map((t) => t.split(/\s+/).filter(Boolean).filter((w) => stripWaqf(w).length > 0).length);
+  const words = compareWords(ayahTexts.join(" "), gotText);
+  const perAyah: AyahScoring["perAyah"] = [];
+  let at = 0;
+  for (const n of counts) {
+    const slice = words.slice(at, at + n);
+    at += n;
+    perAyah.push({ words: slice, total: slice.length, correct: slice.filter((w) => w.status === "correct").length });
+  }
+  const correct = words.filter((w) => w.status === "correct").length;
+  return { words, perAyah, score: words.length ? Math.round((correct / words.length) * 100) : 0 };
+}
