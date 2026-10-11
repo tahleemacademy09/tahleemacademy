@@ -59,12 +59,22 @@ async function transcribeRecitation(blob: Blob): Promise<string | null> {
  * WHILE the student recited, so on Stop only the last chunk is left. If anything went wrong (a chunk
  * failed, nothing heard, or the model looped) the whole recording is transcribed instead.
  */
-async function finalizeTranscript(blob: Blob, bg: ChunkTranscriber | null): Promise<string | null> {
+async function finalizeTranscript(blob: Blob, bg: ChunkTranscriber | null, refText = ""): Promise<string | null> {
   if (bg) {
     try {
       const r = await withTimeout(bg.finish(), TRANSCRIBE_TIMEOUT_MS, "Background transcription");
       const looped = /(\S+\s+\S+)(\s+\1){2,}/.test(normalizeArabic(r.text));
-      if (r.ok && r.text.trim() && !looped) return r.text.trim();
+      if (r.ok && r.text.trim() && !looped) {
+        const bgText = r.text.trim();
+        // Safety net: short chunks are decoded independently and a chunk cut mid-word can make the model hear
+        // the wrong words. If the chunk transcript scores poorly, also transcribe the whole recording in one
+        // go and keep whichever matches the page better.
+        if (refText && scoreRecitation(bgText, refText).total < 60) {
+          const full = await transcribeRecitation(blob);
+          if (full && scoreRecitation(full, refText).total > scoreRecitation(bgText, refText).total) return full;
+        }
+        return bgText;
+      }
     } catch (e) { console.warn("[RecitationTest] background transcription failed, falling back:", e); }
   }
   return transcribeRecitation(blob);
@@ -592,7 +602,7 @@ const RecitationTest = () => {
   // the database until the student presses "Submit Score" (handleSubmitScore).
   const runScoring = async (blob: Blob, runId: number, bg: ChunkTranscriber | null = null) => {
     setScoring(true);
-    const transcript = await finalizeTranscript(blob, bg);
+    const transcript = await finalizeTranscript(blob, bg, quranRef.current.map(a => a.text).join(" "));
     if (runId !== runIdRef.current) return;          // discarded — ignore result
 
     if (transcript === null) {
