@@ -1,6 +1,14 @@
 /*  src/components/InstallPWAPrompt.tsx
     ═══════════════════════════════════════════════════════════════════════
-    WhatsApp-style "Add to Home Screen" bottom sheet.
+    WhatsApp-style install bottom sheet.
+
+    - Android (when an admin has uploaded the real app in Admin → App
+      Releases): offers the real Android app (APK) download. This REPLACES
+      the old "Add to Home Screen" prompt on Android.
+    - Android with no release uploaded yet / desktop Chrome: falls back to the
+      PWA install dialog (beforeinstallprompt).
+    - iOS: unchanged (Share → Add to Home Screen steps; no iOS app yet).
+    - Inside the native app: never shown.
 
     - Android/Desktop Chrome: captures the beforeinstallprompt event and
       shows a native install dialog when user taps "Install".
@@ -15,7 +23,8 @@
     ═══════════════════════════════════════════════════════════════════════
 */
 import { useEffect, useState, useRef } from "react";
-import { X, Share, Plus, Smartphone, Download } from "lucide-react";
+import { X, Share, Plus, Smartphone, Download, Loader2 } from "lucide-react";
+import { useAppRelease, formatBytes, isNativeApp } from "@/hooks/useAppRelease";
 
 const DISMISS_KEY = "tahleem_install_dismissed_until";
 const IP_G    = "#064E3B";
@@ -57,9 +66,26 @@ export default function InstallPWAPrompt() {
   const [visible,      setVisible]      = useState(false);
   const [leaving,      setLeaving]      = useState(false);
   const [iosStep,      setIosStep]      = useState(0);    // 0 = not started
+  const [downloading,   setDownloading]   = useState(false);
+  const [downloadedOk,  setDownloadedOk]  = useState(false);
+  const [dlError,       setDlError]       = useState("");
   const deferredPrompt = useRef<any>(null);
+  const { latest, hasUpdate, upToDate, download } = useAppRelease();
+
+  // Real Android app available → offer it instead of the PWA install.
+  // (If the person already downloaded this version, or has an older one, the
+  // sheet stays hidden — the update banner/star handle that case.)
+  const realApp    = platform === "android" && !!latest && !isNativeApp();
+  const needsSheet = realApp && !upToDate && !hasUpdate;
 
   useEffect(() => {
+    if (!needsSheet || isDismissed()) return;
+    const t = setTimeout(() => setVisible(true), 20_000);
+    return () => clearTimeout(t);
+  }, [needsSheet]);
+
+  useEffect(() => {
+    if (isNativeApp()) return;
     const p = detectPlatform();
     setPlatform(p);
     if (p === "installed" || p === "unsupported") return;
@@ -85,6 +111,9 @@ export default function InstallPWAPrompt() {
   }, []);
 
   if (!visible || platform === "installed" || platform === "unsupported") return null;
+  if (isNativeApp()) return null;
+  // Real app exists but this person already has it → nothing to offer.
+  if (realApp && !needsSheet && !downloadedOk) return null;
 
   const hide = (permanent = false) => {
     setLeaving(true);
@@ -93,6 +122,19 @@ export default function InstallPWAPrompt() {
   };
 
   const handleInstall = async () => {
+    if (realApp) {
+      setDownloading(true); setDlError("");
+      try {
+        await download();
+        setDownloadedOk(true);
+        dismiss7Days();
+      } catch (e: any) {
+        setDlError(e?.message || "Download failed. Please try again.");
+      } finally {
+        setDownloading(false);
+      }
+      return;
+    }
     if (platform === "ios") {
       setIosStep(1); // show step-by-step
       return;
@@ -156,7 +198,11 @@ export default function InstallPWAPrompt() {
             <img src="/icons/icon-96x96.png" alt="Tahleem" style={{ width:56, height:56, borderRadius:16, boxShadow:"0 4px 16px rgba(6,78,59,.2)" }} />
             <div>
               <div style={{ fontSize:18, fontWeight:900, color:"#111", marginBottom:2 }}>Tahleem Academy</div>
-              <div style={{ fontSize:13, color:"#6B7280" }}>tahleemacademy.vercel.app</div>
+              <div style={{ fontSize:13, color:"#6B7280" }}>
+                {realApp && latest
+                  ? `Android app · v${latest.version_name}${latest.file_size ? ` · ${formatBytes(latest.file_size)}` : ""}`
+                  : "tahleemacademy.vercel.app"}
+              </div>
             </div>
           </div>
 
@@ -211,8 +257,28 @@ export default function InstallPWAPrompt() {
             </div>
           )}
 
+          {/* Real app: download state */}
+          {realApp && downloadedOk && (
+            <div style={{ background:"#F0FDF4", borderRadius:16, padding:"14px 16px", border:"1px solid #86EFAC", marginBottom:14, fontSize:13, color:"#374151", lineHeight:1.6 }}>
+              <strong style={{ color: IP_G }}>Download started.</strong> When it finishes, open the file and tap <strong>Install</strong>.
+              If Android asks, allow installs from your browser.
+            </div>
+          )}
+          {realApp && dlError && (
+            <div style={{ background:"#FEF2F2", borderRadius:12, padding:"10px 14px", border:"1px solid #FCA5A5", marginBottom:14, fontSize:12.5, color:"#B91C1C" }}>
+              {dlError}
+            </div>
+          )}
+
           {/* Install / Done button */}
-          {iosStep === 0 || platform !== "ios" ? (
+          {realApp && downloadedOk ? (
+            <button
+              onClick={() => hide(true)}
+              style={{ width:"100%", padding:"16px", borderRadius:16, border:"none", background:`linear-gradient(135deg,${IP_G},${IP_GM})`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer" }}
+            >
+              ✅ Done
+            </button>
+          ) : iosStep === 0 || platform !== "ios" ? (
             <button
               onClick={handleInstall}
               style={{
@@ -226,7 +292,11 @@ export default function InstallPWAPrompt() {
             >
               {platform === "ios"
                 ? <><Share size={18}/> Show me how to install</>
-                : <><Download size={18}/> Install App — Free</>}
+                : downloading
+                  ? <><Loader2 size={18} className="animate-spin"/> Preparing download…</>
+                  : realApp
+                    ? <><Download size={18}/> Download App — Free</>
+                    : <><Download size={18}/> Install App — Free</>}
             </button>
           ) : iosStep < 4 ? (
             <button

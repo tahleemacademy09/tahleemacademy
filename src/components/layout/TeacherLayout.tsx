@@ -8,6 +8,7 @@ import PageFallback from "@/components/layout/PageFallback";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useStaffTermId, useStaffTermRow, useIsViewingPastTerm } from "@/hooks/useCurrentTermId";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useAppRelease } from "@/hooks/useAppRelease";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
@@ -16,7 +17,7 @@ import {
   LogOut, Globe, Menu, X, Settings, Trophy, MessageSquare,
   CheckSquare, Mic, BookOpen, GraduationCap, BarChart2,
   Megaphone, Calendar, ChevronDown,
-  ChevronRight, Bell, Clock, Trash2,
+  ChevronRight, Bell, Clock, Trash2, Smartphone, Star,
 } from "lucide-react";
 import NotificationPermissionBanner from "@/components/NotificationPermissionBanner";
 
@@ -117,6 +118,7 @@ const buildNav = (t: (a: string, b: string) => string, badges: Record<string, nu
 const TeacherLayout = () => {
   const { t, language, setLanguage, dir } = useLanguage();
   const { signOut, profile, user } = useAuth();
+  const { hasUpdate: appHasUpdate } = useAppRelease(true);
   const staffTermId = useStaffTermId();
   const staffTermRow = useStaffTermRow();
   const viewingPastTerm = useIsViewingPastTerm();
@@ -382,6 +384,12 @@ const TeacherLayout = () => {
 
       {/* Footer */}
       <div className="flex-shrink-0 border-t border-white/10 p-2">
+        <Link to="/teacher/app"
+          className={cn("mb-1.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs transition-colors",
+            location.pathname === "/teacher/app" ? "bg-white/15 text-white" : "bg-white/5 text-white/60 hover:bg-white/10")}>
+          <Smartphone size={13} className="text-yellow-400" />{t("Get the App", "حمّل التطبيق")}
+          {appHasUpdate && <Star aria-label="New update" size={12} className="ms-auto" style={{ color: "#c9a84c", fill: "#c9a84c" }} />}
+        </Link>
         <button onClick={() => setLanguage(language === "en" ? "ar" : "en")}
           className="mb-1.5 flex w-full items-center gap-2 rounded-lg bg-white/5 px-2.5 py-2 text-xs text-white/60 transition-colors hover:bg-white/10">
           <Globe size={13} />{t("العربية", "English")}

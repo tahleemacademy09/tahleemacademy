@@ -18,6 +18,7 @@ import PublicLayout from "@/components/layout/PublicLayout";
 import NotFound from "@/pages/NotFound";
 import IdleWarningModal from "@/components/IdleWarningModal";
 import UpdateAvailableBanner from "@/components/UpdateAvailableBanner";
+import AppUpdateBanner from "@/components/AppUpdateBanner";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import DiagnosticsPanel from "@/components/dev/DiagnosticsPanel";
 import TasjeelGuard from "@/components/TasjeelGuard";
@@ -57,6 +58,7 @@ const ExamRegistration    = lazy(() => import("./pages/student/ExamRegistration"
 const SubjectRegistration = lazy(() => import("./pages/student/SubjectRegistration"));
 const ExamTaking          = lazy(() => import("./pages/student/ExamTaking"));
 const ProfileSettings     = lazy(() => import("./pages/student/ProfileSettings"));
+const StudentApp          = lazy(() => import("./pages/student/StudentApp"));
 const ExamResults         = lazy(() => import("./pages/student/ExamResults"));
 const PreExamVerification = lazy(() => import("./pages/student/PreExamVerification"));
 const ReportCard          = lazy(() => import("./pages/student/ReportCard"));
@@ -141,6 +143,7 @@ const LevelManagement       = lazy(() => import("./pages/admin/LevelManagement")
 const RegistrationHub       = lazy(() => import("./pages/admin/RegistrationHub"));
 const StudentsHub           = lazy(() => import("./pages/admin/StudentsHub"));
 const AdminSettings         = lazy(() => import("./pages/admin/AdminSettings"));
+const AppReleases           = lazy(() => import("./pages/admin/AppReleases"));
 const SiteAnalytics         = lazy(() => import("./pages/admin/SiteAnalytics"));
 
 // ── Auth callback ──────────────────────────────────────────────────────────
@@ -211,6 +214,7 @@ const AppMain = () => (
               <AppNotifications />
               <IdleWarningModal />
               <UpdateAvailableBanner />
+              <AppUpdateBanner />
               <DiagnosticsPanel />
               <Suspense fallback={
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
@@ -301,6 +305,7 @@ const AppMain = () => (
                     <Route path="/student/attendance"          element={<ProgressHub />} />
                     <Route path="/student/support"             element={<StudentSupport />} />
                     <Route path="/student/profile"             element={<ProfileSettings />} />
+                    <Route path="/student/app"                 element={<StudentApp />} />
                     <Route path="/student/enrollment-payment"  element={<EnrollmentPayment />} />
                     {/* Hub: choose between Quiz Arena or Recitation Competition */}
                     <Route path="/student/musabaqah"           element={<MusabaqahHub />} />
@@ -322,6 +327,7 @@ const AppMain = () => (
                   {/* ── Teacher routes ── */}
                   <Route element={<ProtectedRoute requiredRole="teacher"><TeacherLayout /></ProtectedRoute>}>
                     <Route path="/teacher"                  element={<TeacherDashboard />} />
+                    <Route path="/teacher/app"            element={<StudentApp />} />
                     <Route path="/teacher/teaching-hub"    element={<TeacherTeachingHub />} />
                     <Route path="/teacher/students-hub"    element={<TeacherStudentsHub />} />
                     <Route path="/teacher/assessments-hub" element={<TeacherAssessmentsHub />} />
@@ -415,6 +421,7 @@ const AppMain = () => (
                     <Route path="/admin/registration-diagnostics"   element={<RegistrationHub />} />
                     <Route path="/admin/student-registration"        element={<RegistrationHub />} />
                     <Route path="/admin/settings"                    element={<AdminSettings />} />
+                    <Route path="/admin/app-releases"                element={<AppReleases />} />
                     <Route path="/admin/tasjeel"                     element={<RegistrationHub />} />
                     {/* Hub: choose between Quiz Arena or Recitation Competition */}
                     <Route path="/admin/musabaqah"                   element={<MusabaqahHub />} />

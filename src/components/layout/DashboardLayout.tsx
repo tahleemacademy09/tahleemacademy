@@ -10,6 +10,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRevisionAssignedCount } from "@/hooks/useRevisionAssignedCount";
+import { useAppRelease } from "@/hooks/useAppRelease";
 import { useImpersonation } from "@/hooks/useImpersonation";
 import { usePaymentAccess } from "@/hooks/usePaymentAccess";
 import { useSubjectRegistrationSettings } from "@/hooks/useSubjectRegistrationSettings";
@@ -20,7 +21,7 @@ import {
   Menu, Video, Mic, Layers, UserCheck, BookMarked, Settings,
   CreditCard, Calendar, ChevronDown, ChevronRight, Wallet, Bell,
   BookOpenCheck, RefreshCw, Headphones, Trophy, X, Lock, Clock, FolderOpen,
-  Activity, BookText, LifeBuoy, Eye, Sparkles,
+  Activity, BookText, LifeBuoy, Eye, Sparkles, Smartphone, Star,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -154,6 +155,10 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     location.pathname,
   );
 
+  // ── App update star (student) ────────────────────────────────
+  // Gold star on "Get the App" when a newer Android release is out.
+  const { hasUpdate: appHasUpdate } = useAppRelease(role === "student" || role === "admin");
+
   // ── Payment-locking: block features when student subscription is locked ──
   const { accessStatus: paymentStatus, isLoading: paymentLoading } = usePaymentAccess();
   const isPaymentLocked = role === "student" && !paymentLoading && paymentStatus === "locked";
@@ -210,7 +215,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   // ── Student nav ──────────────────────────────────────────────
   type NavItem =
-    | { type:"link"; to:string; icon:any; label:string }
+    | { type:"link"; to:string; icon:any; label:string; star?: boolean }
     | { type:"group"; key:string; icon:any; label:string; children:{to:string;icon:any;label:string}[] };
 
   const studentNav: NavItem[] = [
@@ -315,6 +320,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
     // 9 ── Al-Musābaqah (updated route) ─────────────────────────
     { type:"link", to:"/admin/musabaqah", icon:Trophy, label:t("Al-Musābaqah 🏆","المسابقة 🏆") },
+
 
     // 10 ── Admin Settings ────────────────────────────────────────
     { type:"link", to:"/admin/settings", icon:UserCircle, label:t("My Settings","إعداداتي") },
@@ -521,6 +527,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   )}>
                   <item.icon className="h-4 w-4 shrink-0"/>
                   <span className="truncate">{item.label}</span>
+                  {item.star && <Star aria-label="New update" className="ms-auto h-3.5 w-3.5 shrink-0" style={{ color: "#c9a84c", fill: "#c9a84c" }}/>}
                   {(item.badge ?? unreadCountFor(item.to)) > 0 && <UnreadBadge count={item.badge ?? unreadCountFor(item.to)} />}
                 </Link>
               );
@@ -583,6 +590,22 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
               </p>
             </div>
           )}
+          {(role === "student" || role === "admin") && (() => {
+            const appTo = role === "admin" ? "/admin/app-releases" : "/student/app";
+            return (
+              <Link to={appTo} onClick={onNavigate}
+                className={cn(
+                  "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                  location.pathname === appTo
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground/65 hover:bg-sidebar-accent/40 hover:text-sidebar-accent-foreground"
+                )}>
+                <Smartphone className="h-4 w-4 shrink-0 text-yellow-400"/>
+                <span>{role === "admin" ? t("App Releases","إصدارات التطبيق") : t("Get the App","حمّل التطبيق")}</span>
+                {appHasUpdate && <Star aria-label="New update" className="ms-auto h-3.5 w-3.5 shrink-0" style={{ color: "#c9a84c", fill: "#c9a84c" }}/>}
+              </Link>
+            );
+          })()}
           {role === "student" && (
             <Link to="/student/enrollment-payment" onClick={onNavigate}
               className={cn(
@@ -627,8 +650,9 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
         <header className="flex h-12 items-center gap-3 border-b bg-background px-4 md:hidden flex-shrink-0">
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
+              <Button variant="ghost" size="icon" className="h-8 w-8 relative">
                 <Menu className="h-4 w-4"/>
+                {role === "student" && appHasUpdate && <Star aria-label="New app update" className="absolute -top-0.5 -right-0.5 h-3 w-3" style={{ color: "#c9a84c", fill: "#c9a84c" }}/>}
               </Button>
             </SheetTrigger>
             <SheetContent
