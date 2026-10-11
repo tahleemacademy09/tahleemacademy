@@ -233,6 +233,7 @@ function weekdayOfDateStr(dateStr: string): number {
 }
 
 function ExamScheduleSection({ studentLevel, isPrivileged, navigate, t, language }: any) {
+  const { profile } = useAuth();
   const { isExamsModuleEnabled } = useAcademySettings();
   const today = localDateStr(new Date());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -253,12 +254,14 @@ function ExamScheduleSection({ studentLevel, isPrivileged, navigate, t, language
     enabled: isExamsModuleEnabled,
   });
 
+  // Only the subjects this student is enrolled in: compulsory ones always, optional ones only while enrolled.
+  // (Hook must run before the early return below — hooks can't be conditional.)
+  const enrQ = useSubjectEnrollmentMap(profile?.user_id, !isPrivileged);
+
   // Module toggled off — this section simply doesn't render, same as the
   // rest of the Timetable page when timetable_module_enabled is off.
   if (!isExamsModuleEnabled) return null;
 
-  // Only the subjects this student is enrolled in: compulsory ones always, optional ones only while enrolled.
-  const enrQ = useSubjectEnrollmentMap(profile?.user_id, !isPrivileged);
   const loadingAll = isLoading || (!isPrivileged && enrQ.isLoading);   // don't flash optional courses before enrollments load
 
   const slots = (allSlots || []).filter((s: any) => {
