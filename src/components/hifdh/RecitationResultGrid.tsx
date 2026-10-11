@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import { breakdownRecitation, type WordStatus } from "@/lib/recitationAlign";
+import { tarteelEngine } from "@/lib/tarteelOnDevice";
 
 interface Props {
   /** Expected words in reading order (original script, with diacritics). */
@@ -84,6 +85,21 @@ const RecitationResultGrid: React.FC<Props> = ({ words, matched, heardText, chec
       <p style={{ margin: 0, fontFamily: FONT, fontSize: 22, lineHeight: 2.1, direction: "rtl", color: "#eef4f1", overflowWrap: "anywhere" }}>
         {heardText.trim() || "(nothing heard)"}
       </p>
+      {!heardText.trim() && (() => {
+        const r = tarteelEngine.lastRun;
+        if (!r) return null;
+        const why =
+          r.reason === "no_speech_detected" ? "No speech was detected in the recording — it was silent or far too quiet."
+          : r.reason === "too_short" ? "The recording was too short."
+          : r.reason === "model_returned_empty" ? "Speech was detected but the model returned no text."
+          : r.reason;
+        return (
+          <p style={{ margin: "10px 0 0", fontSize: 11, color: MUTED, lineHeight: 1.7, direction: "ltr" }}>
+            {why} (audio {r.audioSecs.toFixed(1)} s · peak {r.peak.toFixed(3)} · level {r.rms.toFixed(4)}
+            {r.gatedSecs != null ? ` · sent to model ${r.gatedSecs.toFixed(1)} s` : ""})
+          </p>
+        );
+      })()}
     </div>
   );
 };
