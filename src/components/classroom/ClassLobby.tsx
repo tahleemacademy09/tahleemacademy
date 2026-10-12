@@ -3,6 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { Video, VideoOff, Mic, MicOff, Settings, ChevronDown, ChevronUp, Users } from "lucide-react";
+import LessonPicker from "./LessonPicker";
 
 interface ClassLobbyProps {
   subject: any;
@@ -37,6 +38,9 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
   const [muteOnEntry,      setMuteOnEntry]      = useState(true);
   const [chatEnabled,      setChatEnabled]      = useState(true);
   const [handRaiseEnabled, setHandRaiseEnabled] = useState(true);
+  // Which lesson this class covers — saved on the live session so its recording/materials show under that lesson.
+  const [lessonId, setLessonId] = useState<string | null>(null);
+  useEffect(() => { if (session?.lesson_id) setLessonId(prev => prev ?? session.lesson_id); }, [session?.lesson_id]);
 
   useEffect(() => {
     // FIX BUG 3: Track the stream in a local variable so it can be stopped
@@ -132,6 +136,7 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
     onStartClass({
       waiting_room_enabled: waitingRoom, chat_enabled: chatEnabled,
       hand_raise_enabled: handRaiseEnabled, class_settings: { mute_on_entry: muteOnEntry },
+      ...(lessonId ? { lesson_id: lessonId } : {}),
     }, { micOn, cameraOn });
   };
 
@@ -268,6 +273,16 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
             <span style={{ fontSize: 13, color: isLive ? "#86efac" : "rgba(255,255,255,.5)" }}>
               {isLive ? "Class is live — join now!" : "Class hasn't started yet — you can join early"}
             </span>
+          </div>
+        )}
+
+        {/* Teacher: which lesson is this class? (optional) */}
+        {isPrivileged && subject?.id && (
+          <div style={{ borderRadius: 16, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)", padding: "12px 16px", marginBottom: 10 }}>
+            <p style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,.45)", letterSpacing: .6, textTransform: "uppercase" as const, margin: "0 0 8px" }}>
+              {t("Lesson for this class (optional)", "درس هذه الحصة (اختياري)")}
+            </p>
+            <LessonPicker subjectId={subject.id} value={lessonId} onChange={setLessonId} />
           </div>
         )}
 

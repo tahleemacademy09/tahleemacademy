@@ -24,6 +24,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import MaterialsViewer from "./MaterialsViewer";
+import LessonPicker from "./LessonPicker";
 import HtmlMaterialEditor from "./HtmlMaterialEditor";
 import { useStaffTermId, useViewingTermId } from "@/hooks/useCurrentTermId";
 import {
@@ -99,6 +100,7 @@ const emptyForm = {
   title: "", title_ar: "", description: "",
   material_type: "Document" as MaterialType,
   is_downloadable: true,
+  lesson_id: null as string | null,
 };
 
 function MaterialManager({ subjectId }: { subjectId?: string }) {
@@ -167,6 +169,7 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
       title: m.title || "", title_ar: m.title_ar || "", description: m.description || "",
       material_type: (m.material_type as MaterialType) || "Document",
       is_downloadable: m.is_downloadable ?? true,
+      lesson_id: m.lesson_id ?? null,
     });
     setSelectedFiles([]);
     setShowForm(true);
@@ -217,6 +220,7 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
             file_url: path,
             file_size: file.size,
             is_downloadable: form.is_downloadable,
+            lesson_id: form.lesson_id || null,
             uploaded_by: user.id,
             sort_order: materials.length + ok,
           };
@@ -261,6 +265,7 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
         file_url,
         file_size,
         is_downloadable: form.is_downloadable,
+        lesson_id: form.lesson_id || null,
         uploaded_by: user.id,
         sort_order: editing?.sort_order ?? materials.length,
       };
@@ -434,6 +439,10 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
               )}
               <label style={fieldLabel}>{t("Description", "الوصف")}
                 <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} style={{ ...fieldInput, resize: "vertical" as const }} />
+              </label>
+
+              <label style={fieldLabel}>{t("Lesson (optional)", "الدرس (اختياري)")}
+                <LessonPicker subjectId={subjectId} value={form.lesson_id} onChange={id => setForm(f => ({ ...f, lesson_id: id }))} style={fieldInput} />
               </label>
 
               {selectedFiles.length <= 1 && (

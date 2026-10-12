@@ -27,6 +27,7 @@ import SubjectRecordings    from "@/components/classroom/SubjectRecordings";
 import TeacherRecitation    from "./TeacherRecitation";
 import TeacherHifdhReview   from "./TeacherHifdhReview";
 import TeacherPublicClasses from "./TeacherPublicClasses";
+import LessonPicker from "@/components/classroom/LessonPicker";
 
 const G    = "#0f2d1f";
 const GM   = "#1a4731";
@@ -107,7 +108,7 @@ function LiveClassesTab({user,t}:any){
   const [loading,setLoading]=useState(true);
   const [starting,setStarting]=useState<string|null>(null);
   const [showForm,setShowForm]=useState(false);
-  const [form,setForm]=useState({subject_id:"",topic:"",date:"",time:"",duration:60});
+  const [form,setForm]=useState({subject_id:"",lesson_id:"" as string,topic:"",date:"",time:"",duration:60});
   const [saving,setSaving]=useState(false);
 
   const load=useCallback(async()=>{
@@ -150,8 +151,8 @@ function LiveClassesTab({user,t}:any){
     if(!form.subject_id||!user)return;
     setSaving(true);
     const at=form.date&&form.time?`${form.date}T${form.time}:00`:new Date().toISOString();
-    const {error}=await supabase.from("live_sessions").insert({subject_id:form.subject_id,host_id:user.id,status:"scheduled",scheduled_at:at,topic:form.topic||null,duration_minutes:form.duration});
-    if(!error){toast({title:t("Scheduled!","تمت الجدولة!")});setShowForm(false);setForm({subject_id:"",topic:"",date:"",time:"",duration:60});load();}
+    const {error}=await supabase.from("live_sessions").insert({subject_id:form.subject_id,host_id:user.id,status:"scheduled",scheduled_at:at,topic:form.topic||null,duration_minutes:form.duration,lesson_id:form.lesson_id||null});
+    if(!error){toast({title:t("Scheduled!","تمت الجدولة!")});setShowForm(false);setForm({subject_id:"",lesson_id:"",topic:"",date:"",time:"",duration:60});load();}
     setSaving(false);
   };
 
@@ -296,6 +297,7 @@ function LiveClassesTab({user,t}:any){
               </div>
               <div><p style={{fontSize:11,color:"#6b7280",marginBottom:3}}>{t("Date","التاريخ")}</p><input type="date" style={inp} value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))}/></div>
               <div><p style={{fontSize:11,color:"#6b7280",marginBottom:3}}>{t("Time","الوقت")}</p><input type="time" style={inp} value={form.time} onChange={e=>setForm(f=>({...f,time:e.target.value}))}/></div>
+              <div><p style={{fontSize:11,color:"#6b7280",marginBottom:3}}>{t("Lesson (optional)","الدرس (اختياري)")}</p><LessonPicker subjectId={form.subject_id} value={form.lesson_id} onChange={id=>setForm(f=>({...f,lesson_id:id||""}))}/></div>
               <div><p style={{fontSize:11,color:"#6b7280",marginBottom:3}}>{t("Topic","الموضوع")}</p><input style={inp} value={form.topic} placeholder={t("Optional…","اختياري…")} onChange={e=>setForm(f=>({...f,topic:e.target.value}))}/></div>
               <div><p style={{fontSize:11,color:"#6b7280",marginBottom:3}}>{t("Duration (min)","المدة")}</p><input type="number" style={inp} value={form.duration} min={15} max={300} onChange={e=>setForm(f=>({...f,duration:+e.target.value}))}/></div>
             </div>

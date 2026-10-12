@@ -3807,6 +3807,7 @@ export type Database = {
           total_participants: number | null
           waiting_room_enabled: boolean | null
           whiteboard_enabled: boolean | null
+          lesson_id: string | null
         }
         Insert: {
           actual_end_time?: string | null
@@ -3842,6 +3843,7 @@ export type Database = {
           total_participants?: number | null
           waiting_room_enabled?: boolean | null
           whiteboard_enabled?: boolean | null
+          lesson_id?: string | null
         }
         Update: {
           actual_end_time?: string | null
@@ -3877,6 +3879,7 @@ export type Database = {
           total_participants?: number | null
           waiting_room_enabled?: boolean | null
           whiteboard_enabled?: boolean | null
+          lesson_id?: string | null
         }
         Relationships: [
           {
@@ -7073,6 +7076,7 @@ export type Database = {
           updated_at: string
           uploaded_by: string
           visibility: string
+          lesson_id: string | null
         }
         Insert: {
           content?: string | null
@@ -7095,6 +7099,7 @@ export type Database = {
           updated_at?: string
           uploaded_by: string
           visibility?: string
+          lesson_id?: string | null
         }
         Update: {
           content?: string | null
@@ -7117,6 +7122,7 @@ export type Database = {
           updated_at?: string
           uploaded_by?: string
           visibility?: string
+          lesson_id?: string | null
         }
         Relationships: [
           {

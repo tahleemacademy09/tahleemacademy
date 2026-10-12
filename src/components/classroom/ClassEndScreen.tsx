@@ -4,6 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle, Play, BookOpen, Home } from "lucide-react";
+import { useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "@/hooks/use-toast";
+import LessonPicker from "./LessonPicker";
 
 interface ClassEndScreenProps {
   subject: any;
@@ -18,6 +22,16 @@ const ClassEndScreen = ({ subject, session, duration, participantCount, onGoToDa
   const { t } = useLanguage();
   const { hasRole } = useAuth();
   const isPrivileged = hasRole("admin") || hasRole("teacher");
+  const [lessonId, setLessonId] = useState<string | null>((session as any)?.lesson_id ?? null);
+
+  const saveLesson = async (id: string | null) => {
+    const prev = lessonId;
+    setLessonId(id);
+    if (!(session as any)?.id) return;
+    const { error } = await supabase.from("live_sessions").update({ lesson_id: id } as any).eq("id", (session as any).id);
+    if (error) { setLessonId(prev); toast({ title: t("Couldn't save lesson", "تعذر حفظ الدرس"), variant: "destructive" }); }
+    else toast({ title: id ? t("Class linked to lesson ✅", "تم ربط الحصة بالدرس ✅") : t("Lesson link removed", "تمت إزالة الربط") });
+  };
 
   const formatDuration = (sec: number) => {
     const h = Math.floor(sec / 3600);
@@ -61,6 +75,14 @@ const ClassEndScreen = ({ subject, session, duration, participantCount, onGoToDa
               <p className="font-bold">{participantCount}</p>
             </div>
           </div>
+
+          {isPrivileged && (session as any)?.id && subject?.id && (
+            <div className="text-left space-y-1">
+              <p className="text-xs font-medium text-muted-foreground">{t("Which lesson did this class cover?", "ما الدرس الذي غطّته هذه الحصة؟")}</p>
+              <LessonPicker subjectId={subject.id} value={lessonId} onChange={saveLesson} />
+              <p className="text-[11px] text-muted-foreground">{t("The recording and materials will appear under that lesson for students.", "سيظهر التسجيل والمواد تحت هذا الدرس للطلاب.")}</p>
+            </div>
+          )}
 
           <p className="text-xs text-muted-foreground">
             {t("Recording will be available shortly", "التسجيل سيكون متاحاً قريباً")}

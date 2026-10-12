@@ -36,6 +36,7 @@ import SubjectAnnouncements from "@/components/classroom/SubjectAnnouncements";
 import LiveClassFilePanel   from "@/components/classroom/LiveClassFilePanel";
 import { useLiveClass }     from "@/contexts/LiveClassContext";
 import { useAcademicLevels, getLevelConfig } from "@/hooks/useAcademicLevels";
+import LessonPicker from "@/components/classroom/LessonPicker";
 
 /* ── brand tokens ── */
 const G    = "#0f2d1f";
@@ -142,7 +143,7 @@ const LiveClassManagement = () => {
   const [showFilters,  setShowFilters]  = useState(false);
   const [now,          setNow]          = useState(new Date());
   const [form, setForm] = useState({
-    subject_id:"", topic:"", topic_ar:"", scheduled_at:"",
+    subject_id:"", lesson_id:"" as string, topic:"", topic_ar:"", scheduled_at:"",
     duration_minutes:60, recording_enabled:true, chat_enabled:true,
     hand_raise_enabled:true, waiting_room_enabled:true,
     homework:"", homework_ar:"", quiz_code:"",
@@ -247,15 +248,15 @@ const LiveClassManagement = () => {
     return (cfg as any)?.color || "#6b7280";
   };
 
-  const resetForm = () => setForm({subject_id:"",topic:"",topic_ar:"",scheduled_at:"",duration_minutes:60,recording_enabled:true,chat_enabled:true,hand_raise_enabled:true,waiting_room_enabled:true,homework:"",homework_ar:"",quiz_code:""});
+  const resetForm = () => setForm({subject_id:"",lesson_id:"",topic:"",topic_ar:"",scheduled_at:"",duration_minutes:60,recording_enabled:true,chat_enabled:true,hand_raise_enabled:true,waiting_room_enabled:true,homework:"",homework_ar:"",quiz_code:""});
   const openCreate = () => { resetForm(); setEditingSession(null); setShowCreate(true); };
   const openEdit   = (s:any) => {
-    setForm({subject_id:s.subject_id||"",topic:s.topic||"",topic_ar:s.topic_ar||"",scheduled_at:s.scheduled_at?s.scheduled_at.slice(0,16):"",duration_minutes:s.duration_minutes||60,recording_enabled:s.recording_enabled??true,chat_enabled:s.chat_enabled??true,hand_raise_enabled:s.hand_raise_enabled??true,waiting_room_enabled:s.waiting_room_enabled??true,homework:s.homework||"",homework_ar:s.homework_ar||"",quiz_code:s.quiz_code||""});
+    setForm({subject_id:s.subject_id||"",lesson_id:s.lesson_id||"",topic:s.topic||"",topic_ar:s.topic_ar||"",scheduled_at:s.scheduled_at?s.scheduled_at.slice(0,16):"",duration_minutes:s.duration_minutes||60,recording_enabled:s.recording_enabled??true,chat_enabled:s.chat_enabled??true,hand_raise_enabled:s.hand_raise_enabled??true,waiting_room_enabled:s.waiting_room_enabled??true,homework:s.homework||"",homework_ar:s.homework_ar||"",quiz_code:s.quiz_code||""});
     setEditingSession(s); setShowCreate(true);
   };
   const handleSave = async () => {
     if (!form.subject_id) { toast({title:"Please select a subject",variant:"destructive"}); return; }
-    const payload = {subject_id:form.subject_id,topic:form.topic||null,topic_ar:form.topic_ar||null,scheduled_at:form.scheduled_at||null,duration_minutes:form.duration_minutes,recording_enabled:form.recording_enabled,chat_enabled:form.chat_enabled,hand_raise_enabled:form.hand_raise_enabled,waiting_room_enabled:form.waiting_room_enabled,homework:form.homework||null,homework_ar:form.homework_ar||null,quiz_code:form.quiz_code||null};
+    const payload = {subject_id:form.subject_id,lesson_id:form.lesson_id||null,topic:form.topic||null,topic_ar:form.topic_ar||null,scheduled_at:form.scheduled_at||null,duration_minutes:form.duration_minutes,recording_enabled:form.recording_enabled,chat_enabled:form.chat_enabled,hand_raise_enabled:form.hand_raise_enabled,waiting_room_enabled:form.waiting_room_enabled,homework:form.homework||null,homework_ar:form.homework_ar||null,quiz_code:form.quiz_code||null};
     if (editingSession) {
       await supabase.from("live_sessions").update(payload).eq("id",editingSession.id);
       toast({title:"Class updated"});
@@ -1264,6 +1265,10 @@ const CreateEditDialog = ({open,onClose,form,setForm,subjects,editing,onSave}:an
             <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Select a subject"/></SelectTrigger>
             <SelectContent>{subjects.map((s:any)=><SelectItem key={s.id} value={s.id}>{s.title}</SelectItem>)}</SelectContent>
           </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold">Lesson (optional)</Label>
+          <LessonPicker subjectId={form.subject_id} value={form.lesson_id} onChange={id=>setForm((f:any)=>({...f,lesson_id:id||""}))} style={{height:40,fontSize:13}}/>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">

@@ -11,6 +11,7 @@ import { useState } from "react";
 import { toast } from "@/hooks/use-toast";
 import { useRecordingPlayer } from "@/contexts/RecordingPlayerContext";
 import { useViewingTermId } from "@/hooks/useCurrentTermId";
+import LessonPicker, { useSubjectLessons } from "./LessonPicker";
 
 const G      = "#0f2d1f";
 const GM     = "#1a4731";
@@ -18,7 +19,7 @@ const GOLD   = "#c9a84c";
 const BORDER = "rgba(15,45,31,0.1)";
 
 const SubjectRecordings = ({ subjectId, programId }: { subjectId: string; programId?: string | null }) => {
-  const { t }             = useLanguage();
+  const { t, language }     = useLanguage();
   const { user, hasRole, profile } = useAuth();
   const qc                = useQueryClient();
   const player            = useRecordingPlayer();
@@ -41,7 +42,7 @@ const SubjectRecordings = ({ subjectId, programId }: { subjectId: string; progra
     setResolvedUrls(prev => ({ ...prev, ...resolved }));
   };
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm]   = useState({ teacher_name: "", duration_seconds: 0 });
+  const [editForm, setEditForm]   = useState<{ teacher_name: string; duration_seconds: number; lesson_id: string | null }>({ teacher_name: "", duration_seconds: 0, lesson_id: null });
   const [deleteId, setDeleteId]   = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
@@ -132,6 +133,23 @@ const SubjectRecordings = ({ subjectId, programId }: { subjectId: string; progra
     }
   }
 
+  // Which lesson (if any) each recording's class was linked to
+  const { data: lessonList = [] } = useSubjectLessons(subjectId);
+  const lessonTitleById: Record<string, string> = {};
+  (lessonList as any[]).forEach(l => { lessonTitleById[l.id] = (language === "ar" && l.title_ar) ? l.title_ar : l.title; });
+  const sessionIdsKey = (recordings || []).map((r: any) => r.session_id).filter(Boolean).join(",");
+  const { data: sessionLessonMap = {} } = useQuery({
+    queryKey: ["rec-session-lessons", subjectId, sessionIdsKey],
+    enabled: !!sessionIdsKey,
+    queryFn: async () => {
+      const ids = Array.from(new Set((recordings || []).map((r: any) => r.session_id).filter(Boolean)));
+      const { data } = await supabase.from("live_sessions").select("id,lesson_id").in("id", ids as string[]);
+      const map: Record<string, string | null> = {};
+      (data || []).forEach((x: any) => { map[x.id] = x.lesson_id ?? null; });
+      return map;
+    },
+  });
+
   const { data: progressMap } = useQuery({
     queryKey: ["recording-progress", subjectId, user?.id],
     enabled: !!user && !!recordings?.length,
@@ -148,13 +166,22 @@ const SubjectRecordings = ({ subjectId, programId }: { subjectId: string; progra
   });
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, teacher_name, duration_seconds }: any) => {
+    mutationFn: async ({ id, teacher_name, duration_seconds, lesson_id }: any) => {
       const { error } = await supabase.from("session_recordings")
         .update({ teacher_name, duration_seconds }).eq("id", id);
       if (error) throw error;
+      // Link the recording's class to a lesson (recording + materials then show under that lesson)
+      const rec: any = recordings?.find((r: any) => r.id === id);
+      if (rec?.session_id) {
+        const { error: lErr } = await supabase.from("live_sessions")
+          .update({ lesson_id: lesson_id || null } as any).eq("id", rec.session_id);
+        if (lErr) throw lErr;
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["recordings", subjectId] });
+      qc.invalidateQueries({ queryKey: ["rec-session-lessons"] });
+      qc.invalidateQueries({ queryKey: ["lesson-class-resources"] });
       setEditingId(null);
       toast({ title: t("Updated", "تم التحديث") });
     },
@@ -291,6 +318,15 @@ const SubjectRecordings = ({ subjectId, programId }: { subjectId: string; progra
                   <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: "#7a9e88" }}>
                     <User style={{ width: 12, height: 12 }} />{r.teacher_name || "Teacher"}
                   </span>
+                  {sessionLessonMap[r.session_id] && lessonTitleById[sessionLessonMap[r.session_id] as string] ? (
+                    <span style={{ fontSize: 10, fontWeight: 800, borderRadius: 20, padding: "2px 9px", color: GM, background: "#ecfdf5", border: "1px solid #a7f3d0", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      📖 {lessonTitleById[sessionLessonMap[r.session_id] as string]}
+                    </span>
+                  ) : isPrivileged ? (
+                    <span style={{ fontSize: 10, fontWeight: 700, borderRadius: 20, padding: "2px 9px", color: "#9ca3af", background: "#f3f4f6" }}>
+                      {t("No lesson linked", "غير مرتبط بدرس")}
+                    </span>
+                  ) : null}
                   {r.duration_seconds != null && r.duration_seconds > 0 && (
                     <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: "#7a9e88" }}>
                       <Clock style={{ width: 12, height: 12 }} />{fmtDur(r.duration_seconds)}
@@ -352,7 +388,7 @@ const SubjectRecordings = ({ subjectId, programId }: { subjectId: string; progra
 
                 {isPrivileged && (
                   <div style={{ display: "flex", gap: 4 }}>
-                    <button onClick={() => { setEditForm({ teacher_name: r.teacher_name || "", duration_seconds: r.duration_seconds || 0 }); setEditingId(r.id); }}
+                    <button onClick={() => { setEditForm({ teacher_name: r.teacher_name || "", duration_seconds: r.duration_seconds || 0, lesson_id: (sessionLessonMap as any)[r.session_id] ?? null }); setEditingId(r.id); }}
                       style={{ flex: 1, padding: "6px 0", borderRadius: 8, background: "#f8fafb", border: `1px solid ${BORDER}`, color: "#7a9e88", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
                       <Edit style={{ width: 13, height: 13 }} />
                     </button>
@@ -382,6 +418,10 @@ const SubjectRecordings = ({ subjectId, programId }: { subjectId: string; progra
               <label style={{ fontSize: 12, fontWeight: 600, color: G, display: "block", marginBottom: 4 }}>{t("Duration (seconds)", "\u0627\u0644\u0645\u062f\u0629 (\u062b\u0648\u0627\u0646\u064a)")}</label>
               <input type="number" value={editForm.duration_seconds} onChange={e => setEditForm({ ...editForm, duration_seconds: parseInt(e.target.value) || 0 })}
                 style={{ width: "100%", padding: "9px 12px", borderRadius: 10, border: `1px solid ${BORDER}`, outline: "none", fontSize: 14, color: G, boxSizing: "border-box" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 600, color: G, display: "block", marginBottom: 4 }}>{t("Lesson this class covered", "الدرس الذي غطّته هذه الحصة")}</label>
+              <LessonPicker subjectId={subjectId} value={editForm.lesson_id} onChange={id => setEditForm(f => ({ ...f, lesson_id: id }))} />
             </div>
             <button onClick={() => editingId && updateMutation.mutate({ id: editingId, ...editForm })} disabled={updateMutation.isPending}
               style={{ width: "100%", padding: "11px 0", borderRadius: 12, background: G, border: "none", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>

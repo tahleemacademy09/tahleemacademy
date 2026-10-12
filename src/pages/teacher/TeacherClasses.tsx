@@ -33,6 +33,7 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { format, isFuture, isPast, isToday, differenceInMinutes } from "date-fns";
 import { useLiveClass } from "@/contexts/LiveClassContext";
+import LessonPicker from "@/components/classroom/LessonPicker";
 
 // ── Reminder helpers ──────────────────────────────────────────────────────────
 
@@ -114,7 +115,7 @@ const TeacherClasses = () => {
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({
-    subject_id: "", topic: "", topic_ar: "", date: "", time: "", duration: 60, is_recorded: true,
+    subject_id: "", lesson_id: "" as string, topic: "", topic_ar: "", date: "", time: "", duration: 60, is_recorded: true,
   });
 
   // Track which sessions have reminders set (sessionId → true/false)
@@ -274,13 +275,14 @@ const TeacherClasses = () => {
       topic_ar: form.topic_ar,
       session_number: sessionNum,
       is_recorded: form.is_recorded,
+      lesson_id: form.lesson_id || null,
     } as any);
 
     if (!error) {
       await supabase.from("subjects").update({ next_session_at: scheduledAt } as any).eq("id", form.subject_id);
       toast({ title: t("Class scheduled!", "تم جدولة الحصة!") });
       setShowCreate(false);
-      setForm({ subject_id: "", topic: "", topic_ar: "", date: "", time: "", duration: 60, is_recorded: true });
+      setForm({ subject_id: "", lesson_id: "" as string, topic: "", topic_ar: "", date: "", time: "", duration: 60, is_recorded: true });
       fetchSessions();
     }
   };
@@ -486,6 +488,10 @@ const TeacherClasses = () => {
                         {subjects.map(s => <SelectItem key={s.id} value={s.id}>{s.title}</SelectItem>)}
                       </SelectContent>
                     </Select>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-bold text-slate-700">{t("Lesson (optional)", "الدرس (اختياري)")}</Label>
+                    <LessonPicker subjectId={form.subject_id} value={form.lesson_id} onChange={id => setForm(f => ({ ...f, lesson_id: id || "" }))} style={{ height: 44 }} />
                   </div>
                   <div><Label className="text-sm font-bold text-slate-700">{t("Topic (English)", "الموضوع")}</Label><Input className="h-11 rounded-lg" value={form.topic} onChange={e => setForm({ ...form, topic: e.target.value })} /></div>
                   <div><Label className="text-sm font-bold text-slate-700">{t("Topic (Arabic)", "الموضوع (عربي)")}</Label><Input dir="rtl" className="h-11 rounded-lg" value={form.topic_ar} onChange={e => setForm({ ...form, topic_ar: e.target.value })} /></div>

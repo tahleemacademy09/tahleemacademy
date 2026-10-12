@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import SubjectRecordings    from "@/components/classroom/SubjectRecordings";
 import SubjectMaterials     from "@/components/classroom/SubjectMaterials";
+import LessonClassResources from "@/components/classroom/LessonClassResources";
 import SubjectSyllabus      from "@/components/classroom/SubjectSyllabus";
 import SubjectAssignments   from "@/components/classroom/SubjectAssignments";
 import SubjectAnnouncements from "@/components/classroom/SubjectAnnouncements";
@@ -757,6 +758,9 @@ const LearningHub = ({ defaultTab = "courses", scope }: Props) => {
                 </div>
               )}
             </div>
+
+            {/* Recording + materials of the live class that taught this lesson (hidden when none) */}
+            <LessonClassResources lessonId={activeL.id} />
 
             <div style={{ padding:"14px 20px", borderTop:"1px solid #f0f4f0", background:"#fff", flexShrink:0 }}>
               {!done.has(activeL.id) ? (
