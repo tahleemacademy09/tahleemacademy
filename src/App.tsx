@@ -12,6 +12,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
+import WithSignOut from "@/components/layout/WithSignOut";
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import PublicLayout from "@/components/layout/PublicLayout";
@@ -238,7 +239,7 @@ const AppMain = () => (
 
                   <Route path="/admin-secure" element={<AdminLogin />} />
 
-                  <Route path="/auth/register-continue" element={<RegisterContinue />} />
+                  <Route path="/auth/register-continue" element={<WithSignOut><RegisterContinue /></WithSignOut>} />
                   <Route path="/auth/callback"          element={<AuthCallback />} />
                   <Route path="/registration-complete"  element={<RegistrationComplete />} />
 
@@ -316,12 +317,12 @@ const AppMain = () => (
                   <Route path="/student/exam-verify/:examId"         element={<ProtectedRoute><PreExamVerification /></ProtectedRoute>} />
                   <Route path="/student/exam/:attemptId"             element={<ProtectedRoute><ExamTaking /></ProtectedRoute>} />
                   <Route path="/student/results/:attemptId"          element={<ProtectedRoute><ExamResults /></ProtectedRoute>} />
-                  <Route path="/onboarding"                          element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />
-                  <Route path="/student/recitation-test"             element={<ProtectedRoute><RecitationTest /></ProtectedRoute>} />
+                  <Route path="/onboarding"                          element={<ProtectedRoute><WithSignOut><Onboarding /></WithSignOut></ProtectedRoute>} />
+                  <Route path="/student/recitation-test"             element={<ProtectedRoute><WithSignOut><RecitationTest /></WithSignOut></ProtectedRoute>} />
                   <Route path="/student/entrance-exam/:attemptId"    element={<ProtectedRoute><EntranceExamTaking /></ProtectedRoute>} />
-                  <Route path="/student/entrance-exam"              element={<ProtectedRoute><EntranceExamResume /></ProtectedRoute>} />
-                  <Route path="/student/entrance-results/:attemptId" element={<ProtectedRoute><EntranceResults /></ProtectedRoute>} />
-                  <Route path="/student/awaiting-level"              element={<ProtectedRoute><TasjeelAwaitingLevel /></ProtectedRoute>} />
+                  <Route path="/student/entrance-exam"              element={<ProtectedRoute><WithSignOut><EntranceExamResume /></WithSignOut></ProtectedRoute>} />
+                  <Route path="/student/entrance-results/:attemptId" element={<ProtectedRoute><WithSignOut><EntranceResults /></WithSignOut></ProtectedRoute>} />
+                  <Route path="/student/awaiting-level"              element={<ProtectedRoute><WithSignOut><TasjeelAwaitingLevel /></WithSignOut></ProtectedRoute>} />
                   <Route path="/student/recitation-session"          element={<ProtectedRoute><RecitationSession /></ProtectedRoute>} />
 
                   {/* ── Teacher routes ── */}
