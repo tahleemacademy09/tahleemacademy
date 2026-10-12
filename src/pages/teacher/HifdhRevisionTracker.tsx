@@ -397,7 +397,11 @@ export default function HifdhRevisionTracker() {
         };
       });
       const lMap: Record<string,DailyLog> = {};
-      (logs||[]).forEach((l:any) => { lMap[l.student_id] = l; });
+      // One log per active programme per day — prefer a completed one.
+      const better = (a:any, b:any) => // true if a should replace b
+        (!!a.completed !== !!b.completed) ? !!a.completed
+        : String(a.created_at||"") > String(b.created_at||"");
+      (logs||[]).forEach((l:any) => { const prev = lMap[l.student_id]; if (!prev || better(l, prev)) lMap[l.student_id] = l; });
 
       setStudents(profiles.map((p:any) => ({
         ...p,

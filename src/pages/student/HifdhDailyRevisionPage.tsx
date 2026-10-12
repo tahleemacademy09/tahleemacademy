@@ -1431,6 +1431,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // Seconds from a previous partial recording — timer starts here on "Continue Recording"
   const [carryOverSecs, setCarryOverSecs] = useState(0);
   const [submitting,   setSubmitting]  = useState(false);
+  const [saveError,    setSaveError]   = useState<string|null>(null);
+  const lastSubmitArgs = useRef<[number, number|null, number|null]>([0,null,null]);
   const [audioUrl,     setAudioUrl]    = useState<string|null>(null);
   const [lastTranscript, setLastTranscript] = useState("");
   // Seconds from tapping Stop to the result appearing (shown on the result grid).
@@ -1611,7 +1613,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             // Preserve teacher override so it isn't wiped by re-attempts
             ...(existingTeacherOverride ? { teacher_override: existingTeacherOverride } : {}),
           },
-        }, { onConflict: "student_id,log_date" });
+        }, { onConflict: "student_id,assignment_id,log_date" });
         if (error) console.warn("[HifdhDaily] interim save error:", error);
       } catch(e) { console.warn("[HifdhDaily] interim save exception:", e); }
     });
@@ -2351,7 +2353,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   };
 
   const submitSession=async(tScore:number, sA:number|null=null, sB:number|null=null)=>{
-    setSubmitting(true);
+    setSubmitting(true); setSaveError(null);
+    lastSubmitArgs.current=[tScore,sA,sB];
     const recAvg = recitationScore ?? (pageResults.length?Math.round(pageResults.reduce((s,r)=>s+r.score,0)/pageResults.length):tScore);
     const overall=Math.round((recAvg+tScore)/2);
     setFinalScore(overall);
@@ -2365,8 +2368,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     const existingTeacherOverride = todayLog?.session_data?.teacher_override;
     const finalAvgScore = existingTeacherOverride ? existingTeacherOverride.score : overall;
 
+    let saved=false;
     try {
-      await (supabase as any).from("hifdh_daily_logs").upsert({
+      const {error:saveErr} = await (supabase as any).from("hifdh_daily_logs").upsert({
         student_id:userId, assignment_id:assignment?.id,
         log_date:today, pages_revised:todayPages.length,
         avg_score:finalAvgScore, duration_secs:dur, completed:true,
@@ -2402,7 +2406,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           // Preserve teacher override so it isn't wiped on re-completion
           ...(existingTeacherOverride ? { teacher_override: existingTeacherOverride } : {}),
         },
-      },{onConflict:"student_id,log_date"});
+      },{onConflict:"student_id,assignment_id,log_date"});
+
+      // Never show "complete" if the session wasn't actually stored.
+      if(saveErr){
+        console.error("[HifdhDaily] final save failed:", saveErr);
+        setSaveError(saveErr.message || "Could not save your session.");
+        setSubmitting(false);
+        return;
+      }
+      saved=true;
 
       // Notify admins and assigned teacher
       const {data:pf}=await (supabase as any).from("profiles").select("full_name,assigned_teacher_id").eq("user_id",userId).maybeSingle();
@@ -2422,7 +2435,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       if(assignedTeacher && !adminIds.includes(assignedTeacher)){
         await (supabase as any).from("notifications").insert({...notifBase,user_id:assignedTeacher,link:"/teacher/hifdh"});
       }
-    } catch(e){ console.error("Submit error",e); }
+    } catch(e){
+      console.error("Submit error",e);
+      if(!saved){ setSaveError("Could not save your session."); setSubmitting(false); return; }
+    }
     setSubmitting(false); setPhase("complete");
   };
 
@@ -3575,6 +3591,21 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 submitting
                   ?<div style={{display:"flex",justifyContent:"center",padding:20}}>
                     <Loader2 size={28} color={GOLD} style={{animation:"spin .9s linear infinite"}}/>
+                  </div>
+                  :saveError
+                  ?<div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    <div style={{padding:"12px",borderRadius:12,background:"#FEF2F2",
+                      border:"1px solid #FECACA",textAlign:"center"}}>
+                      <p style={{margin:0,fontSize:12,color:"#B91C1C",fontWeight:700,lineHeight:1.6}}>
+                        ⚠️ Your session could not be saved. Please check your connection and try again.
+                      </p>
+                    </div>
+                    <button onClick={()=>submitSession(...lastSubmitArgs.current)}
+                      style={{padding:"14px",borderRadius:14,border:"none",cursor:"pointer",
+                        background:`linear-gradient(135deg,${AMBER},#b45309)`,color:W,
+                        fontWeight:900,fontSize:14,fontFamily:"inherit"}}>
+                      🔁 Try saving again
+                    </button>
                   </div>
                   :<div style={{padding:"12px",borderRadius:12,background:"#F0FDF4",
                     border:"1px solid #BBF7D0",textAlign:"center"}}>

@@ -699,7 +699,7 @@ export default function HifdhDailySession({ assignment, userId, onClose }: Props
         completed:     true,
         session_data:  sessionData,
         updated_at:    new Date().toISOString(),
-      }, { onConflict: "student_id,log_date" });
+      }, { onConflict: "student_id,assignment_id,log_date" });
 
     // Notify teacher/admin
     try {

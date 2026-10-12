@@ -413,7 +413,13 @@ export default function HifdhRevisionTracker() {
       });
 
       const lMap: Record<string,DailyLog> = {};
+      // A student can have one log per active programme per day — prefer a completed one.
+      const better = (a:any, b:any) => // true if a should replace b
+        (!!a.completed !== !!b.completed) ? !!a.completed
+        : String(a.created_at||"") > String(b.created_at||"");
       (logs||[]).forEach((l:any) => {
+        const prev = lMap[l.student_id];
+        if (prev && !better(l, prev)) return;
         lMap[l.student_id] = {
           ...l,
           session_data: typeof l.session_data === "string"
