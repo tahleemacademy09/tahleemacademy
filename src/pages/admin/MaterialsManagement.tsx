@@ -539,7 +539,7 @@ export default function MaterialsManagement() {
     level: "all" as Level,
     sort_order: 0,
     is_downloadable: true,
-    sync_allowed: false,
+    sync_allowed: true,
     session_id: null as string | null,
   });
 
@@ -695,7 +695,7 @@ export default function MaterialsManagement() {
     setFormData({
       title: "", title_ar: "", description: "",
       material_type: "PDF", content: "", file_url: "", file_size: 0,
-      level: "all", sort_order: 0, is_downloadable: true, sync_allowed: false, session_id: null,
+      level: "all", sort_order: 0, is_downloadable: true, sync_allowed: true, session_id: null,
     });
     setEditingId(null);
     setShowForm(false);
