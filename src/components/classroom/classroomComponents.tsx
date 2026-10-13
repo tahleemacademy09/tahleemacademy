@@ -4118,7 +4118,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   const[cFile,setCFile]=useState<File|null>(null);
   const[cPosting,setCPosting]=useState(false);
   const[cVisibility,setCVisibility]=useState<"all"|"staff">("all");
-  const[cSyncAllowed,setCSyncAllowed]=useState(false); // admin-only: authorize this material for live sync at upload time
+  const[cSyncAllowed,setCSyncAllowed]=useState(true); // admin-only: authorize this material for live sync at upload time (default ON)
   // ── Assignments section (teacher/admin manage, students view/submit) ────
   const[assignmentsOpen,setAssignmentsOpen]=useState(false);
   const[cError,setCError]=useState("");
@@ -4433,7 +4433,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   };
 
   const resetComposer=()=>{
-    setCTitle("");setCBody("");setCFile(null);setCError("");setCVisibility("all");setCSyncAllowed(false);
+    setCTitle("");setCBody("");setCFile(null);setCError("");setCVisibility("all");setCSyncAllowed(true);
     if(fileInputRef.current)fileInputRef.current.value="";
   };
 
