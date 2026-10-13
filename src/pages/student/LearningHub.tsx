@@ -441,7 +441,7 @@ const LearningHub = ({ defaultTab = "courses", scope }: Props) => {
   // Auto-join classroom when arriving from a class_ring push notification
   // (?autoJoin=true&subject=<id> deep-link set by schedule-class-reminders)
   useEffect(() => {
-    const autoJoin  = searchParams.get("autoJoin") === "true";
+    const autoJoin  = searchParams.get("autoJoin") === "true" || searchParams.get("join") === "1";
     const subjectId = searchParams.get("subject");
     if (!autoJoin || !subjectId || !allSubjects?.length) return;
     const found = allSubjects.find((s: any) => s.id === subjectId);
@@ -451,6 +451,7 @@ const LearningHub = ({ defaultTab = "courses", scope }: Props) => {
     // Remove the autoJoin param so a refresh doesn't re-trigger
     const next = new URLSearchParams(searchParams);
     next.delete("autoJoin");
+    next.delete("join");
     setSearchParams(next, { replace: true });
   }, [allSubjects, searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
