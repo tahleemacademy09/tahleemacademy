@@ -27,6 +27,7 @@ import { LiveClassProvider } from "@/contexts/LiveClassContext";
 import RecordingPlayerProvider from "@/contexts/RecordingPlayerContext";
 const GlobalClassroomOverlay = lazy(() => import("./components/classroom/GlobalClassroomOverlay"));
 import AppNotifications from "@/components/AppNotifications";
+import ClassRingListener from "@/components/ClassRingListener";
 import { useAppStateRestore } from "@/hooks/useAppStateRestore";
 import { usePageViewTracking } from "@/hooks/usePageViewTracking";
 import { setNavigateRef } from "@/lib/nativeApp";
@@ -213,6 +214,7 @@ const AppMain = () => (
             <LiveClassProvider>
             <ErrorBoundary>
               <AppNotifications />
+              <ClassRingListener />
               <IdleWarningModal />
               <UpdateAvailableBanner />
               <AppUpdateBanner />
