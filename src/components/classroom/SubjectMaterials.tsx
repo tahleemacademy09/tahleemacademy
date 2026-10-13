@@ -590,7 +590,9 @@ function MaterialViewer({ subjectId }: { subjectId?: string }) {
       const { data } = await supabase
         .from("subject_materials").select("*")
         .eq("subject_id", subjectId)
-        .eq("term_id", viewingTermId)
+        // Lessons aren't term-scoped, so a material linked to a lesson must
+        // show here for every student, whichever term they're viewing.
+        .or(`term_id.eq.${viewingTermId},lesson_id.not.is.null`)
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: false });
       setMaterials(data || []);
