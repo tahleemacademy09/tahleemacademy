@@ -293,12 +293,14 @@ function RecordingMiniPlayer({ recordings, materialId }: { recordings: any[]; ma
    FILE VIEWER — onMinimize added alongside onClose
 ══════════════════════════════════════════════════════════════ */
 function FileViewer({
-  mat, kind, recordings = [], onClose, onMinimize, prefetchedUrl,
+  mat, kind, recordings = [], onClose, onMinimize, prefetchedUrl, isFull = false, onToggleFull,
 }: {
   mat: any; kind: FileKind; recordings?: any[];
   onClose: () => void;
   onMinimize: () => void;
   prefetchedUrl?: string;
+  isFull?: boolean;
+  onToggleFull?: () => void;
 }) {
   const materialId = mat.id || "";
   // If a pre-fetched URL was passed in, start ready immediately — no loading spinner
@@ -379,6 +381,18 @@ function FileViewer({
                 <Download size={12} style={{ marginRight:3 }}/><span className="hidden sm:inline">Save</span>
               </Button>
             </a>
+          )}
+
+          {/* ── FULL SCREEN toggle ── */}
+          {onToggleFull && (
+            <button
+              onClick={onToggleFull}
+              title={isFull ? "Exit full screen" : "Full screen"}
+              aria-label={isFull ? "Exit full screen" : "Full screen"}
+              style={{ width:30,height:30,borderRadius:8,border:"1px solid #e5e7eb",background:"#f8fafc",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s" }}
+            >
+              {isFull ? <Minimize2 size={14} color="#064E3B"/> : <Maximize2 size={14} color="#064E3B"/>}
+            </button>
           )}
 
           {/* ── MINIMIZE — keeps viewer alive in tray ── */}
@@ -479,6 +493,32 @@ function ViewerPanel({
   entry: OpenEntry; isActive: boolean;
   onMinimize: () => void; onClose: () => void; recordings: any[];
 }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [isFull, setIsFull] = useState(false);
+
+  // Keep state in sync if the browser exits native fullscreen (Esc / back gesture).
+  useEffect(() => {
+    const onFs = () => { if (!document.fullscreenElement) setIsFull(false); };
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+  // Minimizing / hiding the panel always leaves full screen.
+  useEffect(() => {
+    if (!isActive && isFull) {
+      setIsFull(false);
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    }
+  }, [isActive, isFull]);
+
+  const toggleFull = () => {
+    const next = !isFull;
+    setIsFull(next); // CSS full-viewport fill works everywhere (incl. iOS)
+    try {
+      if (next) boxRef.current?.requestFullscreen?.().catch(() => {}); // true browser full screen where supported
+      else if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    } catch { /* CSS fallback already applied */ }
+  };
+
   return (
     /* Use opacity + visibility instead of display:none to keep the DOM
        mounted (so video/audio elements don't reset on restore). */
@@ -492,10 +532,12 @@ function ViewerPanel({
       transition:"opacity .22s, background .22s",
     }}>
       <div
+        ref={boxRef}
         onClick={e => e.stopPropagation()}
         style={{
-          width:"min(96vw,900px)", height:"min(92vh,800px)",
-          background:"#fff", borderRadius:16, overflow:"hidden",
+          width: isFull ? "100vw" : "min(96vw,900px)",
+          height: isFull ? "100dvh" : "min(92vh,800px)",
+          background:"#fff", borderRadius: isFull ? 0 : 16, overflow:"hidden",
           display:"flex", flexDirection:"column",
           boxShadow:"0 24px 60px rgba(0,0,0,0.3)",
           animation: isActive ? "mv-slideUp .2s ease" : "none",
@@ -508,6 +550,8 @@ function ViewerPanel({
           onMinimize={onMinimize}
           onClose={onClose}
           prefetchedUrl={entry.prefetchedUrl}
+          isFull={isFull}
+          onToggleFull={toggleFull}
         />
       </div>
     </div>
