@@ -420,7 +420,8 @@ const LevelAssignment = () => {
       suggestLevel(calcFinal(student.exam_score, student.rec_ai_score, student.rec_teacher_score));
     setAssigning(student.user_id);
     try {
-      await supabase.from("profiles").update({ level: lvl, course_level: lvl } as any).eq("user_id", student.user_id);
+      const { error: profErr } = await supabase.from("profiles").update({ level: lvl, course_level: lvl } as any).eq("user_id", student.user_id);
+      if (profErr) throw profErr; // stop here — don't mark the pipeline completed / notify if the level didn't save
       const { data: recRow } = await (supabase as any).from("recitation_tests").select("id").eq("user_id", student.user_id).maybeSingle();
       if (recRow) {
         await (supabase as any).from("recitation_tests").update({

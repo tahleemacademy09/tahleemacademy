@@ -389,7 +389,7 @@ export default function StudentManagement() {
     if (!editUser) return;
     setSaving(true);
     try {
-      await supabase.from("profiles").update({
+      const { error: profErr } = await supabase.from("profiles").update({
         full_name:    editForm.full_name,
         full_name_ar: editForm.full_name_ar || null,
         level:        editForm.level        || null,
@@ -400,6 +400,7 @@ export default function StudentManagement() {
         allow_general_access: editForm.allow_general_access ?? false,
         updated_at:   new Date().toISOString(),
       }).eq("user_id", editUser.user_id);
+      if (profErr) throw profErr;
 
       const desiredRoles: string[] = editForm.roles || ["student"];
       const currentRoles: string[] = editUser.roles || ["student"];
