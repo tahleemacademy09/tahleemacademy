@@ -10,6 +10,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRevisionAssignedCount } from "@/hooks/useRevisionAssignedCount";
+import { useSupportUnreadCount } from "@/hooks/useSupportUnreadCount";
 import { useAppRelease } from "@/hooks/useAppRelease";
 import { useImpersonation } from "@/hooks/useImpersonation";
 import { usePaymentAccess } from "@/hooks/usePaymentAccess";
@@ -135,6 +136,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   // "Cannot access before initialization" on every render, for every role,
   // since adminNav's array literal evaluates immediately, top-to-bottom.
   const [gradingBadge, setGradingBadge] = useState(0);
+  // ── Help / Support badge (student + admin): threads waiting to be read ──
+  const supportBadge = useSupportUnreadCount(role);
   useEffect(() => {
     if (!user || role !== "admin") return;
     (async () => {
@@ -257,7 +260,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
         match:["/student/transcripts","/student/report-card","/student/attendance"] },
     ]},
     { type:"link", to:"/student/majlis",     icon:MessageCircle, label:t("Al-Majlis","المجلس") },
-    { type:"link", to:"/student/support",    icon:LifeBuoy,      label:t("Al-Musā'adah","المساعدة") },
+    { type:"link", to:"/student/support",    icon:LifeBuoy,      label:t("Al-Musā'adah","المساعدة"), badge: supportBadge },
     { type:"link", to:"/student/profile",    icon:UserCircle,    label:t("Al-I'dādāt","الإعدادات") },
   ];
 
@@ -331,7 +334,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { type:"group", key:"comms", icon:MessageCircle, label:t("Communication","التواصل"), children:[
       { to:"/admin/majlis-moderation", icon:MessageCircle, label:t("Al-Majlis","المجلس") },
       { to:"/admin/notifications",     icon:Bell,          label:t("Notifications","الإشعارات") },
-      { to:"/admin/support-tickets",   icon:LifeBuoy,      label:t("Support Tickets","تذاكر الدعم") },
+      { to:"/admin/support-tickets",   icon:LifeBuoy,      label:t("Support Tickets","تذاكر الدعم"), badge: supportBadge },
     ]},
 
     // 9 ── Al-Musābaqah (updated route) ─────────────────────────

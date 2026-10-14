@@ -98,6 +98,9 @@ class ScreenSharePlugin : Plugin() {
             val k = minOf(1f, 1600f / maxOf(sw, sh))
             val cw = ((sw * k).toInt() / 2) * 2
             val ch = ((sh * k).toInt() / 2) * 2
+            newRoom.localParticipant.screenShareTrackCaptureDefaults = LocalVideoTrackOptions(
+                captureParams = VideoCaptureParameter(width = cw, height = ch, maxFps = 15)
+            )
             try {
                 newRoom.connect(url, token)
                 newRoom.localParticipant.setScreenShareEnabled(true, data)

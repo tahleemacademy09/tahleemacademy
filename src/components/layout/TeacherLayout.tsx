@@ -17,8 +17,9 @@ import {
   LogOut, Globe, Menu, X, Settings, Trophy, MessageSquare,
   CheckSquare, Mic, BookOpen, GraduationCap, BarChart2,
   Megaphone, Calendar, ChevronDown,
-  ChevronRight, Bell, Clock, Trash2, Smartphone, Star,
+  ChevronRight, Bell, Clock, Trash2, Smartphone, Star, LifeBuoy,
 } from "lucide-react";
+import { useSupportUnreadCount } from "@/hooks/useSupportUnreadCount";
 import NotificationPermissionBanner from "@/components/NotificationPermissionBanner";
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -106,6 +107,10 @@ const buildNav = (t: (a: string, b: string) => string, badges: Record<string, nu
     type: "link",
     link: { to: "/teacher/majlis", icon: MessageSquare, label: t("Al-Majlis", "المجلس") },
   },
+  {
+    type: "link",
+    link: { to: "/teacher/support", icon: LifeBuoy, label: t("Help & Support", "المساعدة والدعم"), badge: badges.support },
+  },
 
   // ── Settings ─────────────────────────────────────────────────────
   {
@@ -130,6 +135,7 @@ const TeacherLayout = () => {
   const [gradingBadge,  setGradingBadge]  = useState(0);
   const [hifdhBadge,    setHifdhBadge]    = useState(0);
   const [unreadNotifs,  setUnreadNotifs]  = useState(0);
+  const supportBadge = useSupportUnreadCount("teacher"); // student messages waiting in Help & Support
   const [showNotifs,    setShowNotifs]    = useState(false);
   const [notifList,     setNotifList]     = useState<any[]>([]);
 
@@ -299,7 +305,7 @@ const TeacherLayout = () => {
     })();
   }, [user, location.pathname]);
 
-  const badges = { grading: gradingBadge, hifdh: hifdhBadge };
+  const badges = { grading: gradingBadge, hifdh: hifdhBadge, support: supportBadge };
   const navItems = buildNav(t, badges);
   const toggle = (key: string) => setExpanded(p => ({ ...p, [key]: !p[key] }));
 

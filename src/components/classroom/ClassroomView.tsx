@@ -365,14 +365,31 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     setChatOpen(true);setSideTab("chat");setChatUnread(0);
     if(peer)chatStore.requestOpen(peer);
   };
+  // Incoming class-chat message shown as a banner over the class (✕ to dismiss); it also stays in the chat box.
+  const[chatBanner,setChatBanner]=useState<{id:string;name:string;text:string}|null>(null);
+  const chatOpenRef=useRef(false);
+  useEffect(()=>{chatOpenRef.current=chatOpen;if(chatOpen)setChatBanner(null);},[chatOpen]);
+  useEffect(()=>{
+    if(!chatBanner)return;
+    const tm=setTimeout(()=>setChatBanner(cur=>cur&&cur.id===chatBanner.id?null:cur),10000);
+    return()=>clearTimeout(tm);
+  },[chatBanner]);
   useEffect(()=>{
     if(!sessionId||phase!=="live")return;
     const ch=supabase.channel(`chat-unread-${sessionId}`)
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"class_chat_messages",filter:`session_id=eq.${sessionId}`},
-        (payload:any)=>{
+        async(payload:any)=>{
           if(payload.new?.sender_id===user?.id)return;
           if(payload.new?.type==="system")return;
-          setChatUnread(n=>{const panelClosed=!chatOpen;return panelClosed?n+1:0;});
+          setChatUnread(n=>{const panelClosed=!chatOpenRef.current;return panelClosed?n+1:0;});
+          if(chatOpenRef.current||payload.new?.type==="reaction")return;
+          const m=payload.new||{};
+          let nm="Class chat";
+          try{
+            const{data}=await supabase.from("profiles").select("full_name").eq("user_id",m.sender_id).maybeSingle();
+            if(data?.full_name)nm=data.full_name;
+          }catch{}
+          if(!chatOpenRef.current)setChatBanner({id:String(m.id||Date.now()),name:nm,text:String(m.message||"")});
         })
       .subscribe();
     return()=>{supabase.removeChannel(ch);};
@@ -594,15 +611,28 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     return()=>clearInterval(iv);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[subject.id,isPrivileged]);
+  // AUTO-JOIN (opened from a ring / "Join" link): this used to try exactly ONCE, 120ms after mount. If the
+  // user profile or the first render wasn't ready at that instant it silently did nothing — and since the lobby
+  // is hidden for auto-join, the screen looked like you were in class while you were not connected, until you
+  // opened the lobby and pressed Join Class yourself. Now it keeps trying until everything is ready, shows
+  // "Connecting…" meanwhile, and falls back to the normal lobby after 6s so you can always join by hand.
+  const autoTriedRef=useRef(false);
+  const[autoJoinGaveUp,setAutoJoinGaveUp]=useState(false);
   useEffect(()=>{
-    if(!autoJoin)return;
+    if(!autoJoin||autoTriedRef.current)return;
+    if(phase!=="lobby"||loading||error||!user)return;
     const t=setTimeout(()=>{
-      if(phase==="lobby"&&!loading&&!error){
-        connect(isPrivileged?"start_session":"join");
-      }
+      if(autoTriedRef.current)return;
+      autoTriedRef.current=true;
+      connect(isPrivileged?"start_session":"join");
     },120);
     return()=>clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[autoJoin,phase,loading,error,user?.id]);
+  useEffect(()=>{
+    if(!autoJoin)return;
+    const g=setTimeout(()=>setAutoJoinGaveUp(true),6000);
+    return()=>clearTimeout(g);
   },[autoJoin]);
   useEffect(()=>{const check=async()=>{const{data}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).eq("status","live").maybeSingle();if(data){setSessionInfo(data);setSessionId(data.id);setIsSessionLive(true);}else setIsSessionLive(false);};check();const iv=setInterval(check,4000);return()=>clearInterval(iv);},[subject.id]);
 
@@ -1258,8 +1288,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       </div>
     </div>
   );
-  if(phase==="lobby"&&!loading&&!error&&!autoJoin)return<ClassLobby subject={subject} session={sessionInfo} onStartClass={(s:any,media?:any)=>connect("start_session",s,media)} onJoinClass={(media?:any)=>connect("join",undefined,media)} onBack={onLeave} isLive={isSessionLive}/>;
-  if(loading)return(
+  if(phase==="lobby"&&!loading&&!error&&(!autoJoin||autoJoinGaveUp))return<ClassLobby subject={subject} session={sessionInfo} onStartClass={(s:any,media?:any)=>connect("start_session",s,media)} onJoinClass={(media?:any)=>connect("join",undefined,media)} onBack={onLeave} isLive={isSessionLive}/>;
+  if(loading||(phase==="lobby"&&autoJoin&&!autoJoinGaveUp&&!error))return(
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100dvh",background:"#202124"}}>
       <style>{CSS}</style>
       <div style={{textAlign:"center"}}>
@@ -1421,6 +1451,18 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <RoomToContextBridge />
           <PrivateChatListener/>
           <ChatPopupLayer sessionId={sessionId||""} onOpen={openChatFrom}/>
+          {chatBanner&&!chatOpen&&(
+            <div style={{position:"fixed",top:"calc(env(safe-area-inset-top, 0px) + 64px)",left:12,right:12,zIndex:70,display:"flex",justifyContent:"center",pointerEvents:"none"}}>
+              <div onClick={()=>{setChatBanner(null);openChatFrom();}} style={{pointerEvents:"auto",maxWidth:420,width:"100%",display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",borderRadius:14,background:"rgba(32,33,36,.94)",backdropFilter:"blur(10px)",border:"1px solid rgba(255,255,255,.12)",boxShadow:"0 8px 28px rgba(0,0,0,.5)",cursor:"pointer"}}>
+                <span style={{fontSize:18,lineHeight:"22px"}}>💬</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:12,fontWeight:700,color:"#8ab4f8",fontFamily:"system-ui,sans-serif",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{chatBanner.name}</div>
+                  <div style={{fontSize:13,color:"#fff",fontFamily:"system-ui,sans-serif",lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:3,WebkitBoxOrient:"vertical" as any,overflow:"hidden",wordBreak:"break-word"}}>{chatBanner.text}</div>
+                </div>
+                <button onClick={(e:any)=>{e.stopPropagation();setChatBanner(null);}} aria-label="Dismiss" style={{width:26,height:26,flexShrink:0,borderRadius:"50%",border:"none",background:"rgba(255,255,255,.14)",color:"#fff",cursor:"pointer",fontSize:14,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+              </div>
+            </div>
+          )}
           <MediaAutoPublish lobbyMic={lobbyMic} lobbyCam={lobbyCam} isFirstJoin={isFirstJoinPropRef.current}/>
           <MicKeepAliveFromContext />
           <WbSyncBridge wbOpen={wbOpen} isTeacher={isPrivileged}/>
