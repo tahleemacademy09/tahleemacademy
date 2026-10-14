@@ -42,7 +42,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { logger } from "@/lib/logger";
 
 export const isNative = () => Capacitor.isNativePlatform();
-const CLASS_CHANNEL_ID = "tahleem_class";
+// v2: the old "tahleem_class" channel was created pointing at a missing adhan.wav and
+// stays silent forever on devices that already have it (channels are immutable).
+const CLASS_CHANNEL_ID = "tahleem_class_v2";
 const SUPPORT_REPLY_ACTION_TYPE = "support_ticket_reply";
 
 async function setupNotificationChannels() {
@@ -186,6 +188,10 @@ async function registerPushToken() {
       const title = notification.title ?? data.title ?? "Tahleem Academy";
       const body  = notification.body  ?? data.message ?? "";
       const url   = data.url ?? null;
+
+      // Ring pushes are shown natively by RingMessagingService (ring sound, full-screen
+      // call screen, Join button). Showing them here too = a second silent notification.
+      if (["class_ring", "admin_class_ring", "ring"].includes(data.type)) return;
 
       const isSupportTicket = data.type === "support_ticket";
       const ticketId = isSupportTicket ? extractTicketId(url) : null;

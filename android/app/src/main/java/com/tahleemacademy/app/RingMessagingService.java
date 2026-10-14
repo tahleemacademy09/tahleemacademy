@@ -24,7 +24,8 @@ import java.util.Map;
 
 public class RingMessagingService extends FirebaseMessagingService {
 
-    private static final String RING_CHANNEL_ID    = "tahleem_ring";
+    private static final String RING_CHANNEL_ID    = "tahleem_ring_v2"; // v2: old "tahleem_ring" may exist on devices as a SILENT channel (Android never lets you change a channel's sound after creation)
+    private static final String LEGACY_RING_CHANNEL = "tahleem_ring";
     private static final String GENERAL_CHANNEL_ID = "tahleem_general";
     private static final String GROUP_KEY           = "com.tahleemacademy.app.NOTIFICATIONS";
     private static final int    SUMMARY_ID          = 0;
@@ -32,11 +33,16 @@ public class RingMessagingService extends FirebaseMessagingService {
 
     @Override
     public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
-        PushNotificationsPlugin.sendRemoteMessage(remoteMessage);
-
         Map<String, String> data = remoteMessage.getData();
         String type = data.get("type");
-        if ("class_ring".equals(type) || "admin_class_ring".equals(type) || "ring".equals(type)) {
+        boolean isRing = "class_ring".equals(type) || "admin_class_ring".equals(type) || "ring".equals(type);
+
+        // Ring pushes are fully handled natively. Do NOT forward them to the JS
+        // layer, or nativeApp.ts shows a second, silent "normal" notification
+        // (and replays it when the app next opens).
+        if (!isRing) PushNotificationsPlugin.sendRemoteMessage(remoteMessage);
+
+        if (isRing) {
             showRing(data);
         } else if (data.get("title") != null || data.get("message") != null) {
             showGeneral(data);
@@ -99,6 +105,7 @@ public class RingMessagingService extends FirebaseMessagingService {
 
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm != null) {
+            nm.deleteNotificationChannel(LEGACY_RING_CHANNEL);
             NotificationChannel channel = new NotificationChannel(
                 RING_CHANNEL_ID, "Class Ring", NotificationManager.IMPORTANCE_HIGH);
             channel.setDescription("Rings when a live class starts");
@@ -147,9 +154,12 @@ public class RingMessagingService extends FirebaseMessagingService {
             .setVibrate(vibrationPattern)
             .addAction(0, "\ud83d\udcf9 Join Now", joinActionPendingIntent)
             .addAction(0, "Dismiss", dismissActionPendingIntent)
+            .setTimeoutAfter(60_000)
             .setAutoCancel(true);
 
-        if (nm != null) nm.notify(requestCode, builder.build());
+        Notification ringNotification = builder.build();
+        ringNotification.flags |= Notification.FLAG_INSISTENT; // keep ringing until acted on (pre-Android 8 / some OEMs)
+        if (nm != null) nm.notify(requestCode, ringNotification);
     }
 
     private void showGeneral(Map<String, String> data) {

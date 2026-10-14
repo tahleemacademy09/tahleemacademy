@@ -18,7 +18,7 @@
             </intent-filter>
         </service>
         <service android:name="com.capacitorjs.plugins.pushnotifications.MessagingService" tools:node="remove" />
-        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="tahleem_class" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="tahleem_class_v2" />
         <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_icon" />
         <receiver android:name="io.capawesome.capacitorjs.plugins.foregroundservice.NotificationActionBroadcastReceiver" />
         <receiver android:name=".DismissRingReceiver" android:exported="false" />
