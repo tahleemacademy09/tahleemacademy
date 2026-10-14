@@ -42,45 +42,90 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
   const [lessonId, setLessonId] = useState<string | null>(null);
   useEffect(() => { if (session?.lesson_id) setLessonId(prev => prev ?? session.lesson_id); }, [session?.lesson_id]);
 
+  // LOBBY = NOTHING HAPPENS UNTIL YOU PRESS JOIN.
+  // Previously the lobby opened the real camera + microphone the moment it appeared (tracks "disabled" but
+  // the device was already captured), which made phones switch to call-audio mode and show the mic/camera
+  // indicators — it felt like you had already joined. Now nothing is touched on screen load: the camera and
+  // mic are only opened if YOU tap their buttons (for the preview / level meter), and they are released
+  // again when you switch them off, press Join/Start, or leave.
+  const camStreamRef = useRef<MediaStream | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const audioCtxRef  = useRef<AudioContext | null>(null);
+  const stopStream = (ref: { current: MediaStream | null }) => {
+    ref.current?.getTracks().forEach(t => t.stop());
+    ref.current = null;
+  };
+  const stopAllMedia = () => {
+    stopStream(camStreamRef);
+    stopStream(micStreamRef);
+    try { audioCtxRef.current?.close(); } catch {}
+    audioCtxRef.current = null;
+    setStream(null);
+  };
+
+  // Device counts only (no permission prompt, no capture)
   useEffect(() => {
-    // FIX BUG 3: Track the stream in a local variable so it can be stopped
-    // on unexpected unmount (e.g. nav away, error) — prevents camera LED staying on.
-    let localStream: MediaStream | null = null;
+    navigator.mediaDevices?.enumerateDevices?.().then(devs => setDevices({
+      cameras: devs.filter(d => d.kind === "videoinput"),
+      mics:    devs.filter(d => d.kind === "audioinput"),
+    })).catch(() => {});
+    return () => stopAllMedia();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    // BUG FIX: this rAF loop had no cancellation — every time the lobby
-    // unmounted (Start Class, Join Class, or Back), the tick() loop kept
-    // scheduling itself forever, calling setMicLevel on a stale/unmounted
-    // component indefinitely. Over multiple lobby visits in one session,
-    // these accumulate as orphaned loops silently burning CPU/battery.
-    let rafId: number | null = null;
+  // Camera preview — only while the camera button is ON
+  useEffect(() => {
     let cancelled = false;
-
-    const init = async () => {
+    if (!cameraOn) {
+      stopStream(camStreamRef);
+      if (videoRef.current) videoRef.current.srcObject = null;
+      return;
+    }
+    (async () => {
       try {
         const s = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
-          audio: { echoCancellation: true, noiseSuppression: true },
         });
         if (cancelled) { s.getTracks().forEach(t => t.stop()); return; }
-        localStream = s;
+        camStreamRef.current = s;
         setStream(s);
-        s.getVideoTracks().forEach(t => { t.enabled = false; });
-        s.getAudioTracks().forEach(t => { t.enabled = false; });
         if (videoRef.current) videoRef.current.srcObject = s;
-        const devs = await navigator.mediaDevices.enumerateDevices();
-        setDevices({
-          cameras: devs.filter(d => d.kind === "videoinput"),
-          mics:    devs.filter(d => d.kind === "audioinput"),
-        });
+      } catch (err: any) {
+        setCameraOn(false);
+        if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError") {
+          setPermError("Camera/microphone access was denied. Please allow permissions in your browser settings and reload.");
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [cameraOn]);
+
+  // Mic level meter — only while the mic button is ON
+  useEffect(() => {
+    let cancelled = false;
+    let rafId: number | null = null;
+    if (!micOn) {
+      stopStream(micStreamRef);
+      try { audioCtxRef.current?.close(); } catch {}
+      audioCtxRef.current = null;
+      setMicLevel(0);
+      return;
+    }
+    (async () => {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        if (cancelled) { s.getTracks().forEach(t => t.stop()); return; }
+        micStreamRef.current = s;
         try {
           const ctx = new ((window as any).AudioContext || (window as any).webkitAudioContext)();
+          audioCtxRef.current = ctx;
           await ctx.resume();
           const analyser = ctx.createAnalyser();
           analyser.fftSize = 256;
-          ctx.createMediaStreamSource(s).connect(analyser);
+          ctx.createMediaStreamSource(s).connect(analyser); // analysis only — never connected to the speakers
           const data = new Uint8Array(analyser.frequencyBinCount);
           const tick = () => {
-            if (cancelled) return; // stop scheduling once unmounted
+            if (cancelled) return;
             analyser.getByteFrequencyData(data);
             setMicLevel(data.reduce((a, b) => a + b, 0) / data.length / 128);
             rafId = requestAnimationFrame(tick);
@@ -88,33 +133,14 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
           tick();
         } catch {}
       } catch (err: any) {
-        // FIX BUG 9: Surface permission denial instead of silently swallowing it
+        setMicOn(false);
         if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError") {
           setPermError("Camera/microphone access was denied. Please allow permissions in your browser settings and reload.");
         }
       }
-    };
-    init();
-
-    // FIX BUG 3: Cleanup — stop all tracks if user navigates away without clicking Start/Join.
-    // Without this, the camera LED stays on and the mic is held open indefinitely.
-    return () => {
-      cancelled = true;
-      if (rafId !== null) cancelAnimationFrame(rafId);
-      localStream?.getTracks().forEach(t => t.stop());
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!stream) return;
-    stream.getVideoTracks().forEach(t => { t.enabled = cameraOn; });
-    if (videoRef.current) videoRef.current.srcObject = stream;
-  }, [cameraOn, stream]);
-
-  useEffect(() => {
-    if (!stream) return;
-    stream.getAudioTracks().forEach(t => { t.enabled = micOn; });
-  }, [micOn, stream]);
+    })();
+    return () => { cancelled = true; if (rafId !== null) cancelAnimationFrame(rafId); };
+  }, [micOn]);
 
   useEffect(() => {
     if (!session?.id) return;
@@ -132,7 +158,7 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
   }, [session?.id]);
 
   const handleStart = () => {
-    stream?.getTracks().forEach(t => t.stop());
+    stopAllMedia();
     onStartClass({
       waiting_room_enabled: waitingRoom, chat_enabled: chatEnabled,
       hand_raise_enabled: handRaiseEnabled, class_settings: { mute_on_entry: muteOnEntry },
@@ -141,7 +167,7 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
   };
 
   const handleJoin = () => {
-    stream?.getTracks().forEach(t => t.stop());
+    stopAllMedia();
     onJoinClass({ micOn, cameraOn });
   };
 
@@ -351,7 +377,7 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
           {isPrivileged ? t("START LIVE CLASS", "\u0627\u0628\u062F\u0623 \u0627\u0644\u062F\u0631\u0633 \u0627\u0644\u0645\u0628\u0627\u0634\u0631") : isLive ? t("JOIN CLASS", "\u0627\u0646\u0636\u0645 \u0644\u0644\u0641\u0635\u0644") : t("JOIN EARLY", "\u0627\u0646\u0636\u0645 \u0645\u0628\u0643\u0631\u0627")}
         </button>
         <button onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,.3)", fontSize: 13, padding: "2px 0" }}>
-          \u2190 {t("Back", "\u0631\u062C\u0648\u0639")}
+          {"\u2190"} {t("Back", "\u0631\u062C\u0648\u0639")}
         </button>
       </div>
     </div>

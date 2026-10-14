@@ -2695,6 +2695,18 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
   const rawUrl=material.file_url||material.url||"";
   const matId=material.id||rawUrl;
 
+  // Keep the material BETWEEN the class header (top) and the control bar (bottom) so neither is covered.
+  // The insets are constant — the header/footer fade in and out over their own reserved strips — so the
+  // material never resizes (resizing the iframe was what made it flash when tapped).
+  const[headerH,setHeaderH]=useState(60);
+  useEffect(()=>{
+    const calc=()=>{const h=document.querySelector("[data-class-header]") as HTMLElement|null;if(h&&h.offsetHeight)setHeaderH(h.offsetHeight);};
+    calc();
+    window.addEventListener("resize",calc);
+    return()=>window.removeEventListener("resize",calc);
+  },[]);
+  const toggleChrome=()=>window.dispatchEvent(new Event("classroom:toggle-ui"));
+
   // ── resolve Supabase storage path to a working viewer URL ────────────────
   // Strategy: if rawUrl is already https:// (teacher pre-resolved it before
   // broadcasting) we skip all network calls entirely — zero latency.
@@ -2915,9 +2927,49 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
   },[kind,following,remoteActivity]);
 
 
+  // HTML lessons live in an iframe, so taps never reach this page — listen inside the lesson document.
+  useEffect(()=>{
+    if(kind!=="html"||htmlDoc==null)return;
+    const frame=iframeRef.current;
+    if(!frame)return;
+    let cleanup=()=>{};
+    const attach=()=>{
+      const doc=frame.contentDocument,win=frame.contentWindow;
+      if(!doc||!win)return;
+      let sx=0,sy=0;
+      const down=(e:any)=>{const t=e.touches?e.touches[0]:e;sx=t.clientX;sy=t.clientY;};
+      const click=(e:MouseEvent)=>{
+        if(Math.abs(e.clientX-sx)>10||Math.abs(e.clientY-sy)>10)return; // a drag/swipe, not a tap
+        const t=e.target as HTMLElement;
+        if(t?.closest?.("button,a,input,textarea,select,summary,[onclick],[role=button],[tabindex]"))return;
+        const x=e.clientX/Math.max(1,win.innerWidth),y=e.clientY/Math.max(1,win.innerHeight);
+        if(x>0.25&&x<0.75&&y>0.25&&y<0.75)toggleChrome();
+      };
+      doc.addEventListener("pointerdown",down,true);
+      doc.addEventListener("click",click);
+      cleanup=()=>{doc.removeEventListener("pointerdown",down,true);doc.removeEventListener("click",click);};
+    };
+    if(frame.contentDocument?.readyState==="complete")attach();
+    frame.addEventListener("load",attach);
+    return()=>{frame.removeEventListener("load",attach);cleanup();};
+  },[kind,htmlDoc]);
+
   // Use absolute positioning scoped to the video content area so footer is always visible
   const overlayStyle: React.CSSProperties = {
     position: "absolute", inset: 0, zIndex: 55,
+  };
+  const bodyInsets: React.CSSProperties = {
+    position: "absolute", left: 0, right: 0,
+    top: headerH,
+    bottom: `calc(${BAR_H}px + env(safe-area-inset-bottom, 0px))`,
+    display: "flex", flexDirection: "column", background: "#0f1117",
+  };
+  // Tap in the middle of the material → show/hide header + footer (ignores buttons/links/inputs)
+  const onMaterialTap=(e:any)=>{
+    if(e?.target?.closest?.("button,a,input,textarea,select,[data-tile-control]"))return;
+    const r=e.currentTarget.getBoundingClientRect();
+    const x=(e.clientX-r.left)/Math.max(1,r.width),y=(e.clientY-r.top)/Math.max(1,r.height);
+    if(x>0.25&&x<0.75&&y>0.25&&y<0.75)toggleChrome();
   };
 
   const renderContent=()=>{
@@ -2962,7 +3014,7 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
     // HTML lessons (syncActive/onSyncActivity on the teacher's copy,
     // following/remoteActivity on the student's copy).
     if(kind==="pdf")return(
-      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0,position:"relative"}}>
+      <div onClick={onMaterialTap} style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0,position:"relative"}}>
         <PDFViewer url={embedUrl} bg="#0f1117" materialId={matId}
           syncActive={isTeacher&&syncActive}
           onSyncScroll={(pct:number)=>onSyncActivity?.(0.5,0.5,pct,null,null,null)}
@@ -3014,7 +3066,11 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
   const resumeBadge=resume?.time||resume?.page;
 
   return(
-    <div style={{...overlayStyle,background:"#0f1117",display:"flex",flexDirection:"column"}}>
+    <div style={{...overlayStyle,background:"#0f1117"}}>
+      {/* Edge strips: tapping where the header/footer were (while hidden) brings them back */}
+      <div onClick={toggleChrome} style={{position:"absolute",top:0,left:0,right:0,height:headerH,zIndex:1}}/>
+      <div onClick={toggleChrome} style={{position:"absolute",bottom:0,left:0,right:0,height:`calc(${BAR_H}px + env(safe-area-inset-bottom, 0px))`,zIndex:1}}/>
+      <div style={{...bodyInsets,zIndex:2}}>
       {/* Viewer header */}
       <div style={{height:46,background:"#2d2e30",display:"flex",alignItems:"center",padding:"0 10px",gap:8,flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.08)"}}>
         {/* Minimize to pip */}
@@ -3064,6 +3120,7 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
         </button>
       </div>
       {renderContent()}
+      </div>
     </div>
   );
 };
@@ -5570,6 +5627,17 @@ export const ParticipantSignalIcon=({participant}:{participant:any})=>{
 // with a Provider — e.g. if ParticipantTile is ever reused somewhere else.
 export const ClassroomAdminContext = createContext<{isPrivileged:boolean;sessionId:string|null}>({isPrivileged:false,sessionId:null});
 
+const nameInitials=(n:string)=>{
+  const parts=String(n||"").replace(/\(.*?\)/g,"").trim().split(/\s+/).filter(Boolean);
+  if(!parts.length)return "?";
+  const a=Array.from(parts[0])[0]||"";
+  const b=parts.length>1?(Array.from(parts[parts.length-1])[0]||""):"";
+  return (a+b).toUpperCase();
+};
+const nameHue=(n:string)=>{
+  let h=0;for(const c of String(n||""))h=(h*31+c.charCodeAt(0))>>>0;
+  return `hsl(${h%360},38%,28%)`;
+};
 export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{participant:any;isLocal:boolean;size?:"normal"|"large"|"small";pip?:boolean})=>{
   const videoRef=useRef<HTMLVideoElement>(null);
   const attachedTrackRef=useRef<any>(null);
@@ -5830,21 +5898,20 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
         style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal&&!backCam?"scaleX(-1)":"none"}}
       />
 
-      {/* Camera-off profile: full-bleed photo filling all four corners of the tile */}
+      {/* Camera-off tile (WhatsApp style): round photo — or coloured initials when there is no
+          photo — with the person's NAME right below it. No grey silhouette placeholder. */}
       {!hasVideo&&(
-        <div style={{position:"absolute",inset:0,background:"#131313",overflow:"hidden"}}>
-          {avatarUrl&&!avatarImgError ? (
-            <img src={avatarUrl} alt="" onError={()=>setAvatarImgError(true)}
-              style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>
-          ) : (
-            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(160deg,#1f2c34 0%,#111b21 100%)"}}>
-              <svg viewBox="0 0 200 220" style={{width:avatarW,height:avatarW,maxWidth:220,maxHeight:240}} fill="none">
-                <circle cx="100" cy="72" r="52" fill="#8696a0"/>
-                <path d="M0 220 C0 148 36 128 100 128 C164 128 200 148 200 220Z" fill="#8696a0"/>
-              </svg>
-            </div>
-          )}
-          <div style={{position:"absolute",left:0,right:0,bottom:0,height:"38%",background:"linear-gradient(to top,rgba(0,0,0,.6),rgba(0,0,0,0))",pointerEvents:"none"}}/>
+        <div style={{position:"absolute",inset:0,overflow:"hidden",background:`linear-gradient(160deg,${nameHue(name)} 0%,#0b141a 100%)`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:pip?4:size==="small"?4:10,padding:pip?4:8,boxSizing:"border-box"}}>
+          <div style={{width:pip?"58%":size==="small"?"46%":"min(46%,120px)",aspectRatio:"1 / 1",borderRadius:"50%",overflow:"hidden",flexShrink:0,background:"rgba(255,255,255,.14)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 10px rgba(0,0,0,.35)"}}>
+            {avatarUrl&&!avatarImgError ? (
+              <img src={avatarUrl} alt="" onError={()=>setAvatarImgError(true)} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+            ) : (
+              <span style={{color:"#fff",fontWeight:600,fontFamily:"system-ui,sans-serif",fontSize:pip?18:size==="small"?16:"clamp(20px,6vw,40px)",lineHeight:1}}>{nameInitials(name)}</span>
+            )}
+          </div>
+          <span style={{maxWidth:"92%",textAlign:"center",color:"#fff",fontFamily:"system-ui,sans-serif",fontWeight:500,fontSize:pip?10:size==="small"?11:13,lineHeight:1.2,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical" as any,textShadow:"0 1px 3px rgba(0,0,0,.6)"}}>
+            {name}{isLocal?" (You)":""}
+          </span>
         </div>
       )}
 
@@ -5859,8 +5926,8 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
         </div>
       )}
 
-      {/* Name pill — bottom-left, only on non-pip tiles */}
-      {!pip&&(
+      {/* Name pill — bottom-left, only on non-pip tiles that are showing live video */}
+      {!pip&&hasVideo&&(
         <div style={{
           position:"absolute",bottom:10,left:10,
           display:"inline-flex",alignItems:"center",gap:5,
@@ -5897,6 +5964,20 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
             {name}{isLocal?" (You)":""}
           </span>
           <ParticipantSignalIcon participant={participant}/>
+        </div>
+      )}
+
+      {/* Camera off: small mic-state badge (the name is already centred under the avatar) */}
+      {!pip&&!hasVideo&&(
+        <div style={{position:"absolute",top:8,left:8,display:"inline-flex",alignItems:"center",gap:4,background:"rgba(0,0,0,.45)",borderRadius:12,padding:"3px 6px",pointerEvents:canModerate?"auto":"none"}}>
+          {canModerate ? (
+            <button data-tile-control="true" onClick={toggleTileMic} onPointerDown={(e:any)=>e.stopPropagation()} title={micEnabled?"Mute":"Unmute"}
+              style={{background:"none",border:"none",padding:0,margin:0,cursor:"pointer",display:"flex",alignItems:"center"}}>
+              {micEnabled?<Mic style={{width:12,height:12,color:"rgba(255,255,255,.9)"}}/>:<MicOff style={{width:12,height:12,color:"#ef4444"}}/>}
+            </button>
+          ) : micEnabled
+            ? <Mic style={{width:12,height:12,color:"rgba(255,255,255,.75)"}}/>
+            : <MicOff style={{width:12,height:12,color:"#ef4444"}}/>}
         </div>
       )}
 
@@ -6263,8 +6344,16 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
     if(!room)return;
     const update=()=>{let n=room.numParticipants||0;room.remoteParticipants?.forEach?.((p:any)=>{if(isScreenBot(p.identity))n--;});setLiveCount(Math.max(0,n));};
     update();
-    const onJoin=(p?:any)=>{update();if(isScreenBot(p?.identity))return;try{playJoinSound();}catch{}};
-    const onLeave=(p?:any)=>{update();if(isScreenBot(p?.identity))return;try{playLeaveSound();}catch{}};
+    const nameOf=(p?:any)=>{
+      let n=p?.name;
+      if(!n&&p?.metadata){try{n=JSON.parse(p.metadata)?.name;}catch{}}
+      return n||p?.identity||"Someone";
+    };
+    const onJoin=(p?:any)=>{update();if(isScreenBot(p?.identity))return;try{playJoinSound();}catch{}
+      // Metadata/name can land a moment after the connect event — wait briefly so the toast shows a real name.
+      setTimeout(()=>toast({title:`👋 ${nameOf(p)} joined`,duration:2500}),600);};
+    const onLeave=(p?:any)=>{update();if(isScreenBot(p?.identity))return;try{playLeaveSound();}catch{}
+      toast({title:`🚪 ${nameOf(p)} left`,duration:2500});};
     room.on(RoomEvent.ParticipantConnected,onJoin);room.on(RoomEvent.ParticipantDisconnected,onLeave);
     return()=>{room.off(RoomEvent.ParticipantConnected,onJoin);room.off(RoomEvent.ParticipantDisconnected,onLeave);};
   },[room]);
