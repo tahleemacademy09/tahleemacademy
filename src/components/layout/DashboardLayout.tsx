@@ -146,6 +146,22 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     })();
   }, [user, role, location.pathname]);
 
+  // ── Recitation Review badge (admin) ──────────────────────────
+  // Revision recordings nobody has reviewed yet — same rule the Recitation
+  // Review page uses for its "Pending" tab (no teacher review/override).
+  const [recitBadge, setRecitBadge] = useState(0);
+  useEffect(() => {
+    if (!user || role !== "admin") return;
+    (async () => {
+      const { data } = await (supabase as any)
+        .from("hifdh_daily_logs")
+        .select("id, review:session_data->review, override:session_data->teacher_override")
+        .order("log_date", { ascending: false })
+        .limit(300);
+      setRecitBadge((data || []).filter((l: any) => !l.review && !l.override).length);
+    })();
+  }, [user, role, location.pathname]);
+
   // ── Murājaʿah badge (student) ────────────────────────────────
   // Number of today's revision assignments still waiting. Re-checked on every
   // route change so it clears right after the student finishes the session.
@@ -299,7 +315,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
     // 6 ── Recitation & Ḥifẓ ────────────────────────────────────
     { type:"group", key:"recit", icon:Mic, label:t("Recitation & Ḥifẓ","التلاوة والحفظ"), children:[
-      { to:"/admin/recitation-review",        icon:Mic,      label:t("Recitation Review","مراجعة التلاوة") },
+      { to:"/admin/recitation-review",        icon:Mic,      label:t("Recitation Review","مراجعة التلاوة"), badge: recitBadge },
       { to:"/admin/quran-recitations",        icon:BookText, label:t("Qur'an Recitations","تسجيلات القرآن") },
       { to:"/admin/letter-audio",             icon:Sparkles, label:t("Letter Audio Library","مكتبة صوت الحروف") },
     ]},
@@ -518,21 +534,17 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     </span>
   );
 
-  // Student: a gold star marks a section with new notifications; staff keep the
-  // numbered pill. An explicit badge (e.g. Hifdh revision count) is always numeric.
+  // ONE badge per item, same look for every role: gold (n).
+  // A to-do count (e.g. revisions assigned, reviews pending) wins over the
+  // unread-notification count, because the notification is usually about the
+  // same thing — showing both made the item look like it had two different badges.
   const NotifMark = ({ count, explicit = 0 }: { count: number; explicit?: number }) => {
-    if (explicit <= 0 && count <= 0) return null;
+    const n = explicit > 0 ? explicit : count;
+    if (n <= 0) return null;
     return (
-      <span className="ms-auto flex shrink-0 items-center gap-1">
-        {explicit > 0 && <UnreadBadge count={explicit} />}
-        {count > 0 && (role === "student"
-          ? (
-            <span aria-label={`${count} new`} className="inline-flex shrink-0 items-center"
-              style={{ color: "#c9a84c", fontWeight: 800, fontSize: 12, lineHeight: 1 }}>
-              ({count > 99 ? "99+" : count})
-            </span>
-          )
-          : <UnreadBadge count={count} />)}
+      <span aria-label={`${n} waiting`} className="ms-auto inline-flex shrink-0 items-center"
+        style={{ color: "#c9a84c", fontWeight: 800, fontSize: 12, lineHeight: 1 }}>
+        ({n > 99 ? "99+" : n})
       </span>
     );
   };
@@ -623,8 +635,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
             const isActive = groupActive(item.children.flatMap((c: any) => c.match ?? [c.to]));
             const isOpen   = expanded[item.key] ?? isActive; // auto-expand if a child is active
             const groupLocked = levelPending && item.children.every((c: any) => LOCKED_ROUTES.has(c.to));
-            const groupExplicit = item.children.reduce((sum: number, c: any) => sum + (c.badge ?? 0), 0);
-            const groupUnreadCount = item.children.reduce((sum: number, c: any) => sum + unreadCountFor(c.to), 0);
+                        const groupUnreadCount = item.children.reduce((sum: number, c: any) => sum + ((c.badge ?? 0) > 0 ? c.badge : unreadCountFor(c.to)), 0);
             return (
               <div key={item.key}>
                 <button onClick={() => !groupLocked && toggle(item.key)}
@@ -638,7 +649,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   )}>
                   <item.icon className="h-4 w-4 shrink-0"/>
                   <span className="flex-1 text-left truncate">{item.label}</span>
-                  <NotifMark explicit={groupExplicit} count={groupUnreadCount} />
+                  <NotifMark count={groupUnreadCount} />
                   {isOpen
                     ? <ChevronDown className="h-3.5 w-3.5 opacity-50 shrink-0"/>
                     : <ChevronRight className="h-3.5 w-3.5 opacity-50 shrink-0"/>}

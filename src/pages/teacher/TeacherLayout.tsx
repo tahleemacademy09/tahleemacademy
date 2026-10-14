@@ -95,7 +95,7 @@ const buildNav = (t: (a: string, b: string) => string, badges: Record<string, nu
       label: t("Recitation & Ḥifẓ", "التلاوة والحفظ"),
       children: [
         { to: "/teacher/recitation", icon: Mic,    label: t("My Recitations", "تسجيلات التلاوة") },
-        { to: "/teacher/hifdh",      icon: BookOpen,label: t("Ḥifẓ Review",   "مراجعة الحفظ") },
+        { to: "/teacher/hifdh",      icon: BookOpen,label: t("Ḥifẓ Review",   "مراجعة الحفظ"), badge: badges.hifdh },
       ],
     },
   },
@@ -129,6 +129,7 @@ const TeacherLayout = () => {
   const [isMobile,      setIsMobile]      = useState(false);
   const [expanded,      setExpanded]      = useState<Record<string, boolean>>({});
   const [gradingBadge,  setGradingBadge]  = useState(0);
+  const [hifdhBadge,    setHifdhBadge]    = useState(0);
   const [unreadNotifs,  setUnreadNotifs]  = useState(0);
   const [showNotifs,    setShowNotifs]    = useState(false);
   const [notifList,     setNotifList]     = useState<any[]>([]);
@@ -274,7 +275,32 @@ const TeacherLayout = () => {
     await supabase.from("notifications").delete().eq("user_id", user.id);
   };
 
-  const badges = { grading: gradingBadge };
+  // ── Ḥifẓ Review badge: this teacher's students' revision recordings not yet reviewed ──
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      let ids: string[] = [];
+      const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
+      const subIds = (subs || []).map((s: any) => s.id);
+      if (subIds.length) {
+        const { data: courses } = await supabase.from("courses").select("id").in("subject_id", subIds);
+        const cIds = (courses || []).map((c: any) => c.id);
+        if (cIds.length) {
+          const { data: enr } = await supabase.from("enrollments").select("user_id").in("course_id", cIds);
+          ids = (enr || []).map((e: any) => e.user_id);
+        }
+      }
+      const { data: pvt } = await (supabase as any).from("profiles").select("user_id").eq("assigned_teacher_id", user.id);
+      ids = [...new Set([...ids, ...((pvt || []).map((p: any) => p.user_id))])];
+      if (!ids.length) { setHifdhBadge(0); return; }
+      const { data } = await (supabase as any).from("hifdh_daily_logs")
+        .select("id, review:session_data->review, override:session_data->teacher_override")
+        .in("student_id", ids).order("log_date", { ascending: false }).limit(200);
+      setHifdhBadge((data || []).filter((l: any) => !l.review && !l.override).length);
+    })();
+  }, [user, location.pathname]);
+
+  const badges = { grading: gradingBadge, hifdh: hifdhBadge };
   const navItems = buildNav(t, badges);
   const toggle = (key: string) => setExpanded(p => ({ ...p, [key]: !p[key] }));
 
@@ -328,7 +354,7 @@ const TeacherLayout = () => {
                 <lnk.icon size={15} className="flex-shrink-0" />
                 <span className="flex-1">{lnk.label}</span>
                 {!!lnk.badge && (
-                  <span className="flex-shrink-0 rounded-full bg-destructive px-1.5 py-0.5 text-[9px] font-black text-destructive-foreground">{lnk.badge}</span>
+                  <span className="flex-shrink-0 text-xs font-extrabold" style={{color:"#c9a84c"}}>({lnk.badge})</span>
                 )}
               </Link>
             );
@@ -350,8 +376,8 @@ const TeacherLayout = () => {
                 <grp.icon size={15} className="flex-shrink-0" />
                 <span className="flex-1">{grp.label}</span>
                 {groupBadgeTotal > 0 && !gOpen && (
-                  <span className="flex-shrink-0 rounded-full bg-destructive px-1.5 py-0.5 text-[9px] font-black text-destructive-foreground">
-                    {groupBadgeTotal}
+                  <span className="flex-shrink-0 text-xs font-extrabold" style={{color:"#c9a84c"}}>
+                    ({groupBadgeTotal})
                   </span>
                 )}
                 {gOpen
@@ -371,7 +397,7 @@ const TeacherLayout = () => {
                         <child.icon size={13} className="flex-shrink-0" />
                         <span className="flex-1">{child.label}</span>
                         {!!child.badge && (
-                          <span className="flex-shrink-0 rounded-full bg-destructive px-1.5 py-0.5 text-[9px] font-black text-destructive-foreground">{child.badge}</span>
+                          <span className="flex-shrink-0 text-xs font-extrabold" style={{color:"#c9a84c"}}>({child.badge})</span>
                         )}
                       </Link>
                     );
