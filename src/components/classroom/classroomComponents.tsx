@@ -16,8 +16,6 @@ import "@livekit/components-styles";
 import { Track, RoomEvent, ConnectionState, ConnectionQuality, RemoteTrackPublication, RemoteParticipant } from "livekit-client";
 import { canNativeScreenShare, startNativeScreenShare, stopNativeScreenShare, onNativeScreenShareStopped, isScreenBot } from "@/lib/nativeScreenShare";
 import { createPortal } from "react-dom";
-import { RotateCw as RotateCwIcon, ZoomIn as ZoomInIcon } from "lucide-react";
-import { isMobileDevice } from "@/lib/livekitOptions";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { getSignedUrl } from "../../integrations/supabase/storageClient";
@@ -260,7 +258,7 @@ export const CSS = `
     position:absolute; left:50%; bottom:14px; transform:translateX(-50%);
     display:flex; align-items:center; justify-content:center; gap:3px;
     height:26px; padding:6px 12px; border-radius:14px;
-    background:rgba(0,0,0,.4); backdrop-filter:blur(6px);
+    background:rgba(0,0,0,.6);
     pointer-events:none; z-index:2;
     animation: fade-in .18s ease both;
   }
@@ -5954,166 +5952,54 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
   );
 };
 
-export const ScreenShareTile = ({ participant, isLocal }: { participant: any; isLocal: boolean }) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const boxRef = useRef<HTMLDivElement>(null);
-  const [immersive, setImmersive] = useState(() => !isLocal && isMobileDevice());
-  const [browserFs, setBrowserFs] = useState(false);
-  const [ui, setUi] = useState(true);
-  const [tf, setTf] = useState({ s: 1, x: 0, y: 0 });
-  const name = participant.name || participant.identity || "User";
-
-  // ── attach the screen-share track to <video> ─────────────────────────
-  useEffect(() => {
-    const el = videoRef.current;
-    if (isLocal || !el) return;
-    let attached: any = null;
-    const bind = () => {
-      const pub = participant.getTrackPublication?.(Track.Source.ScreenShare);
-      const track = pub?.videoTrack || pub?.track || null;
-      if (track === attached) return;
-      if (attached) { try { attached.detach(el); } catch {} attached = null; }
-      if (track) { try { track.attach(el); attached = track; el.play().catch(() => {}); } catch {} }
+export const ScreenShareTile=({participant,isLocal}:{participant:any;isLocal:boolean})=>{
+  const videoRef=useRef<HTMLVideoElement>(null);
+  const [fitWidth,setFitWidth]=useState(false);
+  const name=participant.name||participant.identity||"User";
+  useEffect(()=>{
+    const el=videoRef.current;
+    if(isLocal||!el)return;
+    let attached:any=null;
+    const bind=()=>{
+      const pub=participant.getTrackPublication?.(Track.Source.ScreenShare);
+      const track=pub?.videoTrack||pub?.track||null;
+      if(track===attached)return;
+      if(attached){try{attached.detach(el);}catch{}attached=null;}
+      if(track){try{track.attach(el);attached=track;el.play().catch(()=>{});}catch{}}
     };
     bind();
-    const evs = ["trackSubscribed", "trackUnsubscribed", "trackPublished", "trackUnpublished", "trackMuted", "trackUnmuted"];
-    evs.forEach(ev => participant.on?.(ev, bind));
-    const poll = setInterval(bind, 1500);
-    return () => {
+    const evs=["trackSubscribed","trackUnsubscribed","trackPublished","trackUnpublished","trackMuted","trackUnmuted"];
+    evs.forEach(ev=>participant.on?.(ev,bind));
+    const poll=setInterval(bind,1500);
+    return()=>{
       clearInterval(poll);
-      evs.forEach(ev => participant.off?.(ev, bind));
-      if (attached) { try { attached.detach(el); } catch {} }
+      evs.forEach(ev=>participant.off?.(ev,bind));
+      if(attached){try{attached.detach(el);}catch{}}
     };
-  }, [participant, isLocal, immersive]); // immersive: the <video> remounts when it moves into the portal
-
-  // ── browser fullscreen state + cleanup ───────────────────────────────
-  useEffect(() => {
-    const onFs = () => setBrowserFs(!!document.fullscreenElement);
-    document.addEventListener("fullscreenchange", onFs);
-    return () => {
-      document.removeEventListener("fullscreenchange", onFs);
-      try { (screen.orientation as any)?.unlock?.(); } catch {}
-      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-    };
-  }, []);
-
-  // ── auto-hide controls ───────────────────────────────────────────────
-  useEffect(() => {
-    if (!ui) return;
-    const t = setTimeout(() => setUi(false), 3500);
-    return () => clearTimeout(t);
-  }, [ui, tf.s]);
-
-  // ── zoom / pan / tap gestures ────────────────────────────────────────
-  const pts = useRef(new Map<number, { x: number; y: number }>());
-  const g = useRef({ d: 0, s: 1, lx: 0, ly: 0, moved: 0, t0: 0, lastTap: 0 });
-  const clamp = (s: number, x: number, y: number) => {
-    const el = boxRef.current;
-    const w = el?.clientWidth || 0, h = el?.clientHeight || 0;
-    const mx = (w * (s - 1)) / 2, my = (h * (s - 1)) / 2;
-    return { s, x: Math.max(-mx, Math.min(mx, x)), y: Math.max(-my, Math.min(my, y)) };
-  };
-  const dist = () => { const [a, b] = [...pts.current.values()]; return Math.hypot(a.x - b.x, a.y - b.y) || 1; };
-  const onDown = (e: React.PointerEvent) => {
-    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-    pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pts.current.size === 2) { g.current.d = dist(); g.current.s = tf.s; }
-    else { g.current.lx = e.clientX; g.current.ly = e.clientY; g.current.moved = 0; g.current.t0 = Date.now(); }
-  };
-  const onMove = (e: React.PointerEvent) => {
-    if (!pts.current.has(e.pointerId)) return;
-    pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pts.current.size === 2) {
-      const s = Math.max(1, Math.min(4, g.current.s * (dist() / g.current.d)));
-      setTf(p => clamp(s, p.x, p.y)); g.current.moved = 99;
-    } else if (pts.current.size === 1) {
-      const dx = e.clientX - g.current.lx, dy = e.clientY - g.current.ly;
-      g.current.lx = e.clientX; g.current.ly = e.clientY; g.current.moved += Math.abs(dx) + Math.abs(dy);
-      if (tf.s > 1) setTf(p => clamp(p.s, p.x + dx, p.y + dy));
-    }
-  };
-  const onUp = (e: React.PointerEvent) => {
-    const wasSingle = pts.current.size === 1;
-    pts.current.delete(e.pointerId);
-    if (!wasSingle || g.current.moved > 10 || Date.now() - g.current.t0 > 350) return;
-    const now = Date.now();
-    if (now - g.current.lastTap < 300) { setTf(p => (p.s > 1 ? { s: 1, x: 0, y: 0 } : clamp(2.5, 0, 0))); g.current.lastTap = 0; }
-    else { g.current.lastTap = now; setUi(v => !v); }
-  };
-
-  // ── buttons ──────────────────────────────────────────────────────────
-  const toggleFull = () => {
-    const box = boxRef.current as any;
-    if (isMobileDevice()) {
-      if (immersive) { setImmersive(false); if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); }
-      else { setImmersive(true); }
-      return;
-    }
-    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-    else (box?.requestFullscreen || box?.webkitRequestFullscreen)?.call(box)?.catch?.(() => {});
-  };
-  const rotate = async () => {
-    try {
-      const o: any = screen.orientation;
-      const landscape = o?.type?.startsWith("landscape");
-      if (!document.fullscreenElement) await (boxRef.current as any)?.requestFullscreen?.();
-      await o?.lock?.(landscape ? "portrait" : "landscape");
-    } catch { /* not allowed here — the user can still rotate the phone, the view re-fits by itself */ }
-  };
-
-  const btn: React.CSSProperties = {
-    width: 44, height: 44, borderRadius: 22, border: "none", background: "rgba(32,33,36,.78)",
-    color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
-  };
-  const isFull = immersive || browserFs;
-
-  const view = (
-    <div
-      ref={boxRef}
-      onPointerDown={isLocal ? undefined : onDown}
-      onPointerMove={isLocal ? undefined : onMove}
-      onPointerUp={isLocal ? undefined : onUp}
-      onPointerCancel={isLocal ? undefined : onUp}
-      style={immersive
-        ? { position: "fixed", inset: 0, width: "100dvw", height: "100dvh", zIndex: 2147483000, background: "#000", overflow: "hidden", touchAction: "none" }
-        : { position: "absolute", inset: 0, width: "100%", height: "100%", background: "#000", overflow: "hidden", touchAction: "none" }}
-    >
-      {isLocal ? (
-        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: 24, textAlign: "center" }}>
-          <Monitor style={{ width: 34, height: 34, color: "#8ab4f8" }} />
-          <p style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e8eaed", fontFamily: "system-ui,sans-serif" }}>{"You're presenting your screen"}</p>
-        </div>
-      ) : (
-        <video
-          ref={videoRef} autoPlay playsInline muted
-          style={{
-            position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", background: "#000",
-            transform: `translate(${tf.x}px, ${tf.y}px) scale(${tf.s})`, transformOrigin: "center center",
-            // never let the browser crop/stretch: contain keeps portrait phone screens AND landscape PC screens whole
-          }}
-        />
+  },[participant,isLocal]);
+  const pill={position:"absolute" as const,bottom:14,left:"50%",transform:"translateX(-50%)",maxWidth:"86%",padding:"9px 20px",borderRadius:12,background:"rgba(60,64,67,.92)",color:"#fff",fontSize:14,fontWeight:500,fontFamily:"system-ui,sans-serif",whiteSpace:"nowrap" as const,overflow:"hidden",textOverflow:"ellipsis",pointerEvents:"none" as const};
+  return(
+    <div style={{position:"absolute",inset:0,width:"100%",height:"100%",background:"#000",overflow:"hidden"}}>
+      <div style={{position:"absolute",inset:0,overflowX:"hidden",overflowY:fitWidth?"auto":"hidden",display:"flex",alignItems:fitWidth?"flex-start":"center",justifyContent:"center"}}>
+        {isLocal?(
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:14,padding:24,textAlign:"center"}}>
+            <div style={{width:72,height:72,borderRadius:22,background:"rgba(138,180,248,.14)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <Monitor style={{width:34,height:34,color:"#8ab4f8"}}/>
+            </div>
+            <p style={{margin:0,fontSize:16,fontWeight:600,color:"#e8eaed",fontFamily:"system-ui,sans-serif"}}>{"You're presenting your screen"}</p>
+          </div>
+        ):(
+          <video ref={videoRef} autoPlay playsInline muted onClick={()=>setFitWidth(v=>!v)} style={fitWidth?{display:"block",width:"100%",height:"auto",flexShrink:0,background:"#000"}:{width:"100%",height:"100%",objectFit:"contain",background:"#000"}}/>
+        )}
+      </div>
+      {!isLocal&&(
+        <button onClick={()=>setFitWidth(v=>!v)} style={{position:"absolute",top:"50%",right:8,transform:"translateY(-50%)",padding:"10px 12px",borderRadius:12,border:"none",background:"rgba(60,64,67,.85)",color:"#fff",fontSize:13,fontWeight:600,fontFamily:"system-ui,sans-serif"}}>
+          {fitWidth?"Fit screen":"Full width"}
+        </button>
       )}
-
-      {!isLocal && (
-        <div style={{
-          position: "absolute", top: 0, left: 0, right: 0, padding: "max(env(safe-area-inset-top), 10px) 12px 10px",
-          display: "flex", alignItems: "center", gap: 8, background: "linear-gradient(rgba(0,0,0,.65),transparent)",
-          opacity: ui ? 1 : 0, pointerEvents: ui ? "auto" : "none", transition: "opacity .2s",
-        }}>
-          <span style={{ flex: 1, color: "#fff", fontSize: 14, fontWeight: 600, fontFamily: "system-ui,sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {name}'s screen{tf.s > 1 ? ` · ${tf.s.toFixed(1)}×` : ""}
-          </span>
-          {tf.s > 1 && <button style={btn} onClick={e => { e.stopPropagation(); setTf({ s: 1, x: 0, y: 0 }); }} onPointerDown={e => e.stopPropagation()} aria-label="Reset zoom"><ZoomInIcon size={20} /></button>}
-          {isMobileDevice() && <button style={btn} onClick={e => { e.stopPropagation(); rotate(); }} onPointerDown={e => e.stopPropagation()} aria-label="Rotate"><RotateCwIcon size={20} /></button>}
-          <button style={btn} onClick={e => { e.stopPropagation(); toggleFull(); }} onPointerDown={e => e.stopPropagation()} aria-label={isFull ? "Exit full screen" : "Full screen"}>
-            {isFull ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
-          </button>
-        </div>
-      )}
+      <div style={pill}>{isLocal?"You're presenting":`${name}'s screen`}</div>
     </div>
   );
-
-  return immersive && typeof document !== "undefined" ? createPortal(view, document.body) : view;
 };
 
 /* ══ VIDEO GRID — uniform grid, everyone the same size ══
