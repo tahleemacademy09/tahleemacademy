@@ -61,6 +61,7 @@
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
         <service android:name="io.capawesome.capacitorjs.plugins.foregroundservice.AndroidForegroundService" android:foregroundServiceType="microphone|mediaPlayback" android:exported="false" />
+        <service android:name=".ScreenCaptureService" android:exported="false" android:foregroundServiceType="mediaProjection" />
     </application>
 
     <!-- Permissions -->

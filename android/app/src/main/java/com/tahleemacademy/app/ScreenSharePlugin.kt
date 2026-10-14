@@ -24,6 +24,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 /**
  * ScreenShare — shares the phone's whole screen into the live class.
@@ -80,6 +81,16 @@ class ScreenSharePlugin : Plugin() {
         val token = call.getString("token").orEmpty()
 
         scope.launch {
+            // Must be running BEFORE the projection is used (Android 10+ / hard requirement on 14+)
+            try {
+                ScreenCaptureService.start(context.applicationContext)
+                withTimeout(4000) { ScreenCaptureService.ready?.await() }
+            } catch (e: Throwable) {
+                ScreenCaptureService.stop(context.applicationContext)
+                starting = false
+                call.reject(e.message ?: "Could not start the screen-share service", "FAILED")
+                return@launch
+            }
             val newRoom = LiveKit.create(context.applicationContext)
             val dm = context.resources.displayMetrics
             val sw = dm.widthPixels.coerceAtLeast(1)
@@ -87,7 +98,7 @@ class ScreenSharePlugin : Plugin() {
             val k = minOf(1f, 1600f / maxOf(sw, sh))
             val cw = ((sw * k).toInt() / 2) * 2
             val ch = ((sh * k).toInt() / 2) * 2
-            newRoom.localParticipant.videoTrackCaptureDefaults = LocalVideoTrackOptions(
+            newRoom.localParticipant.screenShareTrackCaptureDefaults = LocalVideoTrackOptions(
                 captureParams = VideoCaptureParameter(width = cw, height = ch, maxFps = 15)
             )
             try {
@@ -99,6 +110,7 @@ class ScreenSharePlugin : Plugin() {
             } catch (e: Throwable) {
                 runCatching { newRoom.disconnect() }
                 runCatching { newRoom.release() }
+                ScreenCaptureService.stop(context.applicationContext)
                 call.reject(e.message ?: "Could not start screen share", "FAILED")
             } finally {
                 starting = false
@@ -141,6 +153,7 @@ class ScreenSharePlugin : Plugin() {
             runCatching { it.release() }
         }
         room = null
+        ScreenCaptureService.stop(context.applicationContext)
     }
 
     @PluginMethod

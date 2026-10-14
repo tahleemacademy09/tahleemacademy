@@ -16,6 +16,8 @@ import "@livekit/components-styles";
 import { Track, RoomEvent, ConnectionState, ConnectionQuality, RemoteTrackPublication, RemoteParticipant } from "livekit-client";
 import { canNativeScreenShare, startNativeScreenShare, stopNativeScreenShare, onNativeScreenShareStopped, isScreenBot } from "@/lib/nativeScreenShare";
 import { createPortal } from "react-dom";
+import { RotateCw as RotateCwIcon, ZoomIn as ZoomInIcon } from "lucide-react";
+import { isMobileDevice } from "@/lib/livekitOptions";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { getSignedUrl } from "../../integrations/supabase/storageClient";
@@ -2695,18 +2697,6 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
   const rawUrl=material.file_url||material.url||"";
   const matId=material.id||rawUrl;
 
-  // Keep the material BETWEEN the class header (top) and the control bar (bottom) so neither is covered.
-  // The insets are constant — the header/footer fade in and out over their own reserved strips — so the
-  // material never resizes (resizing the iframe was what made it flash when tapped).
-  const[headerH,setHeaderH]=useState(60);
-  useEffect(()=>{
-    const calc=()=>{const h=document.querySelector("[data-class-header]") as HTMLElement|null;if(h&&h.offsetHeight)setHeaderH(h.offsetHeight);};
-    calc();
-    window.addEventListener("resize",calc);
-    return()=>window.removeEventListener("resize",calc);
-  },[]);
-  const toggleChrome=()=>window.dispatchEvent(new Event("classroom:toggle-ui"));
-
   // ── resolve Supabase storage path to a working viewer URL ────────────────
   // Strategy: if rawUrl is already https:// (teacher pre-resolved it before
   // broadcasting) we skip all network calls entirely — zero latency.
@@ -2927,49 +2917,9 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
   },[kind,following,remoteActivity]);
 
 
-  // HTML lessons live in an iframe, so taps never reach this page — listen inside the lesson document.
-  useEffect(()=>{
-    if(kind!=="html"||htmlDoc==null)return;
-    const frame=iframeRef.current;
-    if(!frame)return;
-    let cleanup=()=>{};
-    const attach=()=>{
-      const doc=frame.contentDocument,win=frame.contentWindow;
-      if(!doc||!win)return;
-      let sx=0,sy=0;
-      const down=(e:any)=>{const t=e.touches?e.touches[0]:e;sx=t.clientX;sy=t.clientY;};
-      const click=(e:MouseEvent)=>{
-        if(Math.abs(e.clientX-sx)>10||Math.abs(e.clientY-sy)>10)return; // a drag/swipe, not a tap
-        const t=e.target as HTMLElement;
-        if(t?.closest?.("button,a,input,textarea,select,summary,[onclick],[role=button],[tabindex]"))return;
-        const x=e.clientX/Math.max(1,win.innerWidth),y=e.clientY/Math.max(1,win.innerHeight);
-        if(x>0.25&&x<0.75&&y>0.25&&y<0.75)toggleChrome();
-      };
-      doc.addEventListener("pointerdown",down,true);
-      doc.addEventListener("click",click);
-      cleanup=()=>{doc.removeEventListener("pointerdown",down,true);doc.removeEventListener("click",click);};
-    };
-    if(frame.contentDocument?.readyState==="complete")attach();
-    frame.addEventListener("load",attach);
-    return()=>{frame.removeEventListener("load",attach);cleanup();};
-  },[kind,htmlDoc]);
-
   // Use absolute positioning scoped to the video content area so footer is always visible
   const overlayStyle: React.CSSProperties = {
     position: "absolute", inset: 0, zIndex: 55,
-  };
-  const bodyInsets: React.CSSProperties = {
-    position: "absolute", left: 0, right: 0,
-    top: headerH,
-    bottom: `calc(${BAR_H}px + env(safe-area-inset-bottom, 0px))`,
-    display: "flex", flexDirection: "column", background: "#0f1117",
-  };
-  // Tap in the middle of the material → show/hide header + footer (ignores buttons/links/inputs)
-  const onMaterialTap=(e:any)=>{
-    if(e?.target?.closest?.("button,a,input,textarea,select,[data-tile-control]"))return;
-    const r=e.currentTarget.getBoundingClientRect();
-    const x=(e.clientX-r.left)/Math.max(1,r.width),y=(e.clientY-r.top)/Math.max(1,r.height);
-    if(x>0.25&&x<0.75&&y>0.25&&y<0.75)toggleChrome();
   };
 
   const renderContent=()=>{
@@ -3014,7 +2964,7 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
     // HTML lessons (syncActive/onSyncActivity on the teacher's copy,
     // following/remoteActivity on the student's copy).
     if(kind==="pdf")return(
-      <div onClick={onMaterialTap} style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0,position:"relative"}}>
+      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0,position:"relative"}}>
         <PDFViewer url={embedUrl} bg="#0f1117" materialId={matId}
           syncActive={isTeacher&&syncActive}
           onSyncScroll={(pct:number)=>onSyncActivity?.(0.5,0.5,pct,null,null,null)}
@@ -3066,11 +3016,7 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
   const resumeBadge=resume?.time||resume?.page;
 
   return(
-    <div style={{...overlayStyle,background:"#0f1117"}}>
-      {/* Edge strips: tapping where the header/footer were (while hidden) brings them back */}
-      <div onClick={toggleChrome} style={{position:"absolute",top:0,left:0,right:0,height:headerH,zIndex:1}}/>
-      <div onClick={toggleChrome} style={{position:"absolute",bottom:0,left:0,right:0,height:`calc(${BAR_H}px + env(safe-area-inset-bottom, 0px))`,zIndex:1}}/>
-      <div style={{...bodyInsets,zIndex:2}}>
+    <div style={{...overlayStyle,background:"#0f1117",display:"flex",flexDirection:"column"}}>
       {/* Viewer header */}
       <div style={{height:46,background:"#2d2e30",display:"flex",alignItems:"center",padding:"0 10px",gap:8,flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.08)"}}>
         {/* Minimize to pip */}
@@ -3120,7 +3066,6 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
         </button>
       </div>
       {renderContent()}
-      </div>
     </div>
   );
 };
@@ -5627,17 +5572,6 @@ export const ParticipantSignalIcon=({participant}:{participant:any})=>{
 // with a Provider — e.g. if ParticipantTile is ever reused somewhere else.
 export const ClassroomAdminContext = createContext<{isPrivileged:boolean;sessionId:string|null}>({isPrivileged:false,sessionId:null});
 
-const nameInitials=(n:string)=>{
-  const parts=String(n||"").replace(/\(.*?\)/g,"").trim().split(/\s+/).filter(Boolean);
-  if(!parts.length)return "?";
-  const a=Array.from(parts[0])[0]||"";
-  const b=parts.length>1?(Array.from(parts[parts.length-1])[0]||""):"";
-  return (a+b).toUpperCase();
-};
-const nameHue=(n:string)=>{
-  let h=0;for(const c of String(n||""))h=(h*31+c.charCodeAt(0))>>>0;
-  return `hsl(${h%360},38%,28%)`;
-};
 export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{participant:any;isLocal:boolean;size?:"normal"|"large"|"small";pip?:boolean})=>{
   const videoRef=useRef<HTMLVideoElement>(null);
   const attachedTrackRef=useRef<any>(null);
@@ -5898,20 +5832,21 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
         style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal&&!backCam?"scaleX(-1)":"none"}}
       />
 
-      {/* Camera-off tile (WhatsApp style): round photo — or coloured initials when there is no
-          photo — with the person's NAME right below it. No grey silhouette placeholder. */}
+      {/* Camera-off profile: full-bleed photo filling all four corners of the tile */}
       {!hasVideo&&(
-        <div style={{position:"absolute",inset:0,overflow:"hidden",background:`linear-gradient(160deg,${nameHue(name)} 0%,#0b141a 100%)`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:pip?4:size==="small"?4:10,padding:pip?4:8,boxSizing:"border-box"}}>
-          <div style={{width:pip?"58%":size==="small"?"46%":"min(46%,120px)",aspectRatio:"1 / 1",borderRadius:"50%",overflow:"hidden",flexShrink:0,background:"rgba(255,255,255,.14)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 10px rgba(0,0,0,.35)"}}>
-            {avatarUrl&&!avatarImgError ? (
-              <img src={avatarUrl} alt="" onError={()=>setAvatarImgError(true)} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-            ) : (
-              <span style={{color:"#fff",fontWeight:600,fontFamily:"system-ui,sans-serif",fontSize:pip?18:size==="small"?16:"clamp(20px,6vw,40px)",lineHeight:1}}>{nameInitials(name)}</span>
-            )}
-          </div>
-          <span style={{maxWidth:"92%",textAlign:"center",color:"#fff",fontFamily:"system-ui,sans-serif",fontWeight:500,fontSize:pip?10:size==="small"?11:13,lineHeight:1.2,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical" as any,textShadow:"0 1px 3px rgba(0,0,0,.6)"}}>
-            {name}{isLocal?" (You)":""}
-          </span>
+        <div style={{position:"absolute",inset:0,background:"#131313",overflow:"hidden"}}>
+          {avatarUrl&&!avatarImgError ? (
+            <img src={avatarUrl} alt="" onError={()=>setAvatarImgError(true)}
+              style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>
+          ) : (
+            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(160deg,#1f2c34 0%,#111b21 100%)"}}>
+              <svg viewBox="0 0 200 220" style={{width:avatarW,height:avatarW,maxWidth:220,maxHeight:240}} fill="none">
+                <circle cx="100" cy="72" r="52" fill="#8696a0"/>
+                <path d="M0 220 C0 148 36 128 100 128 C164 128 200 148 200 220Z" fill="#8696a0"/>
+              </svg>
+            </div>
+          )}
+          <div style={{position:"absolute",left:0,right:0,bottom:0,height:"38%",background:"linear-gradient(to top,rgba(0,0,0,.6),rgba(0,0,0,0))",pointerEvents:"none"}}/>
         </div>
       )}
 
@@ -5926,8 +5861,8 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
         </div>
       )}
 
-      {/* Name pill — bottom-left, only on non-pip tiles that are showing live video */}
-      {!pip&&hasVideo&&(
+      {/* Name pill — bottom-left, only on non-pip tiles */}
+      {!pip&&(
         <div style={{
           position:"absolute",bottom:10,left:10,
           display:"inline-flex",alignItems:"center",gap:5,
@@ -5964,20 +5899,6 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
             {name}{isLocal?" (You)":""}
           </span>
           <ParticipantSignalIcon participant={participant}/>
-        </div>
-      )}
-
-      {/* Camera off: small mic-state badge (the name is already centred under the avatar) */}
-      {!pip&&!hasVideo&&(
-        <div style={{position:"absolute",top:8,left:8,display:"inline-flex",alignItems:"center",gap:4,background:"rgba(0,0,0,.45)",borderRadius:12,padding:"3px 6px",pointerEvents:canModerate?"auto":"none"}}>
-          {canModerate ? (
-            <button data-tile-control="true" onClick={toggleTileMic} onPointerDown={(e:any)=>e.stopPropagation()} title={micEnabled?"Mute":"Unmute"}
-              style={{background:"none",border:"none",padding:0,margin:0,cursor:"pointer",display:"flex",alignItems:"center"}}>
-              {micEnabled?<Mic style={{width:12,height:12,color:"rgba(255,255,255,.9)"}}/>:<MicOff style={{width:12,height:12,color:"#ef4444"}}/>}
-            </button>
-          ) : micEnabled
-            ? <Mic style={{width:12,height:12,color:"rgba(255,255,255,.75)"}}/>
-            : <MicOff style={{width:12,height:12,color:"#ef4444"}}/>}
         </div>
       )}
 
@@ -6033,54 +5954,166 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
   );
 };
 
-export const ScreenShareTile=({participant,isLocal}:{participant:any;isLocal:boolean})=>{
-  const videoRef=useRef<HTMLVideoElement>(null);
-  const [fitWidth,setFitWidth]=useState(false);
-  const name=participant.name||participant.identity||"User";
-  useEffect(()=>{
-    const el=videoRef.current;
-    if(isLocal||!el)return;
-    let attached:any=null;
-    const bind=()=>{
-      const pub=participant.getTrackPublication?.(Track.Source.ScreenShare);
-      const track=pub?.videoTrack||pub?.track||null;
-      if(track===attached)return;
-      if(attached){try{attached.detach(el);}catch{}attached=null;}
-      if(track){try{track.attach(el);attached=track;el.play().catch(()=>{});}catch{}}
+export const ScreenShareTile = ({ participant, isLocal }: { participant: any; isLocal: boolean }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [immersive, setImmersive] = useState(() => !isLocal && isMobileDevice());
+  const [browserFs, setBrowserFs] = useState(false);
+  const [ui, setUi] = useState(true);
+  const [tf, setTf] = useState({ s: 1, x: 0, y: 0 });
+  const name = participant.name || participant.identity || "User";
+
+  // ── attach the screen-share track to <video> ─────────────────────────
+  useEffect(() => {
+    const el = videoRef.current;
+    if (isLocal || !el) return;
+    let attached: any = null;
+    const bind = () => {
+      const pub = participant.getTrackPublication?.(Track.Source.ScreenShare);
+      const track = pub?.videoTrack || pub?.track || null;
+      if (track === attached) return;
+      if (attached) { try { attached.detach(el); } catch {} attached = null; }
+      if (track) { try { track.attach(el); attached = track; el.play().catch(() => {}); } catch {} }
     };
     bind();
-    const evs=["trackSubscribed","trackUnsubscribed","trackPublished","trackUnpublished","trackMuted","trackUnmuted"];
-    evs.forEach(ev=>participant.on?.(ev,bind));
-    const poll=setInterval(bind,1500);
-    return()=>{
+    const evs = ["trackSubscribed", "trackUnsubscribed", "trackPublished", "trackUnpublished", "trackMuted", "trackUnmuted"];
+    evs.forEach(ev => participant.on?.(ev, bind));
+    const poll = setInterval(bind, 1500);
+    return () => {
       clearInterval(poll);
-      evs.forEach(ev=>participant.off?.(ev,bind));
-      if(attached){try{attached.detach(el);}catch{}}
+      evs.forEach(ev => participant.off?.(ev, bind));
+      if (attached) { try { attached.detach(el); } catch {} }
     };
-  },[participant,isLocal]);
-  const pill={position:"absolute" as const,bottom:14,left:"50%",transform:"translateX(-50%)",maxWidth:"86%",padding:"9px 20px",borderRadius:12,background:"rgba(60,64,67,.92)",color:"#fff",fontSize:14,fontWeight:500,fontFamily:"system-ui,sans-serif",whiteSpace:"nowrap" as const,overflow:"hidden",textOverflow:"ellipsis",pointerEvents:"none" as const};
-  return(
-    <div style={{position:"absolute",inset:0,width:"100%",height:"100%",background:"#000",overflow:"hidden"}}>
-      <div style={{position:"absolute",inset:0,overflowX:"hidden",overflowY:fitWidth?"auto":"hidden",display:"flex",alignItems:fitWidth?"flex-start":"center",justifyContent:"center"}}>
-        {isLocal?(
-          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:14,padding:24,textAlign:"center"}}>
-            <div style={{width:72,height:72,borderRadius:22,background:"rgba(138,180,248,.14)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <Monitor style={{width:34,height:34,color:"#8ab4f8"}}/>
-            </div>
-            <p style={{margin:0,fontSize:16,fontWeight:600,color:"#e8eaed",fontFamily:"system-ui,sans-serif"}}>{"You're presenting your screen"}</p>
-          </div>
-        ):(
-          <video ref={videoRef} autoPlay playsInline muted onClick={()=>setFitWidth(v=>!v)} style={fitWidth?{display:"block",width:"100%",height:"auto",flexShrink:0,background:"#000"}:{width:"100%",height:"100%",objectFit:"contain",background:"#000"}}/>
-        )}
-      </div>
-      {!isLocal&&(
-        <button onClick={()=>setFitWidth(v=>!v)} style={{position:"absolute",top:"50%",right:8,transform:"translateY(-50%)",padding:"10px 12px",borderRadius:12,border:"none",background:"rgba(60,64,67,.85)",color:"#fff",fontSize:13,fontWeight:600,fontFamily:"system-ui,sans-serif"}}>
-          {fitWidth?"Fit screen":"Full width"}
-        </button>
+  }, [participant, isLocal, immersive]); // immersive: the <video> remounts when it moves into the portal
+
+  // ── browser fullscreen state + cleanup ───────────────────────────────
+  useEffect(() => {
+    const onFs = () => setBrowserFs(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFs);
+      try { (screen.orientation as any)?.unlock?.(); } catch {}
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    };
+  }, []);
+
+  // ── auto-hide controls ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!ui) return;
+    const t = setTimeout(() => setUi(false), 3500);
+    return () => clearTimeout(t);
+  }, [ui, tf.s]);
+
+  // ── zoom / pan / tap gestures ────────────────────────────────────────
+  const pts = useRef(new Map<number, { x: number; y: number }>());
+  const g = useRef({ d: 0, s: 1, lx: 0, ly: 0, moved: 0, t0: 0, lastTap: 0 });
+  const clamp = (s: number, x: number, y: number) => {
+    const el = boxRef.current;
+    const w = el?.clientWidth || 0, h = el?.clientHeight || 0;
+    const mx = (w * (s - 1)) / 2, my = (h * (s - 1)) / 2;
+    return { s, x: Math.max(-mx, Math.min(mx, x)), y: Math.max(-my, Math.min(my, y)) };
+  };
+  const dist = () => { const [a, b] = [...pts.current.values()]; return Math.hypot(a.x - b.x, a.y - b.y) || 1; };
+  const onDown = (e: React.PointerEvent) => {
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.current.size === 2) { g.current.d = dist(); g.current.s = tf.s; }
+    else { g.current.lx = e.clientX; g.current.ly = e.clientY; g.current.moved = 0; g.current.t0 = Date.now(); }
+  };
+  const onMove = (e: React.PointerEvent) => {
+    if (!pts.current.has(e.pointerId)) return;
+    pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.current.size === 2) {
+      const s = Math.max(1, Math.min(4, g.current.s * (dist() / g.current.d)));
+      setTf(p => clamp(s, p.x, p.y)); g.current.moved = 99;
+    } else if (pts.current.size === 1) {
+      const dx = e.clientX - g.current.lx, dy = e.clientY - g.current.ly;
+      g.current.lx = e.clientX; g.current.ly = e.clientY; g.current.moved += Math.abs(dx) + Math.abs(dy);
+      if (tf.s > 1) setTf(p => clamp(p.s, p.x + dx, p.y + dy));
+    }
+  };
+  const onUp = (e: React.PointerEvent) => {
+    const wasSingle = pts.current.size === 1;
+    pts.current.delete(e.pointerId);
+    if (!wasSingle || g.current.moved > 10 || Date.now() - g.current.t0 > 350) return;
+    const now = Date.now();
+    if (now - g.current.lastTap < 300) { setTf(p => (p.s > 1 ? { s: 1, x: 0, y: 0 } : clamp(2.5, 0, 0))); g.current.lastTap = 0; }
+    else { g.current.lastTap = now; setUi(v => !v); }
+  };
+
+  // ── buttons ──────────────────────────────────────────────────────────
+  const toggleFull = () => {
+    const box = boxRef.current as any;
+    if (isMobileDevice()) {
+      if (immersive) { setImmersive(false); if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); }
+      else { setImmersive(true); }
+      return;
+    }
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    else (box?.requestFullscreen || box?.webkitRequestFullscreen)?.call(box)?.catch?.(() => {});
+  };
+  const rotate = async () => {
+    try {
+      const o: any = screen.orientation;
+      const landscape = o?.type?.startsWith("landscape");
+      if (!document.fullscreenElement) await (boxRef.current as any)?.requestFullscreen?.();
+      await o?.lock?.(landscape ? "portrait" : "landscape");
+    } catch { /* not allowed here — the user can still rotate the phone, the view re-fits by itself */ }
+  };
+
+  const btn: React.CSSProperties = {
+    width: 44, height: 44, borderRadius: 22, border: "none", background: "rgba(32,33,36,.78)",
+    color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+  };
+  const isFull = immersive || browserFs;
+
+  const view = (
+    <div
+      ref={boxRef}
+      onPointerDown={isLocal ? undefined : onDown}
+      onPointerMove={isLocal ? undefined : onMove}
+      onPointerUp={isLocal ? undefined : onUp}
+      onPointerCancel={isLocal ? undefined : onUp}
+      style={immersive
+        ? { position: "fixed", inset: 0, width: "100dvw", height: "100dvh", zIndex: 2147483000, background: "#000", overflow: "hidden", touchAction: "none" }
+        : { position: "absolute", inset: 0, width: "100%", height: "100%", background: "#000", overflow: "hidden", touchAction: "none" }}
+    >
+      {isLocal ? (
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: 24, textAlign: "center" }}>
+          <Monitor style={{ width: 34, height: 34, color: "#8ab4f8" }} />
+          <p style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e8eaed", fontFamily: "system-ui,sans-serif" }}>{"You're presenting your screen"}</p>
+        </div>
+      ) : (
+        <video
+          ref={videoRef} autoPlay playsInline muted
+          style={{
+            position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", background: "#000",
+            transform: `translate(${tf.x}px, ${tf.y}px) scale(${tf.s})`, transformOrigin: "center center",
+            // never let the browser crop/stretch: contain keeps portrait phone screens AND landscape PC screens whole
+          }}
+        />
       )}
-      <div style={pill}>{isLocal?"You're presenting":`${name}'s screen`}</div>
+
+      {!isLocal && (
+        <div style={{
+          position: "absolute", top: 0, left: 0, right: 0, padding: "max(env(safe-area-inset-top), 10px) 12px 10px",
+          display: "flex", alignItems: "center", gap: 8, background: "linear-gradient(rgba(0,0,0,.65),transparent)",
+          opacity: ui ? 1 : 0, pointerEvents: ui ? "auto" : "none", transition: "opacity .2s",
+        }}>
+          <span style={{ flex: 1, color: "#fff", fontSize: 14, fontWeight: 600, fontFamily: "system-ui,sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {name}'s screen{tf.s > 1 ? ` · ${tf.s.toFixed(1)}×` : ""}
+          </span>
+          {tf.s > 1 && <button style={btn} onClick={e => { e.stopPropagation(); setTf({ s: 1, x: 0, y: 0 }); }} onPointerDown={e => e.stopPropagation()} aria-label="Reset zoom"><ZoomInIcon size={20} /></button>}
+          {isMobileDevice() && <button style={btn} onClick={e => { e.stopPropagation(); rotate(); }} onPointerDown={e => e.stopPropagation()} aria-label="Rotate"><RotateCwIcon size={20} /></button>}
+          <button style={btn} onClick={e => { e.stopPropagation(); toggleFull(); }} onPointerDown={e => e.stopPropagation()} aria-label={isFull ? "Exit full screen" : "Full screen"}>
+            {isFull ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
+          </button>
+        </div>
+      )}
     </div>
   );
+
+  return immersive && typeof document !== "undefined" ? createPortal(view, document.body) : view;
 };
 
 /* ══ VIDEO GRID — uniform grid, everyone the same size ══
@@ -6344,16 +6377,8 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
     if(!room)return;
     const update=()=>{let n=room.numParticipants||0;room.remoteParticipants?.forEach?.((p:any)=>{if(isScreenBot(p.identity))n--;});setLiveCount(Math.max(0,n));};
     update();
-    const nameOf=(p?:any)=>{
-      let n=p?.name;
-      if(!n&&p?.metadata){try{n=JSON.parse(p.metadata)?.name;}catch{}}
-      return n||p?.identity||"Someone";
-    };
-    const onJoin=(p?:any)=>{update();if(isScreenBot(p?.identity))return;try{playJoinSound();}catch{}
-      // Metadata/name can land a moment after the connect event — wait briefly so the toast shows a real name.
-      setTimeout(()=>toast({title:`👋 ${nameOf(p)} joined`,duration:2500}),600);};
-    const onLeave=(p?:any)=>{update();if(isScreenBot(p?.identity))return;try{playLeaveSound();}catch{}
-      toast({title:`🚪 ${nameOf(p)} left`,duration:2500});};
+    const onJoin=(p?:any)=>{update();if(isScreenBot(p?.identity))return;try{playJoinSound();}catch{}};
+    const onLeave=(p?:any)=>{update();if(isScreenBot(p?.identity))return;try{playLeaveSound();}catch{}};
     room.on(RoomEvent.ParticipantConnected,onJoin);room.on(RoomEvent.ParticipantDisconnected,onLeave);
     return()=>{room.off(RoomEvent.ParticipantConnected,onJoin);room.off(RoomEvent.ParticipantDisconnected,onLeave);};
   },[room]);
