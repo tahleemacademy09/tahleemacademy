@@ -95,6 +95,7 @@ import {
   RoomDataListener,
   FloatingEmojiLayer,
   RaisedHandsOverlay,
+  JoinLeaveOverlay,
   GroupRecitePermDialog,
   LAYOUT_OPTIONS,
   LayoutSwitcher,
@@ -380,7 +381,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"class_chat_messages",filter:`session_id=eq.${sessionId}`},
         async(payload:any)=>{
           if(payload.new?.sender_id===user?.id)return;
-          if(payload.new?.type==="system")return;
+          if(payload.new?.type==="system"||payload.new?.type==="reaction"||payload.new?.type==="emoji")return;
           setChatUnread(n=>{const panelClosed=!chatOpenRef.current;return panelClosed?n+1:0;});
           if(chatOpenRef.current||payload.new?.type==="reaction")return;
           const m=payload.new||{};
@@ -1487,6 +1488,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <HeartbeatBridge sessionId={sessionId} active={phase==="live"}/>
           {/* Feature 9: data channel queue flusher — replays queued messages on reconnect */}
           <DataQueueFlusher roomRef={roomRef}/>
+          <JoinLeaveOverlay/>
           <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>{setMatOpen(mat);setMatMinimized(false);}} onMatClose={()=>{setMatOpen(null);setMatMinimized(false);}} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}} onForceAudioOnly={(active:boolean)=>{setForcedAudioOnly(active);setAudioOnlyActive(active);}}
             onClassEnded={!isPrivileged?()=>setPhase("ended"):undefined} roomRef={roomRef}/>{/* FIX BUG 10: pass roomRef */}
           {reconnecting&&<ReconnectingOverlay attempt={autoReconnectCountRef.current}/>}
@@ -1670,6 +1672,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                           </button>
                           <button onClick={()=>{
                             try{roomRef.current?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"force_mute",target:h.identity})),{reliable:true});}catch{}
+                            try{roomRef.current?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"hand_raise",identity:h.identity,name:h.name,raised:false})),{reliable:true});}catch{}
+                            if(sessionId)supabase.from("class_participants").update({hand_raised:false,hand_raised_at:null}).eq("session_id",sessionId).eq("student_id",h.identity).then(()=>{},()=>{});
                             handleHandRaise(h.identity,h.name,false);
                           }}
                             style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.4)",borderRadius:6,padding:"3px 6px",fontSize:10,cursor:"pointer"}}>

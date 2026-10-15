@@ -689,9 +689,29 @@ const ClassControls = ({
     }
   }, [handRaised, user, sessionId, room]);
 
+  // ── Teacher lowered my hand → reset my button ─────────────────────────
+  useEffect(() => {
+    if (!room) return;
+    const h = (payload: Uint8Array) => {
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(payload));
+        if (msg.type === "hand_raise" && msg.raised === false && msg.identity === room.localParticipant.identity) setHandRaised(false);
+      } catch {}
+    };
+    room.on(RoomEvent.DataReceived, h);
+    return () => { room.off(RoomEvent.DataReceived, h); };
+  }, [room]);
+
   // ── Reactions ─────────────────────────────────────────────────────────
   const sendReaction = (emoji: string) => {
     setFloatingEmoji({ emoji, id: Date.now() });
+    // Broadcast to everyone else in the room (they render it via RoomDataListener → FloatingEmojiLayer).
+    try {
+      room?.localParticipant?.publishData(
+        new TextEncoder().encode(JSON.stringify({ type: "emoji_react", emoji, sender: room.localParticipant.name || (user as any)?.user_metadata?.full_name || "" })),
+        { reliable: false }
+      );
+    } catch {}
     setShowReactions(false);
     setShowMoreEmojis(false);
     if (user && sessionId) supabase.from("class_chat_messages").insert({ session_id: sessionId, sender_id: user.id, message: emoji, type: "emoji" });

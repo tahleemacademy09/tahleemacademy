@@ -1683,6 +1683,53 @@ export const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,on
   return null;
 };
 
+/* ══ JOIN / LEAVE OVERLAY ══
+   In-classroom pills ("👋 Name joined" / "🚪 Name left"). The global toast
+   viewport sits UNDER the full-screen classroom overlay, and ClassControls only
+   plays a sound, so nothing was ever shown. Rendered inside the classroom so it
+   is always visible. */
+export const JoinLeaveOverlay = () => {
+  const room = useRoomContext();
+  const [items, setItems] = useState<{ id: number; text: string; kind: "join" | "leave" }[]>([]);
+  const idRef = useRef(0);
+  useEffect(() => {
+    if (!room) return;
+    const nameOf = (p?: any) => {
+      let n = p?.name;
+      if (!n && p?.metadata) { try { n = JSON.parse(p.metadata)?.name; } catch {} }
+      return n || p?.identity || "Someone";
+    };
+    const push = (text: string, kind: "join" | "leave") => {
+      const id = ++idRef.current;
+      setItems(prev => [...prev.slice(-3), { id, text, kind }]);
+      setTimeout(() => setItems(prev => prev.filter(i => i.id !== id)), 3500);
+    };
+    const onJoin = (p?: any) => {
+      if (isScreenBot(p?.identity)) return;
+      // name/metadata can land just after the connect event
+      setTimeout(() => push(`${nameOf(p)} joined`, "join"), 600);
+    };
+    const onLeave = (p?: any) => {
+      if (isScreenBot(p?.identity)) return;
+      push(`${nameOf(p)} left`, "leave");
+    };
+    room.on(RoomEvent.ParticipantConnected, onJoin);
+    room.on(RoomEvent.ParticipantDisconnected, onLeave);
+    return () => { room.off(RoomEvent.ParticipantConnected, onJoin); room.off(RoomEvent.ParticipantDisconnected, onLeave); };
+  }, [room]);
+  if (!items.length) return null;
+  return (
+    <div style={{ position: "fixed", top: "calc(env(safe-area-inset-top, 0px) + 64px)", left: 0, right: 0, zIndex: 9400, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, pointerEvents: "none" }}>
+      {items.map(i => (
+        <div key={i.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 14px", borderRadius: 20, background: "rgba(32,33,36,.94)", border: `1px solid ${i.kind === "join" ? "rgba(52,168,83,.5)" : "rgba(234,67,53,.45)"}`, boxShadow: "0 4px 18px rgba(0,0,0,.45)", color: "#fff", fontSize: 13, fontWeight: 600, fontFamily: "system-ui,sans-serif", maxWidth: "88vw", animation: "fade-in .2s ease" }}>
+          <span style={{ fontSize: 15 }}>{i.kind === "join" ? "👋" : "🚪"}</span>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{i.text}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 /* ══ FLOATING EMOJI LAYER ══ */
 export const FloatingEmojiLayer=({emojis}:{emojis:FloatingEmoji[]})=>(
   <div style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:40,overflow:"visible"}}>
@@ -2664,29 +2711,86 @@ function driveToStep(doc:Document,targetStep:number,onDone?:()=>void,attempts=0)
    many `.shown` items are currently visible, and catch a student up by
    clicking the content area the same way a real reader would (per the
    lesson's own "click anywhere ... to reveal the next word" instruction). */
+const REVEAL_TIER2=".shown, .revealed, .item.show, .item.visible, .item.revealed, .word.show, .word.shown, .word.on, .word.visible, .word.revealed, .w.show, .w.shown, .w.on, .w.visible, .w.revealed, .reveal.show, .reveal.visible, .fade-in.visible, .fade.show, [data-revealed=\"true\"], [data-shown=\"true\"]";
+const REVEAL_CANDIDATES=".item, .word, .w, .reveal, [data-reveal], [data-word], .token, .fade, .fade-in";
+function revealRoot(doc:Document):ParentNode{
+  return doc.querySelector("#stage")||doc.querySelector(".stage")||doc.body||doc;
+}
+/* Returns the elements that are currently revealed, in DOM order. Tries the
+   common class conventions first (.item.shown etc.), then falls back to
+   computed visibility of reveal-style candidates, so lessons that reveal via
+   inline opacity / other class names are still tracked. */
+function getRevealedEls(doc:Document):HTMLElement[]{
+  const root=revealRoot(doc);
+  let list=Array.from(root.querySelectorAll<HTMLElement>(".item.shown"));
+  if(list.length)return list;
+  list=Array.from(root.querySelectorAll<HTMLElement>(REVEAL_TIER2)).filter(el=>!el.classList.contains("dot"));
+  if(list.length)return list;
+  const win=doc.defaultView;
+  if(!win)return [];
+  const cands=Array.from(root.querySelectorAll<HTMLElement>(REVEAL_CANDIDATES));
+  if(!cands.length||cands.length>3000)return [];
+  return cands.filter(el=>{
+    const cs=win.getComputedStyle(el);
+    return cs.display!=="none"&&cs.visibility!=="hidden"&&parseFloat(cs.opacity||"1")>0.5;
+  });
+}
 function detectRevealCount(doc:Document):number{
-  let items=doc.querySelectorAll(".item.shown");
-  if(!items||items.length===0)items=doc.querySelectorAll(".shown");
-  return items?items.length:0;
+  return getRevealedEls(doc).length;
 }
-function clickStage(doc:Document){
+/* Keep the most recently revealed word/item in view. Uses scrollIntoView so it
+   works whether the lesson scrolls the window or an inner container. */
+function scrollLatestRevealIntoView(doc:Document,win:Window,smooth=true){
+  const els=getRevealedEls(doc);
+  if(!els.length)return;
+  const el=els[els.length-1];
+  const r=el.getBoundingClientRect();
+  const vh=win.innerHeight||doc.documentElement.clientHeight;
+  const margin=Math.min(120,vh*0.2);
+  if(r.top>=margin&&r.bottom<=vh-margin)return; // already comfortably visible
+  try{el.scrollIntoView({block:"center",inline:"nearest",behavior:smooth?"smooth":"auto"});}catch{el.scrollIntoView();}
+}
+function clickStage(doc:Document,attempt=0){
   const stage=doc.querySelector<HTMLElement>("#stage")||doc.querySelector<HTMLElement>(".stage")||doc.body;
-  stage?.dispatchEvent(new MouseEvent("click",{bubbles:true,cancelable:true}));
+  if(!stage)return;
+  const win=doc.defaultView as any;
+  const opts:any={bubbles:true,cancelable:true,view:win,clientX:Math.round((win?.innerWidth||400)*0.5),clientY:Math.round((win?.innerHeight||600)*0.5)};
+  // Lessons listen on different events (click / pointer / mouse / touch) — fire the full sequence.
+  try{stage.dispatchEvent(new PointerEvent("pointerdown",{...opts,pointerType:"mouse"}));}catch{}
+  stage.dispatchEvent(new MouseEvent("mousedown",opts));
+  try{stage.dispatchEvent(new PointerEvent("pointerup",{...opts,pointerType:"mouse"}));}catch{}
+  stage.dispatchEvent(new MouseEvent("mouseup",opts));
+  stage.dispatchEvent(new MouseEvent("click",opts));
+  // Keyboard-driven lessons (space / arrow) — only after plain clicks have visibly failed.
+  if(attempt>=3&&attempt%3===0){
+    doc.dispatchEvent(new KeyboardEvent("keydown",{key:" ",code:"Space",bubbles:true,cancelable:true}));
+  }
 }
-function driveToReveal(doc:Document,targetCount:number,expectedStep:number,attempts=0){
-  if(attempts>60)return; // safety cap
-  const cur=detectRevealCount(doc);
-  if(cur>=targetCount)return;
-  clickStage(doc);
-  setTimeout(()=>{
-    // If that click ended up advancing to a different slide instead of
-    // revealing an item (the lesson often overloads the same "click
-    // anywhere" gesture for both), stop — a fresh sync broadcast covering
-    // the new slide/reveal state will arrive right behind it anyway.
-    const step=detectDotStep(doc);
-    if(step&&step.step!==expectedStep)return;
-    driveToReveal(doc,targetCount,expectedStep,attempts+1);
-  },150);
+// One reveal catch-up loop per document: a newer sync update cancels the previous loop
+// (previously every 90ms update spawned another loop, all clicking at once).
+const revealLoopId=new WeakMap<Document,number>();
+function driveToReveal(doc:Document,targetCount:number,expectedStep:number,onDone?:()=>void){
+  const id=(revealLoopId.get(doc)||0)+1;
+  revealLoopId.set(doc,id);
+  let attempts=0,stalled=0,last=detectRevealCount(doc);
+  const tick=()=>{
+    if(revealLoopId.get(doc)!==id)return; // superseded
+    const cur=detectRevealCount(doc);
+    if(cur>=targetCount){onDone?.();return;}
+    if(attempts++>80){onDone?.();return;}
+    stalled=cur>last?0:stalled+1;
+    last=cur;
+    clickStage(doc,stalled);
+    setTimeout(()=>{
+      if(revealLoopId.get(doc)!==id)return;
+      // If the click advanced to a different slide instead of revealing, stop —
+      // a fresh sync broadcast for the new slide arrives right behind it.
+      const step=detectDotStep(doc);
+      if(step&&expectedStep>=0&&step.step!==expectedStep)return;
+      tick();
+    },150);
+  };
+  tick();
 }
 
 /* ══ IN-CLASS MATERIAL VIEWER ══
@@ -2913,10 +3017,16 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
     const win=frame?.contentWindow;
     const doc=frame?.contentDocument;
     if(!win||!doc)return;
+    const hasReveal=remoteActivity.revealCount!=null&&remoteActivity.revealCount>0;
+    const finish=()=>{
+      // Reveal-based lesson: follow the newest revealed word instead of a raw scroll %
+      // (the % was computed against a shorter page, which is why it jumped back to the top).
+      if(hasReveal)scrollLatestRevealIntoView(doc,win);
+    };
     const catchUpReveal=()=>{
-      if(remoteActivity.revealCount!=null){
+      if(remoteActivity.revealCount!=null&&remoteActivity.revealCount>0){
         const step=detectDotStep(doc);
-        driveToReveal(doc,remoteActivity.revealCount,step?.step??-1);
+        driveToReveal(doc,remoteActivity.revealCount,step?.step??-1,finish);
       }
     };
     if(remoteActivity.step!=null){
@@ -2924,10 +3034,41 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
     } else {
       catchUpReveal();
     }
-    const target=findScrollTarget(doc,win);
-    writeScrollPct(target,win,remoteActivity.scrollPct);
+    if(!hasReveal){
+      const target=findScrollTarget(doc,win);
+      writeScrollPct(target,win,remoteActivity.scrollPct);
+    }
   },[kind,following,remoteActivity]);
 
+
+  // ── Auto-scroll with reveals (teacher AND student): when a new word/item is
+  //    revealed below the visible area, scroll it into view instead of leaving
+  //    the page parked where it was. ──
+  useEffect(()=>{
+    if(kind!=="html"||htmlDoc==null)return;
+    const frame=iframeRef.current;
+    if(!frame)return;
+    let cleanup=()=>{};
+    const attach=()=>{
+      const doc=frame.contentDocument,win=frame.contentWindow;
+      if(!doc||!win||!doc.body)return;
+      let prev=detectRevealCount(doc);
+      let t:any=null;
+      const obs=new MutationObserver(()=>{
+        clearTimeout(t);
+        t=setTimeout(()=>{
+          const cur=detectRevealCount(doc);
+          if(cur>prev)scrollLatestRevealIntoView(doc,win);
+          prev=cur;
+        },60);
+      });
+      obs.observe(doc.body,{childList:true,subtree:true,attributes:true,attributeFilter:["class","style"]});
+      cleanup=()=>{clearTimeout(t);obs.disconnect();};
+    };
+    if(frame.contentDocument?.readyState==="complete")attach();
+    frame.addEventListener("load",attach);
+    return()=>{frame.removeEventListener("load",attach);cleanup();};
+  },[kind,htmlDoc]);
 
   // HTML lessons live in an iframe, so taps never reach this page — listen inside the lesson document.
   useEffect(()=>{
