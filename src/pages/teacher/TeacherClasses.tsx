@@ -311,7 +311,18 @@ const TeacherClasses = () => {
     if (!subjectId) return;
 
     const candidates = sessions.filter((s: any) => s.subject_id === subjectId);
-    if (candidates.length === 0) { deepLinkHandled.current = true; return; }
+    if (candidates.length === 0) {
+      // No session row for this subject — still open its room directly.
+      const sub = subjects.find((x: any) => x.id === subjectId);
+      deepLinkHandled.current = true;
+      if (sub) {
+        joinClass({ id: sub.id, title: sub.title || "Class", title_ar: sub.title_ar || "" });
+        const next = new URLSearchParams(searchParams);
+        next.delete("subject");
+        setSearchParams(next, { replace: true });
+      }
+      return;
+    }
 
     const live = candidates.find((s: any) => s.status === "live");
     const upcoming = candidates
