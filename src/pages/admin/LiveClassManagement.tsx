@@ -302,7 +302,7 @@ const LiveClassManagement = () => {
   // the admin lands on the right context instead of a generic dashboard.
   useEffect(() => {
     if (deepLinkHandled.current) return;
-    if (loading) return;
+    if (loading || subjects.length === 0) return;
 
     const subjectId = searchParams.get("subject");
     if (!subjectId) return;
@@ -313,13 +313,19 @@ const LiveClassManagement = () => {
       setActiveTab("live");
       viewLive(liveMatch);
     } else {
+      // No session flagged live yet — still go straight into the subject's room
+      // (admin joins as monitor) instead of dropping on the list.
+      const sub = subjects.find(s => s.id === subjectId);
+      if (sub) {
+        joinClass({id:sub.id,title:sub.title,title_ar:sub.title_ar||"",livekit_room_name:sub.livekit_room_name},{autoJoin:true});
+      }
       setActiveTab("today");
     }
 
     const next = new URLSearchParams(searchParams);
     next.delete("subject");
     setSearchParams(next, { replace: true });
-  }, [loading, sessions, searchParams, setSearchParams]);
+  }, [loading, sessions, subjects, searchParams, setSearchParams]);
 
   /* Start an instant (unscheduled) live session for a subject that has no sessions yet */
   const startInstantClass = async (sub: any) => {
