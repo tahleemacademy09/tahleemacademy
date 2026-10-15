@@ -17,7 +17,7 @@ import {
   LogOut, Globe, Menu, X, Settings, Trophy, MessageSquare,
   CheckSquare, Mic, BookOpen, GraduationCap, BarChart2,
   Megaphone, Calendar, ChevronDown,
-  ChevronRight, Bell, Clock, Trash2, Smartphone, Star, LifeBuoy,
+  ChevronRight, Bell, Clock, Trash2, Smartphone, LifeBuoy,
 } from "lucide-react";
 import { useSupportUnreadCount } from "@/hooks/useSupportUnreadCount";
 import NotificationPermissionBanner from "@/components/NotificationPermissionBanner";
@@ -252,6 +252,42 @@ const TeacherLayout = () => {
     return () => { document.removeEventListener("visibilitychange", onVisibility); stop(); };
   }, [user]);
 
+  // All unread notifications (id/type/link only) so sidebar badges aren't limited to the 30-row bell list.
+  const [unreadIdx, setUnreadIdx] = useState<{ id: string; type: string; link: string | null }[]>([]);
+  useEffect(() => {
+    if (!user) return;
+    let alive = true;
+    (async () => {
+      const { data } = await supabase.from("notifications").select("id,type,link")
+        .eq("user_id", user.id).eq("is_read", false).limit(1000);
+      if (alive) setUnreadIdx((data || []).filter(belongsToTeacher) as any);
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, unreadNotifs, location.pathname]);
+
+  // Unread notifications that belong to a sidebar route (by link prefix; link-less ones fall to the Dashboard).
+  const TEACHER_ALIASES: Record<string, string[]> = {
+    "/teacher/hifdh": ["/teacher/hifdh-program", "/teacher/recitation"],
+    "/teacher/classes": ["/teacher/live-classes", "/teacher/live"],
+  };
+  const unreadFor = (route: string): number => {
+    return unreadIdx.reduce((c, n) => {
+      const path = String(n.link || "").split(/[?#]/)[0];
+      if (route === "/teacher") {
+        return (!path || path.startsWith("reminder:") || path === "/teacher" || path === "/teacher/dashboard" || path === "/" || path === "/dashboard") ? c + 1 : c;
+      }
+      const prefixes = [route, ...(TEACHER_ALIASES[route] ?? [])];
+      return prefixes.some(x => path === x || path.startsWith(x + "/")) ? c + 1 : c;
+    }, 0);
+  };
+  const RedBadge = ({ n }: { n: number }) => n > 0 ? (
+    <span aria-label={`${n} unread`} className="inline-flex flex-shrink-0 items-center justify-center rounded-full"
+      style={{ background: "#dc2626", color: "#fff", fontWeight: 800, fontSize: 10, lineHeight: 1, minWidth: 18, height: 18, padding: "0 5px" }}>
+      {n > 99 ? "99+" : n}
+    </span>
+  ) : null;
+
   const markRead = async (id: string) => {
     await supabase.from("notifications").update({ is_read: true }).eq("id", id);
     setNotifList(p => p.map(n => n.id === id ? { ...n, is_read: true } : n));
@@ -358,9 +394,7 @@ const TeacherLayout = () => {
                 )}>
                 <lnk.icon size={15} className="flex-shrink-0" />
                 <span className="flex-1">{lnk.label}</span>
-                {!!lnk.badge && (
-                  <span className="flex-shrink-0 text-xs font-extrabold" style={{color:"#c9a84c"}}>({lnk.badge})</span>
-                )}
+                <RedBadge n={lnk.badge || unreadFor(lnk.to)} />
               </Link>
             );
           }
@@ -368,7 +402,7 @@ const TeacherLayout = () => {
           const grp = item.group;
           const gActive  = groupActive(location.pathname, grp.children.map(c => c.to));
           const gOpen    = expanded[grp.key] ?? gActive;
-          const groupBadgeTotal = grp.children.reduce((s, c) => s + (c.badge || 0), 0);
+          const groupBadgeTotal = grp.children.reduce((s, c) => s + (c.badge || unreadFor(c.to)), 0);
           return (
             <div key={grp.key} className="mb-0.5">
               <button onClick={() => toggle(grp.key)}
@@ -380,11 +414,7 @@ const TeacherLayout = () => {
                 )}>
                 <grp.icon size={15} className="flex-shrink-0" />
                 <span className="flex-1">{grp.label}</span>
-                {groupBadgeTotal > 0 && !gOpen && (
-                  <span className="flex-shrink-0 text-xs font-extrabold" style={{color:"#c9a84c"}}>
-                    ({groupBadgeTotal})
-                  </span>
-                )}
+                {!gOpen && <RedBadge n={groupBadgeTotal} />}
                 {gOpen
                   ? <ChevronDown size={13} className="flex-shrink-0 text-white/40" />
                   : <ChevronRight size={13} className="flex-shrink-0 text-white/40" />}
@@ -401,9 +431,7 @@ const TeacherLayout = () => {
                         )}>
                         <child.icon size={13} className="flex-shrink-0" />
                         <span className="flex-1">{child.label}</span>
-                        {!!child.badge && (
-                          <span className="flex-shrink-0 text-xs font-extrabold" style={{color:"#c9a84c"}}>({child.badge})</span>
-                        )}
+                        <RedBadge n={child.badge || unreadFor(child.to)} />
                       </Link>
                     );
                   })}
@@ -420,7 +448,7 @@ const TeacherLayout = () => {
           className={cn("mb-1.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs transition-colors",
             location.pathname === "/teacher/app" ? "bg-white/15 text-white" : "bg-white/5 text-white/60 hover:bg-white/10")}>
           <Smartphone size={13} className="text-yellow-400" />{t("Get the App", "حمّل التطبيق")}
-          {appHasUpdate && <Star aria-label="New update" size={12} className="ms-auto" style={{ color: "#c9a84c", fill: "#c9a84c" }} />}
+          <span className="ms-auto"><RedBadge n={appHasUpdate ? 1 : 0} /></span>
         </Link>
         <button onClick={() => setLanguage(language === "en" ? "ar" : "en")}
           className="mb-1.5 flex w-full items-center gap-2 rounded-lg bg-white/5 px-2.5 py-2 text-xs text-white/60 transition-colors hover:bg-white/10">
@@ -565,7 +593,7 @@ const TeacherLayout = () => {
                   ? <div className="py-8 text-center text-sm text-muted-foreground">{t("No notifications yet", "لا توجد إشعارات")}</div>
                   : notifList.map((n: any) => (
                     <div key={n.id}
-                      onClick={() => { if (!n.is_read) markRead(n.id); if (n.link) { setShowNotifs(false); window.location.href = n.link; } }}
+                      onClick={() => { if (!n.is_read) markRead(n.id); { setShowNotifs(false); window.location.href = n.link && !n.link.startsWith("reminder:") ? n.link : "/teacher"; } }}
                       className={cn(
                         "flex cursor-pointer items-start gap-3 border-b border-border/60 px-5 py-3.5 transition-colors hover:bg-muted/50",
                         n.is_read ? "bg-card" : "bg-secondary/10"

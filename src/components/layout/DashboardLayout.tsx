@@ -22,7 +22,7 @@ import {
   Menu, Video, Mic, Layers, UserCheck, BookMarked, Settings,
   CreditCard, Calendar, ChevronDown, ChevronRight, Wallet, Bell,
   BookOpenCheck, RefreshCw, Headphones, Trophy, X, Lock, Clock, FolderOpen,
-  Activity, BookText, LifeBuoy, Eye, Sparkles, Smartphone, Star,
+  Activity, BookText, LifeBuoy, Eye, Sparkles, Smartphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -453,13 +453,14 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     "/student/hifdh-program": { prefixes: ["/student/hifdh"] },
     "/student/exams":         { prefixes: ["/student/results", "/exams"], types: ["exam"] },
     "/student/musabaqah":     { prefixes: ["/musabaqah"] },
+    "/admin":                 { prefixes: ["/admin/dashboard"], types: ["announcement", "general"] },
   };
   const notifLinkPath = (l: any) => String(l || "").split(/[?#]/)[0];
   const notifMatchesRoute = (n: any, route: string): boolean => {
     const al = NOTIF_ALIASES[route];
     const p = notifLinkPath(n.link);
     const prefixes = NOTIF_ROOTS.includes(route) ? (al?.prefixes ?? []) : [route, ...(al?.prefixes ?? [])];
-    if (p) return prefixes.some(x => p === x || p.startsWith(x + "/"));
+    if (p) return (NOTIF_ROOTS.includes(route) && p === route) || prefixes.some(x => p === x || p.startsWith(x + "/"));
     return !!al?.types?.includes(n.type);
   };
 
@@ -467,7 +468,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   // bell list above is capped at 50 and daily content would crowd out the rest.
   const [unreadIdx, setUnreadIdx] = useState<{ id: string; type: string; link: string | null; is_read: boolean }[]>([]);
   useEffect(() => {
-    if (role !== "student" || !user) return;
+    if (!user) return;
     let alive = true;
     (async () => {
       const { data } = await supabase.from("notifications").select("id,type,link")
@@ -476,19 +477,13 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, role, unreadNotifs, location.pathname]);
+  }, [user?.id, unreadNotifs, location.pathname]);
 
   const unreadCountFor = (route: string, extraTypes: string[] = []): number => {
-    const src: any[] = role === "student" ? unreadIdx : notifList;
-    if (!src?.length) return 0;
-    if (role === "student") return src.reduce((c, n) => (!n.is_read && notifMatchesRoute(n, route) ? c + 1 : c), 0);
-    return src.reduce((count: number, n: any) => {
-      if (n.is_read) return count;
-      const link = String(n.link || "");
-      if (link.startsWith(route)) return count + 1;
-      if (extraTypes.length && extraTypes.includes(n.type)) return count + 1;
-      return count;
-    }, 0);
+    if (!unreadIdx.length) return 0;
+    return unreadIdx.reduce((c, n) => (
+      !n.is_read && (notifMatchesRoute(n, route) || (extraTypes.length > 0 && extraTypes.includes(n.type))) ? c + 1 : c
+    ), 0);
   };
 
   // Student: opening a section clears that section's notifications (the star goes away).
@@ -529,15 +524,15 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       aria-label={`${count} unread`}
       className="ms-auto inline-flex shrink-0 items-center justify-center rounded-full"
       style={{
-        background: "#c9a84c", color: "#14251b", fontWeight: 800,
-        fontSize: 10, lineHeight: 1, minWidth: 16, height: 16, padding: "0 4px",
+        background: "#dc2626", color: "#fff", fontWeight: 800,
+        fontSize: 10, lineHeight: 1, minWidth: 18, height: 18, padding: "0 5px",
       }}
     >
       {count > 99 ? "99+" : count}
     </span>
   );
 
-  // ONE badge per item, same look for every role: gold (n).
+  // ONE badge per item, same look for every role: small filled red circle with the number.
   // A to-do count (e.g. revisions assigned, reviews pending) wins over the
   // unread-notification count, because the notification is usually about the
   // same thing — showing both made the item look like it had two different badges.
@@ -545,9 +540,10 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     const n = explicit > 0 ? explicit : count;
     if (n <= 0) return null;
     return (
-      <span aria-label={`${n} waiting`} className="ms-auto inline-flex shrink-0 items-center"
-        style={{ color: "#c9a84c", fontWeight: 800, fontSize: 12, lineHeight: 1 }}>
-        ({n > 99 ? "99+" : n})
+      <span aria-label={`${n} unread`} className="ms-auto inline-flex shrink-0 items-center justify-center rounded-full"
+        style={{ background: "#dc2626", color: "#fff", fontWeight: 800, fontSize: 10, lineHeight: 1,
+          minWidth: 18, height: 18, padding: "0 5px" }}>
+        {n > 99 ? "99+" : n}
       </span>
     );
   };
@@ -630,7 +626,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   )}>
                   <item.icon className="h-4 w-4 shrink-0"/>
                   <span className="truncate">{item.label}</span>
-                  {item.star && <Star aria-label="New update" className="ms-auto h-3.5 w-3.5 shrink-0" style={{ color: "#c9a84c", fill: "#c9a84c" }}/>}
                   <NotifMark explicit={item.badge ?? 0} count={unreadCountFor(item.to)} />
                 </Link>
               );
@@ -706,7 +701,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                 )}>
                 <Smartphone className="h-4 w-4 shrink-0 text-yellow-400"/>
                 <span>{role === "admin" ? t("App Releases","إصدارات التطبيق") : t("Get the App","حمّل التطبيق")}</span>
-                {appHasUpdate && <Star aria-label="New update" className="ms-auto h-3.5 w-3.5 shrink-0" style={{ color: "#c9a84c", fill: "#c9a84c" }}/>}
+                <NotifMark count={appHasUpdate ? 1 : 0} />
               </Link>
             );
           })()}
@@ -756,7 +751,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
             <SheetTrigger asChild>
               <Button variant="ghost" size="icon" className="h-8 w-8 relative">
                 <Menu className="h-4 w-4"/>
-                {role === "student" && appHasUpdate && <Star aria-label="New app update" className="absolute -top-0.5 -right-0.5 h-3 w-3" style={{ color: "#c9a84c", fill: "#c9a84c" }}/>}
+                {(unreadNotifs > 0 || appHasUpdate) && <span aria-label="Unread" className="absolute top-0.5 right-0.5 h-2.5 w-2.5 rounded-full bg-red-600 border border-background"/>}
               </Button>
             </SheetTrigger>
             <SheetContent
