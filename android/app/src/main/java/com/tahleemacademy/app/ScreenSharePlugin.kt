@@ -100,12 +100,6 @@ class ScreenSharePlugin : Plugin() {
             val ch = ((sh * k).toInt() / 2) * 2
             try {
                 newRoom.connect(url, token)
-                // Capture at the phone's REAL screen shape (portrait stays portrait, up to 1600px).
-                // Without this the default 16:9 landscape size letterboxed the phone screen.
-                newRoom.localParticipant.screenShareTrackCaptureDefaults = LocalVideoTrackOptions(
-                    isScreencast = true,
-                    captureParams = VideoCaptureParameter(cw, ch, 15)
-                )
                 newRoom.localParticipant.setScreenShareEnabled(true, data)
                 room = newRoom
                 watch(newRoom)
