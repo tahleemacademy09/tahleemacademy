@@ -5249,7 +5249,9 @@ export const RecController=({sessionId,subjectId,onSavingChange,stopRecRef,isRec
     setBusy(true);
     try{
       const{data,error}=await supabase.functions.invoke("start-recording",{body:{session_id:sessionId,subject_id:subjectId}});
-      if(error||data?.error)throw new Error(data?.error||error?.message||"Failed to start recording");
+      let msg=data?.error;
+      if(error&&!msg){try{const b=await (error as any).context?.json();msg=b?.error||JSON.stringify(b);}catch{try{msg=await (error as any).context?.text();}catch{}}}
+      if(error||data?.error)throw new Error(msg||error?.message||"Failed to start recording");
       setRecording(true);setPaused(false);setDisplayTime(0);
       toast({title:t("Recording started ⏺","بدأ التسجيل ⏺")});
     }catch(err:any){
@@ -5291,7 +5293,9 @@ export const RecController=({sessionId,subjectId,onSavingChange,stopRecRef,isRec
     setBusy(true);
     try{
       const{data,error}=await supabase.functions.invoke("start-recording",{body:{session_id:sessionId,subject_id:subjectId}});
-      if(error||data?.error)throw new Error(data?.error||error?.message||"Failed to resume recording");
+      let msg=data?.error;
+      if(error&&!msg){try{const b=await (error as any).context?.json();msg=b?.error||JSON.stringify(b);}catch{try{msg=await (error as any).context?.text();}catch{}}}
+      if(error||data?.error)throw new Error(msg||error?.message||"Failed to resume recording");
       setRecording(true);setPaused(false);
       toast({title:t("Recording resumed ⏺","استؤنف التسجيل ⏺")});
     }catch(err:any){
