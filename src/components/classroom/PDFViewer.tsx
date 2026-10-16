@@ -49,6 +49,25 @@ function loadScroll(id: string): number {
   try { return parseInt(localStorage.getItem(scrollKey(id)) || "0", 10) || 0; } catch { return 0; }
 }
 
+// Position persisted as {page, frac-within-page, zoom, rotate} — survives re-layout at a different
+// width (px offsets do not), so minimize/restore or reopening resumes at the same place.
+type SyncPos = { page: number; frac: number; zoom: number; rotate: number };
+const posKey = (id: string) => `pdfv-pos-${id}`;
+function savePosLS(id: string, pos: SyncPos) {
+  try { localStorage.setItem(posKey(id), JSON.stringify(pos)); } catch {}
+}
+function loadPosLS(id: string): SyncPos | null {
+  try {
+    const raw = localStorage.getItem(posKey(id));
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (p && typeof p.page === "number" && typeof p.frac === "number") return p;
+  } catch {}
+  return null;
+}
+// Min gap between live-sync sends (Supabase realtime allows ~10 msgs/s per client).
+const SYNC_MIN_MS = 120;
+
 /** True if this PDF's bytes are already on-device (will open instantly, even offline). */
 export async function isPDFCached(url: string): Promise<boolean> {
   if (PAGE_CACHE.has(url)) return true;
@@ -173,12 +192,15 @@ interface Props {
   // remoteScrollPct: the teacher's latest scroll fraction (0-1) to drive to
   //               while following.
   syncActive?: boolean;
-  onSyncScroll?: (scrollPct: number, page: number, total: number) => void;
+  onSyncScroll?: (scrollPct: number, page: number, total: number, pos?: SyncPos) => void;
   following?: boolean;
   remoteScrollPct?: number | null;
+  // Teacher's exact position (page + fraction within page + zoom/rotate). Preferred over
+  // remoteScrollPct, which depends on how many pages each device has rendered so far.
+  remotePos?: { page?: number; pageFrac?: number; zoom?: number; rotate?: number; scrollPct?: number } | null;
 }
 
-export default function PDFViewer({ url, bg = "#1c1c1e", materialId, syncActive = false, onSyncScroll, following = false, remoteScrollPct = null }: Props) {
+export default function PDFViewer({ url, bg = "#1c1c1e", materialId, syncActive = false, onSyncScroll, following = false, remoteScrollPct = null, remotePos = null }: Props) {
   const scrollRef    = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [phase, setPhase] = useState<"instant"|"loading"|"rendering"|"done"|"error">("loading");
@@ -190,6 +212,8 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId, syncActive 
   // ── Zoom / rotate / download state ───────────────────────────────────────
   const [zoom,   setZoom]   = useState(1);
   const [rotate, setRotate] = useState(0); // degrees: 0 90 180 270
+  const rotateRef = useRef(0);
+  useEffect(() => { rotateRef.current = rotate; }, [rotate]);
   const zoomRef  = useRef(1);
 
   // Pinch-to-zoom touch tracking
@@ -391,8 +415,19 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId, syncActive 
     return c;
   }, []);
 
+  const followingRef = useRef(following);
+  useEffect(() => { followingRef.current = following; }, [following]);
+  const applyPosRef = useRef<(p: SyncPos) => void>(() => {});
+
   const restoreScroll = useCallback(() => {
     if (!materialId) return;
+    if (followingRef.current) return; // a follower is driven by the teacher, not by its own history
+    const pos = loadPosLS(materialId);
+    if (pos) {
+      requestAnimationFrame(() => applyPosRef.current(pos));
+      setTimeout(() => applyPosRef.current(pos), 350); // once more after zoom/layout settles
+      return;
+    }
     const saved = loadScroll(materialId);
     if (saved > 0) requestAnimationFrame(() => {
       if (scrollRef.current) scrollRef.current.scrollTop = saved;
@@ -472,13 +507,101 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId, syncActive 
     return () => { cancelRef.current = true; clearInterval(poll); };
   }, [url, makePage, restoreScroll]);
 
+  // ── Position helpers (rect-based: correct under zoom, any width, partial rendering) ──
+  const computePos = useCallback((): SyncPos | null => {
+    const sc = scrollRef.current, cont = containerRef.current;
+    if (!sc || !cont || !cont.children.length) return null;
+    const scTop = sc.getBoundingClientRect().top;
+    const y = sc.scrollTop;
+    let idx = 0, top0 = 0, h0 = 1;
+    for (let i = 0; i < cont.children.length; i++) {
+      const r = (cont.children[i] as HTMLElement).getBoundingClientRect();
+      const absTop = r.top - scTop + sc.scrollTop;
+      if (absTop <= y + 1) { idx = i; top0 = absTop; h0 = Math.max(1, r.height); } else break;
+    }
+    const frac = Math.min(1.5, Math.max(0, (y - top0) / h0));
+    return { page: idx + 1, frac, zoom: zoomRef.current, rotate: rotateRef.current };
+  }, []);
+
+  // Returns false if the target page isn't rendered yet (caller retries as pages stream in).
+  const applyPos = useCallback((pos: SyncPos): boolean => {
+    const sc = scrollRef.current, cont = containerRef.current;
+    if (!sc || !cont) return false;
+    if (pos.zoom != null && Math.abs(pos.zoom - zoomRef.current) > 0.001) { applyZoom(pos.zoom); }
+    if (pos.rotate != null && pos.rotate !== rotateRef.current) { setRotate(pos.rotate); }
+    const child = cont.children[pos.page - 1] as HTMLElement | undefined;
+    if (!child) return false;
+    const r = child.getBoundingClientRect();
+    const target = (r.top - sc.getBoundingClientRect().top + sc.scrollTop) + pos.frac * r.height;
+    if (Math.abs(sc.scrollTop - target) > 1.5) {
+      applyingRemoteRef.current = true;
+      sc.scrollTop = target;
+      setTimeout(() => { applyingRemoteRef.current = false; }, 80);
+    }
+    return true;
+  }, [applyZoom]);
+  useEffect(() => { applyPosRef.current = (p: SyncPos) => { applyPos(p); }; }, [applyPos]);
+
+  // How many pages are in the DOM right now (so a late joiner can retry once its target page exists)
+  const [renderedCount, setRenderedCount] = useState(0);
+  useEffect(() => {
+    const c = containerRef.current;
+    if (!c) return;
+    const mo = new MutationObserver(() => setRenderedCount(c.children.length));
+    mo.observe(c, { childList: true });
+    setRenderedCount(c.children.length);
+    return () => mo.disconnect();
+  }, []);
+
+  // ── Teacher side: send latest position. Throttled WITH a trailing send, so the final resting
+  //    position is never dropped (the old leading-edge-only throttle lost it → student stuck). ──
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sendSyncNow = useCallback(() => {
+    if (!syncActiveRef.current || !onSyncScrollRef.current || applyingRemoteRef.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    lastSyncSentRef.current = Date.now();
+    const max = el.scrollHeight - el.clientHeight;
+    const pct = max > 0 ? Math.min(1, Math.max(0, el.scrollTop / max)) : 0;
+    onSyncScrollRef.current(pct, currentPageRef.current, totalPagesRef.current, computePos() || undefined);
+  }, [computePos]);
+  const scheduleSync = useCallback(() => {
+    const wait = SYNC_MIN_MS - (Date.now() - lastSyncSentRef.current);
+    if (wait <= 0) {
+      if (syncTimerRef.current) { clearTimeout(syncTimerRef.current); syncTimerRef.current = null; }
+      sendSyncNow();
+    } else if (!syncTimerRef.current) {
+      syncTimerRef.current = setTimeout(() => { syncTimerRef.current = null; sendSyncNow(); }, wait);
+    }
+  }, [sendSyncNow]);
+  useEffect(() => () => { if (syncTimerRef.current) clearTimeout(syncTimerRef.current); }, []);
+
+  // When sync turns ON (or the viewer is restored after a minimize) push the CURRENT position at
+  // once, so students open exactly where the teacher is instead of at page 1.
+  useEffect(() => {
+    if (!syncActive || (phase !== "done" && phase !== "rendering")) return;
+    const t = setTimeout(sendSyncNow, 250);
+    return () => clearTimeout(t);
+  }, [syncActive, phase, sendSyncNow]);
+  // Zoom / rotate changes don't fire a scroll event — sync them too.
+  useEffect(() => { if (syncActiveRef.current) scheduleSync(); }, [zoom, rotate, scheduleSync]);
+
   // Save scroll position + track current page while reading
   useEffect(() => {
     if (phase !== "done" && phase !== "rendering") return;
     const el = scrollRef.current;
     if (!el) return;
+    let lastPosSave = 0;
     const fn = () => {
-      if (materialId) saveScroll(materialId, el.scrollTop);
+      if (materialId) {
+        saveScroll(materialId, el.scrollTop);
+        const now = Date.now();
+        if (!applyingRemoteRef.current && now - lastPosSave > 250) {
+          lastPosSave = now;
+          const p = computePos();
+          if (p) savePosLS(materialId, p);
+        }
+      }
       updateCurrentPageFromScroll();
       // Show the navigator while the user is actively scrolling; fade it
       // out 500ms after the last scroll event so it doesn't block the page.
@@ -486,19 +609,9 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId, syncActive 
       if (navHideTimer.current) clearTimeout(navHideTimer.current);
       navHideTimer.current = setTimeout(() => setNavVisible(false), 1200);
 
-      // Teacher side: report scroll position for the classroom sync channel,
-      // throttled the same as the HTML-lesson sync path. Skip while we're
-      // the ones programmatically applying a REMOTE position (follower
-      // side) so we never echo it back.
-      if (syncActiveRef.current && onSyncScrollRef.current && !applyingRemoteRef.current) {
-        const now = Date.now();
-        if (now - lastSyncSentRef.current >= 90) {
-          lastSyncSentRef.current = now;
-          const max = el.scrollHeight - el.clientHeight;
-          const pct = max > 0 ? Math.min(1, Math.max(0, el.scrollTop / max)) : 0;
-          onSyncScrollRef.current(pct, currentPageRef.current, totalPagesRef.current);
-        }
-      }
+      // Teacher side: report scroll position (throttled + trailing). Skipped while WE are the
+      // ones applying a REMOTE position (follower side) so we never echo it back.
+      if (syncActiveRef.current && onSyncScrollRef.current && !applyingRemoteRef.current) scheduleSync();
     };
     fn(); // set the initial page right away, don't wait for the first scroll event
     el.addEventListener("scroll", fn, { passive: true });
@@ -506,25 +619,43 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId, syncActive 
       el.removeEventListener("scroll", fn);
       if (navHideTimer.current) clearTimeout(navHideTimer.current);
     };
-  }, [materialId, phase, updateCurrentPageFromScroll]);
+  }, [materialId, phase, updateCurrentPageFromScroll, computePos, scheduleSync]);
 
-  // ── Follower side: drive the scroll container to the teacher's latest
-  //    reported position. Runs again as pages stream in (phase changes
-  //    scrollHeight), so a late joiner still lands in the right place once
-  //    enough of the document has rendered. ─────────────────────────────
-  useEffect(() => {
-    if (!following || remoteScrollPct == null) return;
-    const el = scrollRef.current;
-    if (!el) return;
-    const max = el.scrollHeight - el.clientHeight;
-    if (max <= 0) return;
-    applyingRemoteRef.current = true;
-    el.scrollTop = remoteScrollPct * max;
+  // ── Follower side: drive the view to the teacher's latest position. Re-asserted when the
+  //    position changes, when more pages render, when zoom/rotate settle, and on a slow timer —
+  //    so a dropped message, a late render or a layout change can never leave it out of step. ──
+  const remotePosRef = useRef<Props["remotePos"]>(null);
+  const reassert = useCallback(() => {
+    const pos = remotePosRef.current;
+    const sc = scrollRef.current;
+    if (!pos || !sc) return;
+    if (pos.page != null && pos.pageFrac != null) {
+      applyPos({ page: pos.page, frac: pos.pageFrac, zoom: pos.zoom ?? zoomRef.current, rotate: pos.rotate ?? rotateRef.current });
+    } else if (pos.scrollPct != null) {
+      const max = sc.scrollHeight - sc.clientHeight;
+      if (max <= 0) return;
+      const target = pos.scrollPct * max;
+      if (Math.abs(sc.scrollTop - target) > 1.5) {
+        applyingRemoteRef.current = true;
+        sc.scrollTop = target;
+        setTimeout(() => { applyingRemoteRef.current = false; }, 80);
+      }
+    }
     updateCurrentPageFromScroll();
-    // Release on next tick — the scroll event this triggers fires async.
-    const t = setTimeout(() => { applyingRemoteRef.current = false; }, 50);
-    return () => clearTimeout(t);
-  }, [following, remoteScrollPct, phase, updateCurrentPageFromScroll]);
+  }, [applyPos, updateCurrentPageFromScroll]);
+
+  useEffect(() => {
+    remotePosRef.current = following
+      ? (remotePos ?? (remoteScrollPct != null ? { scrollPct: remoteScrollPct } : null))
+      : null;
+    reassert();
+  }, [following, remotePos, remoteScrollPct, phase, renderedCount, zoom, rotate, reassert]);
+
+  useEffect(() => {
+    if (!following) return;
+    const id = setInterval(reassert, 900);
+    return () => clearInterval(id);
+  }, [following, reassert]);
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: bg, position: "relative" }}>

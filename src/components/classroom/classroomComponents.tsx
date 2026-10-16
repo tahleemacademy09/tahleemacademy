@@ -158,6 +158,12 @@ export const CSS = `
 
   * { box-sizing: border-box; }
 
+  /* HEAT FIX: backdrop-filter blur over live video is GPU-heavy on phones. Solid translucent
+     backgrounds stay; only the blur is dropped, on phones, while the classroom is mounted. */
+  @media (max-width: 820px), (pointer: coarse) {
+    *, *::before, *::after { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  }
+
   [data-lk-theme]{ height:100%!important;display:flex!important;flex-direction:column!important; }
 
   [data-classroom-root]{
@@ -909,10 +915,34 @@ export const TeacherMaterialFollower = ({ sessionId }: { sessionId: string | nul
   const [activity, setActivity] = useState<any>(null);
   const materialRef = useRef<any>(null);
   useEffect(() => { materialRef.current = material; }, [material]);
+  const lastSeqRef = useRef<number>(0);
+  const lastReqRef = useRef<number>(0);
+  // Student closed the synced material while the teacher is still syncing: keep following in the
+  // background (so the position stays current) and offer a "Sync with teacher" button to rejoin.
+  const [dismissed, setDismissed] = useState(false);
+
+  // Apply a position only if it isn't OLDER than what we already have (equal = the teacher's
+  // heartbeat re-send, which is how a dropped message heals). Stops stale presence snapshots and
+  // out-of-order messages from yanking the student backwards.
+  const acceptActivity = (a: any) => {
+    if (!a) return;
+    const seq = typeof a.seq === "number" ? a.seq : null;
+    if (seq != null) {
+      if (seq < lastSeqRef.current) return;
+      lastSeqRef.current = seq;
+    }
+    setActivity(a);
+  };
+  // Keep the SAME material object when it's the same material, so a presence refresh doesn't
+  // re-run the viewer's effects (or restart it).
+  const acceptMaterial = (m: any) => setMaterial((prev: any) => (prev && prev.id === m.id ? prev : m));
 
   useEffect(() => {
     if (!sessionId) return;
     const ch = supabase.channel(`material-sync-${sessionId}`);
+    let absentTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearAbsent = () => { if (absentTimer) { clearTimeout(absentTimer); absentTimer = null; } };
+    const closeAll = () => { clearAbsent(); lastSeqRef.current = 0; setMaterial(null); setActivity(null); setDismissed(false); };
 
     const applyPresence = () => {
       const state = ch.presenceState() as Record<string, any[]>;
@@ -921,27 +951,41 @@ export const TeacherMaterialFollower = ({ sessionId }: { sessionId: string | nul
         arr.forEach((p: any) => { if (p.role === "teacher") teacherEntry = p; });
       });
       if (teacherEntry?.syncEnabled && teacherEntry?.material) {
-        setMaterial(teacherEntry.material);
-        if (teacherEntry.activity) setActivity(teacherEntry.activity);
-      } else if (materialRef.current) {
-        setMaterial(null);
-        setActivity(null);
+        clearAbsent();
+        if (materialRef.current?.id !== teacherEntry.material.id) { lastSeqRef.current = 0; setDismissed(false); }
+        acceptMaterial(teacherEntry.material);
+        acceptActivity(teacherEntry.activity);
+      } else if (teacherEntry) {
+        // Teacher is present and says "not syncing" → close now.
+        if (materialRef.current) closeAll();
+      } else if (materialRef.current && !absentTimer) {
+        // Teacher's presence vanished — usually a brief reconnect, NOT "close the material".
+        // Wait before closing so a network blip doesn't make the lesson disappear and restart.
+        absentTimer = setTimeout(() => { absentTimer = null; if (materialRef.current) closeAll(); }, 8000);
       }
     };
 
     ch.on("presence", { event: "sync" }, applyPresence)
       .on("broadcast", { event: "material-open" }, ({ payload }: any) => {
         if (!payload?.material) return;
-        setMaterial(payload.material);
-        setActivity(payload.activity || null);
+        clearAbsent();
+        if (materialRef.current?.id !== payload.material.id) { lastSeqRef.current = 0; setDismissed(false); }
+        acceptMaterial(payload.material);
+        acceptActivity(payload.activity);
       })
-      .on("broadcast", { event: "material-close" }, () => {
-        setMaterial(null);
-        setActivity(null);
-      })
+      .on("broadcast", { event: "material-close" }, () => { closeAll(); })
       .on("broadcast", { event: "material-activity" }, ({ payload }: any) => {
-        if (payload?.materialId !== materialRef.current?.id) return;
-        setActivity(payload);
+        if (payload?.materialId !== materialRef.current?.id) {
+          // We're getting live positions for a material we don't have open (missed its
+          // "open" message) → ask the teacher for the current state, at most every 5s.
+          const now = Date.now();
+          if (payload?.materialId && now - lastReqRef.current > 5000) {
+            lastReqRef.current = now;
+            ch.send({ type: "broadcast", event: "request-sync-state", payload: {} });
+          }
+          return;
+        }
+        acceptActivity(payload);
       })
       .subscribe((status: string) => {
         // Covers late joiners and reconnects: ask the teacher directly for
@@ -950,10 +994,22 @@ export const TeacherMaterialFollower = ({ sessionId }: { sessionId: string | nul
         if (status === "SUBSCRIBED") ch.send({ type: "broadcast", event: "request-sync-state", payload: {} });
       });
 
-    return () => { supabase.removeChannel(ch); };
+    return () => { clearAbsent(); supabase.removeChannel(ch); };
   }, [sessionId]);
 
   if (!material) return null;
+  if (dismissed) {
+    return (
+      <button
+        onClick={() => setDismissed(false)}
+        style={{position:"fixed",left:"50%",transform:"translateX(-50%)",bottom:"calc(96px + env(safe-area-inset-bottom, 0px))",zIndex:9000,
+          display:"flex",alignItems:"center",gap:8,padding:"11px 20px",borderRadius:999,border:"none",cursor:"pointer",
+          background:TEAL,color:"#fff",fontSize:14,fontWeight:700,fontFamily:"'Google Sans',sans-serif",
+          boxShadow:"0 6px 22px rgba(0,0,0,.45)"}}>
+        <span style={{fontSize:15}}>🔗</span> Sync with teacher
+      </button>
+    );
+  }
   return (
     <InClassMaterialViewer
       material={material}
@@ -961,7 +1017,7 @@ export const TeacherMaterialFollower = ({ sessionId }: { sessionId: string | nul
       fromPanel={true}
       following={true}
       remoteActivity={activity}
-      onClose={() => setMaterial(null)}
+      onClose={() => setDismissed(true)}
     />
   );
 };
@@ -2963,9 +3019,17 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
       const win=frame.contentWindow;
       if(!doc||!win)return;
 
+      let trailing:ReturnType<typeof setTimeout>|null=null;
+      let lastXY:[number,number]=[0.5,0.5];
       const send=(xPct:number,yPct:number,force=false)=>{
         const now=Date.now();
-        if(!force&&now-lastSentRef.current<90)return;
+        lastXY=[xPct,yPct];
+        if(!force&&now-lastSentRef.current<120){
+          // Trailing send: the LAST position must always go out, even if it landed inside the
+          // throttle window (it used to be dropped, leaving students one step behind).
+          if(!trailing)trailing=setTimeout(()=>{trailing=null;send(lastXY[0],lastXY[1],true);},120-(now-lastSentRef.current)+5);
+          return;
+        }
         lastSentRef.current=now;
         const target=findScrollTarget(doc,win);
         const scrollPct=readScrollPct(target,win);
@@ -2973,6 +3037,9 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
         const revealCount=detectRevealCount(doc);
         onSyncActivity(xPct,yPct,scrollPct,dotStep?.step??null,dotStep?.total??null,revealCount);
       };
+      // Push the CURRENT position as soon as sync starts (or the viewer is restored), so students
+      // land where the teacher is, not at the start of the lesson.
+      setTimeout(()=>send(0.5,0.5,true),300);
       const onMove=(e:MouseEvent)=>{
         const w=doc.documentElement.scrollWidth||win.innerWidth;
         const h=doc.documentElement.scrollHeight||win.innerHeight;
@@ -2993,6 +3060,7 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
       doc.addEventListener("scroll",onScroll,true); // capture:true catches scroll on inner containers too
       win.addEventListener("scroll",onScroll);
       cleanup=()=>{
+        if(trailing){clearTimeout(trailing);trailing=null;}
         observer.disconnect();
         doc.removeEventListener("mousemove",onMove);
         doc.removeEventListener("touchmove",onMove as any);
@@ -3162,9 +3230,10 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
       <div onClick={onMaterialTap} style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0,position:"relative"}}>
         <PDFViewer url={embedUrl} bg="#0f1117" materialId={matId}
           syncActive={isTeacher&&syncActive}
-          onSyncScroll={(pct:number)=>onSyncActivity?.(0.5,0.5,pct,null,null,null)}
+          onSyncScroll={(pct:number,_page:number,_total:number,pos?:any)=>onSyncActivity?.(0.5,0.5,pct,null,null,null,pos?{page:pos.page,pageFrac:pos.frac,zoom:pos.zoom,rotate:pos.rotate}:undefined)}
           following={following}
           remoteScrollPct={following&&remoteActivity?remoteActivity.scrollPct:null}
+          remotePos={following&&remoteActivity?remoteActivity:null}
         />
         {/* While following, the student's copy is fully teacher-driven — block
             local interaction so their own scroll/zoom/page taps can't fight
@@ -4274,7 +4343,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   //    currently being force-synced to the whole class. ───────────────────
   const[syncedMatId,setSyncedMatId]=useState<string|null>(null);
   const[followingSyncId,setFollowingSyncId]=useState<string|null>(null); // material id the student is actively following
-  const[syncActivity,setSyncActivity]=useState<{materialId:string;xPct:number;yPct:number;scrollPct:number;step:number|null;total:number|null;revealCount:number|null}|null>(null);
+  const[syncActivity,setSyncActivity]=useState<{materialId:string;xPct:number;yPct:number;scrollPct:number;step:number|null;total:number|null;revealCount:number|null;seq?:number;page?:number;pageFrac?:number;zoom?:number;rotate?:number}|null>(null);
   const syncChannelRef=useRef<any>(null);
   const followingSyncIdRef=useRef<string|null>(null);
   useEffect(()=>{followingSyncIdRef.current=followingSyncId;},[followingSyncId]);
@@ -4516,13 +4585,34 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   // Broadcast a live pointer/scroll/step/reveal update from the teacher's viewer.
   // Only ever sent for the ONE material currently toggled to sync — and only
   // while it stays admin-authorized (sync_allowed), even if the toggle is on.
-  const broadcastSyncActivity=useCallback((materialId:string,xPct:number,yPct:number,scrollPct:number,step:number|null,total:number|null,revealCount:number|null)=>{
+  const syncSeqRef=useRef(0);
+  const broadcastSyncActivity=useCallback((materialId:string,xPct:number,yPct:number,scrollPct:number,step:number|null,total:number|null,revealCount:number|null,extra?:any)=>{
     if(!isPrivileged||!syncChannelRef.current||syncedMatId!==materialId)return;
     const mat=openMats.find(m=>m.id===materialId);
     if(!mat?.sync_allowed)return;
-    const payload={materialId,xPct,yPct,scrollPct,step,total,revealCount};
+    // seq: strictly increasing, so a student can ignore a late/stale message (and a stale
+    // presence snapshot) instead of jumping backwards.
+    syncSeqRef.current=Math.max(Date.now(),syncSeqRef.current+1);
+    const payload:any={materialId,xPct,yPct,scrollPct,step,total,revealCount,seq:syncSeqRef.current,...(extra||{})};
     lastActivityByMatRef.current[materialId]=payload;
     syncChannelRef.current.send({type:"broadcast",event:"material-activity",payload});
+  },[isPrivileged,syncedMatId,openMats]);
+
+  // ── Heartbeat (teacher): re-send the latest position every 2s while a material is synced.
+  //    Realtime broadcast is best-effort — a dropped message used to leave a student stuck until
+  //    the teacher happened to move again. Re-sending current STATE (not events) makes every
+  //    student converge on the teacher's position within ~2s, whatever got lost. Idempotent:
+  //    students apply a position only if it is not older than what they already have. ──
+  useEffect(()=>{
+    if(!isPrivileged||!syncedMatId)return;
+    const id=setInterval(()=>{
+      const ch=syncChannelRef.current;
+      const mat=openMats.find(m=>m.id===syncedMatId);
+      const last=lastActivityByMatRef.current[syncedMatId];
+      if(!ch||!mat?.sync_allowed||!last)return;
+      ch.send({type:"broadcast",event:"material-activity",payload:last});
+    },2000);
+    return()=>clearInterval(id);
   },[isPrivileged,syncedMatId,openMats]);
 
   // ── Explicit per-material sync toggle — lives in that material's own
@@ -4789,10 +4879,40 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
     );
   };
 
+  /* ── PERSISTENT VIEWERS LAYER ──
+     Every open material stays MOUNTED in every state of this panel (minimized, browsing the
+     list, reading the Quran). Previously minimizing unmounted them, so restoring started the
+     document again from the top. Hidden ones use visibility (not display:none) so their scroll
+     position and layout survive; they're always the FIRST child of the returned fragment so React
+     never remounts them when the panel switches view. */
+  const viewersShown=!quranOpen&&openMats.length>0&&!forceList&&listVisible;
+  const viewersLayer=openMats.map(m=>{
+    const visible=viewersShown&&m.id===activeMatId;
+    return(
+      <div key={m.id} style={{position:"absolute",inset:0,zIndex:visible?55:-1,background:"#202124",display:"flex",flexDirection:"column",...(visible?{}:{visibility:"hidden" as const,pointerEvents:"none" as const})}}>
+        <InClassMaterialViewer
+          material={m}
+          onMinimize={minimizeActive}
+          onClose={()=>closeMaterial(m.id)}
+          fromPanel={true}
+          isTeacher={isPrivileged}
+          syncActive={isPrivileged&&syncedMatId===m.id&&visible}
+          onSyncActivity={(xPct:number,yPct:number,scrollPct:number,step:number|null,total:number|null,revealCount:number|null,extra?:any)=>broadcastSyncActivity(m.id,xPct,yPct,scrollPct,step,total,revealCount,extra)}
+          canSync={isPrivileged&&!!m.sync_allowed}
+          syncOn={isPrivileged&&syncedMatId===m.id}
+          onToggleSync={()=>toggleForceSync(m)}
+          following={followingSyncId===m.id}
+          remoteActivity={followingSyncId===m.id?syncActivity:null}
+        />
+      </div>
+    );
+  });
+
   /* ── VIEWING THE FULL QURAN ── */
   if(quranOpen){
     return(
       <>
+        {viewersLayer}
         {renderPip()}
         {listVisible&&<div style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
@@ -4814,27 +4934,8 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   if(openMats.length>0 && !forceList){
     return(
       <>
+        {viewersLayer}
         {renderPip()}
-        {/* All open materials stay mounted (so video/audio keep playing);
-            only the active one is visible. */}
-        {listVisible&&openMats.map(m=>(
-          <div key={m.id} style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:m.id===activeMatId?"flex":"none",flexDirection:"column"}}>
-            <InClassMaterialViewer
-              material={m}
-              onMinimize={minimizeActive}
-              onClose={()=>closeMaterial(m.id)}
-              fromPanel={true}
-              isTeacher={isPrivileged}
-              syncActive={isPrivileged&&syncedMatId===m.id&&m.id===activeMatId}
-              onSyncActivity={(xPct:number,yPct:number,scrollPct:number,step:number|null,total:number|null,revealCount:number|null)=>broadcastSyncActivity(m.id,xPct,yPct,scrollPct,step,total,revealCount)}
-              canSync={isPrivileged&&!!m.sync_allowed}
-              syncOn={isPrivileged&&syncedMatId===m.id}
-              onToggleSync={()=>toggleForceSync(m)}
-              following={followingSyncId===m.id}
-              remoteActivity={followingSyncId===m.id?syncActivity:null}
-            />
-          </div>
-        ))}
       </>
     );
   }
@@ -4842,10 +4943,11 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   /* ── MATERIAL LIST — slides from right, does NOT cover full height ── */
   if(!listVisible){
     // List is hidden but PiP may still be floating — just render PiP
-    return <>{renderPip()}</>;
+    return <>{viewersLayer}{renderPip()}</>;
   }
   return(
     <>
+    {viewersLayer}
     {/* PiP floats above list when user is browsing while materials are minimized */}
     {forceList&&renderPip()}
     <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={handleClose}>
@@ -6489,6 +6591,7 @@ export const DuoPipLayout=({participants,localIdentity}:{participants:any[];loca
 
 // 3×3 = 9 tiles is the largest a single page will hold before spilling to the next page.
 export const GRID_PAGE_SIZE=9;
+export const GRID_MOBILE_PAGE_SIZE=4;
 
 /* ══ PAGED GRID — 3+ participants ══
    3 → 2 up / 1 down (centered)     4 → 2×2
@@ -6496,7 +6599,9 @@ export const GRID_PAGE_SIZE=9;
    >9 → split into pages of 9, swipeable left/right with a page-dot indicator */
 export const PagedGrid=({participants,localIdentity,isMobile}:{participants:any[];localIdentity?:string;isMobile:boolean})=>{
   const n=participants.length;
-  const pageCount=Math.max(1,Math.ceil(n/GRID_PAGE_SIZE));
+  // HEAT FIX: a phone decodes at most 4 video tiles at once (swipe for the rest); PC keeps 9.
+  const PAGE_SIZE=isMobile?GRID_MOBILE_PAGE_SIZE:GRID_PAGE_SIZE;
+  const pageCount=Math.max(1,Math.ceil(n/PAGE_SIZE));
   const[page,setPage]=useState(0);
   useEffect(()=>{ if(page>pageCount-1)setPage(0); },[pageCount,page]);
 
@@ -6511,7 +6616,7 @@ export const PagedGrid=({participants,localIdentity,isMobile}:{participants:any[
     if(dx>0&&page>0)setPage(p=>p-1);           // swiped right → previous page
   };
 
-  const pageParticipants=participants.slice(page*GRID_PAGE_SIZE,(page+1)*GRID_PAGE_SIZE);
+  const pageParticipants=participants.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE);
   const pn=pageParticipants.length;
   const isFirstPage=page===0;
 
@@ -6535,7 +6640,7 @@ export const PagedGrid=({participants,localIdentity,isMobile}:{participants:any[
     );
   }
 
-  const cols = (isFirstPage&&n===4) ? 2 : Math.min(3,pn);
+  const cols=(isFirstPage&&n===4)?2:Math.min(isMobile?2:3,pn);
   const rows = Math.ceil(pn/cols);
 
   return(

@@ -187,6 +187,9 @@ const ClassClock=({durationRef}:{durationRef:{current:number}})=>{
   return <>{`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`}</>;
 };
 
+// Set to false to go back to the default VP8 codec on phones (see publishDefaults).
+const USE_H264_ON_MOBILE=true;
+
 const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewProps)=>{
   const{user,hasRole}=useAuth();const{t}=useLanguage();const isMobile=useIsMobile();const isPrivileged=hasRole("admin")||hasRole("teacher");const isAdmin=hasRole("admin");
   const{setHasConnected,leaveSessionFnRef}=useLiveClass();
@@ -273,7 +276,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // no per-component keep-alive needed here anymore.
   // Feature 7: Screen wake lock — keep screen on during class so Android doesn't kill audio
   // (Separate from GlobalClassroomOverlay's wake lock — that one only activates after minimize)
-  useScreenWakeLock(phase === "live");
+  // (Wake lock is now taken after audioOnlyActive is declared, below — audio-only mode lets the screen sleep.)
 
   // ── Full-screen while in a live class ─────────────────────────────────
   // Web: requests the browser's real Fullscreen API (hides the address bar/
@@ -460,6 +463,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const stuRoomListenersRef=useRef<{onSub:(...a:any[])=>void;onUnsub:(...a:any[])=>void}|null>(null);
   // Feature 2: Audio-only mode (manual + auto on poor network)
   const[audioOnlyActive,setAudioOnlyActive]=useState(false);
+  useScreenWakeLock(phase==="live"&&!audioOnlyActive);
   // Admin/teacher-wide forced audio-only — when true, EVERY participant's camera is
   // off and locked (grey/disabled Cam button) until the admin/teacher reverts it.
   // Broadcast via LiveKit data channel ("force_audio_only") so it applies to
@@ -1252,7 +1256,17 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // always publish the sharp PC-grade stack, even from a phone (480p upscaled onto a
   // portrait phone screen is what made the admin's video look blurry).
   const lowDataProfile = isMobile && !isPrivileged;
-  const videoQualityProfile = lowDataProfile ? {
+  // Teachers/admins on a PHONE: still sharp (540p) for what they show — handwriting, notebook —
+  // but 2 layers / 24fps / ~700kbps instead of the 3-layer 720p@30 PC stack, which a phone
+  // cannot encode without overheating. PC/laptop teachers are unchanged.
+  const privilegedMobile = isMobile && isPrivileged;
+  const videoQualityProfile = privilegedMobile ? {
+    videoEncoding:{maxBitrate:700_000,maxFramerate:24},
+    simulcastLayers:[
+      {width:320,height:180,resolution:{width:320,height:180,frameRate:15},encoding:{maxBitrate:150_000,maxFramerate:15}},
+      {width:960,height:540,resolution:{width:960,height:540,frameRate:24},encoding:{maxBitrate:700_000,maxFramerate:24}},
+    ],
+  } : lowDataProfile ? {
     // Mobile: two layers instead of three, capped well below PC's — this
     // roughly halves worst-case upload versus the PC profile, while the
     // top layer (480p@30fps/500kbps) is still clearly sharp for a phone
@@ -1393,6 +1407,14 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               // mobile: capped to protect mobile data plans).
               videoEncoding:videoQualityProfile.videoEncoding,
               backupCodec:true,
+              // HEAT FIX: on phones publish H.264 so the phone's HARDWARE encoder is used
+              // (VP8, the default, is software-encoded on most phones and runs the CPU hot).
+              // backupCodec above keeps non-H.264 devices working. Flip USE_H264_ON_MOBILE to
+              // false (top of this file) to revert in one line. PC/laptop is untouched.
+              ...(isMobile&&USE_H264_ON_MOBILE?{videoCodec:"h264" as const}:{}),
+              // Writing-friendly: if the encoder is stressed, drop frame-rate before resolution,
+              // so a notebook / handwriting stays readable.
+              ...({degradationPreference:"maintain-resolution"} as any),
               // SIMULCAST — this is the correct, LiveKit-native way to adapt
               // video quality to each viewer's network, replacing the old
               // approach of the sender repeatedly disabling/re-enabling their
@@ -1418,7 +1440,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               // (960×540) since its top published layer is 480p anyway —
               // capturing far above what's ever actually encoded just burns
               // CPU/battery on the phone for no visible or data benefit.
-              resolution:lowDataProfile?{width:640,height:360,frameRate:20}:{width:1280,height:720,frameRate:isMobile?24:30},
+              resolution:privilegedMobile?{width:960,height:540,frameRate:24}:lowDataProfile?{width:640,height:360,frameRate:20}:{width:1280,height:720,frameRate:isMobile?24:30},
               facingMode:"user",
               // Explicit ideal aspect ratio — without this, a phone's front
               // camera (which is very often natively 3:4 / 4:3, not 16:9)
