@@ -78,13 +78,20 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, en
     if (!missing.length) return;
     missing.forEach(id => fetchingIds.current.add(id));
     try {
-      const { data } = await supabase.from("profiles").select("user_id, full_name").in("user_id", missing);
-      const { data: roles } = await supabase.from("user_roles").select("user_id, role").in("user_id", missing);
       const np: Record<string, { name: string; role: string }> = {};
-      (data || []).forEach(p => {
-        const r = (roles || []).find(r => r.user_id === p.user_id);
-        np[p.user_id] = { name: p.full_name || "Student", role: r?.role || "student" };
-      });
+      // Students can't read other people's profile rows (RLS), so the admin's name used to
+      // come back empty. This SECURITY DEFINER function returns only name + role.
+      const { data: rpcRows } = await (supabase as any).rpc("get_chat_sender_names", { _ids: missing });
+      (rpcRows || []).forEach((p: any) => { np[p.user_id] = { name: p.full_name || "Student", role: p.role || "student" }; });
+      const stillMissing = missing.filter(id => !np[id]);
+      if (stillMissing.length) {
+        const { data } = await supabase.from("profiles").select("user_id, full_name").in("user_id", stillMissing);
+        const { data: roles } = await supabase.from("user_roles").select("user_id, role").in("user_id", stillMissing);
+        (data || []).forEach(p => {
+          const r = (roles || []).find(r => r.user_id === p.user_id);
+          np[p.user_id] = { name: p.full_name || "Student", role: r?.role || "student" };
+        });
+      }
       setProfiles(prev => ({ ...prev, ...np }));
     } finally {
       missing.forEach(id => fetchingIds.current.delete(id));

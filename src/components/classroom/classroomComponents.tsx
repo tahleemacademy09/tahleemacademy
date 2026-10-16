@@ -1053,7 +1053,9 @@ class MirrorCorrectProcessor {
 // camera/device, which doesn't change based on who's logged in on it), OFF
 // by default. See the perf note on CameraUnmirrorEngine below for why this
 // isn't just always on.
-const MIRROR_FIX_KEY = "ta_camera_unmirror_fix";
+// v2: the old key could be left ON from earlier testing, which makes this processor
+// FLIP an already-correct camera for everyone watching. New key = starts OFF again.
+const MIRROR_FIX_KEY = "ta_camera_unmirror_fix_v2";
 export const getMirrorFixEnabled = () => {
   try { return localStorage.getItem(MIRROR_FIX_KEY) === "1"; } catch { return false; }
 };
@@ -6176,7 +6178,7 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
   );
 };
 
-export const ScreenShareTile = ({ participant, isLocal }: { participant: any; isLocal: boolean }) => {
+export const ScreenShareTile = ({ participant, isLocal, strip }: { participant: any; isLocal: boolean; strip?: React.ReactNode }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const [immersive, setImmersive] = useState(() => !isLocal && isMobileDevice());
@@ -6332,6 +6334,16 @@ export const ScreenShareTile = ({ participant, isLocal }: { participant: any; is
           </button>
         </div>
       )}
+
+      {/* WhatsApp-style: other people stay visible as small tiles over the shared screen
+          (tap the screen to show/hide them together with the buttons). */}
+      {strip && (
+        <div style={{
+          position: "absolute", left: 0, right: 0, bottom: 0, display: "flex", gap: 6, overflowX: "auto",
+          padding: "8px 10px max(env(safe-area-inset-bottom), 8px)", background: "linear-gradient(transparent, rgba(0,0,0,.6))",
+          opacity: ui ? 1 : 0, pointerEvents: ui ? "auto" : "none", transition: "opacity .2s",
+        }} onPointerDown={e => e.stopPropagation()}>{strip}</div>
+      )}
     </div>
   );
 
@@ -6369,7 +6381,8 @@ export const VideoGrid=({layout="grid",isMobile=false,spotlightId=null}:{layout?
     return(
       <div style={{width:"100%",height:"100%",position:"relative",background:"#000"}}>
         <div style={{position:"absolute",inset:0,bottom:showStrip?100:0}}>
-          <ScreenShareTile participant={screensharer} isLocal={screensharer.identity===localParticipant?.identity}/>
+          <ScreenShareTile participant={screensharer} isLocal={screensharer.identity===localParticipant?.identity}
+            strip={isMobile&&others.length>0?others.map(p=>(<div key={p.identity} style={{width:64,height:84,flexShrink:0,borderRadius:10,overflow:"hidden",border:"1px solid rgba(255,255,255,.25)"}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/></div>)):undefined}/>
         </div>
         {showStrip&&(
           <div style={{position:"absolute",bottom:0,left:0,right:0,height:100,display:"flex",gap:4,padding:"4px 8px",background:"rgba(0,0,0,.4)",overflowX:"auto"}}>

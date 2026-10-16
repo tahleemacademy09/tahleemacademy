@@ -34,3 +34,4 @@ pnpm-lock.yaml
 .cache
 *.tsbuildinfo
 supabase/.temp/
+public.sql

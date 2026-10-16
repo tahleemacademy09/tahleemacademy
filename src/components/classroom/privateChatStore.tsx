@@ -177,12 +177,13 @@ export const ChatPopupLayer = ({
           if (chatStore.get().chatVisible) return;
           let name = names.current.get(m.sender_id);
           if (!name) {
-            const { data } = await supabase
-              .from("profiles")
-              .select("full_name")
-              .eq("user_id", m.sender_id)
-              .maybeSingle();
-            name = data?.full_name || "Participant";
+            const { data: rows } = await (supabase as any).rpc("get_chat_sender_names", { _ids: [m.sender_id] });
+            let full = rows?.[0]?.full_name as string | undefined;
+            if (!full) {
+              const { data } = await supabase.from("profiles").select("full_name").eq("user_id", m.sender_id).maybeSingle();
+              full = data?.full_name || undefined;
+            }
+            name = full || "Participant";
             names.current.set(m.sender_id, name);
           }
           const text =

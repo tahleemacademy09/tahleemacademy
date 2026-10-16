@@ -1071,7 +1071,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         setScreenSharing(false);
         toast({title:"Screen share stopped"});
       }else{
-        await room.localParticipant.setScreenShareEnabled(true,{audio:true});
+        await room.localParticipant.setScreenShareEnabled(true,{audio:true,resolution:{width:1920,height:1080,frameRate:15},contentHint:"detail"} as any);
         setScreenSharing(true);
         toast({title:"📺 Screen sharing started"});
       }
@@ -1248,7 +1248,11 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // network data — it's purely local, feeding the encoder — the actual
   // data cost is the encoded bitrate of each simulcast layer, which is
   // what differs between these two profiles.
-  const videoQualityProfile = isMobile ? {
+  // Teachers/admins are the one or two people everyone is watching full-screen, so they
+  // always publish the sharp PC-grade stack, even from a phone (480p upscaled onto a
+  // portrait phone screen is what made the admin's video look blurry).
+  const lowDataProfile = isMobile && !isPrivileged;
+  const videoQualityProfile = lowDataProfile ? {
     // Mobile: two layers instead of three, capped well below PC's — this
     // roughly halves worst-case upload versus the PC profile, while the
     // top layer (480p@30fps/500kbps) is still clearly sharp for a phone
@@ -1403,13 +1407,18 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               // renegotiates the peer connection.
               simulcast:true,
               videoSimulcastLayers:videoQualityProfile.simulcastLayers,
+              // Screen share: ONE full-quality layer, no low simulcast layer. With the
+              // default extra low layer + adaptiveStream, a viewer whose share tile is
+              // small (PC screen on a phone) was handed the tiny layer: blurry, unreadable.
+              screenShareEncoding:{maxBitrate:2_500_000,maxFramerate:15},
+              screenShareSimulcastLayers:[],
             },
             videoCaptureDefaults:{
               // PC captures at a genuine 720p; mobile captures a bit lower
               // (960×540) since its top published layer is 480p anyway —
               // capturing far above what's ever actually encoded just burns
               // CPU/battery on the phone for no visible or data benefit.
-              resolution:isMobile?{width:640,height:360,frameRate:20}:{width:1280,height:720,frameRate:30},
+              resolution:lowDataProfile?{width:640,height:360,frameRate:20}:{width:1280,height:720,frameRate:isMobile?24:30},
               facingMode:"user",
               // Explicit ideal aspect ratio — without this, a phone's front
               // camera (which is very often natively 3:4 / 4:3, not 16:9)
