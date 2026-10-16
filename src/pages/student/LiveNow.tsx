@@ -113,7 +113,7 @@ export default function LiveNow() {
   const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
 
   const isPrivileged = hasRole("admin") || hasRole("teacher");
-  const studentLevel = (profile as any)?.level || (profile as any)?.course_level || "";
+  const studentLevel = (profile as any)?.level || (profile as any)?.course_level || ""; // no level yet → only open-to-all classes show
   const needsSubjectRestriction = isPrivateStudent && !allowGeneralAccess && !isPrivileged;
 
   // ── 1. Live sessions — ground truth, polled every 5s ──────────────────────
@@ -143,7 +143,7 @@ export default function LiveNow() {
     queryFn: async () => {
       const { data } = await supabase
         .from("subjects")
-        .select("id, title, title_ar, image_url")
+        .select("id, title, title_ar, image_url, level, levels")
         .in("id", subjectIds);
       return data || [];
     },
@@ -193,8 +193,15 @@ export default function LiveNow() {
       if (!privateSubjectIds) return false; // still loading — don't flash unauthorized rows
       return privateSubjectIds.has(s.subject_id);
     }
-    if (!s.level || s.level === "all") return true;
-    return s.level === studentLevel;
+    // Level check. live_sessions.level is empty on every row, so the subject's own
+    // levels decide (falling back to the session's level when it is set).
+    if (!subjects) return false; // subjects still loading — don't flash other levels' classes
+    const subj = subjectMap[s.subject_id];
+    const norm = (v: any) => String(v ?? "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean);
+    const allowed = [...norm(subj?.levels), ...(norm(subj?.levels).length ? [] : norm(subj?.level)), ...norm(s.level)];
+    if (allowed.length === 0 || allowed.includes("all")) return true;      // open to everyone
+    const mine = norm(studentLevel);
+    return mine.some(l => allowed.includes(l));                             // must match my level
   });
 
   const handleJoin = (session: any) => {
