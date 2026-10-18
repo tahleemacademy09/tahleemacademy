@@ -13,7 +13,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { resolveRecitationAudioUrl, uploadExamAudioToR2 } from "@/lib/examAudioUpload";
 import { tarteelEngine, ChunkTranscriber, type TarteelProgress } from "@/lib/tarteelOnDevice";
 import { playbackGainFor } from "@/lib/audioEnhance";
-import { compareWords, normalizeArabic } from "@/lib/recitationCompare";
+import { compareWords, normalizeArabic, scoreOf } from "@/lib/recitationCompare";
 import { useToast } from "@/hooks/use-toast";
 import { useRecitationSettings } from "@/hooks/useRecitationSettings";
 import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
@@ -237,7 +237,7 @@ function scoreRecitation(transcript: string, reference: string): ScoreBreakdown 
   if (!totalWords) return { total: 0, correct: 0, missing: 0, totalWords: 0 };
   const correct = res.filter(w => w.status === "correct").length;
   return {
-    total: Math.min(100, Math.max(0, Math.round((correct / totalWords) * 100))),
+    total: Math.min(100, Math.max(0, scoreOf(res))),   // one letter off counts half
     correct,
     missing: totalWords - correct,
     totalWords,

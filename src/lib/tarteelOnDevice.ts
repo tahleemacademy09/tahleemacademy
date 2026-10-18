@@ -22,6 +22,7 @@
 */
 
 import { prepareForAsr } from "@/lib/audioEnhance";
+import { soundKey } from "@/lib/recitationCompare";
 
 export const TARTEEL_MODEL = "iqbalaesthetic/Basira"; // ONNX export of tarteel-ai/whisper-base-ar-quran
 const TRANSFORMERS_CDN = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.0";
@@ -44,9 +45,12 @@ export function tarteelNormalize(text: string): string {
     .trim();
 }
 
-/** Comparison key: normalised, alefs/hamzas dropped, doubled letters collapsed. */
+/**
+ * Comparison key = how the word SOUNDS (Uthmani-aware, shared with the result grids — see soundKey in
+ * recitationCompare.ts). It no longer deletes every alef, so عليهم ≠ عليهما and قال ≠ قل.
+ */
 export function tarteelWordKey(w: string): string {
-  return tarteelNormalize(w).replace(/[اءأإآ]/g, "").replace(/(.)\1+/g, "$1");
+  return soundKey(w);
 }
 
 export function tarteelWords(text: string): string[] {
@@ -192,7 +196,8 @@ async function handle(ev) {
     } else if (m.type === "transcribe") {
       if (!asr) { self.postMessage({ type: "result", id: m.id, text: "", error: "not_loaded" }); return; }
       const t0 = Date.now();
-      const opts = { language: "arabic", task: "transcribe" };
+      // Greedy decoding: the model writes what it hears, it does not "search" for a more likely-looking verse.
+      const opts = { language: "arabic", task: "transcribe", do_sample: false, num_beams: 1 };
       // Whole recordings: Whisper sees 30 s at a time with a 5 s stride so no word is lost at a cut.
       if (m.full) { opts.chunk_length_s = 30; opts.stride_length_s = 5; }
       // Cap the output length to what real recitation needs (~14 tokens per second at the very most).
@@ -341,7 +346,10 @@ class TarteelEngine {
     if (res.tokens != null && res.cap != null && res.tokens >= res.cap - 1) {
       console.warn(`[Tarteel] output hit the token cap (${res.tokens}/${res.cap}) — the end of this chunk may be cut off`);
     }
-    return { ...res, text: collapseLoops(res.text || ""), audioSecs };
+    // A phrase repeated 3+ times is only treated as a model loop when the output also hit the token ceiling;
+    // otherwise it is the student drilling an ayah, and (up to 5 repeats) every repeat is kept.
+    const hitCap = res.tokens != null && res.cap != null && res.tokens >= res.cap - 1;
+    return { ...res, text: collapseLoops(res.text || "", hitCap ? 3 : 6), audioSecs };
   }
 }
 
@@ -675,14 +683,16 @@ export function mergeHeard(prev: string, next: string, overlapped = true): strin
   if (!overlapped) return [...a, ...b].join(" ");
   const ak = a.map(tarteelWordKey), bk = b.map(tarteelWordKey);
   let best: { k: number; drops: number; dt: number; sh: number } | null = null;
-  for (let dt = 0; dt <= 2; dt++) {
-    for (let sh = 0; sh <= 2; sh++) {
+  // Dropping a word at the seam is only allowed with strong evidence (a shared run of 3+ words) and for at most
+  // 1 word per side — a real word must never be thrown away on weak evidence.
+  for (let dt = 0; dt <= 1; dt++) {
+    for (let sh = 0; sh <= 1; sh++) {
       const aEnd = a.length - dt;
       const maxK = Math.min(10, aEnd, b.length - sh);
       for (let k = maxK; k >= 2; k--) {
         let ok = true;
         for (let i = 0; i < k && ok; i++) ok = keysMatch(ak[aEnd - k + i], bk[sh + i]);
-        if (ok) {
+        if (ok && (dt + sh === 0 || k >= 3)) {
           const drops = dt + sh;
           if (!best || k > best.k || (k === best.k && drops < best.drops)) best = { k, drops, dt, sh };
           break;
@@ -697,7 +707,7 @@ export function mergeHeard(prev: string, next: string, overlapped = true): strin
 }
 
 /** A model that loops repeats the same 1–6 word phrase over and over — keep it once. */
-export function collapseLoops(text: string): string {
+export function collapseLoops(text: string, minReps = 3): string {
   const w = text.trim().split(/\s+/).filter(Boolean);
   if (w.length < 6) return w.join(" ");
   const k = w.map(tarteelWordKey);
@@ -714,7 +724,7 @@ export function collapseLoops(text: string): string {
         if (!same) break;
         reps++;
       }
-      if (reps >= 3) { for (let j = 0; j < n; j++) out.push(w[i + j]); i += reps * n; done = true; }
+      if (reps >= minReps) { for (let j = 0; j < n; j++) out.push(w[i + j]); i += reps * n; done = true; }
     }
     if (!done) { out.push(w[i]); i++; }
   }

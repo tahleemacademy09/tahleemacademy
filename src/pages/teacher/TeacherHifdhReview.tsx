@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { resolveStaffAudioUrl } from "@/lib/hifdhAudio";
+import RecitationResultGrid from "@/components/hifdh/RecitationResultGrid";
+import { buildPageGrids } from "@/lib/staffRecitationView";
 
 /* ── palette ── */
 const G    = "#064E3B";
@@ -48,16 +50,6 @@ const scoreLabel=(s:number)=>s>=70?"Excellent":s>=50?"Good":s<50?"Needs Work":""
 const fmtDate=(d:string)=>new Date(d).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"});
 const fmtDur=(s?:number|null)=>!s?"—":`${Math.floor(s/60)}m ${s%60}s`;
 
-/** Strip diacritics + normalise alef variants for Arabic word comparison */
-function normalizeAr(t: string): string {
-  return t
-    .replace(/[\u064B-\u065F\u0610-\u061A\u0670]/g,"")
-    .replace(/[\u0622\u0623\u0625\u0627]/g,"\u0627")
-    .replace(/\u0629/g,"\u0647").replace(/\u0649/g,"\u064A")
-    .replace(/\u0640/g,"")
-    .replace(/[^\u0621-\u063A\u0641-\u064A\s]/g,"")
-    .replace(/\s+/g," ").trim();
-}
 
 function ScoreRing({pct,size=72}:{pct:number;size?:number}) {
   const r=size*0.38; const c=2*Math.PI*r;
@@ -413,75 +405,29 @@ export default function TeacherHifdhReview() {
                           </div>
 
                           {/* Word-by-word coloring — same approach as student مراجعة */}
-                          {pr.ayahs&&pr.ayahs.length>0&&(
-                            <div style={{padding:"12px 14px"}}>
-                              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                                <span style={{fontSize:10,fontWeight:800,color:"#6B7280",textTransform:"uppercase",letterSpacing:.4}}>
-                                  Word-by-Word Analysis
-                                </span>
-                                {pr.errorWords&&(
-                                  <span style={{fontSize:10,fontWeight:700}}>
-                                    <span style={{color:PASS}}>
-                                      ✓{pr.ayahs.reduce((acc,a)=>acc+a.text.split(/\s+/).filter(Boolean).length,0)-pr.errorWords.length} correct
-                                    </span>
-                                    {" · "}
-                                    <span style={{color:FAIL}}>✗{pr.errorWords.length} missed</span>
-                                  </span>
-                                )}
-                              </div>
-                              {(()=>{
-                                const errSet=new Set((pr.errorWords||[]).map(w=>normalizeAr(w)));
-                                return (
-                                  <div style={{
-                                    background:"#fffdf6",borderRadius:8,
-                                    border:`1.5px solid ${GOLD}55`,
-                                    padding:"12px 14px",
-                                    direction:"rtl",
-                                    fontFamily:"'Amiri Quran','Amiri',serif",
-                                    fontSize:20,lineHeight:3.8,
-                                    textAlign:"justify",
-                                    wordBreak:"keep-all",overflowWrap:"break-word",
-                                  }}>
-                                    {pr.ayahs.map((a,ai)=>(
-                                      <span key={ai}>
-                                        {a.text.split(/\s+/).filter(Boolean).map((wd,wi)=>{
-                                          const ok=!errSet.has(normalizeAr(wd));
-                                          return (
-                                            <span key={wi} style={{
-                                              background:ok?`${PASS}28`:`${FAIL}20`,
-                                              color:ok?"#14532d":"#991b1b",
-                                              borderRadius:5,
-                                              boxShadow:`inset 0 0 0 1.5px ${ok?PASS+"55":FAIL+"55"}`,
-                                              padding:"2px 4px",margin:"0 2px",
-                                              fontWeight:ok?400:600,
-                                            }}>{wd}</span>
-                                          );
-                                        })}
-                                        <span style={{fontSize:13,color:GOLD,margin:"0 6px",fontFamily:"'Amiri',serif"}}>
-                                          ۝{a.numberInSurah}
-                                        </span>
-                                      </span>
-                                    ))}
-                                  </div>
-                                );
-                              })()}
-                            </div>
-                          )}
-
-                          {/* Transcript */}
-                          {pr.transcript&&(
-                            <div style={{padding:"0 14px 12px"}}>
-                              <p style={{fontSize:10,fontWeight:800,color:"#6B7280",
-                                textTransform:"uppercase",letterSpacing:.4,margin:"0 0 4px"}}>
-                                Transcript (AI heard)
-                              </p>
-                              <p style={{margin:0,fontSize:13,color:"#374151",lineHeight:1.7,
-                                direction:"rtl",fontFamily:"'Amiri',serif",
-                                background:"#F9FAFB",borderRadius:8,padding:"8px 10px"}}>
-                                {pr.transcript}
-                              </p>
-                            </div>
-                          )}
+                          {(()=>{
+                // Same graded words the student saw (green / yellow / red) — one shared grader + one shared component.
+                const grid=buildPageGrids(pages as any)[curPage];
+                if(grid&&grid.graded) return(
+                  <div style={{padding:"12px 14px"}}>
+                    <p style={{fontSize:10,fontWeight:800,color:"#6B7280",textTransform:"uppercase",letterSpacing:.4,margin:"0 0 8px"}}>
+                      Word-by-Word Analysis — exactly as the student sees it
+                    </p>
+                    <RecitationResultGrid words={grid.words} extras={grid.extras} heardText={grid.transcript}
+                      ayahEnds={grid.ayahEnds} engineDiagnostics={false}/>
+                  </div>
+                );
+                if(pr.transcript) return(
+                  <div style={{padding:"0 14px 12px"}}>
+                    <p style={{fontSize:10,fontWeight:800,color:"#6B7280",textTransform:"uppercase",letterSpacing:.4,margin:"0 0 4px"}}>
+                      Transcript (AI heard) — not graded: the ayahs were not saved with this attempt
+                    </p>
+                    <p style={{margin:0,fontSize:13,color:"#374151",lineHeight:1.7,direction:"rtl",fontFamily:"'Amiri',serif",
+                      background:"#F9FAFB",borderRadius:8,padding:"8px 10px"}}>{pr.transcript}</p>
+                  </div>
+                );
+                return null;
+              })()}
                         </div>
                       )}
                     </>

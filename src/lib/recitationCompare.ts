@@ -1,7 +1,8 @@
 /*
   recitationCompare.ts
   ────────────────────────────────────────────────────────────────────────
-  Word-by-word comparison of a recitation against the reference text.
+  Word-by-word comparison of a recitation against the reference (Uthmani) text.
+  Every screen — student result, admin review, teacher review — grades words through this one file.
   (Moved out of HifdhDailyRevisionPage.tsx so it can be unit-tested and reused.)
 
   WHY THE ALIGNER CHANGED
@@ -35,6 +36,7 @@ export function stripWaqf(text: string): string {
  */
 export function normalizeArabic(t: string): string {
   return stripWaqf(t)
+    .replace(/وٰ/g, "ا")                                          // bare و + dagger alef (الصلوٰة) = ā
     .replace(/ٰ/g, "ا")                                                   // dagger alef → alef (before the bulk strip)
     .replace(/[ً-ٟؐ-ؚۖ-ۜ۟-۪ۤۧۨ-ۭ]/g, "") // tashkeel + annotation marks
     .replace(/[ٱآأإ]/g, "ا")                               // alef variants → ا
@@ -64,23 +66,77 @@ export function levenshtein(a: string, b: string): number {
   return prev[b.length];
 }
 
+/* ── Uthmani-aware comparison keys ────────────────────────────────────────── */
+
+const MARKS_RE = /[ً-ٟؐ-ؚۖ-ۭ࣓-ࣿ]/g;   // tashkeel + Quranic annotation signs
+
 /**
- * wordsMatch — single source of truth for "are these two normalised words the same?"
- *  1. exact match
- *  2. 3-char prefix overlap (long-vowel insertions: الرحمان / الرحمن)
- *  3. edit distance ≤ 1 for words ≥ 4 chars
- *  4. edit distance ≤ 2 for words ≥ 7 chars
+ * soundKey — "how a word SOUNDS", written in plain consonants.
+ *
+ * The Quran (Uthmani script) often writes a word differently from how a speech model spells what it hears,
+ * even though the recitation is perfect:
+ *   ذَٰلِكَ (dagger alef)  vs  ذلك          هَٰذَا  vs  هذا          لَّـٰكِن  vs  لكن
+ *   ٱلصَّلَوٰةَ (waw + dagger alef)  vs  الصلاة / الصلوة         ٱلْحَيَوٰةَ  vs  الحياة
+ *   إِبْرَٰهِـۧمَ (small yeh)  vs  ابراهيم       ٱلْعَـٰلَمِينَ  vs  العالمين       أُو۟لَٰٓئِكَ  vs  أولئك
+ * so both sides are reduced to the same skeleton: marks removed, alef/hamza/ya/ta-marbuta variants unified,
+ * long-vowel (medial) alefs dropped, the silent alef after waw al-jama'a dropped, doubled letters collapsed.
+ * A final alef is KEPT (ما / عليهما must not equal م / عليهم), and an initial alef is kept.
+ */
+export function soundKey(w: string): string {
+  let s = w
+    .replace(/ـ/g, "")                          // tatweel
+    .replace(/ۧ/g, "ي")                    // small high yeh written as a real letter (إبراهيم)
+    .replace(/ىٰ/g, "")                    // ى + dagger alef (الهدى / فتىٰه): long ā, no extra letter
+    .replace(/وٰ/g, "ا")              // bare و + dagger alef (الصلوٰة / الربوٰا): the و stands for ā
+    .replace(/ٰ/g, "ا")                    // any other dagger alef = long ā
+    .replace(MARKS_RE, "")                           // tashkeel, waqf signs, small waw/ya (silent vowel lengthening)
+    .replace(/[أإآٱ]/g, "ا")// أ إ آ ٱ → ا
+    .replace(/ؤ/g, "و")                    // ؤ → و
+    .replace(/ئ/g, "ي")                    // ئ → ي
+    .replace(/ء/g, "")                          // standalone hamza
+    .replace(/ى$/, "")                          // final ى (alef maqsura) = ā
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")                    // ة → ه
+    .replace(/ک/g, "ك").replace(/[یے]/g, "ي")
+    .replace(/[^ء-ي]/g, "")                // digits, latin, punctuation, signs
+    .replace(/و(?=ه$)/, "");               // الصلوة / الزكوة / الحيوة written with و before ة
+  // long-vowel alefs: keep the first letter and a final alef, except the silent alef after waw al-jama'a (كفروا)
+  const c = [...s];
+  let out = "";
+  for (let i = 0; i < c.length; i++) {
+    if (c[i] === "ا" && i > 0) {
+      if (i < c.length - 1) continue;
+      if (c[i - 1] === "و") continue;
+    }
+    out += c[i];
+  }
+  return out.replace(/(.)\1+/g, "$1");               // shaddah / doubled letters
+}
+
+/** The word as it is WRITTEN (marks and letter variants unified, nothing dropped) — used to tell "same sound, different spelling". */
+export function plainKey(w: string): string {
+  return w
+    .replace(MARKS_RE, "").replace(/[ٰـ]/g, "")
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ؤ/g, "و").replace(/ئ/g, "ي").replace(/ء/g, "")
+    .replace(/ى/g, "ي").replace(/ة/g, "ه")
+    .replace(/[^ء-ي]/g, "");
+}
+
+/** Single letter off (insert / delete / substitute) and long enough that one letter is not most of the word. */
+export function isCloseKey(a: string, b: string): boolean {
+  return a.length >= 4 && b.length >= 4 && Math.abs(a.length - b.length) <= 1 && levenshtein(a, b) <= 1;
+}
+
+/**
+ * wordsMatch — "are these two words the same word?" (used by the quiz-answer checkers).
+ * Same sound after Uthmani-aware reduction, or one letter off in a word of 4+ letters.
+ * (The old 3-letter-prefix rule is gone: it made الحمد = الحياة and الرحيم = الرحمن.)
  */
 export function wordsMatch(rw: string, gw: string): boolean {
-  if (rw === gw) return true;
-  const minLen = Math.min(rw.length, gw.length);
-  if (minLen >= 3 && (rw.startsWith(gw.slice(0, 3)) || gw.startsWith(rw.slice(0, 3)))) return true;
-  if (minLen >= 4) {
-    const d = levenshtein(rw, gw);
-    if (d <= 1) return true;
-    if (minLen >= 7 && d <= 2) return true;
-  }
-  return false;
+  const a = soundKey(rw), b = soundKey(gw);
+  if (!a || !b) return false;
+  return a === b || isCloseKey(a, b);
 }
 
 /* ── Contiguity-aware alignment ───────────────────────────────────────────── */
@@ -175,60 +231,151 @@ export function alignSequences(
 
 /* ── compareWords ─────────────────────────────────────────────────────────── */
 
-// Keeps the ORIGINAL diacritic form of each reference word so the result grid can display full tashkeel
-// while the matching itself uses normalised text.
-export interface WordResult { word: string; status: "correct" | "missing"; }
+/**
+ * grade  ok     – heard (same sound; `tag: "uthmani"` when it is written differently in the Uthmani text)   → GREEN
+ *        close  – the right word, one letter off                                                         → YELLOW
+ *        wrong  – something else was heard in its place                                                   → RED
+ *        missed – not heard at all                                                                        → RED (struck through)
+ * status is kept for older callers: "correct" only for grade ok.
+ * credit is what the word is worth in the score: ok 1, close 0.5, otherwise 0.
+ */
+export type Grade = "ok" | "close" | "wrong" | "missed";
+export interface WordResult {
+  word: string;                       // original Uthmani word, full tashkeel
+  status: "correct" | "missing";
+  grade: Grade;
+  credit: number;
+  tag?: "uthmani";                    // pronounced correctly, written differently in the Uthmani mushaf
+  heard?: string;                     // for grade "wrong": what was heard instead
+}
 
-export function compareWords(refText: string, gotText: string): WordResult[] {
+export interface RecitationAnalysis { words: WordResult[]; extras: string[]; }
+
+interface Tok { text: string; key: string; virtual?: boolean; }
+
+const medialAlefs = (k: string) => [...k].filter((c, i) => c === "\u0627" && i > 0 && i < k.length - 1).length;
+
+export function refTokens(refText: string): string[] {
   // Waqf-only tokens (a lone "ۖ", "صلے" …) are pause marks, not words a reciter can "say".
-  const origRef = refText.split(/\s+/).filter(Boolean).filter((w) => stripWaqf(w).length > 0);
-  const normRef = origRef.map((w) => normalizeArabic(w));
-  const normGot = normalizeArabic(gotText).split(/\s+/).filter(Boolean);
+  return refText.split(/\s+/).filter(Boolean).filter((w) => stripWaqf(w).length > 0);
+}
 
-  if (!normGot.length) return origRef.map((w) => ({ word: w, status: "missing" as const }));
+export function analyzeRecitation(refText: string, gotText: string): RecitationAnalysis {
+  const origRef = refTokens(refText);
+  const refKeys = origRef.map(soundKey);
+  const mk = (word: string, grade: Grade, extra: Partial<WordResult> = {}): WordResult => ({
+    word, grade, status: grade === "ok" ? "correct" : "missing",
+    credit: grade === "ok" ? 1 : grade === "close" ? 0.5 : 0, ...extra,
+  });
 
-  // Intern the distinct words so each distinct (ref word, heard word) pair is compared only once.
-  const refIds = new Map<string, number>();
-  const gotIds = new Map<string, number>();
-  const refArr = normRef.map((w) => { let id = refIds.get(w); if (id === undefined) { id = refIds.size; refIds.set(w, id); } return id; });
-  const gotArr = normGot.map((w) => { let id = gotIds.get(w); if (id === undefined) { id = gotIds.size; gotIds.set(w, id); } return id; });
+  let heard: Tok[] = gotText.split(/\s+/).filter(Boolean).map((t) => ({ text: t, key: soundKey(t) })).filter((t) => t.key);
+  if (!heard.length) return { words: origRef.map((w) => mk(w, "missed")), extras: [] };
+
+  // Joined / split words: the model writes "يا أيها" where the mushaf has يَـٰٓأَيُّهَا (or the other way round).
+  // Only touched when the heard token matches nothing on its own.
+  const refSet = new Set(refKeys);
+  const pairs = new Map<string, [string, string]>();
+  for (let i = 0; i + 1 < origRef.length; i++) {
+    if (refKeys[i] && refKeys[i + 1]) pairs.set(soundKey(origRef[i] + origRef[i + 1]), [refKeys[i], refKeys[i + 1]]);
+  }
+  const split: Tok[] = [];
+  for (const t of heard) {
+    const p = !refSet.has(t.key) ? pairs.get(t.key) : undefined;
+    if (p) { split.push({ text: t.text, key: p[0], virtual: true }, { text: "", key: p[1], virtual: true }); } else split.push(t);
+  }
+  const joined: Tok[] = [];
+  for (let i = 0; i < split.length; i++) {
+    const a = split[i], b = split[i + 1];
+    if (b && !refSet.has(a.key) && !refSet.has(b.key)) {
+      const k = soundKey(a.text + b.text);
+      if (a.text && b.text && refSet.has(k)) { joined.push({ text: `${a.text} ${b.text}`, key: k }); i++; continue; }
+    }
+    joined.push(a);
+  }
+  heard = joined;
+
+  // Intern the distinct keys so each distinct (ref word, heard word) pair is compared only once.
+  const refIds = new Map<string, number>(), gotIds = new Map<string, number>();
+  const refArr = refKeys.map((w) => { let id = refIds.get(w); if (id === undefined) { id = refIds.size; refIds.set(w, id); } return id; });
+  const gotArr = heard.map((t) => { let id = gotIds.get(t.key); if (id === undefined) { id = gotIds.size; gotIds.set(t.key, id); } return id; });
   const refWords = [...refIds.keys()], gotWords = [...gotIds.keys()];
-  const cache = new Uint8Array(refWords.length * gotWords.length);   // 0 = unknown, 1 = no, 2 = fuzzy, 3 = exact
-
+  const cache = new Uint8Array(refWords.length * gotWords.length);   // 0 unknown, 1 no, 2 close, 3 exact
   const eq = (r: number, g: number): 0 | 1 | 2 => {
     const a = refArr[r], b = gotArr[g];
     const ci = a * gotWords.length + b;
     let c = cache[ci];
     if (!c) {
-      c = refWords[a] === gotWords[b] ? 3 : wordsMatch(refWords[a], gotWords[b]) ? 2 : 1;
+      const x = refWords[a], y = gotWords[b];
+      c = x === y ? 3 : isCloseKey(x, y) ? 2 : 1;
       cache[ci] = c;
     }
     return c === 3 ? 2 : c === 2 ? 1 : 0;
   };
 
-  const map = alignSequences(normRef.length, normGot.length, eq);
-  return origRef.map((word, i) => ({ word, status: map[i] >= 0 ? ("correct" as const) : ("missing" as const) }));
+  const map = alignSequences(origRef.length, heard.length, eq);
+
+  // Gaps between matched anchors: what was heard in a gap takes the place of the reference words there
+  // (→ "wrong"), reference words with nothing heard are "missed", leftover heard words are "extras".
+  const words: WordResult[] = new Array(origRef.length);
+  const extras: string[] = [];
+  let r = 0, g = 0;
+  const flushGap = (rEnd: number, gEnd: number) => {
+    const nr = rEnd - r, ng = gEnd - g;
+    for (let i = 0; i < nr; i++) {
+      if (i < ng) words[r + i] = mk(origRef[r + i], "wrong", { heard: heard[g + i].text || heard[g + i].key });
+      else words[r + i] = mk(origRef[r + i], "missed");
+    }
+    for (let i = nr; i < ng; i++) if (heard[g + i].text) extras.push(heard[g + i].text);
+  };
+  for (let ri = 0; ri < origRef.length; ri++) {
+    const gi = map[ri];
+    if (gi < 0) continue;
+    flushGap(ri, gi);
+    // Same sound. Where the mushaf writes a REAL alef (قَالَ, كَانَ, ٱلنَّاسِ — not a dagger alef), a heard word that
+    // lacks it is a different word (قل ≠ قال, الكتب ≠ الكتاب): one letter off → yellow, not green.
+    const exact = refKeys[ri] === heard[gi].key
+      && (heard[gi].virtual || origRef[ri].includes("\u0670") || medialAlefs(plainKey(origRef[ri])) === medialAlefs(plainKey(heard[gi].text.replace(/\s+/g, ""))));
+    if (exact) {
+      const tag = heard[gi].virtual || plainKey(origRef[ri]) !== plainKey(heard[gi].text.replace(/\s+/g, "")) ? { tag: "uthmani" as const } : {};
+      words[ri] = mk(origRef[ri], "ok", tag);
+    } else words[ri] = mk(origRef[ri], "close", { heard: heard[gi].text });
+    r = ri + 1; g = gi + 1;
+  }
+  flushGap(origRef.length, heard.length);
+  return { words, extras };
+}
+
+export function compareWords(refText: string, gotText: string): WordResult[] {
+  return analyzeRecitation(refText, gotText).words;
+}
+
+/** % of the reference worth of words heard (ok = 1, close = ½) — 0-100. */
+export function scoreOf(words: WordResult[]): number {
+  if (!words.length) return 0;
+  return Math.round((words.reduce((a, w) => a + w.credit, 0) / words.length) * 100);
 }
 
 /* ── One alignment for everything ─────────────────────────────────────────── */
 
 export interface AyahScoring {
-  /** every reference word with its status (the word grid) */
+  /** every reference word with its grade (the word grid) */
   words: WordResult[];
-  /** per ayah: its words (same objects as in `words`), how many there are and how many were heard */
+  /** words the model heard that are not in the text */
+  extras: string[];
+  /** per ayah: its words (same objects as in `words`), how many there are and how many were heard exactly */
   perAyah: { words: WordResult[]; total: number; correct: number }[];
-  /** % of reference words heard (0-100) */
+  /** % of reference words heard (0-100); close words count half */
   score: number;
 }
 
 /**
- * Aligns the transcript against ALL the ayahs once (compareWords) and then slices that single result per
+ * Aligns the transcript against ALL the ayahs once (analyzeRecitation) and then slices that single result per
  * ayah. The page score, the word grid, the red words and the green/red ayahs are all derived from this one
- * alignment, so they can never contradict each other (they used to come from three different algorithms).
+ * alignment, so they can never contradict each other — and the admin / teacher screens call this same function.
  */
 export function scoreAgainstAyahs(ayahTexts: string[], gotText: string): AyahScoring {
-  const counts = ayahTexts.map((t) => t.split(/\s+/).filter(Boolean).filter((w) => stripWaqf(w).length > 0).length);
-  const words = compareWords(ayahTexts.join(" "), gotText);
+  const counts = ayahTexts.map((t) => refTokens(t).length);
+  const { words, extras } = analyzeRecitation(ayahTexts.join(" "), gotText);
   const perAyah: AyahScoring["perAyah"] = [];
   let at = 0;
   for (const n of counts) {
@@ -236,6 +383,28 @@ export function scoreAgainstAyahs(ayahTexts: string[], gotText: string): AyahSco
     at += n;
     perAyah.push({ words: slice, total: slice.length, correct: slice.filter((w) => w.status === "correct").length });
   }
-  const correct = words.filter((w) => w.status === "correct").length;
-  return { words, perAyah, score: words.length ? Math.round((correct / words.length) * 100) : 0 };
+  return { words, extras, perAyah, score: scoreOf(words) };
+}
+
+/* ── Compact snapshot of the grades (saved with the day's log; the staff screens read it back) ─────────────── */
+
+/** o = ok · u = ok but spelled differently in the Uthmani text · c = close (yellow) · w = wrong · m = missed */
+export function encodeGrades(words: WordResult[]): string {
+  return words.map((w) => (w.grade === "ok" ? (w.tag ? "u" : "o") : w.grade === "close" ? "c" : w.grade === "wrong" ? "w" : "m")).join("");
+}
+
+/** Rebuild graded words from the reference words + a snapshot made by encodeGrades (null if they don't line up). */
+export function decodeGrades(refWords: string[], grades: string | undefined | null): WordResult[] | null {
+  if (!grades || grades.length !== refWords.length) return null;
+  const out: WordResult[] = [];
+  for (let i = 0; i < refWords.length; i++) {
+    const c = grades[i];
+    const grade: Grade | null = c === "o" || c === "u" ? "ok" : c === "c" ? "close" : c === "w" ? "wrong" : c === "m" ? "missed" : null;
+    if (!grade) return null;
+    out.push({
+      word: refWords[i], grade, status: grade === "ok" ? "correct" : "missing",
+      credit: grade === "ok" ? 1 : grade === "close" ? 0.5 : 0, ...(c === "u" ? { tag: "uthmani" as const } : {}),
+    });
+  }
+  return out;
 }

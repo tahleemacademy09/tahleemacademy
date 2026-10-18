@@ -20,7 +20,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { playbackGainFor, decodeForPlayback, freshPlaybackContext, preferSpeaker } from "@/lib/audioEnhance";
 import { tarteelEngine, ChunkTranscriber, type TarteelProgress } from "@/lib/tarteelOnDevice";
-import { stripWaqf, normalizeArabic, wordsMatch, compareWords, scoreAgainstAyahs, type WordResult, type AyahScoring } from "@/lib/recitationCompare";
+import { stripWaqf, normalizeArabic, wordsMatch, compareWords, analyzeRecitation, scoreOf, encodeGrades, scoreAgainstAyahs, type WordResult, type AyahScoring } from "@/lib/recitationCompare";
 import { saveHifdhRecording, resolveHifdhSessionAudio } from "@/lib/hifdhAudio";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
 import HifdhLiveClass from "@/components/hifdh/HifdhLiveClass";
@@ -163,6 +163,8 @@ interface Ayah {
 interface PageResult {
   pageNum: number; score: number; errorWords: string[]; ayahs: Ayah[];
   ayahCorrectness?: boolean[]; transcript?: string;
+  /** snapshot of the green/yellow/red grading (encodeGrades) + extra words heard — read by the admin / teacher review */
+  grades?: string; extras?: string[]; grouped_recording?: boolean;
 }
 interface Question {
   id: number;
@@ -371,9 +373,7 @@ function stripDiacritics(t: string): string { return normalizeArabic(t); }
  */
 function scoreFromCompareWords(refText: string, gotText: string): number {
   const wordRes = compareWords(refText, gotText);
-  if (!wordRes.length) return 0;
-  const correct = wordRes.filter(w => w.status === "correct").length;
-  return Math.round((correct / wordRes.length) * 100);
+  return scoreOf(wordRes);   // heard = 1, one letter off = ½, wrong / missed = 0
 }
 
 /**
@@ -1538,12 +1538,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   /* ── Split the single combined result back into one PageResult per page ── */
   const buildGroupResults = (tx: string, corr: boolean[], sc: number): PageResult[] => {
     const groups = pageGroupsRef.current;
+    const all = alignAyahs(tx, groups.flat());   // ONE grading of the whole recording, sliced per page
     let off = 0;
     return todayPages.map((pn, i) => {
       const ay = groups[i] ?? [];
-      const c = corr.slice(off, off + ay.length); off += ay.length;
+      const c = corr.slice(off, off + ay.length);
+      const pageWords = all.perAyah.slice(off, off + ay.length).flatMap(a => a.words);
+      off += ay.length;
       return { pageNum: pn, score: sc, errorWords: getErrorWords(tx, ay), ayahs: ay,
-               ayahCorrectness: c, transcript: i === 0 ? tx : "" };
+               ayahCorrectness: c, transcript: i === 0 ? tx : "",
+               grades: encodeGrades(pageWords), extras: i === 0 ? all.extras : [], grouped_recording: true };
     });
   };
 
@@ -1562,7 +1566,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     const last  = lastResultRef.current;
     // Build word-level results using compareWords (same as مراجعة)
     const ref       = pageAyahsRef.current.map((a:any)=>a.text).join(" ");
-    const wordRes   = compareWords(ref, last?.tx ?? "");
+    const analysisAll = alignAyahs(last?.tx ?? "", pageAyahsRef.current);   // same grading as the result screen
+    const wordRes   = analysisAll.words;
+    const snapAyahs = (list: any[]) => (list ?? []).map((a: any) => ({
+      text: a.text, numberInSurah: a.numberInSurah, surahName: a.surah?.englishName ?? a.surahName, surahNum: a.surah?.number ?? a.surahNum,
+    }));
     // one save at a time, in order — an "analysing" save must never land after the scored one
     saveChainRef.current = saveChainRef.current.then(async () => {
       try {
@@ -1591,7 +1599,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               // entry, per-page ayah correctness / errors split out for each page.
               ? buildGroupResults(last?.tx ?? "", last?.ayahCorrectness ?? [], score).map((r, i) => ({
                   pageNum: r.pageNum, score, transcript: r.transcript,
-                  word_results: i === 0 ? wordRes : [],
+                  word_results: i === 0 ? wordRes.map(w => ({ word: w.word, status: w.status })) : [],
+                  ayahs: snapAyahs(r.ayahs),
+                  grades: r.grades, extras: r.extras,
                   ayahCorrectness: r.ayahCorrectness, errorWords: r.errorWords,
                   grouped_recording: true,
                 }))
@@ -1601,7 +1611,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 pageNum:         todayPages[pageIdx],
                 score,
                 transcript:      last?.tx ?? "",
-                word_results:    wordRes,  // full word-level detail for admin
+                word_results:    wordRes.map(w => ({ word: w.word, status: w.status })),
+                ayahs:           snapAyahs(pageAyahsRef.current),
+                grades:          encodeGrades(wordRes),   // green / yellow / red, read back by the admin + teacher screens
+                extras:          analysisAll.extras,
                 ayahCorrectness: last?.ayahCorrectness ?? [],
                 errorWords,
               },
@@ -2250,10 +2263,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       fetchJuzAyahs().then(()=>{ setPhase("pre_test_review"); });
       return;
     }
+    const an = alignAyahs(last.tx, pageAyahs);
     const r: PageResult={
       pageNum:todayPages[pageIdx], score:score!, errorWords, ayahs:pageAyahs,
       ayahCorrectness: last.ayahCorrectness,
       transcript: last.tx,
+      grades: encodeGrades(an.words), extras: an.extras,
     };
     const newResults=[...pageResults,r];
     setPageResults(newResults); setRetryCount(0); setScore(null);
@@ -2384,6 +2399,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             pageNum:r.pageNum, score:r.score, errorWords:r.errorWords,
             ayahCorrectness: r.ayahCorrectness,
             transcript: r.transcript,
+            grades: r.grades, extras: r.extras, grouped_recording: r.grouped_recording,
             ayahs: r.ayahs.map(a=>({
               text:a.text, numberInSurah:a.numberInSurah,
               surahName:a.surah?.englishName, surahNum:a.surah?.number,
@@ -2534,7 +2550,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     if (evaluationReady) {
       const ref = pageAyahs.map(a => a.text).join(" ");
       compareWords(ref, lastTranscript).forEach((r, i) => {
-        if (i < wordStatuses.length) wordStatuses[i] = r.status === "correct" ? "correct" : "missing";
+        if (i < wordStatuses.length) wordStatuses[i] = r.grade === "ok" ? "correct" : r.grade === "close" ? "partial" : "missing";
       });
     }
 
@@ -2556,6 +2572,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
       if (evaluationReady) {
         if (st === "correct") { color = "#15803d"; bg = "#dcfce733"; border = "2px solid #16a34a"; }
+        else if (st === "partial") { color = "#92400e"; bg = "#fef3c733"; border = "2px solid #d97706"; }
         else if (st === "missing") { color = "#b91c1c"; bg = "#fee2e233"; border = "2px solid #dc2626"; }
       }
 
@@ -3061,9 +3078,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       {phase==="page_result"&&score!==null&&(()=>{
         /* ── Build word results exactly as مراجعة does ── */
         const ref       = pageAyahs.map((a:any)=>a.text).join(" ");
-        const wordRes   = compareWords(ref, lastTranscript);
-        const correct   = wordRes.filter(w=>w.status==="correct").length;
-        const missing   = wordRes.filter(w=>w.status==="missing").length;
+        const analysis  = analyzeRecitation(ref, lastTranscript);
+        const wordRes   = analysis.words;
+        const correct   = wordRes.filter(w=>w.grade==="ok").length;
+        const closeN    = wordRes.filter(w=>w.grade==="close").length;
+        const missing   = wordRes.filter(w=>w.grade==="wrong"||w.grade==="missed").length;
 
         /* scoreColor buckets matching مراجعة */
         const sc = score>=85
@@ -3117,6 +3136,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 <div style={{display:"flex",justifyContent:"center",gap:20,marginTop:10,
                   fontSize:12,color:sc.text+"aa"}}>
                   <span>✅ {correct} correct</span>
+                  {closeN>0&&<span>🟡 {closeN} one letter off</span>}
                   <span>❌ {missing} missing</span>
                 </div>
               </div>
@@ -3132,8 +3152,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               {/* 3 ── Word-by-word result: correct / close / wrong / missed, word error rate, what the model heard */}
               {wordRes.length>0&&(
                 <RecitationResultGrid
-                  words={wordRes.map(w=>w.word)}
-                  matched={wordRes.map(w=>w.status==="correct")}
+                  words={wordRes}
+                  extras={analysis.extras}
                   heardText={lastTranscript}
                   checkSecs={checkSecs}
                 />

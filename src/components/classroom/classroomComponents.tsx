@@ -1113,7 +1113,12 @@ class MirrorCorrectProcessor {
 // FLIP an already-correct camera for everyone watching. New key = starts OFF again.
 const MIRROR_FIX_KEY = "ta_camera_unmirror_fix_v2";
 export const getMirrorFixEnabled = () => {
-  try { return localStorage.getItem(MIRROR_FIX_KEY) === "1"; } catch { return false; }
+  try {
+    const v = localStorage.getItem(MIRROR_FIX_KEY);
+    if (v !== null) return v === "1";
+    const c = (window as any).Capacitor; // Android app: front camera frames arrive mirrored, so un-mirror by default
+    return !!c?.isNativePlatform?.() && c.getPlatform?.() === "android";
+  } catch { return false; }
 };
 export const setMirrorFixEnabled = (on: boolean) => {
   try { localStorage.setItem(MIRROR_FIX_KEY, on ? "1" : "0"); } catch {}
@@ -6146,7 +6151,7 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
           gets sent, this transform only fixes how the local tile displays
           it. */}
       <video ref={videoRef} autoPlay playsInline muted={isLocal}
-        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal&&!backCam?"scaleX(-1)":"none"}}
+        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal&&!backCam&&!getMirrorFixEnabled()?"scaleX(-1)":"none"}}
       />
 
       {/* Camera-off tile (WhatsApp style): round photo — or coloured initials when there is no

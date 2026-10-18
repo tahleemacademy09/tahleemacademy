@@ -17,6 +17,7 @@ import io.livekit.android.room.Room
 import io.livekit.android.room.track.LocalVideoTrackOptions
 import io.livekit.android.room.track.VideoCaptureParameter
 import io.livekit.android.room.track.Track
+import io.livekit.android.room.participant.VideoTrackPublishOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -100,7 +101,15 @@ class ScreenSharePlugin : Plugin() {
             val ch = ((sh * k).toInt() / 2) * 2
             try {
                 newRoom.connect(url, token)
-                newRoom.localParticipant.setScreenShareEnabled(true, data)
+                val screenTrack = newRoom.localParticipant.createScreencastTrack(
+                    "screen", data,
+                    LocalVideoTrackOptions(isScreencast = true, captureParams = VideoCaptureParameter(cw, ch, 15))
+                )
+                screenTrack.startCapture()
+                newRoom.localParticipant.publishVideoTrack(
+                    screenTrack,
+                    VideoTrackPublishOptions(source = Track.Source.SCREEN_SHARE, simulcast = false)
+                )
                 room = newRoom
                 watch(newRoom)
                 call.resolve()
