@@ -35,3 +35,11 @@ pnpm-lock.yaml
 *.tsbuildinfo
 supabase/.temp/
 public.sql
+auth.sql
+roles.sql
+triggers.sql
+migrate_all.sh
+mutun_*.csv
+new_*.txt
+old_*.txt
+cron-gate-worker/
