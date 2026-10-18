@@ -61,7 +61,10 @@ self.addEventListener("install", e => {
 self.addEventListener("activate", e => {
   e.waitUntil(
     caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+      // Only delete OLD app-shell caches (tahleem-v9, tahleem-v10 …). Never touch the other caches that live on
+      // this origin: "transformers-cache" (the ~100 MB Quran checker model — wiping it forced a re-download after
+      // every deploy), "tahleem-pdf-offline-v1" and "mushaf-svg-v1".
+      Promise.all(keys.filter(k => /^tahleem-v\d+$/.test(k) && k !== CACHE_NAME).map(k => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
 });
