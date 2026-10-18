@@ -551,7 +551,7 @@ export class LiveRecitationSession {
 
   constructor(private stream: MediaStream, opts: LiveSessionOptions) {
     this.ref = opts.referenceWords;
-    this.refKeys = opts.referenceWords.map(tarteelWordKey);
+    this.refKeys = opts.referenceWords.map((w) => soundKey(w, true));
     this.revealed = opts.referenceWords.map(() => false);
     this.opts = { maxSegmentSec: 20, tickMs: 700, ...opts };
   }

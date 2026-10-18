@@ -82,10 +82,12 @@ const MARKS_RE = /[ً-ٟؐ-ؚۖ-ۭ࣓-ࣿ]/g;   // tashkeel + Quranic annotation
  * long-vowel (medial) alefs dropped, the silent alef after waw al-jama'a dropped, doubled letters collapsed.
  * A final alef is KEPT (ما / عليهما must not equal م / عليهم), and an initial alef is kept.
  */
-export function soundKey(w: string): string {
+export function soundKey(w: string, isRef = false): string {
   let s = w
     .replace(/ـ/g, "")                          // tatweel
     .replace(/ۧ/g, "ي")                    // small high yeh written as a real letter (إبراهيم)
+    // Uthmani text: a ى WITHOUT a dagger alef is a real ya (ٱلَّذِى, فِى, أَىِّ): only ى + dagger alef is long a.
+    // Heard text is the other way round: a final ى is the usual spelling of long a (على, الهدى) and is dropped below.
     .replace(/ىٰ/g, "")                    // ى + dagger alef (الهدى / فتىٰه): long ā, no extra letter
     .replace(/وٰ/g, "ا")              // bare و + dagger alef (الصلوٰة / الربوٰا): the و stands for ā
     .replace(/ٰ/g, "ا")                    // any other dagger alef = long ā
@@ -94,7 +96,7 @@ export function soundKey(w: string): string {
     .replace(/ؤ/g, "و")                    // ؤ → و
     .replace(/ئ/g, "ي")                    // ئ → ي
     .replace(/ء/g, "")                          // standalone hamza
-    .replace(/ى$/, "")                          // final ى (alef maqsura) = ā
+    .replace(isRef ? /(?!)/ : /ى$/, "")                          // final ى (alef maqsura) = ā
     .replace(/ى/g, "ي")
     .replace(/ة/g, "ه")                    // ة → ه
     .replace(/ک/g, "ك").replace(/[یے]/g, "ي")
@@ -134,7 +136,7 @@ export function isCloseKey(a: string, b: string): boolean {
  * (The old 3-letter-prefix rule is gone: it made الحمد = الحياة and الرحيم = الرحمن.)
  */
 export function wordsMatch(rw: string, gw: string): boolean {
-  const a = soundKey(rw), b = soundKey(gw);
+  const a = soundKey(rw, true), b = soundKey(gw);
   if (!a || !b) return false;
   return a === b || isCloseKey(a, b);
 }
@@ -262,7 +264,7 @@ export function refTokens(refText: string): string[] {
 
 export function analyzeRecitation(refText: string, gotText: string): RecitationAnalysis {
   const origRef = refTokens(refText);
-  const refKeys = origRef.map(soundKey);
+  const refKeys = origRef.map((w) => soundKey(w, true));
   const mk = (word: string, grade: Grade, extra: Partial<WordResult> = {}): WordResult => ({
     word, grade, status: grade === "ok" ? "correct" : "missing",
     credit: grade === "ok" ? 1 : grade === "close" ? 0.5 : 0, ...extra,
@@ -276,7 +278,7 @@ export function analyzeRecitation(refText: string, gotText: string): RecitationA
   const refSet = new Set(refKeys);
   const pairs = new Map<string, [string, string]>();
   for (let i = 0; i + 1 < origRef.length; i++) {
-    if (refKeys[i] && refKeys[i + 1]) pairs.set(soundKey(origRef[i] + origRef[i + 1]), [refKeys[i], refKeys[i + 1]]);
+    if (refKeys[i] && refKeys[i + 1]) pairs.set(soundKey(origRef[i] + origRef[i + 1], true), [refKeys[i], refKeys[i + 1]]);
   }
   const split: Tok[] = [];
   for (const t of heard) {
@@ -342,6 +344,9 @@ export function analyzeRecitation(refText: string, gotText: string): RecitationA
     r = ri + 1; g = gi + 1;
   }
   flushGap(origRef.length, heard.length);
+  // A Bismillah recited before the surah is not part of the page text — it is not an "extra word" error.
+  const BISM = ["بسم", "الله", "الرحمن", "الرحيم"].map((w) => soundKey(w));
+  if (refKeys[0] !== BISM[0] && BISM.every((k, i) => extras[i] !== undefined && soundKey(extras[i]) === k)) extras.splice(0, 4);
   return { words, extras };
 }
 
