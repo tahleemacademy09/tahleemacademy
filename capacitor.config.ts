@@ -5,6 +5,7 @@ const config: CapacitorConfig = {
   appName: "Tahleem Academy",
   webDir: 'dist',
   plugins: {
+    CapacitorUpdater: { autoUpdate: false },
     SplashScreen: {
       launchShowDuration: 1500,
       launchAutoHide: true,

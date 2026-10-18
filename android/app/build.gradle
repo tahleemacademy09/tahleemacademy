@@ -1,6 +1,10 @@
 apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
 
+def ksFile = rootProject.file("keystore.properties")
+def ksProps = new Properties()
+if (ksFile.exists()) { ksFile.withInputStream { ksProps.load(it) } }
+
 android {
     applicationVariants.all { variant ->
         variant.outputs.all {
@@ -28,8 +32,19 @@ android {
     kotlinOptions {
         jvmTarget = '21'
     }
+    signingConfigs {
+        release {
+            if (ksFile.exists()) {
+                storeFile rootProject.file(ksProps['storeFile'])
+                storePassword ksProps['storePassword']
+                keyAlias ksProps['keyAlias']
+                keyPassword ksProps['keyPassword']
+            }
+        }
+    }
     buildTypes {
         release {
+            if (ksFile.exists()) { signingConfig signingConfigs.release }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
