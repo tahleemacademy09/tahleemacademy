@@ -43,3 +43,7 @@ mutun_*.csv
 new_*.txt
 old_*.txt
 cron-gate-worker/
+
+keystore.properties
+android/keystore.properties
+*.jks

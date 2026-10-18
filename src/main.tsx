@@ -12,6 +12,8 @@ import { HelmetProvider } from "react-helmet-async";
 import App from "./App.tsx";
 import "./index.css";
 import { initNativeApp } from "./lib/nativeApp";
+import { initOta } from "./lib/otaUpdate";
+import { Capacitor } from "@capacitor/core";
 import { isReloadSafe, onReloadSafe } from "./lib/reloadGuard";
 import { bootstrapTheme } from "./lib/theme";
 import { initDiagnostics, logDiag } from "./lib/diagnostics";
@@ -27,6 +29,7 @@ initDiagnostics();
 bootstrapTheme();
 
 initNativeApp();
+initOta();
 
 // Pre-download page code on hover/touch and while idle so taps feel instant.
 initRoutePrefetch();
@@ -43,7 +46,7 @@ initRoutePrefetch();
 // the user is actually looking at the app AND nothing sensitive is locked.
 // This is intentional: applying while hidden and reloading later on return
 // is what caused the v6.0 regression (reload-on-resume on every page).
-if ("serviceWorker" in navigator) {
+if ("serviceWorker" in navigator && !Capacitor.isNativePlatform()) {
   let waitingWorker: ServiceWorker | null = null;
   let updateRequested = false;
   let reloading = false;

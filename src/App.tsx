@@ -20,6 +20,7 @@ import NotFound from "@/pages/NotFound";
 import IdleWarningModal from "@/components/IdleWarningModal";
 import UpdateAvailableBanner from "@/components/UpdateAvailableBanner";
 import AppUpdateBanner from "@/components/AppUpdateBanner";
+import OtaUpdateBanner from "@/components/OtaUpdateBanner";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import DiagnosticsPanel from "@/components/dev/DiagnosticsPanel";
 import TasjeelGuard from "@/components/TasjeelGuard";
@@ -218,6 +219,7 @@ const AppMain = () => (
               <IdleWarningModal />
               <UpdateAvailableBanner />
               <AppUpdateBanner />
+              <OtaUpdateBanner />
               <DiagnosticsPanel />
               <Suspense fallback={
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
