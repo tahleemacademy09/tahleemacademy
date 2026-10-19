@@ -112,6 +112,7 @@ export default function HifdhProgramAdmin() {
   const [groups, setGroups] = useState<any[]>([]);
   const [members, setMembers] = useState<any[]>([]);
   const [fines, setFines] = useState<any[]>([]);
+  const [reviews, setReviews] = useState<any[]>([]);
   const [viewPage, setViewPage] = useState<number | null>(null);
   const [picking, setPicking] = useState(false);
   const [picked, setPicked] = useState<string[]>([]);
@@ -133,14 +134,16 @@ export default function HifdhProgramAdmin() {
 
     const sj = await hpDb.from("subjects").select("id,title").order("title");
     setSubjects(sj.data || []);
-    const [pg, lv, st, gr, mm, fn] = await Promise.all([
+    const [pg, lv, st, gr, mm, fn, ra] = await Promise.all([
       hpDb.from("hifdh_program").select("*").eq("term", term).order("current_page"),
       hpDb.from("hifdh_levels").select("*").order("sort_order"),
       hpDb.from("hifdh_settings").select("*").eq("id", true).maybeSingle(),
       hpDb.from("hifdh_read_groups").select("*").eq("week_start", week).order("name"),
       hpDb.from("hifdh_read_group_members").select("*").eq("week_start", week),
       hpDb.from("hifdh_fines").select("*").order("created_at", { ascending: false }).limit(200),
+      hpDb.from("hifdh_review_assignments").select("*").eq("week_start", week),
     ]);
+    setReviews(ra.data || []);
     setProgram(pg.data || []);
     setLevels(lv.data || []);
     setSettings(st.data || null);
@@ -259,18 +262,50 @@ export default function HifdhProgramAdmin() {
     <div style={{ display: "grid", gap: 10 }}>
       <HpCard>
         <div style={{ fontSize: 13, color: HP_MUTED, marginBottom: 10 }}>
-          Students who are close in their hifdh are grouped automatically. You can move anyone or change a group's ustadh.
+          Read-along groups are made per level (each level has its own read-along day, set in Settings). Every group and every
+          weekly-review student is given a random ustadh. You can still move anyone or change a ustadh.
         </div>
-        <HpBtn disabled={busy} onClick={() => run(async () => {
-          const r = await hpDb.rpc("hifdh_build_read_groups", { p_week_start: week });
-          if (!r.error) toast({ title: r.data ? `${r.data} group(s) created` : "Everyone is already in a group" });
-          return r;
-        })}>
-          <Layers size={14} /> Auto-group this week
-        </HpBtn>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <HpBtn disabled={busy} onClick={() => run(async () => {
+            const r = await hpDb.rpc("hifdh_build_read_groups", { p_week_start: week });
+            if (r.error) return r;
+            const r2 = await hpDb.rpc("hifdh_assign_reviews", { p_week_start: week, p_reset: false });
+            if (!r2.error) toast({ title: `${r.data || 0} group(s) created · ${r2.data || 0} review assignment(s)` });
+            return r2;
+          })}>
+            <Layers size={14} /> Auto-assign this week
+          </HpBtn>
+          <HpBtn kind="ghost" disabled={busy} onClick={() => window.confirm("Re-shuffle every student's weekly-review ustadh and day for this week?") &&
+            run(() => hpDb.rpc("hifdh_assign_reviews", { p_week_start: week, p_reset: true }), "Weekly review re-shuffled")}>
+            <RotateCcw size={14} /> Re-shuffle reviews
+          </HpBtn>
+        </div>
       </HpCard>
 
       {groups.length === 0 && <HpCard><div style={{ color: HP_MUTED, fontSize: 13 }}>No groups for this week yet.</div></HpCard>}
+
+      {reviews.length > 0 && (
+        <HpCard>
+          <div style={{ fontWeight: 800, color: HP_INK, marginBottom: 8 }}>Weekly review assignments ({reviews.length})</div>
+          {[...teachers, { id: "", name: "No ustadh" }].map((t) => {
+            const rs = reviews.filter((r) => (r.ustadh_id || "") === t.id);
+            if (!rs.length) return null;
+            return (
+              <div key={t.id || "none"} style={{ padding: "8px 0", borderTop: `1px solid ${HP_LINE}`, fontSize: 13 }}>
+                <div style={{ fontWeight: 700, color: HP_GREEN }}>{t.name} · {rs.length}</div>
+                {[5, 6, 7, 1, 2, 3, 4].map((d) => {
+                  const ds = rs.filter((r) => r.review_day === d);
+                  return ds.length ? (
+                    <div key={d} style={{ color: HP_MUTED, fontSize: 12, marginTop: 2 }}>
+                      <b style={{ color: HP_INK }}>{HP_DAYS[d - 1]}</b>: {ds.map((r) => nameOf(r.student_id)).join(", ")}
+                    </div>
+                  ) : null;
+                })}
+              </div>
+            );
+          })}
+        </HpCard>
+      )}
 
       {groups.map((g) => {
         const ms = membersOf(g.id);
@@ -278,7 +313,12 @@ export default function HifdhProgramAdmin() {
         return (
           <HpCard key={g.id}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div style={{ fontWeight: 800, color: HP_GREEN }}>{g.name}</div>
+              <div>
+                <div style={{ fontWeight: 800, color: HP_GREEN }}>{g.name}</div>
+                {levels.find((l) => l.id === g.level_id)?.readalong_day && (
+                  <div style={{ fontSize: 11, color: HP_MUTED }}>Read-along day: {HP_DAYS[levels.find((l) => l.id === g.level_id).readalong_day - 1]}</div>
+                )}
+              </div>
               <div style={{ fontSize: 12, color: HP_MUTED }}>
                 {ms.length} student{ms.length === 1 ? "" : "s"}{pages.length ? ` · ${hpSurahOf(Math.min(...pages)).arabicName} → ${hpSurahOf(Math.max(...pages)).arabicName}` : ""}
               </div>
@@ -414,7 +454,7 @@ export default function HifdhProgramAdmin() {
       <HpCard>
         <Label t="Memorization days (new portions + read-along)" />
         <DayChips k="memorization_days" />
-        <Label t="Ustadh review days (weekly grading window)" />
+        <Label t="Weekly review / general revision days (Fri–Sun)" />
         <DayChips k="review_days" />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <div><Label t="Fine amount (₦)" /><HpInput type="number" value={settings.fine_amount} onChange={(e) => setS({ fine_amount: e.target.value })} /></div>
@@ -439,15 +479,20 @@ export default function HifdhProgramAdmin() {
       <HpCard>
         <div style={{ fontWeight: 800, color: HP_INK, marginBottom: 8 }}>Hifdh levels</div>
         {levels.map((l) => (
-          <div key={l.id} style={{ display: "grid", gridTemplateColumns: "1fr 90px 36px", gap: 8, marginBottom: 8, alignItems: "center" }}>
+          <div key={l.id} style={{ display: "grid", gridTemplateColumns: "1fr 70px 96px 36px", gap: 8, marginBottom: 8, alignItems: "center" }}>
             <HpInput defaultValue={l.name} onBlur={(e) => e.target.value !== l.name && run(() => hpDb.from("hifdh_levels").update({ name: e.target.value }).eq("id", l.id))} />
             <HpInput type="number" step="0.5" min="0.5" defaultValue={l.daily_pages} title="Pages per memorization day"
               onBlur={(e) => Number(e.target.value) !== Number(l.daily_pages) && run(() => hpDb.from("hifdh_levels").update({ daily_pages: Number(e.target.value) || 0.5 }).eq("id", l.id))} />
+            <HpSelect title="Read-along day for this level" value={l.readalong_day || ""} style={{ padding: "8px 4px" }}
+              onChange={(e) => run(() => hpDb.from("hifdh_levels").update({ readalong_day: e.target.value ? Number(e.target.value) : null }).eq("id", l.id))}>
+              <option value="">Day…</option>
+              {HP_DAYS.map((d, i) => <option key={d} value={i + 1}>{d}</option>)}
+            </HpSelect>
             <button aria-label="Delete level" onClick={() => window.confirm(`Delete "${l.name}"?`) && run(() => hpDb.from("hifdh_levels").delete().eq("id", l.id))}
               style={{ border: "none", background: "none", cursor: "pointer", color: HP_RED }}><Trash2 size={16} /></button>
           </div>
         ))}
-        <div style={{ fontSize: 11, color: HP_MUTED, marginBottom: 8 }}>Name · pages per memorization day (0.5 = half a page)</div>
+        <div style={{ fontSize: 11, color: HP_MUTED, marginBottom: 8 }}>Name · pages per memorization day (0.5 = half a page) · read-along day for the level</div>
         <HpBtn small kind="ghost" onClick={() => run(() => hpDb.from("hifdh_levels").insert({ name: `Level ${levels.length + 1}`, daily_pages: 0.5, sort_order: levels.length }))}>
           <Plus size={12} /> Add level
         </HpBtn>
