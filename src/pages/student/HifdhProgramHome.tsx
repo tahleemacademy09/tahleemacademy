@@ -44,10 +44,12 @@ const hhWhen = (iso?: string | null) =>
 const HH_TASK_LABEL: Record<string, { text: string; color: string }> = {
   pending: { text: "Waiting for read-along", color: HH_MUTED },
   read_cleared: { text: "Ready to memorize", color: HH_AMBER },
-  submitted: { text: "Submitted", color: HH_GREEN },
-  passed: { text: "Passed", color: HH_OK },
-  failed: { text: "Repeat", color: HH_RED },
+  submitted: { text: "Waiting for your ustadh", color: HH_GREEN },
+  passed: { text: "Memorized ✓", color: HH_OK },
+  failed: { text: "Repeat this page", color: HH_RED },
 };
+const HH_CAN_SUBMIT = ["read_cleared", "failed"];
+const HH_DAY = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 const HhPill = ({ text, color }: { text: string; color: string }) => (
   <span style={{ background: color + "1a", color, fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 99, whiteSpace: "nowrap" }}>{text}</span>
@@ -110,6 +112,8 @@ export default function HifdhProgramHome() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [review, setReview] = useState<any>(null);
   const [fines, setFines] = useState<any[]>([]);
+  const [reviewAsg, setReviewAsg] = useState<any>(null);
+  const [reviewUstadh, setReviewUstadh] = useState("");
   const [revDays, setRevDays] = useState(0);
   const [doneToday, setDoneToday] = useState(false);
   const revisionPending = useRevisionAssignedCount(user?.id, String(doneToday));
@@ -136,7 +140,7 @@ export default function HifdhProgramHome() {
     setProgram(prog || null);
     if (!prog) { setLoading(false); return; }
 
-    const [lv, st, mm, tk, rv, fn, lg] = await Promise.all([
+    const [lv, st, mm, tk, rv, fn, lg, ra] = await Promise.all([
       prog.level_id ? hhDb.from("hifdh_levels").select("*").eq("id", prog.level_id).maybeSingle() : Promise.resolve({ data: null }),
       hhDb.from("hifdh_settings").select("*").eq("id", true).maybeSingle(),
       hhDb.from("hifdh_read_group_members").select("*").eq("student_id", sid).eq("week_start", week).limit(1).maybeSingle(),
@@ -145,7 +149,13 @@ export default function HifdhProgramHome() {
       hhDb.from("hifdh_fines").select("*").eq("student_id", sid).eq("status", "unpaid"),
       hhDb.from("hifdh_daily_logs").select("log_date,completed").eq("student_id", sid).eq("completed", true)
         .gte("log_date", week).lt("log_date", hhNextWeek(week)),
+      hhDb.from("hifdh_review_assignments").select("*").eq("student_id", sid).eq("week_start", week).maybeSingle(),
     ]);
+    setReviewAsg(ra.data || null);
+    if (ra.data?.ustadh_id) {
+      const { data: rp } = await hhDb.from("profiles").select("full_name").eq("user_id", ra.data.ustadh_id).maybeSingle();
+      setReviewUstadh(rp?.full_name || "");
+    } else setReviewUstadh("");
     setLevel(lv.data || null);
     setSettings(st.data || null);
     setMember(mm.data || null);
@@ -177,7 +187,7 @@ export default function HifdhProgramHome() {
   // when tasks arrive, default to the first session that has work to do
   useEffect(() => {
     if (!tasks.length) return;
-    const next = tasks.find((t) => ["read_cleared", "failed"].includes(t.status)) || tasks[0];
+    const next = tasks.find((t) => HH_CAN_SUBMIT.includes(t.status)) || tasks[0];
     setSelSlot(next.slot);
     setSelPage(null);
   }, [tasks.length]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -227,7 +237,7 @@ export default function HifdhProgramHome() {
   const showBanner = suspended || fines.length > 0 || program.miss_streak > 0;
 
   // Pending counts for the tab badges
-  const memorizePending = tasks.filter((t) => ["read_cleared", "failed"].includes(t.status)).length;
+  const memorizePending = tasks.filter((t) => HH_CAN_SUBMIT.includes(t.status)).length;
   const readAlongPending = group && member && ["pending", "repeat"].includes(member.read_status) ? 1 : 0;
 
   const tabBtn = (id: Tab, label: string, icon: React.ReactNode, badge = 0) => (
@@ -329,12 +339,20 @@ export default function HifdhProgramHome() {
                     <HhFocusBtn onClick={() => setFocus("memorize")} />
                   </div>
                   {activePages.length > 1 && <HhPageChips pages={activePages} active={shownPage!} onPick={setSelPage} />}
-                  {shownPage && <MushafPageView page={shownPage} fontSize={qSize} halves={hpSegmentFor(shownPage, activeTask)} />}
-                  {activeTask.status === "read_cleared" && (
+                  {shownPage && <MushafPageView page={shownPage} fontSize={qSize} halves={hpSegmentFor(shownPage, activeTask)} coverOutside />}
+                  {HH_CAN_SUBMIT.includes(activeTask.status) && (
                     <div style={{ padding: "6px 4px 2px" }}>
-                      <HhBtn gold disabled={busy} onClick={() => submitTask(activeTask.id)}>I've memorized this — submit</HhBtn>
+                      <HhBtn gold disabled={busy} onClick={() => submitTask(activeTask.id)}>
+                        {activeTask.status === "failed" ? "I've repeated it — submit again" : "I've memorized this — submit"}
+                      </HhBtn>
                     </div>
                   )}
+                  <div style={{ padding: "8px 6px 2px", fontSize: 12, color: activeTask.status === "failed" ? HH_RED : HH_MUTED }}>
+                    {activeTask.status === "passed" ? "Your ustadh marked this memorized. Your next page comes after the next read-along."
+                      : activeTask.status === "failed" ? "Your ustadh asked you to repeat this page. You move on only when it is marked memorized."
+                      : activeTask.status === "submitted" ? "Sent. You move to the next page once your ustadh marks this memorized."
+                      : "You move to the next page only when your ustadh marks this memorized."}
+                  </div>
                 </div>
               )}
 
@@ -364,6 +382,11 @@ export default function HifdhProgramHome() {
                         <div style={{ fontSize: 12, color: HH_MUTED }}>
                           {ustadh ? `Ustadh ${ustadh}` : "Ustadh not assigned yet"}{group.scheduled_at ? ` · ${hhWhen(group.scheduled_at)}` : ""}
                         </div>
+                        {level?.readalong_day && (
+                          <div style={{ fontSize: 12, color: HH_GREEN, fontWeight: 700, marginTop: 2 }}>
+                            {level.name} read-along day: {HH_DAY[level.readalong_day - 1]}
+                          </div>
+                        )}
                       </div>
                       {member?.read_status === "passed" && <HhPill text="Read correctly ✓" color={HH_OK} />}
                       {member?.read_status === "repeat" && <HhPill text="Please repeat" color={HH_AMBER} />}
@@ -387,7 +410,7 @@ export default function HifdhProgramHome() {
                     <HhFocusBtn onClick={() => setFocus("readalong")} />
                   </div>
                   {raPages.length > 1 && <HhPageChips pages={raPages} active={raShown!} onPick={setRaPage} />}
-                  {raShown && <MushafPageView page={raShown} fontSize={qSize} halves={hpSegmentFor(raShown, member)} />}
+                  {raShown && <MushafPageView page={raShown} fontSize={qSize} halves={hpSegmentFor(raShown, member)} coverOutside />}
                 </div>
               )}
             </>
@@ -401,6 +424,13 @@ export default function HifdhProgramHome() {
                   <div style={{ fontWeight: 800, fontSize: 16, color: HH_INK }}>Today's Revision</div>
                   <div style={{ fontSize: 12, color: HH_MUTED }}>{revDays} day{revDays === 1 ? "" : "s"} completed this week</div>
                 </div>
+              </div>
+              <div style={{ background: "#f6f8f6", border: `1px solid ${HH_LINE}`, borderRadius: 12, padding: 10, marginBottom: 12, fontSize: 13, color: HH_INK }}>
+                {reviewAsg ? (
+                  <>Weekly review: <b>{HH_DAY[reviewAsg.review_day - 1]}</b>{reviewUstadh ? <> with <b>Ustadh {reviewUstadh}</b></> : null}</>
+                ) : (
+                  <span style={{ color: HH_MUTED }}>Weekly review ({(settings?.review_days || [5, 6, 7]).map((d: number) => dayNames[d - 1]).join(", ")}) — your ustadh and day will be assigned soon.</span>
+                )}
               </div>
               {doneToday ? (
                 <div style={{ display: "flex", alignItems: "center", gap: 8, color: HH_OK, fontWeight: 700, fontSize: 14 }}>
@@ -449,13 +479,14 @@ export default function HifdhProgramHome() {
                   page={cur}
                   fontSize={qSize}
                   halves={hpSegmentFor(cur, portion)}
-                  fitHeight={64 + (pages.length > 1 ? 64 : 0) + (isMem && activeTask?.status === "read_cleared" ? 84 : 0) + 24}
+                  coverOutside
+                  fitHeight={64 + (pages.length > 1 ? 64 : 0) + (isMem && activeTask && HH_CAN_SUBMIT.includes(activeTask.status) ? 84 : 0) + 24}
                   seamless
                   onBackground={setPageBg}
                 />
               </div>
             </div>
-            {isMem && activeTask?.status === "read_cleared" && (
+            {isMem && activeTask && HH_CAN_SUBMIT.includes(activeTask.status) && (
               <div style={{ padding: 12, paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))", background: pageBg, borderTop: "1px solid rgba(0,0,0,.06)" }}>
                 <HhBtn gold disabled={busy} onClick={() => submitTask(activeTask.id)}>I've memorized this — submit</HhBtn>
               </div>
