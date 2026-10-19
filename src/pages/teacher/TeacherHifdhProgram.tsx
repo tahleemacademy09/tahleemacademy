@@ -12,7 +12,7 @@ import { useLiveClass } from "@/contexts/LiveClassContext";
 import { useToast } from "@/hooks/use-toast";
 import { SURAHS } from "@/components/hifdh/surahData";
 import { hpUnit, hpFromUnit, hpUnitsFor, hpUnitsOf, hpPortionFromUnits, hpPortionLabel, HP_AMOUNTS } from "@/lib/hifdhPortion";
-import { Loader2, Video, Check, RotateCcw, ChevronLeft, ChevronRight, BookOpen, ClipboardCheck } from "lucide-react";
+import { Loader2, Video, Check, RotateCcw, ChevronLeft, ChevronRight, BookOpen, ClipboardCheck, CheckCheck } from "lucide-react";
 
 const tpDb = supabase as any;
 
@@ -43,7 +43,12 @@ const tpPretty = (iso: string) => {
 };
 const tpWhen = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "";
-const tpLocalInput = () => {
+const TP_DAY = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const tpLocalInput = (weekIso?: string, day?: number | null) => {
+  if (weekIso && day) {
+    const [y, m, d0] = weekIso.split("-").map(Number);
+    return `${tpIso(new Date(y, m - 1, d0 + day - 1))}T16:00`;
+  }
   const d = new Date(Date.now() + 3600_000);
   d.setMinutes(0, 0, 0);
   return `${tpIso(d)}T${String(d.getHours()).padStart(2, "0")}:00`;
@@ -73,7 +78,7 @@ const TP_TASK: Record<string, { text: string; color: string }> = {
   read_cleared: { text: "Read ✓", color: TP_AMBER },
   submitted: { text: "Submitted", color: TP_GREEN },
   passed: { text: "Passed", color: TP_OK },
-  failed: { text: "Failed", color: TP_RED },
+  failed: { text: "Repeat", color: TP_RED },
 };
 
 export default function TeacherHifdhProgram() {
@@ -83,7 +88,7 @@ export default function TeacherHifdhProgram() {
   const isAdmin = hasRole ? hasRole("admin") : false;
 
   const [week, setWeek] = useState(tpMonday());
-  const [tab, setTab] = useState<"readalong" | "grading">("readalong");
+  const [tab, setTab] = useState<"readalong" | "memorized" | "grading">("readalong");
   const [slot, setSlot] = useState<1 | 2>(1);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -94,6 +99,7 @@ export default function TeacherHifdhProgram() {
   const [program, setProgram] = useState<Record<string, any>>({});
   const [levels, setLevels] = useState<Record<string, any>>({});
   const [tasks, setTasks] = useState<any[]>([]);
+  const [reviewAsg, setReviewAsg] = useState<any[]>([]);
   const [reviews, setReviews] = useState<Record<string, any>>({});
   const [logs, setLogs] = useState<Record<string, { days: number; avg: number | null }>>({});
   const [names, setNames] = useState<Record<string, string>>({});
@@ -122,7 +128,13 @@ export default function TeacherHifdhProgram() {
     const mList: any[] = ms || [];
     setMembers(mList);
 
-    const sids = Array.from(new Set<string>(mList.map((m) => m.student_id)));
+    let raq = tpDb.from("hifdh_review_assignments").select("*").eq("week_start", week);
+    if (!isAdmin) raq = raq.eq("ustadh_id", user.id);
+    const { data: ras } = await raq;
+    const raList: any[] = ras || [];
+    setReviewAsg(raList);
+
+    const sids = Array.from(new Set<string>([...mList.map((m) => m.student_id), ...raList.map((r) => r.student_id)]));
     if (sids.length) {
       const weekEnd = tpShift(week, 1);
       const [pf, pg, lv, tk, rv, lg] = await Promise.all([
@@ -176,9 +188,8 @@ export default function TeacherHifdhProgram() {
     const prog = program[sid];
     const units = hpUnitsFor(levels[prog?.level_id]?.daily_pages ?? 0.5);
     const base = hpUnit(prog?.current_page ?? 1, prog?.current_half ?? 0);
-    const first = taskFor(sid, 1);
-    const start = s === 2 ? (first ? hpUnitsOf(first).end + 1 : base + units) : base;
-    return { start, units };
+    // the position only moves when the ustadh marks a portion memorized
+    return { start: base, units };
   };
   const rangeOf = (sid: string) => edit[`${sid}:${slot}`] || suggest(sid, slot);
   const surahTag = (page: number) => {
@@ -204,7 +215,7 @@ export default function TeacherHifdhProgram() {
     if (!settings?.readalong_subject_id) {
       return toast({ title: "Hifdh class subject not set", description: "Ask the admin to choose it in Hifdh Program → Settings.", variant: "destructive" });
     }
-    const at = new Date(when[g.id] || tpLocalInput()).toISOString();
+    const at = new Date(when[g.id] || defaultWhen(g)).toISOString();
     guard(async () => {
       const ins = await tpDb.from("live_sessions").insert({
         subject_id: settings.readalong_subject_id, host_id: user!.id, status: "scheduled", scheduled_at: at,
@@ -232,6 +243,10 @@ export default function TeacherHifdhProgram() {
       return toast({ title: "Already submitted", description: "This portion has already been memorized and submitted.", variant: "destructive" });
     }
     const cleared = result === "passed";
+    const first = taskFor(m.student_id, 1);
+    if (cleared && slot === 2 && first && first.status !== "passed") {
+      return toast({ title: "Session 1 isn't memorized yet", description: "Mark Session 1 as memorized first — the student only moves to the next page after that.", variant: "destructive" });
+    }
     guard(async () => {
       const up = await tpDb.from("hifdh_memorization_tasks").upsert({
         student_id: m.student_id, week_start: week, slot, ...r,
@@ -251,7 +266,7 @@ export default function TeacherHifdhProgram() {
       p_student: sid, p_week: week, p_grade: g === "excused" ? "pass" : g, p_excused: g === "excused", p_notes: notes[sid] || null,
     }), "Saved");
 
-  const students = useMemo(() => {
+  const memStudents = useMemo(() => {
     const seen = new Set<string>();
     const out: { sid: string; group: string }[] = [];
     groups.forEach((g) => members.filter((m) => m.group_id === g.id).forEach((m) => {
@@ -259,6 +274,23 @@ export default function TeacherHifdhProgram() {
     }));
     return out.sort((a, b) => nameOf(a.sid).localeCompare(nameOf(b.sid)));
   }, [groups, members, names]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Weekly review (general revision, Fri–Sun): students the admin assigned to this ustadh. Falls back to the read-along groups.
+  const reviewDayOf = (sid: string): number | null => reviewAsg.find((r) => r.student_id === sid)?.review_day ?? null;
+  const students = useMemo(() => {
+    if (!reviewAsg.length) return memStudents;
+    const gName = (sid: string) => memStudents.find((x) => x.sid === sid)?.group || "";
+    return reviewAsg
+      .map((r) => ({ sid: r.student_id as string, group: gName(r.student_id) }))
+      .sort((a, b) => (reviewDayOf(a.sid)! - reviewDayOf(b.sid)!) || nameOf(a.sid).localeCompare(nameOf(b.sid)));
+  }, [reviewAsg, memStudents, names]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const markMem = (taskId: string, result: "passed" | "repeat") =>
+    guard(() => tpDb.rpc("hifdh_mark_memorized", { p_task: taskId, p_result: result }),
+      result === "passed" ? "Memorized — the student moves to the next page" : "Sent back — the student repeats it");
+  const waiting = tasks.filter((t) => ["submitted", "read_cleared", "failed"].includes(t.status) && memStudents.some((x) => x.sid === t.student_id));
+  const submittedCount = waiting.filter((t) => t.status === "submitted").length;
+  const defaultWhen = (g: any) => tpLocalInput(week, levels[g.level_id]?.readalong_day);
 
   /* ───── UI ───── */
   const ReadAlong = (
@@ -282,7 +314,12 @@ export default function TeacherHifdhProgram() {
         return (
           <TpCard key={g.id}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <div style={{ fontWeight: 800, color: TP_GREEN, fontSize: 15 }}>{g.name}</div>
+              <div>
+                <div style={{ fontWeight: 800, color: TP_GREEN, fontSize: 15 }}>{g.name}</div>
+                {levels[g.level_id]?.readalong_day && (
+                  <div style={{ fontSize: 11, color: TP_MUTED }}>Read-along day: {TP_DAY[levels[g.level_id].readalong_day - 1]}</div>
+                )}
+              </div>
               <div style={{ fontSize: 12, color: TP_MUTED }}>{ms.length} student{ms.length === 1 ? "" : "s"}</div>
             </div>
 
@@ -293,7 +330,7 @@ export default function TeacherHifdhProgram() {
               </div>
             ) : (
               <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-                <input type="datetime-local" value={when[g.id] || tpLocalInput()} onChange={(e) => setWhen({ ...when, [g.id]: e.target.value })}
+                <input type="datetime-local" value={when[g.id] || defaultWhen(g)} onChange={(e) => setWhen({ ...when, [g.id]: e.target.value })}
                   style={{ flex: 1, minWidth: 180, border: `1px solid ${TP_LINE}`, borderRadius: 10, padding: "8px 10px", fontSize: 13 }} />
                 <TpBtn small disabled={busy} onClick={() => schedule(g)}>Schedule class</TpBtn>
               </div>
@@ -356,11 +393,57 @@ export default function TeacherHifdhProgram() {
     </div>
   );
 
+  const Memorized = (
+    <div style={{ display: "grid", gap: 10 }}>
+      <TpCard>
+        <div style={{ fontSize: 13, color: TP_MUTED }}>
+          When a student has memorized their portion, tap <b>Memorized</b>. Only then do they move to the next page.
+          <b> Repeat</b> keeps them on the same page.
+        </div>
+      </TpCard>
+      {memStudents.length === 0 && <TpCard><div style={{ color: TP_MUTED, fontSize: 13 }}>No students in your groups this week.</div></TpCard>}
+      {[...memStudents]
+        .sort((a, b) => Number(tasks.some((t) => t.student_id === b.sid && t.status === "submitted")) - Number(tasks.some((t) => t.student_id === a.sid && t.status === "submitted")))
+        .map(({ sid, group }) => {
+          const tk = tasks.filter((t) => t.student_id === sid).sort((a, b) => a.slot - b.slot);
+          return (
+            <TpCard key={sid}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <div>
+                  <div style={{ fontWeight: 800, color: TP_INK, fontSize: 14 }}>{nameOf(sid)}</div>
+                  <div style={{ fontSize: 11, color: TP_MUTED }}>{group} · now at page {program[sid]?.current_page ?? "–"}</div>
+                </div>
+              </div>
+              {tk.length === 0 && <div style={{ fontSize: 12, color: TP_MUTED, marginTop: 8 }}>No portion assigned this week yet.</div>}
+              {tk.map((t) => {
+                const lb = TP_TASK[t.status] || TP_TASK.pending;
+                const open = ["submitted", "read_cleared", "failed"].includes(t.status);
+                return (
+                  <div key={t.id} style={{ borderTop: `1px solid ${TP_LINE}`, marginTop: 10, paddingTop: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: open ? 8 : 0 }}>
+                      <div style={{ fontSize: 13, color: TP_INK, fontWeight: 700 }}>S{t.slot} · {hpPortionLabel(t)}</div>
+                      <TpPill text={t.status === "read_cleared" ? "Not submitted yet" : lb.text} color={lb.color} />
+                    </div>
+                    {open && (
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <TpBtn small color={TP_OK} disabled={busy} onClick={() => markMem(t.id, "passed")}><CheckCheck size={14} /> Memorized</TpBtn>
+                        <TpBtn small color={TP_AMBER} ghost disabled={busy || t.status === "failed"} onClick={() => markMem(t.id, "repeat")}><RotateCcw size={14} /> Repeat</TpBtn>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </TpCard>
+          );
+        })}
+    </div>
+  );
+
   const Grading = (
     <div style={{ display: "grid", gap: 10 }}>
       <TpCard>
         <div style={{ fontSize: 13, color: TP_MUTED }}>
-          Grade each student once this week{settings?.review_days?.length ? " (review days: " + settings.review_days.map((d: number) => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][d - 1]).join(", ") + ")" : ""}.
+          {reviewAsg.length ? "Students randomly assigned to you for the weekly review." : "Weekly review."} Grade each student once this week{settings?.review_days?.length ? " (review days: " + settings.review_days.map((d: number) => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][d - 1]).join(", ") + ")" : ""}.
           Pass moves them to the next pages. Fail means they repeat the same portion and receive the fine at close-out.
         </div>
       </TpCard>
@@ -383,7 +466,7 @@ export default function TeacherHifdhProgram() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
               <div>
                 <div style={{ fontWeight: 800, color: TP_INK, fontSize: 14 }}>{nameOf(sid)}</div>
-                <div style={{ fontSize: 11, color: TP_MUTED }}>{group} · page {program[sid]?.current_page ?? "–"}</div>
+                <div style={{ fontSize: 11, color: TP_MUTED }}>{[reviewDayOf(sid) ? `Review: ${TP_DAY[reviewDayOf(sid)! - 1]}` : "", group, `page ${program[sid]?.current_page ?? "–"}`].filter(Boolean).join(" · ")}</div>
               </div>
               {current && <TpPill text={current === "excused" ? "Excused" : current === "pass" ? "Passed" : current === "repeat" ? "Repeat" : "Failed"}
                 color={current === "pass" ? TP_OK : current === "fail" ? TP_RED : current === "repeat" ? TP_AMBER : TP_MUTED} />}
@@ -421,16 +504,16 @@ export default function TeacherHifdhProgram() {
       </div>
 
       <div style={{ display: "flex", gap: 6, marginBottom: 12, background: "#fff", padding: 4, borderRadius: 12, border: `1px solid ${TP_LINE}` }}>
-        {([["readalong", "Read-Along", <BookOpen size={14} key="a" />], ["grading", "Weekly Grading", <ClipboardCheck size={14} key="b" />]] as const).map(([id, label, icon]) => (
+        {([["readalong", "Read-Along", <BookOpen size={14} key="a" />], ["memorized", submittedCount ? `Memorized (${submittedCount})` : "Memorized", <CheckCheck size={14} key="m" />], ["grading", "Weekly Review", <ClipboardCheck size={14} key="b" />]] as const).map(([id, label, icon]) => (
           <button key={id} onClick={() => setTab(id)} style={{
             flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 4px", borderRadius: 9, border: "none", cursor: "pointer",
-            fontSize: 13, fontWeight: 700, background: tab === id ? TP_GREEN : "transparent", color: tab === id ? "#fff" : TP_MUTED,
+            fontSize: 12, fontWeight: 700, background: tab === id ? TP_GREEN : "transparent", color: tab === id ? "#fff" : TP_MUTED,
           }}>{icon}{label}</button>
         ))}
       </div>
 
       {loading ? <div style={{ display: "flex", justifyContent: "center", padding: 40 }}><Loader2 className="animate-spin" color={TP_GOLD} /></div>
-        : tab === "readalong" ? ReadAlong : Grading}
+        : tab === "readalong" ? ReadAlong : tab === "memorized" ? Memorized : Grading}
     </div>
   );
 }
