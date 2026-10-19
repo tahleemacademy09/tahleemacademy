@@ -67,7 +67,7 @@ const mvLoad = (page: number) => {
 const mvSurah = (n: number) => SURAHS.find((s: any) => s.num === n || s.id === n);
 
 /** halves = [startHalf, endHalf] (0 = first half, 1 = second half). Words outside are dimmed. */
-function MushafTextPage({ page, fontSize = 26, halves }: { page: number; fontSize?: number; halves?: [number, number] }) {
+function MushafTextPage({ page, fontSize = 26, halves, coverOutside }: { page: number; fontSize?: number; halves?: [number, number]; coverOutside?: boolean }) {
   const [ayahs, setAyahs] = useState<MvAyah[] | null>(null);
 
   useEffect(() => {
@@ -106,14 +106,14 @@ function MushafTextPage({ page, fontSize = 26, halves }: { page: number; fontSiz
           lastHalf = h;
           return (
             <React.Fragment key={wi}>
-              <span style={{ display: "inline-block", margin: "0 1px", color: "#000", opacity: inPortion(h) ? 1 : 0.2, transition: "opacity .2s" }}>{w.t}</span>{" "}
+              <span style={{ display: "inline-block", margin: "0 1px", color: "#000", opacity: inPortion(h) ? 1 : coverOutside ? 0 : 0.2, transition: "opacity .2s" }}>{w.t}</span>{" "}
             </React.Fragment>
           );
         })}
         <span style={{
           display: "inline-flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, borderRadius: "50%",
           border: `1.5px solid ${MV_GOLD}`, background: "#fffdf6", fontSize: 10, color: MV_GOLD, fontFamily: "'Amiri',serif",
-          margin: "0 4px", verticalAlign: "middle", lineHeight: 1, opacity: inPortion(lastHalf) ? 1 : 0.2, WebkitTextStroke: "0",
+          margin: "0 4px", verticalAlign: "middle", lineHeight: 1, opacity: inPortion(lastHalf) ? 1 : coverOutside ? 0 : 0.2, WebkitTextStroke: "0",
         }}>{a.numberInSurah}</span>{" "}
       </React.Fragment>
     );
@@ -409,8 +409,10 @@ function mvPrefetchAround(page: number, white = false): () => void {
 }
 
 /** fitHeight: pixels of screen NOT available to the page (bars, buttons). When set, the whole page is fitted to the screen height. */
-export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, onUnavailable, onlySurahs, coverUnrevealed, revealProgress }: {
+export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, onUnavailable, onlySurahs, coverUnrevealed, revealProgress, coverOutside }: {
   page: number; fontSize?: number; halves?: [number, number]; fitHeight?: number;
+  /** with `halves`: show the whole page but hide (opaque cover) the half that is not part of the portion */
+  coverOutside?: boolean;
   /** live-recitation mode: hide the whole printed page and uncover only the ayahs listed in `revealedAyahs` */
   coverUnrevealed?: boolean;
   /** recitation progress per ayah, keyed "surah:ayah": m of n words recited, f = fraction of the ayah's letters recited */
@@ -745,7 +747,7 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
     return () => window.cancelAnimationFrame(id);
   }, [onlyKey, mode, src, aspect, boxW, fillH, fillW]);
 
-  if (mode === "text") return <MushafTextPage page={safe} fontSize={fontSize} halves={halves} />;
+  if (mode === "text") return <MushafTextPage page={safe} fontSize={fontSize} halves={halves} coverOutside={coverOutside} />;
 
   const partial = !!halves && !(halves[0] === 0 && halves[1] === 1);
   const dimTop = partial && halves![0] === 1;      // portion is the 2nd half → fade the top
@@ -785,8 +787,16 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
           {shown && clipBands && clipBands.bottom < 1 && (
             <div style={{ position: "absolute", left: 0, right: 0, top: `${clipBands.bottom * 100}%`, bottom: 0, backdropFilter: "blur(7px)", WebkitBackdropFilter: "blur(7px)", background: "rgba(255,255,255,.55)", borderTop: `2px solid ${MV_GOLD}`, pointerEvents: "none" }} />
           )}
-          {shown && dimTop && <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: "50%", background: fade, pointerEvents: "none" }} />}
-          {shown && dimBottom && <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "50%", background: fade, pointerEvents: "none" }} />}
+          {shown && dimTop && (
+            <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: "50%", background: coverOutside ? bg : fade, pointerEvents: "none", display: "flex", alignItems: "center", justifyContent: "center", borderBottom: coverOutside ? `2px dashed ${MV_GOLD}` : undefined }}>
+              {coverOutside && <span style={{ fontSize: 12, fontWeight: 700, color: "#9a8a5a" }}>Covered — not in your portion</span>}
+            </div>
+          )}
+          {shown && dimBottom && (
+            <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "50%", background: coverOutside ? bg : fade, pointerEvents: "none", display: "flex", alignItems: "center", justifyContent: "center", borderTop: coverOutside ? `2px dashed ${MV_GOLD}` : undefined }}>
+              {coverOutside && <span style={{ fontSize: 12, fontWeight: 700, color: "#9a8a5a" }}>Covered — not in your portion</span>}
+            </div>
+          )}
           {shown && partial && (
             <div style={{
               position: "absolute", left: "50%", transform: "translateX(-50%)", ...(dimTop ? { top: "calc(50% + 6px)" } : { top: 8 }),
