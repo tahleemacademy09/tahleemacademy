@@ -2687,7 +2687,18 @@ export function loadResume(id:string):{time?:number;page?:number}|null{
    "#stage" div with its own overflow-y:auto while html/body stay overflow:
    hidden). Detect whichever element is actually the one moving instead of
    assuming it's always the window, so sync works for either layout style. */
+const scrollTargetCache=new WeakMap<Document,Window|HTMLElement>();
 function findScrollTarget(doc:Document,win:Window):Window|HTMLElement{
+  const cached=scrollTargetCache.get(doc);
+  if(cached){
+    if(cached===win){ if(doc.documentElement.scrollHeight>win.innerHeight+4) return win; }
+    else{ const c=cached as HTMLElement; if(c.isConnected&&c.scrollHeight-c.clientHeight>4) return c; }
+  }
+  const found=scanScrollTarget(doc,win);
+  scrollTargetCache.set(doc,found);
+  return found;
+}
+function scanScrollTarget(doc:Document,win:Window):Window|HTMLElement{
   if(doc.documentElement.scrollHeight>win.innerHeight+4) return win;
   let best:HTMLElement|null=null;
   let bestRange=0;
@@ -2712,16 +2723,31 @@ function readScrollPct(target:Window|HTMLElement,win:Window):number{
   const maxScroll=Math.max(1,el.scrollHeight-el.clientHeight);
   return Math.min(1,Math.max(0,el.scrollTop/maxScroll));
 }
+const scrollAnim=new WeakMap<object,{pct:number;raf:number|null}>();
 function writeScrollPct(target:Window|HTMLElement,win:Window,pct:number){
-  if(target===win){
-    const doc=win.document;
-    const maxScroll=Math.max(1,doc.documentElement.scrollHeight-win.innerHeight);
-    win.scrollTo({top:pct*maxScroll,behavior:"smooth"});
-    return;
-  }
-  const el=target as HTMLElement;
-  const maxScroll=Math.max(1,el.scrollHeight-el.clientHeight);
-  el.scrollTo({top:pct*maxScroll,behavior:"smooth"});
+  let st=scrollAnim.get(target);
+  if(!st){st={pct,raf:null};scrollAnim.set(target,st);}
+  st.pct=pct;
+  if(st.raf!=null)return;
+  const frame=()=>{
+    const s2=scrollAnim.get(target);
+    if(!s2)return;
+    let max:number,cur:number;
+    if(target===win){max=Math.max(1,win.document.documentElement.scrollHeight-win.innerHeight);cur=win.scrollY;}
+    else{const el=target as HTMLElement;max=Math.max(1,el.scrollHeight-el.clientHeight);cur=el.scrollTop;}
+    const goal=s2.pct*max;
+    const diff=goal-cur;
+    const done=Math.abs(diff)<1.5;
+    let next=done?goal:cur+Math.sign(diff)*Math.max(1.5,Math.abs(diff)*0.28);
+    if(!done&&Math.abs(next-goal)<1.5)next=goal;
+    try{
+      if(target===win)win.scrollTo({top:next,behavior:"instant" as ScrollBehavior});
+      else (target as HTMLElement).scrollTo({top:next,behavior:"instant" as ScrollBehavior});
+    }catch{}
+    if(done){s2.raf=null;return;}
+    try{s2.raf=win.requestAnimationFrame(frame);}catch{s2.raf=null;}
+  };
+  try{st.raf=win.requestAnimationFrame(frame);}catch{st.raf=null;}
 }
 
 /* ══ SLIDE-STEP SYNC HELPERS ══
@@ -2750,7 +2776,13 @@ function findNavButton(doc:Document,forward:boolean):HTMLElement|null{
   }
   return null;
 }
-function driveToStep(doc:Document,targetStep:number,onDone?:()=>void,attempts=0){
+const stepLoopId=new WeakMap<Document,number>();
+function driveToStep(doc:Document,targetStep:number,onDone?:()=>void,attempts=0,loopId?:number){
+  if(loopId===undefined){
+    loopId=(stepLoopId.get(doc)||0)+1;
+    stepLoopId.set(doc,loopId);
+    revealLoopId.set(doc,(revealLoopId.get(doc)||0)+1);
+  } else if(stepLoopId.get(doc)!==loopId)return; // superseded by a newer teacher position
   if(attempts>40){onDone?.();return;} // safety cap against an infinite loop if detection is off
   const cur=detectDotStep(doc);
   if(!cur||cur.step===targetStep){onDone?.();return;}
@@ -2761,7 +2793,8 @@ function driveToStep(doc:Document,targetStep:number,onDone?:()=>void,attempts=0)
     const ev=new KeyboardEvent("keydown",{key:forward?" ":"ArrowLeft",code:forward?"Space":"ArrowLeft",bubbles:true,cancelable:true});
     doc.dispatchEvent(ev);
   }
-  setTimeout(()=>driveToStep(doc,targetStep,onDone,attempts+1),180);
+  const lid=loopId;
+  setTimeout(()=>driveToStep(doc,targetStep,onDone,attempts+1,lid),180);
 }
 
 /* ── Within-slide reveal sync ──
@@ -3014,70 +3047,55 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
   //    also listen for clicks/taps, since slide-style lessons often advance
   //    via a tap rather than a scroll gesture. ──
   const lastSentRef=useRef(0);
+  const syncCbRef=useRef(onSyncActivity);
+  useEffect(()=>{syncCbRef.current=onSyncActivity;},[onSyncActivity]);
+  const hasSyncCb=!!onSyncActivity;
   useEffect(()=>{
-    if(kind!=="html"||!isTeacher||!syncActive||!onSyncActivity||htmlDoc==null)return;
+    if(kind!=="html"||!isTeacher||!syncActive||!hasSyncCb||htmlDoc==null)return;
     const frame=iframeRef.current;
     if(!frame)return;
     let cleanup=()=>{};
     const attach=()=>{
       const doc=frame.contentDocument;
       const win=frame.contentWindow;
-      if(!doc||!win)return;
-
+      if(!doc||!win||!doc.body)return;
+      cleanup();
       let trailing:ReturnType<typeof setTimeout>|null=null;
-      let lastXY:[number,number]=[0.5,0.5];
-      const send=(xPct:number,yPct:number,force=false)=>{
-        const now=Date.now();
-        lastXY=[xPct,yPct];
-        if(!force&&now-lastSentRef.current<120){
-          // Trailing send: the LAST position must always go out, even if it landed inside the
-          // throttle window (it used to be dropped, leaving students one step behind).
-          if(!trailing)trailing=setTimeout(()=>{trailing=null;send(lastXY[0],lastXY[1],true);},120-(now-lastSentRef.current)+5);
-          return;
-        }
-        lastSentRef.current=now;
+      let lastKey="";
+      const flush=(force:boolean)=>{
+        trailing=null;
         const target=findScrollTarget(doc,win);
         const scrollPct=readScrollPct(target,win);
         const dotStep=detectDotStep(doc);
         const revealCount=detectRevealCount(doc);
-        onSyncActivity(xPct,yPct,scrollPct,dotStep?.step??null,dotStep?.total??null,revealCount);
+        const key=`${dotStep?.step??"-"}|${revealCount}|${Math.round(scrollPct*500)}`;
+        if(!force&&key===lastKey)return;
+        lastKey=key;
+        lastSentRef.current=Date.now();
+        syncCbRef.current?.(0.5,0.5,scrollPct,dotStep?.step??null,dotStep?.total??null,revealCount);
       };
-      // Push the CURRENT position as soon as sync starts (or the viewer is restored), so students
-      // land where the teacher is, not at the start of the lesson.
-      setTimeout(()=>send(0.5,0.5,true),300);
-      const onMove=(e:MouseEvent)=>{
-        const w=doc.documentElement.scrollWidth||win.innerWidth;
-        const h=doc.documentElement.scrollHeight||win.innerHeight;
-        send(Math.min(1,Math.max(0,e.pageX/w)),Math.min(1,Math.max(0,e.pageY/h)));
+      const schedule=()=>{
+        if(trailing)return;
+        const wait=Math.max(30,100-(Date.now()-lastSentRef.current));
+        trailing=setTimeout(()=>flush(false),wait);
       };
-      const onScroll=()=>send(0.5,0.5);
-      // Primary signal: a MutationObserver catches ANY way the lesson's
-      // content actually changed — click, keyboard (space/arrows, per the
-      // lesson's own on-screen hint), swipe, whatever — instead of guessing
-      // at which specific input events to listen for.
-      const observer=new MutationObserver(()=>{
-        setTimeout(()=>send(0.5,0.5,true),40);
-      });
+      const initial=setTimeout(()=>flush(true),300);
+      const observer=new MutationObserver(schedule);
       observer.observe(doc.body,{childList:true,subtree:true,attributes:true,attributeFilter:["class","style"]});
-
-      doc.addEventListener("mousemove",onMove);
-      doc.addEventListener("touchmove",onMove as any,{passive:true});
-      doc.addEventListener("scroll",onScroll,true); // capture:true catches scroll on inner containers too
-      win.addEventListener("scroll",onScroll);
+      doc.addEventListener("scroll",schedule,true);
+      win.addEventListener("scroll",schedule);
       cleanup=()=>{
+        clearTimeout(initial);
         if(trailing){clearTimeout(trailing);trailing=null;}
         observer.disconnect();
-        doc.removeEventListener("mousemove",onMove);
-        doc.removeEventListener("touchmove",onMove as any);
-        doc.removeEventListener("scroll",onScroll,true);
-        win.removeEventListener("scroll",onScroll);
+        doc.removeEventListener("scroll",schedule,true);
+        win.removeEventListener("scroll",schedule);
       };
     };
-    // srcDoc iframes fire onLoad — but guard in case it already loaded
     if(frame.contentDocument?.readyState==="complete") attach();
     frame.addEventListener("load",attach);
     return()=>{ frame.removeEventListener("load",attach); cleanup(); };
-  },[kind,isTeacher,syncActive,onSyncActivity,htmlDoc]);
+  },[kind,isTeacher,syncActive,hasSyncCb,htmlDoc]);
 
   // ── Student: apply the teacher's live position (auto-follow). If the
   //    lesson is dot/slide based, drive the student's own copy to the same
@@ -3086,34 +3104,45 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
   //    just on the right slide but sees the same amount of it revealed.
   //    Scroll-follow handles the rest (lessons that are one long scroll).
   //    The pointer dot itself is drawn as an overlay in the render below. ──
+  const[frameReady,setFrameReady]=useState(false);
+  useEffect(()=>{setFrameReady(false);},[htmlDoc]);
+  const lastApplyKeyRef=useRef("");
   useEffect(()=>{
-    if(kind!=="html"||!following||!remoteActivity)return;
+    if(kind!=="html"||!following||!remoteActivity||!frameReady)return;
     const frame=iframeRef.current;
     const win=frame?.contentWindow;
     const doc=frame?.contentDocument;
-    if(!win||!doc)return;
+    if(!win||!doc||!doc.body)return;
     const hasReveal=remoteActivity.revealCount!=null&&remoteActivity.revealCount>0;
     const finish=()=>{
-      // Reveal-based lesson: follow the newest revealed word instead of a raw scroll %
-      // (the % was computed against a shorter page, which is why it jumped back to the top).
       if(hasReveal)scrollLatestRevealIntoView(doc,win);
     };
-    const catchUpReveal=()=>{
-      if(remoteActivity.revealCount!=null&&remoteActivity.revealCount>0){
-        const step=detectDotStep(doc);
-        driveToReveal(doc,remoteActivity.revealCount,step?.step??-1,finish);
+    const stepNow=detectDotStep(doc);
+    const stepOk=remoteActivity.step==null||!stepNow||stepNow.step===remoteActivity.step;
+    const revealOk=!hasReveal||detectRevealCount(doc)>=remoteActivity.revealCount;
+    const key=`${remoteActivity.step??"-"}|${remoteActivity.revealCount??"-"}`;
+    if(!stepOk||!revealOk){
+      lastApplyKeyRef.current=key;
+      const catchUpReveal=()=>{
+        if(hasReveal){
+          const step=detectDotStep(doc);
+          driveToReveal(doc,remoteActivity.revealCount,step?.step??-1,finish);
+        }
+      };
+      if(remoteActivity.step!=null){
+        driveToStep(doc,remoteActivity.step,catchUpReveal);
+      } else {
+        catchUpReveal();
       }
-    };
-    if(remoteActivity.step!=null){
-      driveToStep(doc,remoteActivity.step,catchUpReveal);
-    } else {
-      catchUpReveal();
+    } else if(hasReveal&&lastApplyKeyRef.current!==key){
+      lastApplyKeyRef.current=key;
+      finish();
     }
     if(!hasReveal){
       const target=findScrollTarget(doc,win);
       writeScrollPct(target,win,remoteActivity.scrollPct);
     }
-  },[kind,following,remoteActivity]);
+  },[kind,following,remoteActivity,frameReady]);
 
 
   // ── Auto-scroll with reveals (teacher AND student): when a new word/item is
@@ -3261,6 +3290,7 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
         ):(<>
           <iframe ref={iframeRef} srcDoc={htmlDoc} title={material.title}
             sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+            onLoad={()=>setFrameReady(true)}
             style={{width:"100%",height:"100%",border:"none",display:"block",background:"#fff",pointerEvents:following?"none":"auto"}}/>
           {following&&(
             <div style={{position:"absolute",inset:0,zIndex:5}}/>
