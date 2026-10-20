@@ -2095,11 +2095,23 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const startQRecording = async () => {
     try {
       setQRecChunks([]); setQRecResult(null); setQRecDone(false); setQRecSecs(0);
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4"].find(t => {
+      // Same raw-mic capture as the reading phase. Browser echo-cancel / noise-suppression / auto-gain are
+      // tuned for calls and clip soft endings, madd and ghunnah, which makes Tarteel mis-hear the answer.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          sampleRate: 48000,
+          channelCount: 1,
+        }
+      });
+      const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t => {
         try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
       }) || "";
-      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      const mr = new MediaRecorder(stream, mime
+        ? { mimeType: mime, audioBitsPerSecond: 128000 }
+        : { audioBitsPerSecond: 128000 });
       const chunks: Blob[] = [];
       mr.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
       mr.onstop = async () => {
