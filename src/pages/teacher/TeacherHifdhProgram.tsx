@@ -103,6 +103,7 @@ export default function TeacherHifdhProgram() {
   const [reviews, setReviews] = useState<Record<string, any>>({});
   const [logs, setLogs] = useState<Record<string, { days: number; avg: number | null }>>({});
   const [names, setNames] = useState<Record<string, string>>({});
+  const [activeIds, setActiveIds] = useState<string[]>([]);
   const [edit, setEdit] = useState<Record<string, { start: number; units: number }>>({});
   const [when, setWhen] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -134,7 +135,14 @@ export default function TeacherHifdhProgram() {
     const raList: any[] = ras || [];
     setReviewAsg(raList);
 
-    const sids = Array.from(new Set<string>([...mList.map((m) => m.student_id), ...raList.map((r) => r.student_id)]));
+    // Admin controls every enrolled student, not only those placed in a group / review slot this week.
+    let allActive: string[] = [];
+    if (isAdmin) {
+      const { data: ap } = await tpDb.from("hifdh_program").select("student_id").eq("status", "active");
+      allActive = (ap || []).map((r: any) => r.student_id);
+    }
+    setActiveIds(allActive);
+    const sids = Array.from(new Set<string>([...mList.map((m) => m.student_id), ...raList.map((r) => r.student_id), ...allActive]));
     if (sids.length) {
       const weekEnd = tpShift(week, 1);
       const [pf, pg, lv, tk, rv, lg] = await Promise.all([
@@ -239,12 +247,12 @@ export default function TeacherHifdhProgram() {
   const mark = (m: any, result: "passed" | "repeat") => {
     const r = hpPortionFromUnits(rangeOf(m.student_id).start, rangeOf(m.student_id).units);
     const existing = taskFor(m.student_id, slot);
-    if (existing && ["submitted", "passed"].includes(existing.status)) {
+    if (!isAdmin && existing && ["submitted", "passed"].includes(existing.status)) {
       return toast({ title: "Already submitted", description: "This portion has already been memorized and submitted.", variant: "destructive" });
     }
     const cleared = result === "passed";
     const first = taskFor(m.student_id, 1);
-    if (cleared && slot === 2 && first && first.status !== "passed") {
+    if (!isAdmin && cleared && slot === 2 && first && first.status !== "passed") {
       return toast({ title: "Session 1 isn't memorized yet", description: "Mark Session 1 as memorized first — the student only moves to the next page after that.", variant: "destructive" });
     }
     guard(async () => {
@@ -266,6 +274,13 @@ export default function TeacherHifdhProgram() {
       p_student: sid, p_week: week, p_grade: g === "excused" ? "pass" : g, p_excused: g === "excused", p_notes: notes[sid] || null,
     }), "Saved");
 
+  // Admin-only overrides
+  const clearTask = (id: string) => window.confirm("Remove this portion? The student's page position is not changed.") &&
+    guard(() => tpDb.from("hifdh_memorization_tasks").delete().eq("id", id), "Portion removed");
+  const resetClass = (g: any) => window.confirm("Unlink this class so it can be scheduled again?") &&
+    guard(() => tpDb.from("hifdh_read_groups").update({ live_session_id: null, scheduled_at: null, status: "planned" }).eq("id", g.id), "Class unlinked");
+  const markDone = (g: any) => guard(() => tpDb.from("hifdh_read_groups").update({ status: "done" }).eq("id", g.id), "Marked done");
+
   const memStudents = useMemo(() => {
     const seen = new Set<string>();
     const out: { sid: string; group: string }[] = [];
@@ -278,12 +293,20 @@ export default function TeacherHifdhProgram() {
   // Weekly review (general revision, Fri–Sun): students the admin assigned to this ustadh. Falls back to the read-along groups.
   const reviewDayOf = (sid: string): number | null => reviewAsg.find((r) => r.student_id === sid)?.review_day ?? null;
   const students = useMemo(() => {
-    if (!reviewAsg.length) return memStudents;
     const gName = (sid: string) => memStudents.find((x) => x.sid === sid)?.group || "";
-    return reviewAsg
-      .map((r) => ({ sid: r.student_id as string, group: gName(r.student_id) }))
-      .sort((a, b) => (reviewDayOf(a.sid)! - reviewDayOf(b.sid)!) || nameOf(a.sid).localeCompare(nameOf(b.sid)));
-  }, [reviewAsg, memStudents, names]); // eslint-disable-line react-hooks/exhaustive-deps
+    let base = reviewAsg.length
+      ? reviewAsg
+          .map((r) => ({ sid: r.student_id as string, group: gName(r.student_id) }))
+          .sort((a, b) => (reviewDayOf(a.sid)! - reviewDayOf(b.sid)!) || nameOf(a.sid).localeCompare(nameOf(b.sid)))
+      : memStudents;
+    if (isAdmin) {
+      const have = new Set(base.map((b) => b.sid));
+      const extra = activeIds.filter((id) => !have.has(id)).map((sid) => ({ sid, group: gName(sid) }))
+        .sort((a, b) => nameOf(a.sid).localeCompare(nameOf(b.sid)));
+      base = [...base, ...extra];
+    }
+    return base;
+  }, [reviewAsg, memStudents, names, activeIds, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const markMem = (taskId: string, result: "passed" | "repeat") =>
     guard(() => tpDb.rpc("hifdh_mark_memorized", { p_task: taskId, p_result: result }),
@@ -327,6 +350,8 @@ export default function TeacherHifdhProgram() {
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
                 <div style={{ fontSize: 12, color: TP_MUTED, flex: 1 }}>{tpWhen(g.scheduled_at)}</div>
                 <TpBtn small disabled={busy} onClick={() => startClass(g)}><Video size={14} /> Open class</TpBtn>
+                {isAdmin && <TpBtn small ghost disabled={busy} onClick={() => resetClass(g)}>Reschedule</TpBtn>}
+                {isAdmin && g.status !== "done" && <TpBtn small ghost color={TP_MUTED} disabled={busy} onClick={() => markDone(g)}>Done</TpBtn>}
               </div>
             ) : (
               <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
@@ -341,7 +366,7 @@ export default function TeacherHifdhProgram() {
                 const r = rangeOf(m.student_id);
                 const t = taskFor(m.student_id, slot);
                 const lb = TP_TASK[t?.status || "pending"];
-                const locked = t && ["submitted", "passed"].includes(t.status);
+                const locked = !isAdmin && t && ["submitted", "passed"].includes(t.status);
                 return (
                   <div key={m.id} style={{ border: `1px solid ${TP_LINE}`, borderRadius: 12, padding: 10 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
@@ -417,7 +442,7 @@ export default function TeacherHifdhProgram() {
               {tk.length === 0 && <div style={{ fontSize: 12, color: TP_MUTED, marginTop: 8 }}>No portion assigned this week yet.</div>}
               {tk.map((t) => {
                 const lb = TP_TASK[t.status] || TP_TASK.pending;
-                const open = ["submitted", "read_cleared", "failed"].includes(t.status);
+                const open = isAdmin || ["submitted", "read_cleared", "failed"].includes(t.status);
                 return (
                   <div key={t.id} style={{ borderTop: `1px solid ${TP_LINE}`, marginTop: 10, paddingTop: 10 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: open ? 8 : 0 }}>
@@ -426,8 +451,9 @@ export default function TeacherHifdhProgram() {
                     </div>
                     {open && (
                       <div style={{ display: "flex", gap: 8 }}>
-                        <TpBtn small color={TP_OK} disabled={busy} onClick={() => markMem(t.id, "passed")}><CheckCheck size={14} /> Memorized</TpBtn>
+                        <TpBtn small color={TP_OK} disabled={busy || (isAdmin && t.status === "passed")} onClick={() => markMem(t.id, "passed")}><CheckCheck size={14} /> Memorized</TpBtn>
                         <TpBtn small color={TP_AMBER} ghost disabled={busy || t.status === "failed"} onClick={() => markMem(t.id, "repeat")}><RotateCcw size={14} /> Repeat</TpBtn>
+                        {isAdmin && <TpBtn small color={TP_RED} ghost disabled={busy} onClick={() => clearTask(t.id)}>Remove</TpBtn>}
                       </div>
                     )}
                   </div>
