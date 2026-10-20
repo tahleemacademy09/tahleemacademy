@@ -233,6 +233,18 @@ export default function HifdhProgramAdmin() {
               <HpPill text={p.status} color={p.status === "active" ? HP_OK : p.status === "suspended" ? HP_RED : HP_MUTED} />
             </div>
             <HpPageTag page={p.current_page} onView={setViewPage} />
+            <div style={{ marginTop: 8 }}>
+              {p.status === "suspended" ? (
+                <HpBtn small kind="ghost" disabled={busy} onClick={() => run(() => hpDb.rpc("hifdh_reinstate", { p_student: p.student_id }), "Reinstated")}>
+                  <RotateCcw size={12} /> Reinstate
+                </HpBtn>
+              ) : (
+                <HpBtn small kind="ghost" disabled={busy} onClick={() => window.confirm(`Hold ${nameOf(p.student_id)} from the Hifdh program?`) &&
+                  patchProgram(p.id, { status: "suspended", suspended_at: new Date().toISOString(), suspended_reason: "Held by admin" })}>
+                  Hold student
+                </HpBtn>
+              )}
+            </div>
             {p.miss_streak > 0 && <div style={{ marginTop: 8 }}><HpPill text={`${p.miss_streak} miss${p.miss_streak > 1 ? "es" : ""} in a row`} color={HP_AMBER} /></div>}
             <div style={{ fontSize: 11, color: HP_MUTED, margin: "10px 0 3px" }}>Hifdh level</div>
             <HpSelect style={{ width: "100%" }} value={p.level_id || ""} onChange={(e) => patchProgram(p.id, { level_id: e.target.value || null })}>
@@ -257,6 +269,19 @@ export default function HifdhProgramAdmin() {
 
   /* ───────── Groups ───────── */
   const membersOf = (gid: string) => members.filter((m) => m.group_id === gid);
+  const placed = useMemo(() => new Set(members.map((m) => m.student_id)), [members]);
+  const unplaced = useMemo(
+    () => program.filter((p) => p.status === "active" && !placed.has(p.student_id)).sort((a, b) => nameOf(a.student_id).localeCompare(nameOf(b.student_id))),
+    [program, placed, nameOf],
+  );
+  const reviewOf = (sid: string) => reviews.find((r) => r.student_id === sid);
+  const setReview = (sid: string, patch: any) =>
+    run(() => hpDb.from("hifdh_review_assignments").upsert(
+      { week_start: week, student_id: sid, ustadh_id: reviewOf(sid)?.ustadh_id ?? null, review_day: reviewOf(sid)?.review_day ?? (settings?.review_days?.[0] || 5), ...patch },
+      { onConflict: "week_start,student_id" }));
+  const removeFromGroup = (mid: string) => run(() => hpDb.from("hifdh_read_group_members").delete().eq("id", mid));
+  const addToGroup = (gid: string, sid: string) =>
+    run(() => hpDb.from("hifdh_read_group_members").insert({ group_id: gid, student_id: sid, week_start: week }));
 
   const GroupsTab = (
     <div style={{ display: "grid", gap: 10 }}>
@@ -282,25 +307,48 @@ export default function HifdhProgramAdmin() {
         </div>
       </HpCard>
 
+      <div>
+        <HpBtn small kind="ghost" disabled={busy} onClick={() => run(() =>
+          hpDb.from("hifdh_read_groups").insert({ week_start: week, name: `Group ${groups.length + 1}`, level_id: null, ustadh_id: null }), "Group added")}>
+          <Plus size={12} /> New group
+        </HpBtn>
+      </div>
+
+      {unplaced.length > 0 && groups.length > 0 && (
+        <HpCard>
+          <div style={{ fontWeight: 800, color: HP_AMBER, marginBottom: 8 }}>Not in any group this week ({unplaced.length})</div>
+          {unplaced.map((p) => (
+            <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "6px 0", fontSize: 13 }}>
+              <span style={{ fontWeight: 600 }}>{nameOf(p.student_id)}</span>
+              <HpSelect value="" style={{ fontSize: 12, padding: "5px 8px" }} onChange={(e) => e.target.value && addToGroup(e.target.value, p.student_id)}>
+                <option value="">Add to group…</option>
+                {groups.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </HpSelect>
+            </div>
+          ))}
+        </HpCard>
+      )}
+
       {groups.length === 0 && <HpCard><div style={{ color: HP_MUTED, fontSize: 13 }}>No groups for this week yet.</div></HpCard>}
 
-      {reviews.length > 0 && (
+      {program.some((p) => p.status === "active") && (
         <HpCard>
-          <div style={{ fontWeight: 800, color: HP_INK, marginBottom: 8 }}>Weekly review assignments ({reviews.length})</div>
-          {[...teachers, { id: "", name: "No ustadh" }].map((t) => {
-            const rs = reviews.filter((r) => (r.ustadh_id || "") === t.id);
-            if (!rs.length) return null;
+          <div style={{ fontWeight: 800, color: HP_INK, marginBottom: 8 }}>Weekly review assignments ({reviews.length}/{program.filter((p) => p.status === "active").length})</div>
+          {program.filter((p) => p.status === "active").sort((a, b) => nameOf(a.student_id).localeCompare(nameOf(b.student_id))).map((p) => {
+            const r = reviewOf(p.student_id);
             return (
-              <div key={t.id || "none"} style={{ padding: "8px 0", borderTop: `1px solid ${HP_LINE}`, fontSize: 13 }}>
-                <div style={{ fontWeight: 700, color: HP_GREEN }}>{t.name} · {rs.length}</div>
-                {[5, 6, 7, 1, 2, 3, 4].map((d) => {
-                  const ds = rs.filter((r) => r.review_day === d);
-                  return ds.length ? (
-                    <div key={d} style={{ color: HP_MUTED, fontSize: 12, marginTop: 2 }}>
-                      <b style={{ color: HP_INK }}>{HP_DAYS[d - 1]}</b>: {ds.map((r) => nameOf(r.student_id)).join(", ")}
-                    </div>
-                  ) : null;
-                })}
+              <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 74px", gap: 6, alignItems: "center", padding: "7px 0", borderTop: `1px solid ${HP_LINE}`, fontSize: 13 }}>
+                <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameOf(p.student_id)}</span>
+                <HpSelect value={r?.ustadh_id || ""} style={{ fontSize: 12, padding: "5px 6px", minWidth: 0 }}
+                  onChange={(e) => setReview(p.student_id, { ustadh_id: e.target.value || null })}>
+                  <option value="">— ustadh —</option>
+                  {teachers.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </HpSelect>
+                <HpSelect value={r?.review_day || ""} style={{ fontSize: 12, padding: "5px 4px" }}
+                  onChange={(e) => setReview(p.student_id, { review_day: Number(e.target.value) })}>
+                  <option value="" disabled>Day</option>
+                  {[5, 6, 7, 1, 2, 3, 4].map((d) => <option key={d} value={d}>{HP_DAYS[d - 1]}</option>)}
+                </HpSelect>
               </div>
             );
           })}
@@ -323,6 +371,12 @@ export default function HifdhProgramAdmin() {
                 {ms.length} student{ms.length === 1 ? "" : "s"}{pages.length ? ` · ${hpSurahOf(Math.min(...pages)).arabicName} → ${hpSurahOf(Math.max(...pages)).arabicName}` : ""}
               </div>
             </div>
+            <div style={{ margin: "10px 0 6px", fontSize: 11, color: HP_MUTED }}>Level</div>
+            <HpSelect style={{ width: "100%" }} value={g.level_id || ""}
+              onChange={(e) => run(() => hpDb.from("hifdh_read_groups").update({ level_id: e.target.value || null }).eq("id", g.id))}>
+              <option value="">— no level —</option>
+              {levels.filter((l) => l.is_active).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </HpSelect>
             <div style={{ margin: "10px 0 6px", fontSize: 11, color: HP_MUTED }}>Ustadh</div>
             <HpSelect style={{ width: "100%" }} value={g.ustadh_id || ""}
               onChange={(e) => run(() => hpDb.from("hifdh_read_groups").update({ ustadh_id: e.target.value || null }).eq("id", g.id))}>
@@ -338,20 +392,23 @@ export default function HifdhProgramAdmin() {
                       <HpPageTag page={program.find((p) => p.student_id === m.student_id).current_page} onView={setViewPage} />
                     )}
                   </div>
-                  <HpSelect value={g.id} style={{ fontSize: 12, padding: "5px 8px" }}
-                    onChange={(e) => run(() => hpDb.from("hifdh_read_group_members").update({ group_id: e.target.value }).eq("id", m.id))}>
-                    {groups.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-                  </HpSelect>
+                  <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                    <HpSelect value={g.id} style={{ fontSize: 12, padding: "5px 8px" }}
+                      onChange={(e) => run(() => hpDb.from("hifdh_read_group_members").update({ group_id: e.target.value }).eq("id", m.id))}>
+                      {groups.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                    </HpSelect>
+                    <button aria-label="Remove from group" onClick={() => removeFromGroup(m.id)}
+                      style={{ border: "none", background: "none", cursor: "pointer", color: HP_RED }}><X size={15} /></button>
+                  </div>
                 </div>
               ))}
             </div>
-            {ms.length === 0 && (
-              <div style={{ marginTop: 10 }}>
-                <HpBtn small kind="ghost" onClick={() => run(() => hpDb.from("hifdh_read_groups").delete().eq("id", g.id))}>
-                  <Trash2 size={12} /> Delete empty group
-                </HpBtn>
-              </div>
-            )}
+            <div style={{ marginTop: 10 }}>
+              <HpBtn small kind="ghost" onClick={() => (ms.length === 0 || window.confirm(`Delete ${g.name} and remove its ${ms.length} student(s) from it?`)) &&
+                run(() => hpDb.from("hifdh_read_groups").delete().eq("id", g.id))}>
+                <Trash2 size={12} /> {ms.length === 0 ? "Delete empty group" : "Delete group"}
+              </HpBtn>
+            </div>
           </HpCard>
         );
       })}
