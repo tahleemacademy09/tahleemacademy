@@ -71,6 +71,25 @@ export function levenshtein(a: string, b: string): number {
 const MARKS_RE = /[ً-ٟؐ-ؚۖ-ۭ࣓-ࣿ]/g;   // tashkeel + Quranic annotation signs
 
 /**
+ * What a FINAL ى is in this word: "ya" (a real ي — ٱلَّذِى, فِى, تَجْرِى, يَهْدِى, يَدَىَّ, إِنِّىٓ) or "alef" (alef maqsura = long ā —
+ * عَلَىٰ, هُدًى, ٱفْتَرَىٰ), or null when the word carries no vowel to tell (plain undiacritized text).
+ *
+ * The Uthmani script — and the Tarteel model, which writes it — uses the SAME letter ى for both, so the vowel
+ * decides: ى after a kasra is ya (ī), ى after a fatha / fathatan is alef (ā), ى that carries its own vowel or
+ * shaddah is a consonantal ya, and ى + dagger alef is always ā.
+ */
+export function finalYaKind(w: string): "ya" | "alef" | null {
+  const m = w.replace(/\u0640/g, "").match(/([\u064B-\u065F\u0670\u06D6-\u06ED]*)\u0649([\u064B-\u065F\u0670\u06D6-\u06ED]*)$/);
+  if (!m) return null;
+  const lead = m[1], trail = m[2];
+  if (/\u0670/.test(trail)) return "alef";                 // ىٰ
+  if (/[\u064B-\u0651]/.test(trail)) return "ya";          // ى that carries a vowel / shaddah: يَدَىَّ
+  if (/[\u0650\u064D]/.test(lead)) return "ya";            // kasra (or kasratan) before it: ī
+  if (/[\u064E\u064B]/.test(lead)) return "alef";          // fatha (or fathatan) before it: ā
+  return null;
+}
+
+/**
  * soundKey — "how a word SOUNDS", written in plain consonants.
  *
  * The Quran (Uthmani script) often writes a word differently from how a speech model spells what it hears,
@@ -83,6 +102,9 @@ const MARKS_RE = /[ً-ٟؐ-ؚۖ-ۭ࣓-ࣿ]/g;   // tashkeel + Quranic annotation
  * A final alef is KEPT (ما / عليهما must not equal م / عليهم), and an initial alef is kept.
  */
 export function soundKey(w: string, isRef = false): string {
+  // a final ى is ya or alef maqsura depending on its vowel (see finalYaKind); undiacritized text falls back to
+  // "reference: ya, heard: alef" and analyzeRecitation() then tries the other reading against the reference.
+  const kind = finalYaKind(w);
   let s = w
     .replace(/ـ/g, "")                          // tatweel
     .replace(/ۧ/g, "ي")                    // small high yeh written as a real letter (إبراهيم)
@@ -96,7 +118,7 @@ export function soundKey(w: string, isRef = false): string {
     .replace(/ؤ/g, "و")                    // ؤ → و
     .replace(/ئ/g, "ي")                    // ئ → ي
     .replace(/ء/g, "")                          // standalone hamza
-    .replace(isRef ? /(?!)/ : /ى$/, "")                          // final ى (alef maqsura) = ā
+    .replace(/ى$/, kind === "alef" || (kind === null && !isRef) ? "" : "ي")                          // final ى (alef maqsura) = ā
     .replace(/ى/g, "ي")
     .replace(/ة/g, "ه")                    // ة → ه
     .replace(/ک/g, "ك").replace(/[یے]/g, "ي")
@@ -128,6 +150,16 @@ export function plainKey(w: string): string {
 /** Single letter off (insert / delete / substitute) and long enough that one letter is not most of the word. */
 export function isCloseKey(a: string, b: string): boolean {
   return a.length >= 4 && b.length >= 4 && Math.abs(a.length - b.length) <= 1 && levenshtein(a, b) <= 1;
+}
+
+/** Word without the prefixes a reciter / model easily adds or drops (و ف, ال) and a tanween-alef ending (كذبا / الكذب, والله / الله). */
+const stemKey = (k: string) => k.replace(/^[وف]?(?:ال)?(?=.{3})/, "").replace(/^(.{3,})ا$/, "$1");
+
+/** "Right word, small slip": one letter off, or the same word with و/ف/ال or a tanween alef added or dropped. Graded yellow, never green. */
+export function isNearKey(a: string, b: string): boolean {
+  if (isCloseKey(a, b)) return true;
+  const x = stemKey(a), y = stemKey(b);
+  return x.length >= 3 && x === y;
 }
 
 /**
@@ -276,6 +308,15 @@ export function analyzeRecitation(refText: string, gotText: string): RecitationA
   // Joined / split words: the model writes "يا أيها" where the mushaf has يَـٰٓأَيُّهَا (or the other way round).
   // Only touched when the heard token matches nothing on its own.
   const refSet = new Set(refKeys);
+
+  // Final ya / alef-maqsura: undiacritized spellings (على written علي, فى written في …) can land on the other reading.
+  // If the heard key is not a reference word but its other reading is, use that reading.
+  heard = heard.map((t) => {
+    if (refSet.has(t.key)) return t;
+    const alts = [t.key.length >= 3 && t.key.endsWith("ي") ? t.key.slice(0, -1) : "", t.key.length >= 2 ? t.key + "ي" : ""];
+    const hit = alts.find((k) => k && refSet.has(k));
+    return hit ? { ...t, key: hit } : t;
+  });
   const pairs = new Map<string, [string, string]>();
   for (let i = 0; i + 1 < origRef.length; i++) {
     if (refKeys[i] && refKeys[i + 1]) pairs.set(soundKey(origRef[i] + origRef[i + 1], true), [refKeys[i], refKeys[i + 1]]);
@@ -288,7 +329,7 @@ export function analyzeRecitation(refText: string, gotText: string): RecitationA
   const joined: Tok[] = [];
   for (let i = 0; i < split.length; i++) {
     const a = split[i], b = split[i + 1];
-    if (b && !refSet.has(a.key) && !refSet.has(b.key)) {
+    if (b && (!refSet.has(a.key) || !refSet.has(b.key))) {   // one half unknown is enough: يا + بني = يَـٰبَنِىٓ even though بني also occurs alone
       const k = soundKey(a.text + b.text);
       if (a.text && b.text && refSet.has(k)) { joined.push({ text: `${a.text} ${b.text}`, key: k }); i++; continue; }
     }
@@ -308,7 +349,7 @@ export function analyzeRecitation(refText: string, gotText: string): RecitationA
     let c = cache[ci];
     if (!c) {
       const x = refWords[a], y = gotWords[b];
-      c = x === y ? 3 : isCloseKey(x, y) ? 2 : 1;
+      c = x === y ? 3 : isNearKey(x, y) ? 2 : 1;
       cache[ci] = c;
     }
     return c === 3 ? 2 : c === 2 ? 1 : 0;
