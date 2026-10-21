@@ -19,6 +19,8 @@ import { createPortal } from "react-dom";
 import { RotateCw as RotateCwIcon, ZoomIn as ZoomInIcon } from "lucide-react";
 import { isMobileDevice } from "@/lib/livekitOptions";
 import { supabase } from "@/integrations/supabase/client";
+import { DirectRecorder, getActiveRecorder, recoverStaleRecording, directRecordingSupported } from "@/lib/directRecorder";
+import { subscribePending } from "@/lib/recordingOutbox";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { getSignedUrl } from "../../integrations/supabase/storageClient";
 import { playJoinSound, playLeaveSound } from "@/lib/soundUtils";
@@ -5309,87 +5311,94 @@ export const MaterialViewer=({material,isTeacher,onClose}:any)=>{
   return <InClassMaterialViewer material={material} isTeacher={isTeacher} onClose={onClose}/>;
 };
 
-/* ══ RECORDING CONTROLLER — server-side (LiveKit Egress) ══
-   The recording happens on LiveKit's servers, not in this browser tab.
-   That means:
-   • It survives the teacher's tab closing, the device sleeping, the app
-     crashing, or the network dropping — the class keeps recording until
-     LiveKit itself confirms it's done (via the livekit-egress-webhook
-     function), independent of anything happening here.
-   • There's no in-memory blob, no upload-at-the-end step, and nothing to
-     lose if this component unmounts mid-class.
-   • LiveKit Egress itself has no pause/resume call — only start and stop —
-     so "Pause" here stops the current egress job and "Resume" starts a new
-     one for the same session. Each pause/resume cycle saves as its own
-     clip under the subject (labelled "Part 1", "Part 2", … in Recordings),
-     rather than one single continuous file.
+/* ══ RECORDING CONTROLLER — direct (in-browser) recording ══
+   The teacher's device records the class itself (audio mix of everyone +
+   screen share / camera video) and uploads it to R2 in 5 MiB parts WHILE
+   the class is running — see src/lib/directRecorder.ts.
+   • Pause / Resume is a real pause: one continuous file, no more "Part 1,
+     Part 2" clips.
+   • The recorder lives at module level, so this component unmounting or
+     re-rendering mid-class does NOT stop the recording.
+   • Every chunk is saved on the device first and uploaded in the
+     background (src/lib/recordingOutbox.ts). If the connection drops, the
+     recording keeps going; if class ends offline it is kept on the device
+     and uploads by itself when the connection returns; if the app dies,
+     it finishes uploading the next time the app opens on that device.
+   • The device should stay awake while recording (a screen wake-lock is
+     requested automatically).
    ════════════════════════════════════════════════════════════════════════ */
-export const RecController=({sessionId,subjectId,onSavingChange,stopRecRef,isRecordingRef}:any)=>{
+export const RecController=({sessionId,subjectId,getRoom,onSavingChange,stopRecRef,isRecordingRef}:any)=>{
   const{t}=useLanguage();
-  const[recording,setRecording]=useState(false);
-  const[paused,setPaused]=useState(false);
+  const recRef=useRef<DirectRecorder|null>(null);
+  const[mode,setMode]=useState<"idle"|"recording"|"paused">("idle");
   const[busy,setBusy]=useState(false);
   const[displayTime,setDisplayTime]=useState(0);
-  const timerRef=useRef<any>(null);
-
+  const recording=mode==="recording";
+  const paused=mode==="paused";
+  const[pending,setPending]=useState(0);   // recordings still on this device, not yet confirmed saved
+  const[online,setOnline]=useState(typeof navigator==="undefined"?true:navigator.onLine);
+  useEffect(()=>subscribePending(setPending),[]);
   useEffect(()=>{
-    // Only an *actively recording* segment (not a pause, where no egress
-    // job is currently running) should trigger the "recording in progress"
-    // leave-page warning / auto-stop — see ClassroomView's beforeunload.
-    if(isRecordingRef)isRecordingRef.current=recording;
+    const on=()=>setOnline(true),off=()=>setOnline(false);
+    window.addEventListener("online",on);window.addEventListener("offline",off);
+    return()=>{window.removeEventListener("online",on);window.removeEventListener("offline",off);};
+  },[]);
+
+  const onState=useCallback((s:string)=>{
+    setMode(s==="recording"?"recording":s==="paused"?"paused":"idle");
+  },[]);
+
+  // Anything other than idle keeps the "recording in progress" leave-page warning.
+  useEffect(()=>{
+    if(isRecordingRef)isRecordingRef.current=mode!=="idle"||pending>0;
     return()=>{ if(isRecordingRef)isRecordingRef.current=false; };
-  },[recording,isRecordingRef]);
+  },[mode,pending,isRecordingRef]);
 
-
-  // If this component mounts on a session that's already being recorded
-  // (e.g. the teacher reloaded the page mid-class), reflect that in the UI
-  // instead of showing "not recording" while a job is actually running.
+  // On mount: re-attach to a recorder that is already running for this
+  // session (component remounted), otherwise ask the server to finalize a
+  // recording left behind by a device that died mid-class.
   useEffect(()=>{
     let cancelled=false;
-    if(!sessionId){setRecording(false);return;}
-    supabase.from("session_recordings").select("status,created_at")
-      .eq("session_id",sessionId).eq("status","recording").maybeSingle()
-      .then(({data}:any)=>{
-        if(cancelled)return;
-        if(data){
-          setRecording(true);
-          const elapsed=Math.max(0,Math.floor((Date.now()-new Date(data.created_at).getTime())/1000));
-          setDisplayTime(elapsed);
-        }else{
-          setRecording(false);
-        }
-       },()=>{});
-    return()=>{cancelled=true;};
-  },[sessionId]);
-
-  useEffect(()=>{
-    // Only ticks while actively recording — holds steady during a pause
-    // and resumes counting up (not restarting from 0) once resumed.
-    if(recording){
-      timerRef.current=setInterval(()=>setDisplayTime(d=>d+1),1000);
-    }else{
-      clearInterval(timerRef.current);
+    if(!sessionId){setMode("idle");return;}
+    const existing=getActiveRecorder(sessionId);
+    if(existing){
+      recRef.current=existing;
+      existing.setHandlers({onState});
+      setMode(existing.state==="paused"?"paused":"recording");
+      setDisplayTime(existing.elapsedSeconds());
+      return;
     }
-    return()=>clearInterval(timerRef.current);
+    recoverStaleRecording(sessionId).then((res)=>{
+      if(cancelled||!res?.recovered)return;
+      toast({title:t("Earlier recording recovered ✅","تم استرجاع التسجيل السابق ✅"),description:"It will appear in Recordings shortly."});
+    }).catch(()=>{});
+    return()=>{cancelled=true;};
+  },[sessionId,onState,t]);
+
+  // Clock follows the recorder (so it stays right across pauses and remounts).
+  useEffect(()=>{
+    if(!recording)return;
+    const id=setInterval(()=>{ if(recRef.current)setDisplayTime(recRef.current.elapsedSeconds()); },1000);
+    return()=>clearInterval(id);
   },[recording]);
 
   const startRec=useCallback(async()=>{
     if(busy)return;
     if(!sessionId||!subjectId){
-      // Previously this just returned silently — clicking Record appeared to
-      // do absolutely nothing, with no error and no indicator, right when
-      // the session row hasn't finished being created yet (a few seconds
-      // after joining/starting class). Now it says so instead of no-op'ing.
       toast({title:"Still setting up the class session…",description:"Give it a couple of seconds, then press Record again.",variant:"destructive"});
+      return;
+    }
+    if(!directRecordingSupported()){
+      toast({title:"This device can't record directly",description:"Try Chrome, or the latest app update.",variant:"destructive"});
       return;
     }
     setBusy(true);
     try{
-      const{data,error}=await supabase.functions.invoke("start-recording",{body:{session_id:sessionId,subject_id:subjectId}});
-      let msg=data?.error;
-      if(error&&!msg){try{const b=await (error as any).context?.json();msg=b?.error||JSON.stringify(b);}catch{try{msg=await (error as any).context?.text();}catch{}}}
-      if(error||data?.error)throw new Error(msg||error?.message||"Failed to start recording");
-      setRecording(true);setPaused(false);setDisplayTime(0);
+      const r=new DirectRecorder({sessionId,subjectId,getRoom:()=>getRoom?.(),onState,
+        onError:(m:string)=>toast({title:"Recording upload problem",description:m,variant:"destructive"})});
+      await r.start();
+      recRef.current=r;
+      setDisplayTime(0);
       toast({title:t("Recording started ⏺","بدأ التسجيل ⏺")});
     }catch(err:any){
       console.error("[RecController] startRec error:",err);
@@ -5397,82 +5406,45 @@ export const RecController=({sessionId,subjectId,onSavingChange,stopRecRef,isRec
     }finally{
       setBusy(false);
     }
-  },[busy,sessionId,subjectId,t]);
+  },[busy,sessionId,subjectId,getRoom,onState,t]);
 
-  // Pause: stops the current LiveKit egress job (saving what's recorded so
-  // far as its own clip) but keeps the on-screen timer and UI in a
-  // "paused" state instead of resetting, ready to resume.
-  const pauseRec=useCallback(async()=>{
-    if(busy||!sessionId)return;
-    setBusy(true);
-    onSavingChange?.(true);
-    try{
-      const{error}=await supabase.functions.invoke("stop-recording",{body:{session_id:sessionId}});
-      if(error)throw error;
-      setRecording(false);setPaused(true);
-      toast({title:t("Recording paused ⏸","تم إيقاف التسجيل مؤقتًا ⏸")});
-    }catch(err:any){
-      console.error("[RecController] pauseRec error:",err);
-      toast({title:"Couldn't pause recording",description:err?.message||"Unknown error",variant:"destructive"});
-    }finally{
-      setBusy(false);
-      onSavingChange?.(false);
-    }
-  },[busy,sessionId,onSavingChange,t]);
+  const pauseRec=useCallback(()=>{
+    recRef.current?.pause();
+    toast({title:t("Recording paused ⏸","تم إيقاف التسجيل مؤقتًا ⏸")});
+  },[t]);
 
-  // Resume: starts a brand-new egress job for the same session — LiveKit
-  // has no "resume" call, so this is really "start another clip", picked
-  // up automatically by RecordingsPage/SubjectRecordings as the next part
-  // of the same session. The on-screen timer keeps counting from where it
-  // left off instead of restarting at 0.
-  const resumeRec=useCallback(async()=>{
-    if(busy||!sessionId||!subjectId)return;
-    setBusy(true);
-    try{
-      const{data,error}=await supabase.functions.invoke("start-recording",{body:{session_id:sessionId,subject_id:subjectId}});
-      let msg=data?.error;
-      if(error&&!msg){try{const b=await (error as any).context?.json();msg=b?.error||JSON.stringify(b);}catch{try{msg=await (error as any).context?.text();}catch{}}}
-      if(error||data?.error)throw new Error(msg||error?.message||"Failed to resume recording");
-      setRecording(true);setPaused(false);
-      toast({title:t("Recording resumed ⏺","استؤنف التسجيل ⏺")});
-    }catch(err:any){
-      console.error("[RecController] resumeRec error:",err);
-      toast({title:"Couldn't resume recording",description:err?.message||"Unknown error",variant:"destructive"});
-    }finally{
-      setBusy(false);
-    }
-  },[busy,sessionId,subjectId,t]);
+  const resumeRec=useCallback(()=>{
+    recRef.current?.resume();
+    toast({title:t("Recording resumed ⏺","استؤنف التسجيل ⏺")});
+  },[t]);
 
   const stopRec=useCallback(async()=>{
-    if(!sessionId)return;
+    const r=recRef.current;
+    if(!r||r.state==="idle")return;
     setBusy(true);
     onSavingChange?.(true);
     try{
-      // A pause has already told LiveKit to stop the current segment (its
-      // status is "processing", not "recording"), so there's nothing left
-      // for this call to do server-side — just reset the local UI.
-      if(!paused){
-        const{error}=await supabase.functions.invoke("stop-recording",{body:{session_id:sessionId}});
-        if(error)throw error;
+      const where=await r.stop();
+      recRef.current=null;
+      setDisplayTime(0);
+      if(where==="uploaded"){
+        toast({title:t("Recording saved ✅","تم حفظ التسجيل ✅"),description:"It will appear in Recordings shortly."});
+      }else{
+        toast({
+          title:t("Recording kept on this device ⏳","التسجيل محفوظ على جهازك ⏳"),
+          description:"It's safe. It will upload automatically when the connection is back — keep the app open or reopen it later on this device.",
+        });
       }
-      setRecording(false);setPaused(false);setDisplayTime(0);
-      toast({
-        title:t("Recording saved ✅","تم حفظ التسجيل ✅"),
-        description:"Finishing up on the server — it'll appear in Recordings shortly.",
-      });
     }catch(err:any){
       console.error("[RecController] stopRec error:",err);
-      toast({title:"Couldn't stop recording",description:err?.message||"Unknown error",variant:"destructive"});
+      toast({title:"Couldn't finish saving the recording",description:err?.message||"Unknown error",variant:"destructive"});
     }finally{
       setBusy(false);
       onSavingChange?.(false);
     }
-  },[sessionId,paused,onSavingChange,t]);
+  },[onSavingChange,t]);
 
-  // Expose stable stopRec ref so the parent can call it from endSession()
-  // when the teacher ends class — this is now the main way a recording gets
-  // stopped promptly; the room_finished webhook is the safety net for when
-  // that never happens (crash, force-quit, etc).
+  // Lets ClassroomView stop the recording when the teacher ends class.
   useEffect(()=>{
     if(stopRecRef)stopRecRef.current=stopRec;
   },[stopRec,stopRecRef]);
@@ -5509,6 +5481,11 @@ export const RecController=({sessionId,subjectId,onSavingChange,stopRecRef,isRec
           <Circle style={{width:8,height:8,fill:RED,color:RED,flexShrink:0}}/>
           <span>{busy?"Starting…":"REC"}</span>
         </button>
+      )}
+      {!recording&&!paused&&pending>0&&(
+        <span title="A recording is stored on this device and is still being uploaded. Don't clear the app's data until it's saved." style={{fontSize:11,fontWeight:700,color:online?"#93c5fd":"#fbbf24",whiteSpace:"nowrap"}}>
+          {online?"⬆ Saving recording…":"📴 Saved on device — waiting for connection"}
+        </span>
       )}
 
     </div>

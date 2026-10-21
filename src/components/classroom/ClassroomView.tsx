@@ -327,7 +327,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // async work initiated from pagehide as long as we don't await across
   // microtask boundaries that the browser kills. We kick it off and let it run.
   useEffect(()=>{
-    const onPageHide=()=>{ recStopRef.current?.(); };
+    // Direct recording is persisted on the device chunk-by-chunk and uploaded in the
+    // background, so closing/refreshing the page no longer needs to "stop" anything:
+    // leftovers are finalized and uploaded the next time the app opens on this device.
+    const onPageHide=()=>{};
     const onBeforeUnload=(e:BeforeUnloadEvent)=>{
       // BUG FIX — "recording in progress" warning was showing on EVERY
       // leave/refresh/close, for every teacher AND every student, even when
@@ -1604,7 +1607,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               {/* Layout switcher — desktop only */}
               {!isMobile&&<LayoutSwitcher layout={layout} onChange={setLayout}/>}
               {/* RecController — admin only, icon-only on mobile */}
-              {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef} isRecordingRef={isRecordingRef}/>}
+              {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} getRoom={()=>roomRef.current} onSavingChange={setSavingRec} stopRecRef={recStopRef} isRecordingRef={isRecordingRef}/>}
             </div>
           </div>
           {/* Content — material panels render here so footer always stays visible */}

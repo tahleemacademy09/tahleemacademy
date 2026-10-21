@@ -65,7 +65,17 @@ const ALLOWED_ROUTE_PREFIXES = [
 ];
 
 /* ════════════════════════════════════════════════════════════════════ */
+import { resumePendingRecordings } from "@/lib/recordingOutbox";
+import { supabase as __supabaseForRec } from "@/integrations/supabase/client";
+
 export default function GlobalClassroomOverlay() {
+  // Finish uploading any class recording left on this device (offline end of class, killed app…).
+  useEffect(() => {
+    resumePendingRecordings();
+    const { data: sub } = __supabaseForRec.auth.onAuthStateChange((ev) => { if (ev === "SIGNED_IN") resumePendingRecordings(); });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
   const {
     activeSubject, inCall, minimized, autoJoin,
     leaveClass, setMinimized,
