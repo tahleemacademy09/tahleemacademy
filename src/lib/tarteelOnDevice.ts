@@ -338,6 +338,9 @@ class TarteelEngine {
     }
     const audioSecs = audio.length / TARGET_SR;
     if (audio.length < TARGET_SR * 0.4) return { text: "", ms: 0, audioSecs };
+    // Longer than one ayah-sized clip: cut at the student's own pauses and transcribe each piece alone.
+    // (One long file makes the model use blind 30 s windows, which garble words at every seam.)
+    if (audioSecs > LONG_AUDIO_SECS) return this.transcribeSegments(audio, audioSecs);
     // Only real speech reaches the model — silence / room noise / long pauses make it invent words.
     let gated: Float32Array | null = null;
     try { gated = prepareForAsr(audio, TARGET_SR); } catch { gated = audio; }
@@ -350,6 +353,34 @@ class TarteelEngine {
     // otherwise it is the student drilling an ayah, and (up to 5 repeats) every repeat is kept.
     const hitCap = res.tokens != null && res.cap != null && res.tokens >= res.cap - 1;
     return { ...res, text: collapseLoops(res.text || "", hitCap ? 3 : 6), audioSecs };
+  }
+
+  /**
+   * Whole-recording path for audio longer than LONG_AUDIO_SECS: split at pauses (breath / end of ayah) into
+   * clips of ~8–20 s, give every clip a little silence at both ends (what the model was trained on), transcribe
+   * each clip ALONE (no 30 s windowing) and join the texts in order.
+   */
+  private async transcribeSegments(audio: Float32Array, audioSecs: number): Promise<{ text: string; error?: string; ms?: number; audioSecs?: number }> {
+    const t0 = Date.now();
+    const segs = splitAtPauses(audio, TARGET_SR);
+    let text = "";
+    let failed = 0;
+    for (const seg of segs) {
+      let gated: Float32Array | null = null;
+      try { gated = prepareForAsr(seg.data, TARGET_SR); } catch { gated = seg.data; }
+      if (!gated) continue;                                   // pure silence — nothing to send
+      const pad = new Float32Array(Math.round(TARGET_SR * 0.25));
+      const clip = new Float32Array(gated.length + pad.length * 2);
+      clip.set(gated, pad.length);
+      const res = await this.transcribe(clip, false);
+      if (res.error) { failed++; continue; }
+      const hitCap = res.tokens != null && res.cap != null && res.tokens >= res.cap - 1;
+      const t = collapseLoops(res.text || "", hitCap ? 3 : 6);
+      if (t) text = mergeHeard(text, t, seg.overlapped);
+    }
+    if (failed === segs.length && segs.length > 0) return { text: "", error: "all_segments_failed", ms: Date.now() - t0, audioSecs };
+    if (failed) console.warn(`[Tarteel] ${failed}/${segs.length} segments failed to transcribe`);
+    return { text: text.trim(), ms: Date.now() - t0, audioSecs };
   }
 }
 
@@ -394,6 +425,66 @@ export async function decodeBlobTo16k(blob: Blob): Promise<Float32Array> {
   } finally {
     try { void ctx.close(); } catch { /* noop */ }
   }
+}
+
+/** Recordings longer than this are cut at pauses instead of being fed to the model as one file. */
+const LONG_AUDIO_SECS = 24;
+
+export interface PauseSegment { data: Float32Array; /** true when the cut was forced (no pause found) and shares ~1.5 s with the previous piece */ overlapped: boolean }
+
+/**
+ * Cut a recording at its natural pauses into pieces of roughly minSec–maxSec (default 8–20 s), so every piece
+ * holds whole ayahs/phrases — what the Quran model was trained on. A cut is placed in the middle of the first
+ * pause (≥ 0.3 s of quiet) after minSec. If no pause comes before maxSec, the quietest 120 ms in the last 5 s
+ * is used and the next piece starts 1.5 s earlier (overlap) so a word at the cut is heard whole.
+ * Pure function: no audio APIs, easy to unit-test.
+ */
+export function splitAtPauses(x: Float32Array, sr = 16000, minSec = 8, maxSec = 20): PauseSegment[] {
+  const total = x.length;
+  if (total <= sr * maxSec) return [{ data: x, overlapped: false }];
+  const frame = Math.round(sr * 0.02);
+  const n = Math.floor(total / frame);
+  const rms = new Float32Array(n);
+  for (let f = 0; f < n; f++) {
+    let e = 0;
+    for (let i = f * frame, end = i + frame; i < end; i++) e += x[i] * x[i];
+    rms[f] = Math.sqrt(e / frame);
+  }
+  const sorted = Array.from(rms).sort((a, b) => a - b);
+  const floor = sorted[Math.floor(n * 0.1)];
+  const loud = sorted[Math.floor(n * 0.9)];
+  const thr = Math.min(Math.max(floor * 3, 0.0025), Math.max(loud * 0.25, 0.0025));
+  const minPauseFrames = 15;                         // 0.3 s
+  const out: PauseSegment[] = [];
+  let start = 0;                                     // frame index where the current piece starts
+  let overlapNext = false;
+  while (start < n) {
+    const minEnd = start + Math.round(minSec * 50);
+    const maxEnd = start + Math.round(maxSec * 50);
+    if (maxEnd >= n) { out.push({ data: x.subarray(start * frame), overlapped: overlapNext }); break; }
+    // first pause (run of quiet frames) that begins after minEnd
+    let cut = -1;
+    for (let f = minEnd; f < maxEnd; f++) {
+      if (rms[f] >= thr) continue;
+      let g = f;
+      while (g < n && rms[g] < thr) g++;
+      if (g - f >= minPauseFrames) { cut = f + ((g - f) >> 1); break; }
+      f = g;
+    }
+    let forced = false;
+    if (cut < 0) {                                   // no pause: quietest 120 ms in the last 5 s
+      forced = true;
+      let bestE = Infinity; cut = maxEnd;
+      for (let f = maxEnd - 250; f < maxEnd - 6; f++) {
+        let e = 0; for (let k = 0; k < 6; k++) e += rms[f + k];
+        if (e < bestE) { bestE = e; cut = f + 3; }
+      }
+    }
+    out.push({ data: x.subarray(start * frame, cut * frame), overlapped: overlapNext });
+    overlapNext = forced;
+    start = forced ? Math.max(start + 1, cut - 75) : cut;   // forced: restart 1.5 s earlier
+  }
+  return out;
 }
 
 /**
