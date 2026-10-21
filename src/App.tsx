@@ -403,6 +403,7 @@ const AppMain = () => (
                     <Route path="/admin/recitation-review"           element={<HifdhHub />} />
                     <Route path="/admin/hifdh-tracker"               element={<HifdhHub />} />
                     <Route path="/admin/hifdh-program"               element={<HifdhHub />} />
+                    <Route path="/admin/hifdh"                       element={<Navigate to="/admin/hifdh-program" replace />} />
                     <Route path="/admin/hifdh-sessions"              element={<HifdhHub />} />
                     <Route path="/admin/recitation-test-settings"    element={<RegistrationHub />} />
                     <Route path="/admin/quran-recitations"           element={<QuranRecitationAdmin />} />
