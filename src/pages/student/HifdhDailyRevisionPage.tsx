@@ -20,6 +20,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { playbackGainFor, decodeForPlayback, freshPlaybackContext, preferSpeaker } from "@/lib/audioEnhance";
 import { tarteelEngine, ChunkTranscriber, type TarteelProgress } from "@/lib/tarteelOnDevice";
+import { logRecitationMisses } from "@/lib/recitationMissLog";
 import { stripWaqf, normalizeArabic, wordsMatch, compareWords, analyzeRecitation, scoreOf, encodeGrades, scoreAgainstAyahs, type WordResult, type AyahScoring } from "@/lib/recitationCompare";
 import { saveHifdhRecording, resolveHifdhSessionAudio } from "@/lib/hifdhAudio";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
@@ -1571,6 +1572,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     const snapAyahs = (list: any[]) => (list ?? []).map((a: any) => ({
       text: a.text, numberInSurah: a.numberInSurah, surahName: a.surah?.englishName ?? a.surahName, surahNum: a.surah?.number ?? a.surahNum,
     }));
+    // miss log for staff: red / yellow words with what the model heard instead (fire-and-forget)
+    if (!analysing) void logRecitationMisses({
+      studentId: userId, logDate: today, pageNum: todayPages[isGroup ? 0 : pageIdx] ?? null,
+      words: wordRes, transcript: last?.tx ?? "",
+    });
     // one save at a time, in order — an "analysing" save must never land after the scored one
     saveChainRef.current = saveChainRef.current.then(async () => {
       try {
