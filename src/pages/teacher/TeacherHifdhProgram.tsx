@@ -137,12 +137,13 @@ export default function TeacherHifdhProgram() {
 
     // Admin controls every enrolled student, not only those placed in a group / review slot this week.
     let allActive: string[] = [];
-    if (isAdmin) {
+    {
       const { data: ap } = await tpDb.from("hifdh_program").select("student_id").eq("status", "active");
       allActive = (ap || []).map((r: any) => r.student_id);
     }
     setActiveIds(allActive);
     const sids = Array.from(new Set<string>([...mList.map((m) => m.student_id), ...raList.map((r) => r.student_id), ...allActive]));
+    // (every enrolled student is loaded for staff: students now get their weekly portions automatically, with or without a read-along group)
     if (sids.length) {
       const weekEnd = tpShift(week, 1);
       const [pf, pg, lv, tk, rv, lg] = await Promise.all([
@@ -290,6 +291,15 @@ export default function TeacherHifdhProgram() {
     return out.sort((a, b) => nameOf(a.sid).localeCompare(nameOf(b.sid)));
   }, [groups, members, names]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Memorized tab: everyone with a portion this week, including students not placed in a read-along group
+  const memList = useMemo(() => {
+    const have = new Set(memStudents.map((m) => m.sid));
+    const extra = activeIds.filter((id) => !have.has(id) && tasks.some((t) => t.student_id === id))
+      .map((sid) => ({ sid, group: "Memorization class" }))
+      .sort((a, b) => nameOf(a.sid).localeCompare(nameOf(b.sid)));
+    return [...memStudents, ...extra];
+  }, [memStudents, activeIds, tasks, names]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Weekly review (general revision, Fri–Sun): students the admin assigned to this ustadh. Falls back to the read-along groups.
   const reviewDayOf = (sid: string): number | null => reviewAsg.find((r) => r.student_id === sid)?.review_day ?? null;
   const students = useMemo(() => {
@@ -426,8 +436,8 @@ export default function TeacherHifdhProgram() {
           <b> Repeat</b> keeps them on the same page.
         </div>
       </TpCard>
-      {memStudents.length === 0 && <TpCard><div style={{ color: TP_MUTED, fontSize: 13 }}>No students in your groups this week.</div></TpCard>}
-      {[...memStudents]
+      {memList.length === 0 && <TpCard><div style={{ color: TP_MUTED, fontSize: 13 }}>No students have portions this week yet.</div></TpCard>}
+      {[...memList]
         .sort((a, b) => Number(tasks.some((t) => t.student_id === b.sid && t.status === "submitted")) - Number(tasks.some((t) => t.student_id === a.sid && t.status === "submitted")))
         .map(({ sid, group }) => {
           const tk = tasks.filter((t) => t.student_id === sid).sort((a, b) => a.slot - b.slot);
