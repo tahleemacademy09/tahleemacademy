@@ -22,6 +22,7 @@ import { Track, RoomEvent, ConnectionState, ConnectionQuality, RemoteTrackPublic
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
+import HifdhReviewPanel,{isHifdhReviewRoom} from "@/components/hifdh/HifdhReviewPanel";
 import { Capacitor } from "@capacitor/core";
 import { canNativeScreenShare, startNativeScreenShare, stopNativeScreenShare, onNativeScreenShareStopped, isScreenBot } from "@/lib/nativeScreenShare";
 import { StatusBar } from "@capacitor/status-bar";
@@ -1503,6 +1504,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <WbSyncBridge wbOpen={wbOpen} isTeacher={isPrivileged}/>
           <AdminMuteListener isPrivileged={isPrivileged}/>
           <JoinRequestBanner sessionId={sessionId} isPrivileged={isPrivileged}/>
+          {isPrivileged&&isHifdhReviewRoom(subject)&&<HifdhReviewPanel subject={subject}/>}
           <GroupReciteAutoMic active={groupRecite} isPrivileged={isPrivileged}/>
           {/* onDisconnected wired to autoReconnect — handles Android tab suspension */}
           <ReconnectMonitor
