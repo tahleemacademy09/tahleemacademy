@@ -1,7 +1,8 @@
-// src/pages/student/HifdhProgramHome.tsx  (v2 — revision-style layout)
-// Dark hero with 4 stat tiles side by side, three tabs (Memorize · Read-Along · Revision),
-// portions as side-by-side tiles, page chips like the D1–D7 circles, and the REAL mushaf page
-// (same look as Daily Hifdh Revision) instead of page numbers.
+// src/pages/student/HifdhProgramHome.tsx  (v3 — two tabs: Memorization · Review)
+// Memorization: this week's page(s) (shown automatically, sized by the admin-set level), the
+//   admin-set memorization days, and a Join button that opens the Quran Memorization live class.
+// Review: what the student has memorized + the ustadh assigned for the weekly live review,
+//   with a Join button on the assigned day.
 
 import { useRevisionAssignedCount } from "@/hooks/useRevisionAssignedCount";
 import { useState, useEffect, useCallback, useMemo } from "react";
@@ -11,8 +12,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { useToast } from "@/hooks/use-toast";
 import MushafPageView from "@/components/hifdh/MushafPageView";
-import { hpPortionLabel, hpPagesOf, hpSegmentFor } from "@/lib/hifdhPortion";
-import { Loader2, BookOpen, Repeat, Video, CheckCircle2, Clock, AlertTriangle, Lock, Flame, BarChart3, Layers, ChevronUp, ChevronDown } from "lucide-react";
+import { hpPortionLabel, hpPagesOf, hpSegmentFor, hpUnitsFor } from "@/lib/hifdhPortion";
+import {
+  Loader2, BookOpen, Repeat, Video, CheckCircle2, Clock, AlertTriangle, Lock, Flame, Layers,
+  ChevronUp, ChevronDown, Users, CalendarDays, BarChart3,
+} from "lucide-react";
 
 const hhDb = supabase as any;
 
@@ -38,18 +42,24 @@ const hhNextWeek = (iso: string) => {
   const [y, m, d] = iso.split("-").map(Number);
   return hhIso(new Date(y, m - 1, d + 7));
 };
-const hhWhen = (iso?: string | null) =>
-  iso ? new Date(iso).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : null;
+/** Today as 1 = Monday … 7 = Sunday (the numbering the admin settings use) */
+const hhTodayN = () => ((new Date().getDay() + 6) % 7) + 1;
+const HH_DAY = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const HH_DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const hhTime = (t?: string | null) => {
+  if (!t) return "";
+  const [h, m] = t.split(":").map(Number);
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
+};
 
 const HH_TASK_LABEL: Record<string, { text: string; color: string }> = {
-  pending: { text: "Waiting for read-along", color: HH_MUTED },
-  read_cleared: { text: "Ready to memorize", color: HH_AMBER },
+  pending: { text: "Getting ready", color: HH_MUTED },
+  read_cleared: { text: "Memorize this", color: HH_AMBER },
   submitted: { text: "Waiting for your ustadh", color: HH_GREEN },
   passed: { text: "Memorized ✓", color: HH_OK },
   failed: { text: "Repeat this page", color: HH_RED },
 };
 const HH_CAN_SUBMIT = ["read_cleared", "failed"];
-const HH_DAY = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 const HhPill = ({ text, color }: { text: string; color: string }) => (
   <span style={{ background: color + "1a", color, fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 99, whiteSpace: "nowrap" }}>{text}</span>
@@ -57,8 +67,9 @@ const HhPill = ({ text, color }: { text: string; color: string }) => (
 
 const HhBtn = ({ children, onClick, disabled, gold }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean; gold?: boolean }) => (
   <button onClick={onClick} disabled={disabled} style={{
-    width: "100%", padding: "13px 14px", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 800,
+    width: "100%", padding: "14px 14px", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 800,
     cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.5 : 1,
+    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
     background: gold ? HH_GOLD : HH_GREEN, color: gold ? HH_INK : "#fff",
   }}>{children}</button>
 );
@@ -78,7 +89,6 @@ const HhFocusBtn = ({ onClick }: { onClick: () => void }) => (
   }}><ChevronUp size={16} /> Focus</button>
 );
 
-/** Page chips side by side, like the D1…D7 circles on the revision screen */
 const HhPageChips = ({ pages, active, onPick }: { pages: number[]; active: number; onPick: (p: number) => void }) => (
   <div style={{ display: "flex", gap: 8, overflowX: "auto", padding: "4px 2px 10px" }}>
     {pages.map((p) => (
@@ -91,7 +101,11 @@ const HhPageChips = ({ pages, active, onPick }: { pages: number[]; active: numbe
   </div>
 );
 
-type Tab = "memorize" | "readalong" | "revision";
+const HhCard = ({ children, pad = 14 }: { children: React.ReactNode; pad?: number | string }) => (
+  <div style={{ background: "#fff", border: `1px solid ${HH_LINE}`, borderRadius: 16, padding: pad }}>{children}</div>
+);
+
+type Tab = "memorize" | "review";
 
 export default function HifdhProgramHome() {
   const { user } = useAuth();
@@ -100,16 +114,17 @@ export default function HifdhProgramHome() {
   const { toast } = useToast();
   const week = hhMonday();
   const today = hhIso(new Date());
+  const todayN = hhTodayN();
 
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("memorize");
   const [program, setProgram] = useState<any>(null);
   const [level, setLevel] = useState<any>(null);
   const [settings, setSettings] = useState<any>(null);
-  const [member, setMember] = useState<any>(null);
-  const [group, setGroup] = useState<any>(null);
-  const [ustadh, setUstadh] = useState("");
+  const [liveSubject, setLiveSubject] = useState<any>(null);
+  const [slots, setSlots] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
+  const [recent, setRecent] = useState<any[]>([]);
   const [review, setReview] = useState<any>(null);
   const [fines, setFines] = useState<any[]>([]);
   const [reviewAsg, setReviewAsg] = useState<any>(null);
@@ -120,8 +135,9 @@ export default function HifdhProgramHome() {
   const [busy, setBusy] = useState(false);
   const [selSlot, setSelSlot] = useState<number>(1);
   const [selPage, setSelPage] = useState<number | null>(null);
-  const [raPage, setRaPage] = useState<number | null>(null);
-  const [focus, setFocus] = useState<null | "memorize" | "readalong">(null);
+  const [recId, setRecId] = useState<string | null>(null);
+  const [recPage, setRecPage] = useState<number | null>(null);
+  const [focus, setFocus] = useState<null | "memorize" | "review">(null);
   const [pageBg, setPageBg] = useState("#fffdf6");
   const [qSize, setQSize] = useState<number>(() => {
     try { return Number(localStorage.getItem("hifdh_qsize")) || 26; } catch { return 26; }
@@ -140,40 +156,46 @@ export default function HifdhProgramHome() {
     setProgram(prog || null);
     if (!prog) { setLoading(false); return; }
 
-    const [lv, st, mm, tk, rv, fn, lg, ra] = await Promise.all([
+    // make sure this week's portions exist (sized by the level, placed at the student's position)
+    if (prog.status === "active") await hhDb.rpc("hifdh_ensure_week", { p_student: sid });
+
+    const [lv, st, tk, rc, rv, fn, lg, ra] = await Promise.all([
       prog.level_id ? hhDb.from("hifdh_levels").select("*").eq("id", prog.level_id).maybeSingle() : Promise.resolve({ data: null }),
       hhDb.from("hifdh_settings").select("*").eq("id", true).maybeSingle(),
-      hhDb.from("hifdh_read_group_members").select("*").eq("student_id", sid).eq("week_start", week).limit(1).maybeSingle(),
       hhDb.from("hifdh_memorization_tasks").select("*").eq("student_id", sid).eq("week_start", week).order("slot"),
+      hhDb.from("hifdh_memorization_tasks").select("*").eq("student_id", sid).eq("status", "passed")
+        .order("week_start", { ascending: false }).order("slot", { ascending: false }).limit(6),
       hhDb.from("hifdh_weekly_reviews").select("*").eq("student_id", sid).eq("week_start", week).maybeSingle(),
       hhDb.from("hifdh_fines").select("*").eq("student_id", sid).eq("status", "unpaid"),
       hhDb.from("hifdh_daily_logs").select("log_date,completed").eq("student_id", sid).eq("completed", true)
         .gte("log_date", week).lt("log_date", hhNextWeek(week)),
       hhDb.from("hifdh_review_assignments").select("*").eq("student_id", sid).eq("week_start", week).maybeSingle(),
     ]);
-    setReviewAsg(ra.data || null);
-    if (ra.data?.ustadh_id) {
-      const { data: rp } = await hhDb.from("profiles").select("full_name").eq("user_id", ra.data.ustadh_id).maybeSingle();
-      setReviewUstadh(rp?.full_name || "");
-    } else setReviewUstadh("");
     setLevel(lv.data || null);
     setSettings(st.data || null);
-    setMember(mm.data || null);
     setTasks(tk.data || []);
+    setRecent(rc.data || []);
     setReview(rv.data || null);
     setFines(fn.data || []);
+    setReviewAsg(ra.data || null);
     const logs: any[] = lg.data || [];
     setRevDays(new Set(logs.map((l) => l.log_date)).size);
     setDoneToday(logs.some((l) => l.log_date === today));
 
-    if (mm.data?.group_id) {
-      const { data: g } = await hhDb.from("hifdh_read_groups").select("*").eq("id", mm.data.group_id).maybeSingle();
-      setGroup(g || null);
-      if (g?.ustadh_id) {
-        const { data: pf } = await hhDb.from("profiles").select("full_name").eq("user_id", g.ustadh_id).maybeSingle();
-        setUstadh(pf?.full_name || "");
-      }
-    } else { setGroup(null); }
+    if (ra.data?.ustadh_id) {
+      const { data: rp } = await hhDb.from("profiles").select("full_name").eq("user_id", ra.data.ustadh_id).maybeSingle();
+      setReviewUstadh(rp?.full_name || "");
+    } else setReviewUstadh("");
+
+    const liveId = st.data?.readalong_subject_id;
+    if (liveId) {
+      const [sb, tt] = await Promise.all([
+        hhDb.from("subjects").select("*").eq("id", liveId).maybeSingle(),
+        hhDb.from("subject_timetable").select("day_of_week,start_time").eq("subject_id", liveId).eq("is_active", true),
+      ]);
+      setLiveSubject(sb.data || null);
+      setSlots(tt.data || []);
+    }
     setLoading(false);
   }, [user?.id, week, today]);
 
@@ -184,7 +206,7 @@ export default function HifdhProgramHome() {
   const activePages = useMemo(() => (activeTask ? hpPagesOf(activeTask) : []), [activeTask]);
   const shownPage = selPage && activePages.includes(selPage) ? selPage : activePages[0];
 
-  // when tasks arrive, default to the first session that has work to do
+  // default to the first session that still needs work
   useEffect(() => {
     if (!tasks.length) return;
     const next = tasks.find((t) => HH_CAN_SUBMIT.includes(t.status)) || tasks[0];
@@ -192,8 +214,9 @@ export default function HifdhProgramHome() {
     setSelPage(null);
   }, [tasks.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const raPages = useMemo(() => (member?.page_from && member?.page_to ? hpPagesOf(member) : []), [member]);
-  const raShown = raPage && raPages.includes(raPage) ? raPage : raPages[0];
+  const recTask = recent.find((r) => r.id === recId) || recent[0];
+  const recPages = useMemo(() => (recTask ? hpPagesOf(recTask) : []), [recTask]);
+  const recShown = recPage && recPages.includes(recPage) ? recPage : recPages[0];
 
   const submitTask = async (id: string) => {
     setBusy(true);
@@ -204,14 +227,9 @@ export default function HifdhProgramHome() {
     else { toast({ title: "Submitted to your ustadh" }); load(); }
   };
 
-  const joinReadAlong = async () => {
-    if (!group?.live_session_id) return;
-    const { data: ls } = await hhDb.from("live_sessions").select("subject_id").eq("id", group.live_session_id).maybeSingle();
-    const { data: subject } = ls?.subject_id
-      ? await hhDb.from("subjects").select("*").eq("id", ls.subject_id).maybeSingle()
-      : { data: null };
-    if (!subject) return toast({ title: "Class not available yet", variant: "destructive" });
-    joinClass(subject);
+  const joinLive = () => {
+    if (!liveSubject) return toast({ title: "Class not available yet", variant: "destructive" });
+    joinClass(liveSubject);
   };
 
   if (loading) {
@@ -231,18 +249,22 @@ export default function HifdhProgramHome() {
   const suspended = program.status === "suspended";
   const unpaidTotal = fines.reduce((n, f) => n + Number(f.amount), 0);
   const limit = settings?.streak_limit ?? 3;
-  const memDays: number[] = settings?.memorization_days || [];
-  const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const memDays: number[] = (settings?.memorization_days || []).slice().sort((a: number, b: number) => a - b);
   const doneCount = tasks.filter((t) => ["submitted", "passed"].includes(t.status)).length;
   const showBanner = suspended || fines.length > 0 || program.miss_streak > 0;
+  const perSession = level ? hpUnitsFor(level.daily_pages) : 1;
+  const amountLabel = perSession === 1 ? "½ page" : perSession % 2 === 0 ? `${perSession / 2} page${perSession === 2 ? "" : "s"}` : `${Math.floor(perSession / 2)}½ pages`;
 
-  // Pending counts for the tab badges
+  const slotTime = (dayN: number) => hhTime(slots.find((s) => s.day_of_week === dayN % 7)?.start_time);
+  const isMemDay = memDays.includes(todayN);
+  const nextMemDay = memDays.find((d) => d > todayN) ?? memDays[0];
+  const reviewToday = !!reviewAsg && reviewAsg.review_day === todayN;
   const memorizePending = tasks.filter((t) => HH_CAN_SUBMIT.includes(t.status)).length;
-  const readAlongPending = group && member && ["pending", "repeat"].includes(member.read_status) ? 1 : 0;
+  const reviewBadge = reviewToday ? 1 : 0;
 
   const tabBtn = (id: Tab, label: string, icon: React.ReactNode, badge = 0) => (
     <button key={id} onClick={() => setTab(id)} style={{
-      flex: 1, padding: "13px 4px", background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700,
+      flex: 1, padding: "13px 4px", background: "none", border: "none", cursor: "pointer", fontSize: 14, fontWeight: 700,
       display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
       color: tab === id ? HH_INK : HH_MUTED, borderBottom: `3px solid ${tab === id ? HH_GREEN : "transparent"}`,
     }}>{icon}{label}{badge > 0 && (
@@ -259,7 +281,7 @@ export default function HifdhProgramHome() {
             <div>
               <div style={{ fontSize: 20, fontWeight: 800 }}>Hifdh Program</div>
               <div style={{ fontSize: 12, opacity: 0.75 }}>
-                {level ? `${level.name} · ${Number(level.daily_pages)} page${Number(level.daily_pages) === 1 ? "" : "s"} a day` : "Level not set yet"}
+                {level ? `${level.name} · ${amountLabel} per session` : "Level not set yet"}
               </div>
             </div>
             <div style={{ fontFamily: "'Amiri',serif", fontSize: 22, color: HH_GOLD }}>برنامج الحفظ</div>
@@ -274,12 +296,10 @@ export default function HifdhProgramHome() {
       </div>
 
       <div style={{ maxWidth: 560, margin: "0 auto" }}>
-        {/* Tabs */}
         {!suspended && (
           <div style={{ display: "flex", background: "#fff", borderBottom: `1px solid ${HH_LINE}` }}>
-            {tabBtn("memorize", "Memorize", <BookOpen size={15} />, suspended ? 0 : memorizePending)}
-            {tabBtn("readalong", "Read-Along", <Video size={15} />, suspended ? 0 : readAlongPending)}
-            {tabBtn("revision", "Revision", <Repeat size={15} />, suspended ? 0 : revisionPending)}
+            {tabBtn("memorize", "Memorization", <BookOpen size={16} />, memorizePending)}
+            {tabBtn("review", "Review", <Repeat size={16} />, reviewBadge)}
           </div>
         )}
 
@@ -291,49 +311,77 @@ export default function HifdhProgramHome() {
             }}>
               {suspended ? <Lock size={18} color={HH_RED} /> : <AlertTriangle size={18} color={HH_AMBER} />}
               <div>
-                {suspended && <div style={{ fontWeight: 800, color: HH_RED }}>Your Hifdh program is suspended</div>}
+                {suspended && <div style={{ fontWeight: 800, color: HH_RED }}>Your Hifdh program is on hold</div>}
                 {suspended && <div style={{ color: HH_MUTED }}>Please contact the admin to be reinstated. Your other classes are not affected.</div>}
                 {!suspended && program.miss_streak > 0 && (
-                  <div><b>{program.miss_streak} missed week{program.miss_streak > 1 ? "s" : ""} in a row.</b> {limit - program.miss_streak} more will suspend the program.</div>
+                  <div><b>{program.miss_streak} missed week{program.miss_streak > 1 ? "s" : ""} in a row.</b> {Math.max(0, limit - program.miss_streak)} more will put the program on hold.</div>
                 )}
                 {fines.length > 0 && <div style={{ marginTop: suspended || program.miss_streak > 0 ? 4 : 0 }}>Unpaid fine{fines.length > 1 ? "s" : ""}: <b>₦{unpaidTotal.toLocaleString()}</b></div>}
               </div>
             </div>
           )}
 
+          {/* ───────────── MEMORIZATION ───────────── */}
           {!suspended && tab === "memorize" && (
             <>
-              <div style={{ fontSize: 12, color: HH_MUTED }}>
-                {memDays.length ? `Memorization days: ${memDays.map((d) => dayNames[d - 1]).join(" & ")}` : "This week's memorization"}
-              </div>
+              {/* Live class */}
+              <HhCard>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                  <div style={{ width: 42, height: 42, borderRadius: 12, background: HH_GREEN + "14", color: HH_GREEN, display: "flex", alignItems: "center", justifyContent: "center" }}><Video size={22} /></div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 800, fontSize: 16, color: HH_INK }}>Quran Memorization class</div>
+                    <div style={{ fontSize: 12, color: HH_MUTED }}>
+                      {memDays.length ? memDays.map((d) => `${HH_DAY_SHORT[d - 1]}${slotTime(d) ? ` ${slotTime(d)}` : ""}`).join(" · ") : "Days not set yet"}
+                    </div>
+                  </div>
+                </div>
+                {isMemDay ? (
+                  <HhBtn onClick={joinLive}><Video size={16} /> Join class{slotTime(todayN) ? ` · ${slotTime(todayN)}` : ""}</HhBtn>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: HH_MUTED, background: HH_BG, borderRadius: 12, padding: "11px 12px" }}>
+                    <Clock size={15} />
+                    {nextMemDay
+                      ? <span>Opens on <b style={{ color: HH_INK }}>{HH_DAY[nextMemDay - 1]}{slotTime(nextMemDay) ? ` at ${slotTime(nextMemDay)}` : ""}</b></span>
+                      : <span>Your class day hasn't been set yet</span>}
+                  </div>
+                )}
+              </HhCard>
 
-              {/* Sessions side by side */}
+              {/* This week's portions */}
+              <div style={{ fontSize: 12, color: HH_MUTED, padding: "2px 2px 0" }}>
+                This week's memorization · {amountLabel} each session
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 {[1, 2].map((s) => {
                   const t = taskOf(s);
                   const lb = t ? HH_TASK_LABEL[t.status] : null;
                   const on = selSlot === s;
+                  const dayN = memDays[s - 1];
                   return (
                     <button key={s} onClick={() => { setSelSlot(s); setSelPage(null); }} disabled={!t} style={{
                       textAlign: "left", background: "#fff", borderRadius: 16, padding: 12, cursor: t ? "pointer" : "default",
                       border: `2px solid ${on && t ? HH_GOLD : HH_LINE}`, opacity: t ? 1 : 0.6,
                     }}>
-                      <div style={{ fontSize: 10, fontWeight: 800, color: HH_MUTED, letterSpacing: 0.6 }}>SESSION {s}</div>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: HH_MUTED, letterSpacing: 0.6 }}>
+                        SESSION {s}{dayN ? ` · ${HH_DAY_SHORT[dayN - 1].toUpperCase()}` : ""}
+                      </div>
                       <div style={{ fontSize: 15, fontWeight: 800, color: HH_INK, margin: "4px 0 8px", minHeight: 38 }}>
                         {t ? hpPortionLabel(t) : "—"}
                       </div>
-                      {lb ? <HhPill text={lb.text} color={lb.color} /> : <HhPill text="Not assigned yet" color={HH_MUTED} />}
+                      {lb ? <HhPill text={lb.text} color={lb.color} /> : <HhPill text="Not ready yet" color={HH_MUTED} />}
                     </button>
                   );
                 })}
               </div>
 
               {!activeTask ? (
-                <div style={{ background: "#fff", border: `1px solid ${HH_LINE}`, borderRadius: 14, padding: 14, fontSize: 13, color: HH_MUTED }}>
-                  Your portions will appear here once your ustadh assigns them after the read-along.
-                </div>
+                <HhCard>
+                  <div style={{ fontSize: 13, color: HH_MUTED }}>
+                    Your page for this week will show here. If it doesn't appear, pull to refresh or ask the admin to check your level.
+                  </div>
+                </HhCard>
               ) : (
-                <div style={{ background: "#fff", border: `1px solid ${HH_LINE}`, borderRadius: 16, padding: "12px 10px" }}>
+                <HhCard pad="12px 10px">
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 4px 8px" }}>
                     <span style={{ fontSize: 12, fontWeight: 700, color: HH_MUTED }}>{hpPortionLabel(activeTask)}</span>
                     <HhFocusBtn onClick={() => setFocus("memorize")} />
@@ -348,98 +396,119 @@ export default function HifdhProgramHome() {
                     </div>
                   )}
                   <div style={{ padding: "8px 6px 2px", fontSize: 12, color: activeTask.status === "failed" ? HH_RED : HH_MUTED }}>
-                    {activeTask.status === "passed" ? "Your ustadh marked this memorized. Your next page comes after the next read-along."
-                      : activeTask.status === "failed" ? "Your ustadh asked you to repeat this page. You move on only when it is marked memorized."
-                      : activeTask.status === "submitted" ? "Sent. You move to the next page once your ustadh marks this memorized."
-                      : "You move to the next page only when your ustadh marks this memorized."}
+                    {activeTask.status === "passed" ? "Your ustadh marked this memorized. Well done."
+                      : activeTask.status === "failed" ? "Your ustadh asked you to repeat this. You move on only when it is marked memorized."
+                      : activeTask.status === "submitted" ? "Sent. Recite it in the live class — you move on once your ustadh marks it memorized."
+                      : "Memorize it, then recite it to your ustadh in the live class. You move on once it is marked memorized."}
                   </div>
-                </div>
-              )}
-
-              {review && (
-                <div style={{ background: "#fff", border: `1px solid ${HH_LINE}`, borderRadius: 14, padding: 14, fontSize: 13 }}>
-                  <div style={{ fontWeight: 800, color: HH_INK, marginBottom: 6 }}>This week's review</div>
-                  {review.excused ? <HhPill text="Excused" color={HH_MUTED} /> : (
-                    <HhPill text={review.grade === "pass" ? "Passed" : review.grade === "repeat" ? "Repeat" : "Not passed"}
-                      color={review.grade === "pass" ? HH_OK : review.grade === "repeat" ? HH_AMBER : HH_RED} />
-                  )}
-                  {review.notes && <div style={{ marginTop: 8, color: HH_MUTED }}>{review.notes}</div>}
-                </div>
+                </HhCard>
               )}
             </>
           )}
 
-          {!suspended && tab === "readalong" && (
+          {/* ───────────── REVIEW ───────────── */}
+          {!suspended && tab === "review" && (
             <>
-              <div style={{ background: "#fff", border: `1px solid ${HH_LINE}`, borderRadius: 16, padding: 14 }}>
-                {!group ? (
-                  <div style={{ fontSize: 13, color: HH_MUTED }}>You haven't been placed in a read-along group for this week yet.</div>
-                ) : (
-                  <div style={{ display: "grid", gap: 12 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                      <div>
-                        <div style={{ fontWeight: 800, fontSize: 16, color: HH_INK }}>{group.name}</div>
-                        <div style={{ fontSize: 12, color: HH_MUTED }}>
-                          {ustadh ? `Ustadh ${ustadh}` : "Ustadh not assigned yet"}{group.scheduled_at ? ` · ${hhWhen(group.scheduled_at)}` : ""}
-                        </div>
-                        {level?.readalong_day && (
-                          <div style={{ fontSize: 12, color: HH_GREEN, fontWeight: 700, marginTop: 2 }}>
-                            {level.name} read-along day: {HH_DAY[level.readalong_day - 1]}
-                          </div>
-                        )}
-                      </div>
-                      {member?.read_status === "passed" && <HhPill text="Read correctly ✓" color={HH_OK} />}
-                      {member?.read_status === "repeat" && <HhPill text="Please repeat" color={HH_AMBER} />}
-                      {member?.read_status === "pending" && <HhPill text="Not yet marked" color={HH_MUTED} />}
+              <HhCard>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                  <div style={{ width: 42, height: 42, borderRadius: 12, background: HH_GREEN + "14", color: HH_GREEN, display: "flex", alignItems: "center", justifyContent: "center" }}><Users size={22} /></div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 800, fontSize: 16, color: HH_INK }}>Weekly review</div>
+                    <div style={{ fontSize: 12, color: HH_MUTED }}>Recite what you memorized to your assigned ustadh, live</div>
+                  </div>
+                  {review && (review.excused
+                    ? <HhPill text="Excused" color={HH_MUTED} />
+                    : <HhPill text={review.grade === "pass" ? "Passed" : review.grade === "repeat" ? "Repeat" : "Not passed"}
+                        color={review.grade === "pass" ? HH_OK : review.grade === "repeat" ? HH_AMBER : HH_RED} />)}
+                </div>
+
+                {reviewAsg ? (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <div style={{ display: "flex", gap: 8, fontSize: 13, color: HH_INK, flexWrap: "wrap" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: HH_BG, borderRadius: 10, padding: "8px 10px" }}>
+                        <Users size={14} color={HH_GREEN} /> {reviewUstadh ? `Ustadh ${reviewUstadh}` : "Ustadh not assigned yet"}
+                      </span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: HH_BG, borderRadius: 10, padding: "8px 10px" }}>
+                        <CalendarDays size={14} color={HH_GREEN} /> {HH_DAY[reviewAsg.review_day - 1]}{slotTime(reviewAsg.review_day) ? ` · ${slotTime(reviewAsg.review_day)}` : ""}
+                      </span>
                     </div>
-                    {group.live_session_id ? (
-                      <HhBtn onClick={joinReadAlong}>Join class</HhBtn>
+                    {review ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, color: HH_OK, fontWeight: 700, fontSize: 14 }}>
+                        <CheckCircle2 size={18} /> This week's review is done
+                      </div>
+                    ) : reviewToday ? (
+                      <HhBtn onClick={joinLive}><Video size={16} /> Join review class</HhBtn>
                     ) : (
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: HH_MUTED }}>
-                        <Clock size={14} /> The class hasn't been scheduled yet
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: HH_MUTED, background: HH_BG, borderRadius: 12, padding: "11px 12px" }}>
+                        <Clock size={15} /> Join opens on <b style={{ color: HH_INK }}>{HH_DAY[reviewAsg.review_day - 1]}</b>
                       </div>
                     )}
+                    {review?.notes && <div style={{ fontSize: 13, color: HH_MUTED }}>{review.notes}</div>}
                   </div>
-                )}
-              </div>
-
-              {raPages.length > 0 && (
-                <div style={{ background: "#fff", border: `1px solid ${HH_LINE}`, borderRadius: 16, padding: "12px 10px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 4px 8px" }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: HH_MUTED }}>Read-along · {hpPortionLabel(member)}</span>
-                    <HhFocusBtn onClick={() => setFocus("readalong")} />
-                  </div>
-                  {raPages.length > 1 && <HhPageChips pages={raPages} active={raShown!} onPick={setRaPage} />}
-                  {raShown && <MushafPageView page={raShown} fontSize={qSize} halves={hpSegmentFor(raShown, member)} coverOutside />}
-                </div>
-              )}
-            </>
-          )}
-
-          {!suspended && tab === "revision" && (
-            <div style={{ background: "#fff", border: `1px solid ${HH_LINE}`, borderRadius: 16, padding: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-                <div style={{ width: 42, height: 42, borderRadius: 12, background: HH_GREEN + "14", color: HH_GREEN, display: "flex", alignItems: "center", justifyContent: "center" }}><BarChart3 size={22} /></div>
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: 16, color: HH_INK }}>Today's Revision</div>
-                  <div style={{ fontSize: 12, color: HH_MUTED }}>{revDays} day{revDays === 1 ? "" : "s"} completed this week</div>
-                </div>
-              </div>
-              <div style={{ background: "#f6f8f6", border: `1px solid ${HH_LINE}`, borderRadius: 12, padding: 10, marginBottom: 12, fontSize: 13, color: HH_INK }}>
-                {reviewAsg ? (
-                  <>Weekly review: <b>{HH_DAY[reviewAsg.review_day - 1]}</b>{reviewUstadh ? <> with <b>Ustadh {reviewUstadh}</b></> : null}</>
                 ) : (
-                  <span style={{ color: HH_MUTED }}>Weekly review ({(settings?.review_days || [5, 6, 7]).map((d: number) => dayNames[d - 1]).join(", ")}) — your ustadh and day will be assigned soon.</span>
+                  <div style={{ fontSize: 13, color: HH_MUTED, background: HH_BG, borderRadius: 12, padding: "11px 12px" }}>
+                    Your review ustadh and day (
+                    {(settings?.review_days || [5, 6, 7]).map((d: number) => HH_DAY_SHORT[d - 1]).join(", ")}
+                    ) will be assigned soon.
+                  </div>
                 )}
-              </div>
-              {doneToday ? (
-                <div style={{ display: "flex", alignItems: "center", gap: 8, color: HH_OK, fontWeight: 700, fontSize: 14 }}>
-                  <CheckCircle2 size={18} /> Done for today — well done
-                </div>
+              </HhCard>
+
+              {/* What they have memorized */}
+              <div style={{ fontSize: 12, color: HH_MUTED, padding: "2px 2px 0" }}>What you have memorized</div>
+              {recent.length === 0 ? (
+                <HhCard>
+                  <div style={{ fontSize: 13, color: HH_MUTED }}>
+                    Portions appear here once your ustadh marks them memorized. That is what you will recite in your review.
+                  </div>
+                </HhCard>
               ) : (
-                <HhBtn onClick={() => navigate("/student/hifdh-daily")}>Start today's revision</HhBtn>
+                <>
+                  <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 2 }}>
+                    {recent.map((r) => {
+                      const on = recTask?.id === r.id;
+                      return (
+                        <button key={r.id} onClick={() => { setRecId(r.id); setRecPage(null); }} style={{
+                          flex: "0 0 auto", minWidth: 132, textAlign: "left", background: "#fff", borderRadius: 14, padding: 10, cursor: "pointer",
+                          border: `2px solid ${on ? HH_GOLD : HH_LINE}`,
+                        }}>
+                          <div style={{ fontSize: 10, fontWeight: 800, color: HH_MUTED, letterSpacing: 0.6 }}>
+                            {r.week_start === week ? "THIS WEEK" : `WEEK OF ${r.week_start.slice(5)}`}
+                          </div>
+                          <div style={{ fontSize: 14, fontWeight: 800, color: HH_INK, marginTop: 4 }}>{hpPortionLabel(r)}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {recTask && (
+                    <HhCard pad="12px 10px">
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 4px 8px" }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: HH_MUTED }}>{hpPortionLabel(recTask)}</span>
+                        <HhFocusBtn onClick={() => setFocus("review")} />
+                      </div>
+                      {recPages.length > 1 && <HhPageChips pages={recPages} active={recShown!} onPick={setRecPage} />}
+                      {recShown && <MushafPageView page={recShown} fontSize={qSize} halves={hpSegmentFor(recShown, recTask)} coverOutside />}
+                    </HhCard>
+                  )}
+                </>
               )}
-            </div>
+
+              {/* Daily revision stays one tap away */}
+              <HhCard>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 38, height: 38, borderRadius: 12, background: HH_GREEN + "14", color: HH_GREEN, display: "flex", alignItems: "center", justifyContent: "center" }}><BarChart3 size={20} /></div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 800, fontSize: 15, color: HH_INK }}>Daily revision</div>
+                    <div style={{ fontSize: 12, color: HH_MUTED }}>{revDays} day{revDays === 1 ? "" : "s"} done this week</div>
+                  </div>
+                  {doneToday
+                    ? <HhPill text="Done today ✓" color={HH_OK} />
+                    : <button onClick={() => navigate("/student/hifdh-daily")} style={{
+                        border: "none", borderRadius: 10, background: HH_GREEN, color: "#fff", fontWeight: 800, fontSize: 13, padding: "10px 14px", cursor: "pointer",
+                      }}>Start{revisionPending > 0 ? ` (${revisionPending})` : ""}</button>}
+                </div>
+              </HhCard>
+            </>
           )}
         </div>
       </div>
@@ -447,11 +516,12 @@ export default function HifdhProgramHome() {
       {/* Focus mode — only the Quran page, full screen */}
       {focus && (() => {
         const isMem = focus === "memorize";
-        const portion = isMem ? activeTask : member;
-        const pages = isMem ? activePages : raPages;
-        const cur = isMem ? shownPage : raShown;
-        const pick = isMem ? setSelPage : setRaPage;
+        const portion = isMem ? activeTask : recTask;
+        const pages = isMem ? activePages : recPages;
+        const cur = isMem ? shownPage : recShown;
+        const pick = isMem ? setSelPage : setRecPage;
         if (!portion || !cur) return null;
+        const showSubmit = isMem && activeTask && HH_CAN_SUBMIT.includes(activeTask.status);
         return (
           <div style={{ position: "fixed", inset: 0, zIndex: 250, background: pageBg, display: "flex", flexDirection: "column" }}>
             <div style={{
@@ -480,13 +550,13 @@ export default function HifdhProgramHome() {
                   fontSize={qSize}
                   halves={hpSegmentFor(cur, portion)}
                   coverOutside
-                  fitHeight={64 + (pages.length > 1 ? 64 : 0) + (isMem && activeTask && HH_CAN_SUBMIT.includes(activeTask.status) ? 84 : 0) + 24}
+                  fitHeight={64 + (pages.length > 1 ? 64 : 0) + (showSubmit ? 84 : 0) + 24}
                   seamless
                   onBackground={setPageBg}
                 />
               </div>
             </div>
-            {isMem && activeTask && HH_CAN_SUBMIT.includes(activeTask.status) && (
+            {showSubmit && activeTask && (
               <div style={{ padding: 12, paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))", background: pageBg, borderTop: "1px solid rgba(0,0,0,.06)" }}>
                 <HhBtn gold disabled={busy} onClick={() => submitTask(activeTask.id)}>I've memorized this — submit</HhBtn>
               </div>
