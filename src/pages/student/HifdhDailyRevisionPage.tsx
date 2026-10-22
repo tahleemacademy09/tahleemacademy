@@ -1905,8 +1905,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         if (r.text.trim() && (long || (r.ok && !looped))) {
           lastTranscribeErrorRef.current = "";
           transcribeMsRef.current = null;   // "transcribe time" = wait after Stop
+          console.info("[HifdhDaily] final transcript (live chunks merged):", r.text.trim());
           return r.text.trim();
         }
+        console.warn(`[HifdhDaily] live transcript not used → whole-recording fallback (ok=${r.ok}, looped=${looped}, empty=${!r.text.trim()}, bytes=${fullBlob.size})`);
       } catch (e) { console.warn("[HifdhDaily] background transcription failed, falling back:", e); }
     }
     return transcribeAudio(fullBlob);
