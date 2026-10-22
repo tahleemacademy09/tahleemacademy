@@ -294,6 +294,32 @@ export function refTokens(refText: string): string[] {
   return refText.split(/\s+/).filter(Boolean).filter((w) => stripWaqf(w).length > 0);
 }
 
+/**
+ * A phrase heard twice in a row that the text itself never says twice in a row is an echo — the seam between two
+ * overlapping recording chunks, or the model looping — not something the student recited. The second copy is dropped
+ * so it is not shown as "extra words" and cannot pull the alignment off course. (Phrases the text really repeats,
+ * like a refrain, are kept.)
+ */
+function dropEchoes(heard: Tok[], refKeys: string[]): Tok[] {
+  const refStr = " " + refKeys.join(" ") + " ";
+  const out = [...heard];
+  for (let n = 5; n >= 1; n--) {
+    for (let i = 0; i + 2 * n <= out.length;) {
+      let same = true;
+      for (let k = 0; k < n && same; k++) {
+        const x = out[i + k].key, y = out[i + n + k].key;
+        same = !!x && (x === y || (n >= 2 && isNearKey(x, y)));
+      }
+      if (same && !(n === 1 && out[i].key.length < 3)) {
+        const phrase = out.slice(i, i + n).map((t) => t.key).join(" ");
+        if (!refStr.includes(` ${phrase} ${phrase} `)) { out.splice(i + n, n); continue; }
+      }
+      i++;
+    }
+  }
+  return out;
+}
+
 export function analyzeRecitation(refText: string, gotText: string): RecitationAnalysis {
   const origRef = refTokens(refText);
   const refKeys = origRef.map((w) => soundKey(w, true));
@@ -308,6 +334,8 @@ export function analyzeRecitation(refText: string, gotText: string): RecitationA
   // Joined / split words: the model writes "يا أيها" where the mushaf has يَـٰٓأَيُّهَا (or the other way round).
   // Only touched when the heard token matches nothing on its own.
   const refSet = new Set(refKeys);
+
+  heard = dropEchoes(heard, refKeys);
 
   // Final ya / alef-maqsura: undiacritized spellings (على written علي, فى written في …) can land on the other reading.
   // If the heard key is not a reference word but its other reading is, use that reading.

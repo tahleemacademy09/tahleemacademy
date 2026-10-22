@@ -23,6 +23,7 @@
 
 import { prepareForAsr } from "@/lib/audioEnhance";
 import { soundKey } from "@/lib/recitationCompare";
+import { mergeHeard } from "@/lib/transcriptMerge";
 
 export const TARTEEL_MODEL = "iqbalaesthetic/Basira"; // ONNX export of tarteel-ai/whisper-base-ar-quran
 const TRANSFORMERS_CDN = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.0";
@@ -755,47 +756,8 @@ export class LiveRecitationSession {
 
 /* ───────────────── Background transcription while the student recites ───────────────── */
 
-/**
- * Merge two consecutive chunk transcripts that share a few seconds of overlapping audio.
- * The words right at a cut are unreliable (a word sliced in half is heard as another word, or the
- * next chunk starts with a stray word), so we allow up to 2 trailing words of `prev` and 2 leading
- * words of `next` to be discarded as boundary noise, and look for the longest run of (fuzzy-equal)
- * words that the two transcripts share. Everything before the run comes from `prev`, everything after
- * it from `next`. If no shared run of 2+ words is found (e.g. the overlap was silence) the texts are
- * simply joined and nothing is thrown away.
- */
-export function mergeHeard(prev: string, next: string, overlapped = true): string {
-  const a = prev.trim().split(/\s+/).filter(Boolean);
-  const b = next.trim().split(/\s+/).filter(Boolean);
-  if (!a.length) return b.join(" ");
-  if (!b.length) return a.join(" ");
-  // The two chunks were cut inside a pause and share no audio: nothing is duplicated, so never drop a word
-  // (a legitimately repeated word/phrase across the pause must survive).
-  if (!overlapped) return [...a, ...b].join(" ");
-  const ak = a.map(tarteelWordKey), bk = b.map(tarteelWordKey);
-  let best: { k: number; drops: number; dt: number; sh: number } | null = null;
-  // Dropping a word at the seam is only allowed with strong evidence (a shared run of 3+ words) and for at most
-  // 1 word per side — a real word must never be thrown away on weak evidence.
-  for (let dt = 0; dt <= 1; dt++) {
-    for (let sh = 0; sh <= 1; sh++) {
-      const aEnd = a.length - dt;
-      const maxK = Math.min(10, aEnd, b.length - sh);
-      for (let k = maxK; k >= 2; k--) {
-        let ok = true;
-        for (let i = 0; i < k && ok; i++) ok = keysMatch(ak[aEnd - k + i], bk[sh + i]);
-        if (ok && (dt + sh === 0 || k >= 3)) {
-          const drops = dt + sh;
-          if (!best || k > best.k || (k === best.k && drops < best.drops)) best = { k, drops, dt, sh };
-          break;
-        }
-      }
-    }
-  }
-  if (best) return [...a.slice(0, a.length - best.dt), ...b.slice(best.sh + best.k)].join(" ");
-  // single exact shared word at the very seam
-  if (ak[ak.length - 1].length >= 3 && ak[ak.length - 1] === bk[0]) return [...a, ...b.slice(1)].join(" ");
-  return [...a, ...b].join(" ");
-}
+// The chunk-overlap merge lives in transcriptMerge.ts (aligns the shared audio instead of requiring an identical run).
+export { mergeHeard };
 
 /** A model that loops repeats the same 1–6 word phrase over and over — keep it once. */
 export function collapseLoops(text: string, minReps = 3): string {
