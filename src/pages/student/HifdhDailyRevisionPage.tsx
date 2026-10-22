@@ -4340,7 +4340,7 @@ export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?
       )}
 
       <div style={{minHeight:embedded?undefined:"100dvh",background:WARM,display:"flex",flexDirection:"column",
-        fontFamily:"'Cairo',sans-serif",maxWidth:600,margin:"0 auto"}}>
+        fontFamily:"'Cairo',sans-serif",maxWidth:600,width:"100%",minWidth:0,boxSizing:"border-box",margin:"0 auto"}}>
 
         {/* ── Header ─────────────────────────────────────────────── */}
         <div style={{flexShrink:0,background:`linear-gradient(165deg,${G0} 0%,${G1} 60%,${G2} 100%)`,

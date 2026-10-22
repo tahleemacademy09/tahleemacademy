@@ -328,7 +328,7 @@ export default function HifdhProgramHome() {
           </div>
         )}
 
-        <div style={{ padding: 14, display: "grid", gap: 12, alignContent: "start" }}>
+        <div style={{ padding: 14, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12, alignContent: "start" }}>
           {showBanner && (
             <div style={{
               borderRadius: 14, padding: 12, fontSize: 13, display: "flex", gap: 10, alignItems: "flex-start",
@@ -379,7 +379,7 @@ export default function HifdhProgramHome() {
               <div style={{ fontSize: 12, color: HH_MUTED, padding: "2px 2px 0" }}>
                 This week's memorization · {amountLabel} each session
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10 }}>
                 {[1, 2].map((s) => {
                   const t = taskOf(s);
                   const lb = t ? HH_TASK_LABEL[t.status] : null;
@@ -439,7 +439,7 @@ export default function HifdhProgramHome() {
           {!suspended && tab === "review" && (
             <>
               {/* Daily revision | Weekly review — side by side */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10 }}>
                 {([
                   ["daily", "Daily revision", doneToday ? "Done today ✓" : `${revDays} day${revDays === 1 ? "" : "s"} this week`, <BarChart3 size={20} key="d" />],
                   ["weekly", "Weekly review", reviewAsg ? `${HH_DAY_SHORT[reviewAsg.review_day - 1]}${reviewUstadh ? ` · ${reviewUstadh}` : ""}` : "Live with ustadh", <Users size={20} key="w" />],
@@ -461,7 +461,7 @@ export default function HifdhProgramHome() {
               {/* Daily: the Daily Hifdh Revision page, right here */}
               {revMode === "daily" && (
                 <Suspense fallback={<div style={{ display: "flex", justifyContent: "center", padding: 40 }}><Loader2 className="animate-spin" color={HH_GOLD} /></div>}>
-                  <div style={{ margin: "0 -14px" }}><DailyRevision embedded /></div>
+                  <div style={{ margin: "0 -14px", minWidth: 0, maxWidth: "100vw", overflowX: "clip" }}><DailyRevision embedded /></div>
                 </Suspense>
               )}
 
