@@ -5,7 +5,7 @@
 //   with a Join button on the assigned day.
 
 import { useRevisionAssignedCount } from "@/hooks/useRevisionAssignedCount";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 const hhDb = supabase as any;
+const DailyRevision = lazy(() => import("./HifdhDailyRevisionPage"));
 
 const HH_DARK = "#0f2e1f";
 const HH_GREEN = "#064E3B";
@@ -118,6 +119,7 @@ const HhCard = ({ children, pad = 14 }: { children: React.ReactNode; pad?: numbe
 );
 
 type Tab = "memorize" | "review";
+type RevMode = "daily" | "weekly";
 
 export default function HifdhProgramHome() {
   const { user } = useAuth();
@@ -130,6 +132,7 @@ export default function HifdhProgramHome() {
 
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("memorize");
+  const [revMode, setRevMode] = useState<RevMode>("daily");
   const [program, setProgram] = useState<any>(null);
   const [level, setLevel] = useState<any>(null);
   const [settings, setSettings] = useState<any>(null);
@@ -435,25 +438,35 @@ export default function HifdhProgramHome() {
           {/* ───────────── REVIEW ───────────── */}
           {!suspended && tab === "review" && (
             <>
-              {/* 1 · Daily revision → Hifdh Daily Revision */}
-              <HhCard>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-                  <div style={{ width: 42, height: 42, borderRadius: 12, background: HH_GREEN + "14", color: HH_GREEN, display: "flex", alignItems: "center", justifyContent: "center" }}><BarChart3 size={22} /></div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 800, fontSize: 16, color: HH_INK }}>Daily revision</div>
-                    <div style={{ fontSize: 12, color: HH_MUTED }}>On your own · {revDays} day{revDays === 1 ? "" : "s"} done this week</div>
-                  </div>
-                  {doneToday && <HhPill text="Done today ✓" color={HH_OK} />}
-                </div>
-                {doneToday ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, color: HH_OK, fontWeight: 700, fontSize: 14 }}>
-                    <CheckCircle2 size={18} /> Done for today — well done
-                  </div>
-                ) : (
-                  <HhBtn onClick={() => navigate("/student/hifdh-daily")}><BarChart3 size={16} /> Start daily revision{revisionPending > 0 ? ` (${revisionPending})` : ""}</HhBtn>
-                )}
-              </HhCard>
+              {/* Daily revision | Weekly review — side by side */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                {([
+                  ["daily", "Daily revision", doneToday ? "Done today ✓" : `${revDays} day${revDays === 1 ? "" : "s"} this week`, <BarChart3 size={20} key="d" />],
+                  ["weekly", "Weekly review", reviewAsg ? `${HH_DAY_SHORT[reviewAsg.review_day - 1]}${reviewUstadh ? ` · ${reviewUstadh}` : ""}` : "Live with ustadh", <Users size={20} key="w" />],
+                ] as const).map(([id, title, sub2, icon]) => {
+                  const on = revMode === id;
+                  return (
+                    <button key={id} onClick={() => setRevMode(id)} style={{
+                      textAlign: "left", background: on ? "#fff" : "#f1f3f2", borderRadius: 16, padding: 12, cursor: "pointer",
+                      border: `2px solid ${on ? HH_GOLD : HH_LINE}`,
+                    }}>
+                      <div style={{ width: 34, height: 34, borderRadius: 10, background: HH_GREEN + "14", color: HH_GREEN, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 8 }}>{icon}</div>
+                      <div style={{ fontWeight: 800, fontSize: 14, color: HH_INK }}>{title}</div>
+                      <div style={{ fontSize: 11, color: HH_MUTED, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub2}</div>
+                    </button>
+                  );
+                })}
+              </div>
 
+              {/* Daily: the Daily Hifdh Revision page, right here */}
+              {revMode === "daily" && (
+                <Suspense fallback={<div style={{ display: "flex", justifyContent: "center", padding: 40 }}><Loader2 className="animate-spin" color={HH_GOLD} /></div>}>
+                  <div style={{ margin: "0 -14px" }}><DailyRevision embedded /></div>
+                </Suspense>
+              )}
+
+              {revMode === "weekly" && (
+                <>
               {/* 2 · Weekly review → live class with the assigned ustadh */}
               <HhCard>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
@@ -543,6 +556,8 @@ export default function HifdhProgramHome() {
                 </>
               )}
 
+                </>
+              )}
             </>
           )}
         </div>

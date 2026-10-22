@@ -1907,7 +1907,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           transcribeMsRef.current = null;   // "transcribe time" = wait after Stop
           return r.text.trim();
         }
-        console.warn(`[HifdhDaily] live transcript not used → whole-recording fallback (ok=${r.ok}, looped=${looped}, empty=${!r.text.trim()}, bytes=${fullBlob.size})`);
       } catch (e) { console.warn("[HifdhDaily] background transcription failed, falling back:", e); }
     }
     return transcribeAudio(fullBlob);
@@ -4134,7 +4133,7 @@ function DayDetailModal({day,totalPagesInProg,pagesReadSoFar,onClose}:{
 /* ══════════════════════════════════════════════════════════════════
    MAIN PAGE
 ═══════════════════════════════════════════════════════════════════*/
-export default function HifdhDailyRevisionPage() {
+export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?: boolean } = {}) {
   const navigate = useNavigate();
   const [loading,      setLoading]      = useState(true);
   const [userId,       setUserId]       = useState<string|null>(null);
@@ -4287,16 +4286,16 @@ export default function HifdhDailyRevisionPage() {
 
   /* ── No assignment ── */
   if(assignments.length === 0) return(
-    <div style={{minHeight:"100dvh",background:WARM,fontFamily:"'Cairo',sans-serif",
+    <div style={{minHeight:embedded?undefined:"100dvh",background:WARM,fontFamily:"'Cairo',sans-serif",
       display:"flex",flexDirection:"column"}}>
       <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:"14px 16px",
         display:"flex",alignItems:"center",gap:12}}>
-        <button onClick={()=>navigate(-1)}
+        {!embedded && <button onClick={()=>navigate(-1)}
           style={{width:36,height:36,borderRadius:10,border:"none",cursor:"pointer",
             background:"rgba(255,255,255,.12)",color:W,display:"flex",alignItems:"center",
             justifyContent:"center"}}>
           <ArrowLeft size={18}/>
-        </button>
+        </button>}
         <p style={{margin:0,fontWeight:900,fontSize:15,color:W}}>Daily Hifdh Revision</p>
       </div>
       <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",
@@ -4310,11 +4309,11 @@ export default function HifdhDailyRevisionPage() {
           Your teacher hasn't assigned a daily Hifdh revision programme yet.
           Please check back later or contact your teacher.
         </p>
-        <button onClick={()=>navigate(-1)}
+        {!embedded && <button onClick={()=>navigate(-1)}
           style={{marginTop:8,padding:"12px 28px",borderRadius:12,border:`1.5px solid ${G2}`,
             background:W,color:G1,fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
           Go Back
-        </button>
+        </button>}
       </div>
     </div>
   );
@@ -4340,7 +4339,7 @@ export default function HifdhDailyRevisionPage() {
         />
       )}
 
-      <div style={{minHeight:"100dvh",background:WARM,display:"flex",flexDirection:"column",
+      <div style={{minHeight:embedded?undefined:"100dvh",background:WARM,display:"flex",flexDirection:"column",
         fontFamily:"'Cairo',sans-serif",maxWidth:600,margin:"0 auto"}}>
 
         {/* ── Header ─────────────────────────────────────────────── */}
@@ -4357,12 +4356,12 @@ export default function HifdhDailyRevisionPage() {
           {/* Nav bar */}
           <div style={{padding:"14px 16px",display:"flex",alignItems:"center",gap:12,
             position:"relative",zIndex:1}}>
-            <button onClick={()=>navigate(-1)}
+            {!embedded && <button onClick={()=>navigate(-1)}
               style={{width:36,height:36,borderRadius:10,border:"none",cursor:"pointer",
                 background:"rgba(255,255,255,.1)",color:W,
                 display:"flex",alignItems:"center",justifyContent:"center"}}>
               <ArrowLeft size={18}/>
-            </button>
+            </button>}
             <div style={{flex:1}}>
               <p style={{margin:0,fontWeight:900,fontSize:15,color:W,letterSpacing:-.2}}>
                 Daily Hifdh Revision
