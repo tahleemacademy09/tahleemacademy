@@ -101,6 +101,18 @@ const HhPageChips = ({ pages, active, onPick }: { pages: number[]; active: numbe
   </div>
 );
 
+/** The page is always shown whole; this says which half of it is the student's portion */
+const hhHalfHint = (page: number, p: { page_from: number; page_to: number; half_from?: number | null; half_to?: number | null }) => {
+  const [a, b] = hpSegmentFor(page, p);
+  if (a === 0 && b === 1) return null;
+  return a === 0 ? "top half of this page" : "bottom half of this page";
+};
+const HhHint = ({ text }: { text: string | null }) => text ? (
+  <div style={{ margin: "0 4px 8px", padding: "7px 10px", borderRadius: 10, background: "#fbf3da", border: `1px solid ${HH_GOLD}88`, color: "#78350F", fontSize: 12, fontWeight: 700 }}>
+    Your portion: the {text}
+  </div>
+) : null;
+
 const HhCard = ({ children, pad = 14 }: { children: React.ReactNode; pad?: number | string }) => (
   <div style={{ background: "#fff", border: `1px solid ${HH_LINE}`, borderRadius: 16, padding: pad }}>{children}</div>
 );
@@ -232,6 +244,16 @@ export default function HifdhProgramHome() {
     joinClass(liveSubject);
   };
 
+  // Weekly review: every ustadh has their own private room, so each ustadh's students meet only together
+  const joinReview = async () => {
+    if (!reviewAsg?.ustadh_id) return toast({ title: "Your ustadh isn't assigned yet", variant: "destructive" });
+    setBusy(true);
+    const { data, error } = await hhDb.rpc("hifdh_review_room", { p_ustadh: reviewAsg.ustadh_id });
+    setBusy(false);
+    if (error || !data) return toast({ title: "Couldn't open the review room", description: error?.message, variant: "destructive" });
+    joinClass(data);
+  };
+
   if (loading) {
     return <div style={{ display: "flex", justifyContent: "center", padding: 60 }}><Loader2 className="animate-spin" color={HH_GOLD} /></div>;
   }
@@ -336,7 +358,10 @@ export default function HifdhProgramHome() {
                   </div>
                 </div>
                 {isMemDay ? (
-                  <HhBtn onClick={joinLive}><Video size={16} /> Join class{slotTime(todayN) ? ` · ${slotTime(todayN)}` : ""}</HhBtn>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <HhBtn onClick={joinLive}><Video size={16} /> Join class{slotTime(todayN) ? ` · ${slotTime(todayN)}` : ""}</HhBtn>
+                    <div style={{ fontSize: 12, color: HH_MUTED, textAlign: "center" }}>You can join now and wait in the room — your ustadh will come in.</div>
+                  </div>
                 ) : (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: HH_MUTED, background: HH_BG, borderRadius: 12, padding: "11px 12px" }}>
                     <Clock size={15} />
@@ -387,7 +412,8 @@ export default function HifdhProgramHome() {
                     <HhFocusBtn onClick={() => setFocus("memorize")} />
                   </div>
                   {activePages.length > 1 && <HhPageChips pages={activePages} active={shownPage!} onPick={setSelPage} />}
-                  {shownPage && <MushafPageView page={shownPage} fontSize={qSize} halves={hpSegmentFor(shownPage, activeTask)} coverOutside />}
+                  {shownPage && <HhHint text={hhHalfHint(shownPage, activeTask)} />}
+                  {shownPage && <MushafPageView page={shownPage} fontSize={qSize} />}
                   {HH_CAN_SUBMIT.includes(activeTask.status) && (
                     <div style={{ padding: "6px 4px 2px" }}>
                       <HhBtn gold disabled={busy} onClick={() => submitTask(activeTask.id)}>
@@ -409,12 +435,32 @@ export default function HifdhProgramHome() {
           {/* ───────────── REVIEW ───────────── */}
           {!suspended && tab === "review" && (
             <>
+              {/* 1 · Daily revision → Hifdh Daily Revision */}
+              <HhCard>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                  <div style={{ width: 42, height: 42, borderRadius: 12, background: HH_GREEN + "14", color: HH_GREEN, display: "flex", alignItems: "center", justifyContent: "center" }}><BarChart3 size={22} /></div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 800, fontSize: 16, color: HH_INK }}>Daily revision</div>
+                    <div style={{ fontSize: 12, color: HH_MUTED }}>On your own · {revDays} day{revDays === 1 ? "" : "s"} done this week</div>
+                  </div>
+                  {doneToday && <HhPill text="Done today ✓" color={HH_OK} />}
+                </div>
+                {doneToday ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, color: HH_OK, fontWeight: 700, fontSize: 14 }}>
+                    <CheckCircle2 size={18} /> Done for today — well done
+                  </div>
+                ) : (
+                  <HhBtn onClick={() => navigate("/student/hifdh-daily")}><BarChart3 size={16} /> Start daily revision{revisionPending > 0 ? ` (${revisionPending})` : ""}</HhBtn>
+                )}
+              </HhCard>
+
+              {/* 2 · Weekly review → live class with the assigned ustadh */}
               <HhCard>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
                   <div style={{ width: 42, height: 42, borderRadius: 12, background: HH_GREEN + "14", color: HH_GREEN, display: "flex", alignItems: "center", justifyContent: "center" }}><Users size={22} /></div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 800, fontSize: 16, color: HH_INK }}>Weekly review</div>
-                    <div style={{ fontSize: 12, color: HH_MUTED }}>Recite what you memorized to your assigned ustadh, live</div>
+                    <div style={{ fontWeight: 800, fontSize: 16, color: HH_INK }}>Weekly review · live</div>
+                    <div style={{ fontSize: 12, color: HH_MUTED }}>Recite what you memorized to your assigned ustadh</div>
                   </div>
                   {review && (review.excused
                     ? <HhPill text="Excused" color={HH_MUTED} />
@@ -437,7 +483,10 @@ export default function HifdhProgramHome() {
                         <CheckCircle2 size={18} /> This week's review is done
                       </div>
                     ) : reviewToday ? (
-                      <HhBtn onClick={joinLive}><Video size={16} /> Join review class</HhBtn>
+                      <>
+                        <HhBtn disabled={busy} onClick={joinReview}><Video size={16} /> Join weekly review{reviewUstadh ? ` with ${reviewUstadh}` : ""}</HhBtn>
+                        <div style={{ fontSize: 12, color: HH_MUTED, textAlign: "center" }}>You can join now and wait in the room — your ustadh will come in.</div>
+                      </>
                     ) : (
                       <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: HH_MUTED, background: HH_BG, borderRadius: 12, padding: "11px 12px" }}>
                         <Clock size={15} /> Join opens on <b style={{ color: HH_INK }}>{HH_DAY[reviewAsg.review_day - 1]}</b>
@@ -487,27 +536,13 @@ export default function HifdhProgramHome() {
                         <HhFocusBtn onClick={() => setFocus("review")} />
                       </div>
                       {recPages.length > 1 && <HhPageChips pages={recPages} active={recShown!} onPick={setRecPage} />}
-                      {recShown && <MushafPageView page={recShown} fontSize={qSize} halves={hpSegmentFor(recShown, recTask)} coverOutside />}
+                      {recShown && <HhHint text={hhHalfHint(recShown, recTask)} />}
+                      {recShown && <MushafPageView page={recShown} fontSize={qSize} />}
                     </HhCard>
                   )}
                 </>
               )}
 
-              {/* Daily revision stays one tap away */}
-              <HhCard>
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <div style={{ width: 38, height: 38, borderRadius: 12, background: HH_GREEN + "14", color: HH_GREEN, display: "flex", alignItems: "center", justifyContent: "center" }}><BarChart3 size={20} /></div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 800, fontSize: 15, color: HH_INK }}>Daily revision</div>
-                    <div style={{ fontSize: 12, color: HH_MUTED }}>{revDays} day{revDays === 1 ? "" : "s"} done this week</div>
-                  </div>
-                  {doneToday
-                    ? <HhPill text="Done today ✓" color={HH_OK} />
-                    : <button onClick={() => navigate("/student/hifdh-daily")} style={{
-                        border: "none", borderRadius: 10, background: HH_GREEN, color: "#fff", fontWeight: 800, fontSize: 13, padding: "10px 14px", cursor: "pointer",
-                      }}>Start{revisionPending > 0 ? ` (${revisionPending})` : ""}</button>}
-                </div>
-              </HhCard>
             </>
           )}
         </div>
@@ -538,6 +573,9 @@ export default function HifdhProgramHome() {
                 <button onClick={() => bump(2)} aria-label="Larger text" style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${HH_LINE}`, background: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer" }}>A+</button>
               </div>
             </div>
+            {hhHalfHint(cur, portion) && (
+              <div style={{ background: pageBg, padding: "6px 12px 0" }}><HhHint text={hhHalfHint(cur, portion)} /></div>
+            )}
             {pages.length > 1 && (
               <div style={{ background: pageBg, padding: "6px 12px 0", borderBottom: "1px solid rgba(0,0,0,.06)" }}>
                 <HhPageChips pages={pages} active={cur} onPick={pick} />
@@ -548,9 +586,7 @@ export default function HifdhProgramHome() {
                 <MushafPageView
                   page={cur}
                   fontSize={qSize}
-                  halves={hpSegmentFor(cur, portion)}
-                  coverOutside
-                  fitHeight={64 + (pages.length > 1 ? 64 : 0) + (showSubmit ? 84 : 0) + 24}
+                  fitHeight={64 + (pages.length > 1 ? 64 : 0) + (hhHalfHint(cur, portion) ? 44 : 0) + (showSubmit ? 84 : 0) + 24}
                   seamless
                   onBackground={setPageBg}
                 />
