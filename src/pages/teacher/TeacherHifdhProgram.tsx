@@ -11,7 +11,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { useToast } from "@/hooks/use-toast";
 import { SURAHS } from "@/components/hifdh/surahData";
-import { hpUnit, hpFromUnit, hpUnitsFor, hpUnitsOf, hpPortionFromUnits, hpPortionLabel, HP_AMOUNTS } from "@/lib/hifdhPortion";
+import { hpUnit, hpFromUnit, hpUnitsFor, hpUnitsOf, hpPortionFromUnits, hpPortionLabel, HP_AMOUNTS, hpReviewRange, hpUnitsLabel } from "@/lib/hifdhPortion";
 import { Loader2, Video, Check, RotateCcw, ChevronLeft, ChevronRight, BookOpen, ClipboardCheck, CheckCheck } from "lucide-react";
 
 const tpDb = supabase as any;
@@ -99,6 +99,7 @@ export default function TeacherHifdhProgram() {
   const [program, setProgram] = useState<Record<string, any>>({});
   const [levels, setLevels] = useState<Record<string, any>>({});
   const [tasks, setTasks] = useState<any[]>([]);
+  const [passedAll, setPassedAll] = useState<any[]>([]);
   const [reviewAsg, setReviewAsg] = useState<any[]>([]);
   const [reviews, setReviews] = useState<Record<string, any>>({});
   const [logs, setLogs] = useState<Record<string, { days: number; avg: number | null }>>({});
@@ -146,14 +147,16 @@ export default function TeacherHifdhProgram() {
     // (every enrolled student is loaded for staff: students now get their weekly portions automatically, with or without a read-along group)
     if (sids.length) {
       const weekEnd = tpShift(week, 1);
-      const [pf, pg, lv, tk, rv, lg] = await Promise.all([
+      const [pf, pg, lv, tk, rv, lg, pa] = await Promise.all([
         tpDb.from("profiles").select("user_id,full_name").in("user_id", sids),
         tpDb.from("hifdh_program").select("*").in("student_id", sids).order("created_at", { ascending: false }),
         tpDb.from("hifdh_levels").select("*"),
         tpDb.from("hifdh_memorization_tasks").select("*").in("student_id", sids).eq("week_start", week),
         tpDb.from("hifdh_weekly_reviews").select("*").in("student_id", sids).eq("week_start", week),
         tpDb.from("hifdh_daily_logs").select("student_id,completed,avg_score,log_date").in("student_id", sids).gte("log_date", week).lt("log_date", weekEnd),
+        tpDb.from("hifdh_memorization_tasks").select("student_id,page_from,page_to,half_from,half_to").in("student_id", sids).eq("status", "passed"),
       ]);
+      setPassedAll(pa.data || []);
       const nm: Record<string, string> = {};
       (pf.data || []).forEach((p: any) => (nm[p.user_id] = p.full_name || "Unnamed"));
       setNames(nm);
@@ -177,7 +180,7 @@ export default function TeacherHifdhProgram() {
       Object.entries(agg).forEach(([k, v]) => (out[k] = { days: v.days, avg: v.n ? Math.round(v.sum / v.n) : null }));
       setLogs(out);
     } else {
-      setTasks([]); setReviews({}); setLogs({}); setProgram({});
+      setTasks([]); setReviews({}); setLogs({}); setProgram({}); setPassedAll([]);
     }
     setLoading(false);
   }, [user?.id, isAdmin, week]);
@@ -527,6 +530,14 @@ export default function TeacherHifdhProgram() {
               ))}
               {tk.length === 0 && <TpPill text="No memorization portions" color={TP_MUTED} />}
             </div>
+            {(() => {
+              const rr = hpReviewRange(passedAll.filter((t) => t.student_id === sid));
+              return (
+                <div style={{ margin: "0 0 10px", padding: "8px 10px", borderRadius: 10, background: "#fbf3da", border: `1px solid ${TP_AMBER}55`, fontSize: 12, color: TP_INK }}>
+                  <b>Review portion:</b> {rr ? `${hpPortionLabel(rr)} · round ${rr.round} · ${hpUnitsLabel(rr.units)} of 5 pages` : "nothing memorized yet"}
+                </div>
+              );
+            })()}
             <input placeholder="Note for the student (optional)" value={notes[sid] ?? rv?.notes ?? ""} onChange={(e) => setNotes({ ...notes, [sid]: e.target.value })}
               style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${TP_LINE}`, borderRadius: 10, padding: "9px 10px", fontSize: 13, marginBottom: 10 }} />
             <div style={{ display: "flex", gap: 6 }}>
