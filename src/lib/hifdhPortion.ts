@@ -65,3 +65,24 @@ export const HP_AMOUNTS: { units: number; label: string }[] = [
   { units: 6, label: "3 pages" },
   { units: 8, label: "4 pages" },
 ];
+
+/** Weekly review covers everything memorized in the current round of 5 pages (10 half-pages).
+ *  It grows as the student moves forward and, once 5 pages are memorized, the next memorized portion starts a new round. */
+export const HP_REVIEW_CYCLE = 10;
+
+export const hpReviewRange = (passed: HifdhPortion[]) => {
+  if (!passed.length) return null;
+  const rs = passed.map(hpUnitsOf);
+  const base = Math.min(...rs.map((r) => r.start));
+  const end = Math.max(...rs.map((r) => r.end));
+  const total = end - base + 1;
+  if (total <= 0) return null;
+  const round = Math.floor((total - 1) / HP_REVIEW_CYCLE);
+  const start = base + round * HP_REVIEW_CYCLE;
+  const units = end - start + 1;
+  return { ...hpPortionFromUnits(start, units), units, round: round + 1 };
+};
+
+/** "3½ pages" for a count of half-pages */
+export const hpUnitsLabel = (units: number) =>
+  units % 2 === 0 ? `${units / 2} page${units === 2 ? "" : "s"}` : `${Math.floor(units / 2) ? Math.floor(units / 2) : ""}½ page${units > 2 ? "s" : ""}`;
