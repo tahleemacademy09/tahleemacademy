@@ -245,6 +245,15 @@ export default function TeacherHifdhProgram() {
     joinClass({ id: sid, title: sub?.title || "Hifdh Read-Along", title_ar: sub?.title_ar || "" });
   };
 
+  // Each ustadh hosts the weekly review in their own private room (their assigned students join it, nobody else)
+  const openReviewRoom = async () => {
+    setBusy(true);
+    const { data, error } = await tpDb.rpc("hifdh_review_room", { p_ustadh: user!.id });
+    setBusy(false);
+    if (error || !data) return toast({ title: "Couldn't open your review room", description: error?.message, variant: "destructive" });
+    joinClass(data);
+  };
+
   const mark = (m: any, result: "passed" | "repeat") => {
     const r = hpPortionFromUnits(rangeOf(m.student_id).start, rangeOf(m.student_id).units);
     const existing = taskFor(m.student_id, slot);
@@ -481,6 +490,9 @@ export default function TeacherHifdhProgram() {
         <div style={{ fontSize: 13, color: TP_MUTED }}>
           {reviewAsg.length ? "Students randomly assigned to you for the weekly review." : "Weekly review."} Grade each student once this week{settings?.review_days?.length ? " (review days: " + settings.review_days.map((d: number) => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][d - 1]).join(", ") + ")" : ""}.
           Pass moves them to the next pages. Fail means they repeat the same portion and receive the fine at close-out.
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <TpBtn small disabled={busy} onClick={openReviewRoom}><Video size={14} /> Open my review room</TpBtn>
         </div>
       </TpCard>
 
