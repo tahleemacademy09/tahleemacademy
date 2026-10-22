@@ -12,7 +12,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { useToast } from "@/hooks/use-toast";
 import MushafPageView from "@/components/hifdh/MushafPageView";
-import { hpPortionLabel, hpPagesOf, hpSegmentFor, hpUnitsFor } from "@/lib/hifdhPortion";
+import { hpPortionLabel, hpPagesOf, hpSegmentFor, hpUnitsFor, hpReviewRange, hpUnitsLabel, HP_REVIEW_CYCLE } from "@/lib/hifdhPortion";
 import {
   Loader2, BookOpen, Repeat, Video, CheckCircle2, Clock, AlertTriangle, Lock, Flame, Layers,
   ChevronUp, ChevronDown, Users, CalendarDays, BarChart3,
@@ -150,7 +150,6 @@ export default function HifdhProgramHome() {
   const [busy, setBusy] = useState(false);
   const [selSlot, setSelSlot] = useState<number>(1);
   const [selPage, setSelPage] = useState<number | null>(null);
-  const [recId, setRecId] = useState<string | null>(null);
   const [recPage, setRecPage] = useState<number | null>(null);
   const [focus, setFocus] = useState<null | "memorize" | "review">(null);
   const [pageBg, setPageBg] = useState("#fffdf6");
@@ -179,7 +178,7 @@ export default function HifdhProgramHome() {
       hhDb.from("hifdh_settings").select("*").eq("id", true).maybeSingle(),
       hhDb.from("hifdh_memorization_tasks").select("*").eq("student_id", sid).eq("week_start", week).order("slot"),
       hhDb.from("hifdh_memorization_tasks").select("*").eq("student_id", sid).eq("status", "passed")
-        .order("week_start", { ascending: false }).order("slot", { ascending: false }).limit(6),
+        .order("week_start", { ascending: true }).order("slot", { ascending: true }).limit(500),
       hhDb.from("hifdh_weekly_reviews").select("*").eq("student_id", sid).eq("week_start", week).maybeSingle(),
       hhDb.from("hifdh_fines").select("*").eq("student_id", sid).eq("status", "unpaid"),
       hhDb.from("hifdh_daily_logs").select("log_date,completed").eq("student_id", sid).eq("completed", true)
@@ -229,7 +228,8 @@ export default function HifdhProgramHome() {
     setSelPage(null);
   }, [tasks.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const recTask = recent.find((r) => r.id === recId) || recent[0];
+  // everything memorized in the current round of 5 pages
+  const recTask = useMemo(() => hpReviewRange(recent), [recent]);
   const recPages = useMemo(() => (recTask ? hpPagesOf(recTask) : []), [recTask]);
   const recShown = recPage && recPages.includes(recPage) ? recPage : recPages[0];
 
@@ -516,44 +516,35 @@ export default function HifdhProgramHome() {
                 )}
               </HhCard>
 
-              {/* What they have memorized */}
-              <div style={{ fontSize: 12, color: HH_MUTED, padding: "2px 2px 0" }}>What you have memorized</div>
-              {recent.length === 0 ? (
+              {/* Review portion: all memorized parts in the current round of 5 pages */}
+              <div style={{ fontSize: 12, color: HH_MUTED, padding: "2px 2px 0" }}>What you will recite in your review</div>
+              {!recTask ? (
                 <HhCard>
                   <div style={{ fontSize: 13, color: HH_MUTED }}>
-                    Portions appear here once your ustadh marks them memorized. That is what you will recite in your review.
+                    Portions appear here once your ustadh marks them memorized. Your review then covers everything you have memorized, up to 5 pages, before it starts again.
                   </div>
                 </HhCard>
               ) : (
-                <>
-                  <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 2 }}>
-                    {recent.map((r) => {
-                      const on = recTask?.id === r.id;
-                      return (
-                        <button key={r.id} onClick={() => { setRecId(r.id); setRecPage(null); }} style={{
-                          flex: "0 0 auto", minWidth: 132, textAlign: "left", background: "#fff", borderRadius: 14, padding: 10, cursor: "pointer",
-                          border: `2px solid ${on ? HH_GOLD : HH_LINE}`,
-                        }}>
-                          <div style={{ fontSize: 10, fontWeight: 800, color: HH_MUTED, letterSpacing: 0.6 }}>
-                            {r.week_start === week ? "THIS WEEK" : `WEEK OF ${r.week_start.slice(5)}`}
-                          </div>
-                          <div style={{ fontSize: 14, fontWeight: 800, color: HH_INK, marginTop: 4 }}>{hpPortionLabel(r)}</div>
-                        </button>
-                      );
-                    })}
+                <HhCard pad="12px 10px">
+                  <div style={{ padding: "0 4px 10px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: HH_INK }}>{hpPortionLabel(recTask)}</span>
+                      <HhFocusBtn onClick={() => setFocus("review")} />
+                    </div>
+                    <div style={{ fontSize: 12, color: HH_MUTED, margin: "4px 0 8px" }}>
+                      Round {recTask.round} · {hpUnitsLabel(recTask.units)} of 5 pages
+                    </div>
+                    <div style={{ height: 8, borderRadius: 99, background: HH_LINE, overflow: "hidden" }}>
+                      <div style={{ width: `${Math.min(100, (recTask.units / HP_REVIEW_CYCLE) * 100)}%`, height: "100%", background: recTask.units >= HP_REVIEW_CYCLE ? HH_OK : HH_GOLD }} />
+                    </div>
+                    {recTask.units >= HP_REVIEW_CYCLE && (
+                      <div style={{ fontSize: 12, color: HH_OK, fontWeight: 700, marginTop: 6 }}>5 pages complete — your next memorized portion starts a new round.</div>
+                    )}
                   </div>
-                  {recTask && (
-                    <HhCard pad="12px 10px">
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 4px 8px" }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: HH_MUTED }}>{hpPortionLabel(recTask)}</span>
-                        <HhFocusBtn onClick={() => setFocus("review")} />
-                      </div>
-                      {recPages.length > 1 && <HhPageChips pages={recPages} active={recShown!} onPick={setRecPage} />}
-                      {recShown && <HhHint text={hhHalfHint(recShown, recTask)} />}
-                      {recShown && <MushafPageView page={recShown} fontSize={qSize} />}
-                    </HhCard>
-                  )}
-                </>
+                  {recPages.length > 1 && <HhPageChips pages={recPages} active={recShown!} onPick={setRecPage} />}
+                  {recShown && <HhHint text={hhHalfHint(recShown, recTask)} />}
+                  {recShown && <MushafPageView page={recShown} fontSize={qSize} />}
+                </HhCard>
               )}
 
                 </>
