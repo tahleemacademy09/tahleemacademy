@@ -998,7 +998,7 @@ export class ChunkTranscriber {
       if (blob.size < 3000) { this.check(); return; }          // empty / near-silent
       this.inflight++;
       tarteelEngine.transcribeBlob(blob)
-        .then((r) => { if (r.error) this.failed = true; else if (r.text) { this.results.set(mySeq, r.text); this.save(); } })
+        .then((r) => { if (r.error) { this.failed = true; console.warn(`[Tarteel] chunk ${mySeq} failed:`, r.error); } else if (r.text) { this.results.set(mySeq, r.text); this.save(); console.info(`[Tarteel] chunk ${mySeq} (${r.audioSecs?.toFixed(1)}s, ${this.seamOverlap.get(mySeq) ? "overlapped" : "pause cut"}):`, r.text); } })
         .catch(() => { this.failed = true; })
         .finally(() => { this.inflight--; this.check(); });
     };
