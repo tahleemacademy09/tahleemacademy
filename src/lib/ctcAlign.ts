@@ -426,3 +426,43 @@ export function scorePrefix(
   }
   return { lastGood, scores, complete };
 }
+
+
+/* ───────────────────────── PARTIAL recitation (audio shorter than the text) ───────────────────────── */
+
+export interface PartialAlign {
+  /** one score per input word; words beyond what the audio could hold get mean -20 ("not heard") */
+  scores: CtcWordScore[];
+  /** how many words (from the start) the alignment path completely covers */
+  covered: number;
+}
+
+/**
+ * Grade a recitation that covers only the START of the text (student recited part of the assignment).
+ * Forced alignment needs frames >= tokens, so for short audio we (1) keep only as many words as could possibly
+ * fit in T frames, (2) align them with the open-ended prefix aligner, (3) mark every word after that as "not heard".
+ */
+export function scoreWordsPartial(
+  logp: Float32Array, T: number, V: number, wordTokens: number[][], blank: number, frameDur: number,
+): PartialAlign | null {
+  let used = 0, keep = 0;
+  while (keep < wordTokens.length && used + wordTokens[keep].length <= T) { used += wordTokens[keep].length; keep++; }
+  if (keep === 0) return null;
+  const head = wordTokens.slice(0, keep);
+  const r = ctcPrefixAlign(logp, T, V, head.flat(), blank);
+  if (!r) return null;
+  const scores = scoreWords(logp, V, r.path, head, frameDur);
+  const endTok = r.endState % 2 === 1 ? (r.endState - 1) / 2 : r.endState / 2 - 1;
+  let seen = 0, covered = 0;
+  for (let j = 0; j < head.length; j++) { seen += head[j].length; if (seen - 1 > endTok) break; covered = j + 1; }
+  for (let j = keep; j < wordTokens.length; j++) scores.push({ mean: -20, min: -20, start: null, end: null });
+  return { scores, covered };
+}
+
+export function alignWordsPartial(
+  logp: Float32Array, T: number, V: number, words: string[], enc: SpEncoder, vocab: SpVocab, frameDur: number,
+): PartialAlign | null {
+  const keep = vocab.hasDiacritics;
+  const wt = words.map((w) => enc.encode(keep ? modelForm(w, true, vocab.shaddaFirst) : stripMarks(w)));
+  return scoreWordsPartial(logp, T, V, wt, vocab.blank, frameDur);
+}

@@ -9,7 +9,7 @@
   Messages out: {type:"progress"|"ready"|"load_error"|"result"|"selftest_result"|"live_progress"}
 */
 import {
-  alignWords, chunkAtQuiet, greedyText, logMel, modelForm, scorePrefix, SpEncoder, SR, stripMarks,
+  alignWords, alignWordsPartial, chunkAtQuiet, greedyText, logMel, modelForm, scorePrefix, SpEncoder, SR, stripMarks,
   type CtcWordScore, type SpVocab,
 } from "./ctcAlign";
 
@@ -136,10 +136,17 @@ async function check(m: { id: number; audio: Float32Array; words: string[]; basm
     useBasmalah = stripMarks(m.words[0] || "") !== "بسم" && heard.startsWith("بسماللهالرحمنالرحيم");
   }
   const refWords = useBasmalah ? [...BASMALAH, ...m.words] : m.words;
-  const scored = alignWords(lp, T, V, refWords, enc, vocab, frameDur);
-  if (!scored) throw new Error("audio_too_short_for_text");
+  let scored = alignWords(lp, T, V, refWords, enc, vocab, frameDur);
+  // The audio is too short to hold the WHOLE text (student recited only the first part of the assignment):
+  // grade what was recited; every word after it is reported as "not heard" instead of failing the whole check.
+  let partial = false, covered = refWords.length;
+  if (!scored) {
+    const p = alignWordsPartial(lp, T, V, refWords, enc, vocab, frameDur);
+    if (!p) throw new Error("audio_too_short_for_text");
+    scored = p.scores; partial = true; covered = Math.max(0, p.covered - (useBasmalah ? BASMALAH.length : 0));
+  }
   const words: CtcWordScore[] = useBasmalah ? scored.slice(BASMALAH.length) : scored;
-  ctx.postMessage({ type: "result", id: m.id, words, greedy, secs, frames: T, ms: Date.now() - t0, basmalah: useBasmalah });
+  ctx.postMessage({ type: "result", id: m.id, words, greedy, secs, frames: T, ms: Date.now() - t0, basmalah: useBasmalah, partial, covered });
 }
 
 async function selftest(m: { id: number; testsUrl: string }) {

@@ -20,6 +20,9 @@ export interface CtcCheckResult {
   frames: number;
   ms: number;
   basmalah: boolean;
+  /** audio was shorter than the text: only the first `covered` words were graded, the rest count as not recited */
+  partial?: boolean;
+  covered?: number;
 }
 export type CtcStatusState = { status: "idle" | "loading" | "ready" | "error"; loadedMB?: number; totalMB?: number; error?: string };
 
