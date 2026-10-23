@@ -5,10 +5,11 @@
   Messages in : {type:"load", vocabUrl, modelUrl, ortBase}
                 {type:"check", id, audio, words, basmalah}
                 {type:"selftest", id, testsUrl}
-  Messages out: {type:"progress"|"ready"|"load_error"|"result"|"selftest_result"}
+                {type:"live_start", words} · {type:"live_audio", samples} · {type:"live_stop"}   (live reveal while reciting)
+  Messages out: {type:"progress"|"ready"|"load_error"|"result"|"selftest_result"|"live_progress"}
 */
 import {
-  alignWords, chunkAtQuiet, greedyText, logMel, SpEncoder, SR, stripMarks,
+  alignWords, chunkAtQuiet, greedyText, logMel, modelForm, scorePrefix, SpEncoder, SR, stripMarks,
   type CtcWordScore, type SpVocab,
 } from "./ctcAlign";
 
@@ -18,6 +19,8 @@ let session: any = null;
 let vocab: SpVocab | null = null;
 let enc: SpEncoder | null = null;
 let inNames: string[] = [];
+let runLock: Promise<unknown> = Promise.resolve();
+const exclusive = <T,>(fn: () => Promise<T>): Promise<T> => { const p = runLock.then(fn, fn); runLock = p.catch(() => {}); return p; };
 
 const BASMALAH = ["بِسْمِ", "ٱللَّهِ", "ٱلرَّحْمَٰنِ", "ٱلرَّحِيمِ"];
 
@@ -72,7 +75,7 @@ async function runChunk(audio: Float32Array): Promise<{ lp: Float32Array; T: num
     [inNames[0]]: new ort.Tensor("float32", data, [1, 80, frames]),
     [inNames[1]]: new ort.Tensor("int64", BigInt64Array.from([BigInt(frames)]), [1]),
   };
-  const outs = await session.run(feeds);
+  const outs = await exclusive(() => session.run(feeds));
   let t: any = null;
   for (const k of Object.keys(outs)) {
     const o = outs[k];
@@ -140,8 +143,126 @@ async function selftest(m: { id: number; testsUrl: string }) {
   ctx.postMessage({ type: "selftest_result", id: m.id, total: tests.length, bad: bad.slice(0, 20), badCount: bad.length });
 }
 
+/* ───────────────────────── LIVE reveal ─────────────────────────
+   While the student recites, the page streams mic audio (16 kHz mono) here. About every half second the worker takes
+   the audio since a few words ago, runs the model, and asks "how many of the NEXT page words have been said so far?"
+   (open-ended CTC alignment). Words are only reported once fully said, and the window start keeps moving forward so
+   the cost of a step does not grow while the student recites. The real grading still happens once, on Stop. */
+interface LiveState {
+  words: string[];
+  tok: (number[] | undefined)[];
+  pageHasBas: boolean;
+  buf: Float32Array; bufBase: number; len: number;   // audio kept: absolute samples [bufBase, bufBase+len)
+  total: number; lastRunEnd: number;
+  winStart: number;                                    // absolute sample the next window starts at
+  commit: number;                                      // words before this index are settled (never re-scored)
+  shown: number;                                       // words revealed so far
+  busy: boolean;
+}
+let live: LiveState | null = null;
+const BAS_HEARD = "بسماللهالرحمنالرحيم";
+
+function wordTokens(L: LiveState, i: number): number[] {
+  let t = L.tok[i];
+  if (!t) {
+    const w = L.words[i] ?? "";
+    t = enc!.encode(vocab!.hasDiacritics ? modelForm(w, true, vocab!.shaddaFirst) : stripMarks(w));
+    L.tok[i] = t;
+  }
+  return t;
+}
+
+function liveBegin(m: { words: string[] }) {
+  if (!session || !vocab || !enc) return;
+  live = {
+    words: m.words, tok: [], pageHasBas: stripMarks(m.words[0] || "") === "بسم",
+    buf: new Float32Array(SR * 60), bufBase: 0, len: 0, total: 0, lastRunEnd: 0,
+    winStart: 0, commit: 0, shown: 0, busy: false,
+  };
+}
+
+function liveAppend(samples: Float32Array) {
+  const L = live;
+  if (!L) return;
+  if (L.len + samples.length > L.buf.length) {
+    const nb = new Float32Array(Math.max(L.buf.length * 2, L.len + samples.length));
+    nb.set(L.buf.subarray(0, L.len));
+    L.buf = nb;
+  }
+  L.buf.set(samples, L.len);
+  L.len += samples.length; L.total += samples.length;
+  void liveRun();
+}
+
+async function liveRun() {
+  const L = live;
+  if (!L || L.busy) return;
+  L.busy = true;
+  try {
+    while (live === L && L.total - L.lastRunEnd >= SR * 0.4) await liveStep(L);
+  } catch (e: any) {
+    // a failed live step must never break recording — the final check on Stop is what counts
+    ctx.postMessage({ type: "live_progress", shown: L.shown, error: String(e?.message ?? e) });
+  } finally { L.busy = false; }
+}
+
+async function liveStep(L: LiveState) {
+  const t0 = Date.now();
+  const end = L.total;
+  L.lastRunEnd = end;
+  // stuck for a long time (silence, or reciting something unlike the page): jump forward instead of growing the window
+  if (end - L.winStart > 20 * SR) { L.commit = Math.max(L.commit, L.shown); L.winStart = end - 6 * SR; }
+  const w0 = Math.max(L.winStart, L.bufBase);
+  const audio = L.buf.slice(w0 - L.bufBase, end - L.bufBase);
+  if (audio.length < SR * 0.6) return;
+  const { lp, T, V } = await runChunk(audio);
+  if (live !== L) return;
+  if (V !== vocab!.pieces.length + 1) throw new Error(`vocab mismatch: model ${V} vs vocab ${vocab!.pieces.length + 1}`);
+  const secs = audio.length / SR, frameDur = secs / T;
+
+  // the Basmalah recited before a page that does not start with it: align it too, then ignore it
+  let bas = false;
+  if (L.commit === 0 && !L.pageHasBas) {
+    const heard = stripMarks(greedyText(lp, T, V, vocab!)).replace(/\s+/g, "");
+    bas = heard.startsWith(BAS_HEARD);
+  }
+  const k = Math.max(8, Math.min(40, Math.ceil(secs * 3) + 6));
+  const idx: number[] = [];
+  if (bas) for (let i = 0; i < BASMALAH.length; i++) idx.push(1000 + i);   // 1000+ = basmalah slots (see wordTokens)
+  for (let i = L.commit; i < Math.min(L.words.length, L.commit + k); i++) idx.push(i);
+  if (!idx.length) return;
+  const wt = idx.map((i) => (i >= 1000 ? enc!.encode(vocab!.hasDiacritics ? modelForm(BASMALAH[i - 1000], true, vocab!.shaddaFirst) : stripMarks(BASMALAH[i - 1000])) : wordTokens(L, i)));
+  const r = scorePrefix(lp, T, V, wt, vocab!.blank, frameDur);
+  if (!r) return;
+  const skip = bas ? BASMALAH.length : 0;
+  const rel = r.lastGood + 1 - skip;
+  if (rel > 0 && L.commit + rel > L.shown) {
+    L.shown = Math.min(L.words.length, L.commit + rel);
+    ctx.postMessage({ type: "live_progress", shown: L.shown, ms: Date.now() - t0, secs });
+  }
+  // settle words that are 3+ behind the newest one, and move the window to where the first unsettled word starts
+  const settled = L.shown - 3;
+  if (L.shown > 0 && settled > L.commit) {
+    const j = skip + (settled - L.commit);
+    const st = r.scores[j]?.start;
+    if (st !== null && st !== undefined) {
+      L.winStart = w0 + Math.max(0, Math.floor((st - 0.5) * SR));
+      L.commit = settled;
+      const drop = L.winStart - L.bufBase - SR * 2;     // keep 2 s of slack, forget the rest
+      if (drop > SR * 5) { L.buf.copyWithin(0, drop, L.len); L.len -= drop; L.bufBase += drop; }
+    }
+  }
+}
+
 let chain: Promise<void> = Promise.resolve();
-ctx.onmessage = (ev: MessageEvent) => { chain = chain.then(() => handle(ev.data)).catch(() => {}); };
+ctx.onmessage = (ev: MessageEvent) => {
+  const m = ev.data;
+  // live messages bypass the queue: audio must be stored the moment it arrives, never wait behind a running step
+  if (m.type === "live_audio") { liveAppend(m.samples); return; }
+  if (m.type === "live_start") { liveBegin(m); return; }
+  if (m.type === "live_stop") { live = null; return; }
+  chain = chain.then(() => handle(m)).catch(() => {});
+};
 async function handle(m: any) {
   try {
     if (m.type === "load") await load(m);

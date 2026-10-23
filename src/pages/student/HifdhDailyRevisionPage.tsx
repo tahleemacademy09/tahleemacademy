@@ -14,7 +14,7 @@
 //    → testing (MCQ, ≥75% gate) → complete (submit + notify)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -45,6 +45,7 @@ import RecitationResultGrid from "@/components/hifdh/RecitationResultGrid";
 // CTC-ONLY TEST MODE (?ctc=1): the FastConformer-Quran CTC check replaces Tarteel on this page.
 import CtcTestPanel from "@/components/hifdh/CtcTestPanel";
 import { ctcEngine, ctcEnabled, type CtcCheckResult, type CtcStatusState } from "@/lib/ctcEngine";
+import { LiveMic, revealFor } from "@/lib/ctcLive";
 import { gradeFromCtc, registerCtcGrading, ctcScoringFor, ctcAnalysisFor } from "@/lib/ctcGrading";
 import { refTokens } from "@/lib/recitationCompare";
 // Transcription is 100% on-device Tarteel (no Groq / no server upload): the whole recording is transcribed once on Stop.
@@ -1486,6 +1487,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [ctcRes, setCtcRes] = useState<CtcCheckResult | null>(null);
   const [ctcErr, setCtcErr] = useState("");
   const ctcResRef = useRef<CtcCheckResult | null>(null);
+  // LIVE reveal (?ctc=1): the printed page is covered while reciting and uncovers word by word as the CTC model hears them.
+  const [liveShown, setLiveShown] = useState(0);
+  const liveMicRef = useRef<LiveMic | null>(null);
+  const stopLive = () => { try { liveMicRef.current?.stop(); } catch { /* noop */ } liveMicRef.current = null; try { ctcEngine.liveEnd(); } catch { /* noop */ } };
+  useEffect(() => () => { stopLive(); }, []);
+  const liveProg = useMemo(() => revealFor(pageAyahs as any, liveShown), [pageAyahs, liveShown]);
   const checkerState: TarteelProgress = ctcOn ? (ctcEng as TarteelProgress) : tarteelState;
   useEffect(() => {
     if (phase !== "reading") return;
@@ -1875,6 +1882,17 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       // the last few seconds are left to process at Stop.
       try { bgRef.current?.cancel(); } catch { /* noop */ }
       if (!ctcEnabled()) try { const bg = new ChunkTranscriber(stream, mime, 8000, 4000, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(carryOverSecs > 0); bgRef.current = bg; } catch { bgRef.current = null; }
+      // LIVE reveal: tap the same mic stream, feed 16 kHz audio to the CTC worker, and uncover words as they are heard.
+      // Never blocks or breaks recording — if anything here fails the recitation is still recorded and graded on Stop.
+      if (ctcEnabled()) {
+        try {
+          setLiveShown(0);
+          const liveWords = refTokens(pageAyahsRef.current.map((a: any) => a.text).join(" "));
+          ctcEngine.liveBegin(liveWords, (n) => setLiveShown((p) => (n > p ? n : p)));
+          const lm = new LiveMic(); liveMicRef.current = lm;
+          lm.start(stream, (x) => ctcEngine.liveFeed(x)).catch((e) => console.warn("[HifdhDaily] live mic failed:", e));
+        } catch (e) { console.warn("[HifdhDaily] live reveal unavailable:", e); }
+      }
       setIsRecording(true);
       setRecSecs(carryOverSecs);           // resume from previous session's elapsed time
       recSecsRef.current = carryOverSecs;
@@ -2115,6 +2133,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
   const handleStop = () => {
     stopTsRef.current = performance.now();
+    stopLive();
     setIsRecording(false);
     clearInterval(timerRef.current);
     if (mediaRecRef.current && mediaRecRef.current.state !== "inactive") {
@@ -2991,7 +3010,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         <>
           <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:isRecording?"14px 16px":"10px 14px",
             display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
-            <BackBtn onClick={()=>{if(mediaRecRef.current&&mediaRecRef.current.state!=="inactive"){mediaRecRef.current.stop();mediaRecRef.current=null;}setIsRecording(false);clearInterval(timerRef.current);setPhase("intro");}}/>
+            <BackBtn onClick={()=>{stopLive();if(mediaRecRef.current&&mediaRecRef.current.state!=="inactive"){mediaRecRef.current.stop();mediaRecRef.current=null;}setIsRecording(false);clearInterval(timerRef.current);setPhase("intro");}}/>
             {!isRecording && (
               <div style={{flex:1,minWidth:0,display:"flex",alignItems:"center",gap:8}}>
                 <Target size={15} color={GOLD} style={{flexShrink:0}}/>
@@ -3044,7 +3063,21 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 is intentionally hidden during recitation: the student should be
                 reciting from memory, not reading along with a blurred page, and
                 the previous blurred-word layout was confusing/distracting. */}
-            {isRecording && (
+            {isRecording && ctcOn && (todayPages[isGroup?0:pageIdx]) && (
+              <div style={{flex:1,minHeight:0,position:"relative"}}>
+                <SwipePages key={"live-"+(isGroup?"group":String(todayPages[pageIdx]))}
+                  pages={isGroup?todayPages:[todayPages[pageIdx]]}
+                  viewIdx={isGroup?viewIdx:0} onView={isGroup?setViewIdx:()=>{}}
+                  onBg={setPrintedBg} clipFor={clipFor}
+                  coverUnrevealed revealProgress={liveProg}/>
+                <span style={{position:"absolute",top:8,left:"50%",transform:"translateX(-50%)",padding:"3px 12px",borderRadius:20,
+                  background:`${PASS}22`,border:`1px solid ${PASS}66`,fontSize:12,fontWeight:900,color:PASS,
+                  fontVariantNumeric:"tabular-nums",pointerEvents:"none"}}>
+                  🔴 {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
+                </span>
+              </div>
+            )}
+            {isRecording && !ctcOn && (
               <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
                 gap:22,padding:"48px 20px",minHeight:"50vh"}}>
                 <div style={{position:"relative",width:128,height:128,display:"flex",alignItems:"center",justifyContent:"center"}}>

@@ -88,6 +88,7 @@ class CtcEngine {
         if (m.type === "progress") this.emit({ status: "loading", loadedMB: m.loaded / 1048576, totalMB: m.total / 1048576 });
         else if (m.type === "ready") { this.emit({ status: "ready" }); resolve(); }
         else if (m.type === "load_error") fail(m.error);
+        else if (m.type === "live_progress") { if (m.error) console.warn("[ctc] live step failed:", m.error); else this.live?.cb(m.shown, m.ms); }
         else if (m.type === "result" || m.type === "selftest_result") { const cb = this.pending.get(m.id); if (cb) { this.pending.delete(m.id); cb(m); } }
       };
       this.worker.onerror = (ev) => { if (this.state.status !== "ready") fail((ev as ErrorEvent).message || "worker_error"); };
@@ -112,6 +113,32 @@ class CtcEngine {
     await this.load();
     const audio = await decodeBlobTo16k(blob);
     return this.call<CtcCheckResult>({ type: "check", audio, words: refWords, basmalah: opts.basmalah ?? "auto" }, [audio.buffer]);
+  }
+
+  /* ── LIVE reveal: stream mic audio in while the student recites; cb(shownWords) fires as words are heard ── */
+  private live: { words: string[]; cb: (shown: number, ms?: number) => void; ready: boolean; queue: Float32Array[] } | null = null;
+
+  /** Start a live session. Safe to call before the model has finished loading: audio is queued and replayed. */
+  liveBegin(words: string[], cb: (shown: number, ms?: number) => void) {
+    const L = { words, cb, ready: false, queue: [] as Float32Array[] };
+    this.live = L;
+    this.load().then(() => {
+      if (this.live !== L || !this.worker) return;
+      this.worker.postMessage({ type: "live_start", words });
+      for (const q of L.queue) this.worker.postMessage({ type: "live_audio", samples: q }, [q.buffer]);
+      L.queue = []; L.ready = true;
+    }).catch(() => { /* status shows the load error; recording itself is unaffected */ });
+  }
+  /** 16 kHz mono samples from the microphone. */
+  liveFeed(samples: Float32Array) {
+    const L = this.live;
+    if (!L) return;
+    if (!L.ready || !this.worker) { if (L.queue.length < 4000) L.queue.push(samples); return; }
+    this.worker.postMessage({ type: "live_audio", samples }, [samples.buffer]);
+  }
+  liveEnd() {
+    this.live = null;
+    try { this.worker?.postMessage({ type: "live_stop" }); } catch { /* noop */ }
   }
 
   /** Tokenizer self-test against public/ctc/sp_tests.json (made by the real sentencepiece). Run from the console: __ctcSelfTest() */

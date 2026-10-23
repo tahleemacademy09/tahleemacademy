@@ -348,3 +348,81 @@ export function greedyText(logp: Float32Array, T: number, V: number, vocab: SpVo
   }
   return out.split(WORD_START).join(" ").replace(/\s+/g, " ").trim();
 }
+
+/* ───────────────────────── LIVE (open-ended) alignment ───────────────────────── */
+
+/**
+ * Like ctcForcedAlign, but the audio does NOT have to contain every token: the student is still reciting, so only
+ * the first part of `tokens` has been said. The path may stop at ANY lattice state; the best-scoring stop wins
+ * (words not said yet would have to be squeezed in over frames the model hears as silence, which costs a lot, so
+ * the path naturally stops right after the last word that really was said).
+ * Returns the state per frame plus the lattice state the path ends in.
+ */
+export function ctcPrefixAlign(
+  logp: Float32Array, T: number, V: number, tokens: number[], blank: number,
+): { path: Int32Array; endState: number } | null {
+  const L = tokens.length;
+  if (L === 0 || T < 1) return null;
+  const S = 2 * L + 1;
+  const ext = new Int32Array(S).fill(blank);
+  for (let i = 0; i < L; i++) ext[2 * i + 1] = tokens[i];
+  const allow2 = new Uint8Array(S);
+  for (let s = 2; s < S; s++) allow2[s] = ext[s] !== blank && ext[s] !== ext[s - 2] ? 1 : 0;
+
+  let prev = new Float64Array(S).fill(NEG);
+  let cur = new Float64Array(S).fill(NEG);
+  const bp = new Uint8Array(T * S);
+  prev[0] = logp[blank];
+  if (S > 1) prev[1] = logp[ext[1]];
+  for (let t = 1; t < T; t++) {
+    const row = t * V;
+    for (let s = 0; s < S; s++) {
+      let best = prev[s], arg = 0;
+      if (s >= 1 && prev[s - 1] > best) { best = prev[s - 1]; arg = 1; }
+      if (s >= 2 && allow2[s] && prev[s - 2] > best) { best = prev[s - 2]; arg = 2; }
+      cur[s] = best + logp[row + ext[s]];
+      bp[t * S + s] = arg;
+    }
+    const tmp = prev; prev = cur; cur = tmp;
+  }
+  let end = 0;
+  for (let s = 1; s < S; s++) if (prev[s] > prev[end]) end = s;
+  const path = new Int32Array(T);
+  let s = end;
+  for (let t = T - 1; t >= 0; t--) { path[t] = s; s -= bp[t * S + s]; }
+  return { path, endState: end };
+}
+
+export interface LivePrefixResult {
+  /** index (into the words passed in) of the last word that was fully said AND heard well, or -1 */
+  lastGood: number;
+  /** per-word scores (words after the end of the path are meaningless) */
+  scores: CtcWordScore[];
+  /** how many words the path completely covers */
+  complete: number;
+}
+
+/**
+ * Which of the next few page words has the student said so far?
+ * A word counts once every one of its tokens is inside the path (so a word that is still being spoken is NOT
+ * revealed early) and its mean score is not "bad" (< `bad`).
+ */
+export function scorePrefix(
+  logp: Float32Array, T: number, V: number, wordTokens: number[][], blank: number, frameDur: number, bad = -3,
+): LivePrefixResult | null {
+  const flat = wordTokens.flat();
+  const r = ctcPrefixAlign(logp, T, V, flat, blank);
+  if (!r) return null;
+  const scores = scoreWords(logp, V, r.path, wordTokens, frameDur);
+  // last token fully inside the path: state 2i+1 → token i, state 2i (blank after token i-1) → token i-1
+  const endTok = r.endState % 2 === 1 ? (r.endState - 1) / 2 : r.endState / 2 - 1;
+  let seen = 0, lastGood = -1, complete = 0;
+  for (let j = 0; j < wordTokens.length; j++) {
+    seen += wordTokens[j].length;
+    if (seen - 1 > endTok) break;
+    complete = j + 1;
+    const m = scores[j]?.mean;
+    if (m !== null && m !== undefined && m >= bad) lastGood = j;
+  }
+  return { lastGood, scores, complete };
+}
