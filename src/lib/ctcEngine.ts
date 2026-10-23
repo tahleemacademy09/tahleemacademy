@@ -3,7 +3,6 @@
   With ?ctc=1 this REPLACES Tarteel on the daily revision page: nothing from Tarteel is loaded or run there.
   Opt-in per device:  open the page with ?ctc=1  (back to Tarteel with ?ctc=0).  First use downloads ~132 MB (then cached).
 */
-import { Capacitor } from "@capacitor/core";
 import { ctcStatus, type CtcWordScore } from "@/lib/ctcAlign";
 
 export { ctcStatus };
@@ -28,12 +27,8 @@ export function ctcEnabled(): boolean {
   try {
     const q = new URLSearchParams(window.location.search).get("ctc");
     if (q === "1") localStorage.setItem("ctc_shadow", "1");
-    if (q === "0") localStorage.setItem("ctc_shadow", "off");
-    const v = localStorage.getItem("ctc_shadow");
-    if (v === "1") return true;
-    // Installed Android/iOS app: there is no address bar to type ?ctc=1 into, so it is on by default there.
-    // (?ctc=0 stores "off" and switches it back to Tarteel on that device.)
-    return Capacitor.isNativePlatform() && v !== "off";
+    if (q === "0") localStorage.removeItem("ctc_shadow");
+    return localStorage.getItem("ctc_shadow") === "1";
   } catch { return false; }
 }
 
