@@ -14,7 +14,7 @@ function build(said: number) {
 describe("partial recitation (audio shorter than the text)", () => {
   it("grades the recited words and marks the rest not heard", () => {
     const { lp, T } = build(2);                       // 2 of 5 words said, T < total tokens + repeats
-    const r = scoreWordsPartial(lp, T, V, words, blank, 0.08)!;
+    const r = scoreWordsPartial(lp, T, V, [words], blank, 0.08)!;
     expect(r.scores).toHaveLength(5);
     expect(r.covered).toBe(2);
     expect(r.scores[0].mean!).toBeGreaterThan(-1);
@@ -23,7 +23,7 @@ describe("partial recitation (audio shorter than the text)", () => {
   });
   it("never needs more words than frames", () => {
     const { lp, T } = build(1);
-    const r = scoreWordsPartial(lp, T, V, words, blank, 0.08)!;
+    const r = scoreWordsPartial(lp, T, V, [words], blank, 0.08)!;
     expect(r.scores).toHaveLength(5);
   });
 });
