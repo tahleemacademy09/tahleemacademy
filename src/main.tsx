@@ -1,0 +1,130 @@
+// ── Polyfill: crypto.randomUUID() ────────────────────────────────────────
+if (typeof crypto !== "undefined" && !crypto.randomUUID) {
+  (crypto as any).randomUUID = function(): string {
+    return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c: any) =>
+      (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)
+    ) as `${string}-${string}-${string}-${string}-${string}`;
+  };
+}
+
+import { createRoot } from "react-dom/client";
+import { HelmetProvider } from "react-helmet-async";
+import App from "./App.tsx";
+import "./index.css";
+import { initNativeApp } from "./lib/nativeApp";
+import { initOta } from "./lib/otaUpdate";
+import { Capacitor } from "@capacitor/core";
+import { isReloadSafe, onReloadSafe } from "./lib/reloadGuard";
+import { bootstrapTheme } from "./lib/theme";
+import { initDiagnostics, logDiag } from "./lib/diagnostics";
+import { initRoutePrefetch } from "./lib/routePrefetch";
+
+// Record how this document load happened (fresh nav / reload / back-forward)
+// and wire up hidden/resume tracking — as early as possible, before
+// anything else that could throw and prevent it from ever running.
+initDiagnostics();
+
+// Apply the saved dark-mode preference immediately, on every page —
+// not just after a user has visited Settings in the current session.
+bootstrapTheme();
+
+initNativeApp();
+initOta();
+
+// Pre-download page code on hover/touch and while idle so taps feel instant.
+initRoutePrefetch();
+
+// ── PWA Service Worker Registration ──────────────────────────────────────────
+//
+// v6 change: this used to auto-postMessage SKIP_WAITING the instant a new
+// worker reached "installed", which forced an immediate reload of whatever
+// the user was doing (login, a live class, an exam). Now: a genuine update
+// (new worker installed while one already controls this page) just dispatches
+// "ta:update-available" for the UI to show a banner. NOTHING is ever applied
+// automatically in the background or while the tab is hidden — an update is
+// only ever applied (and the resulting reload only ever fires) at a moment
+// the user is actually looking at the app AND nothing sensitive is locked.
+// This is intentional: applying while hidden and reloading later on return
+// is what caused the v6.0 regression (reload-on-resume on every page).
+if ("serviceWorker" in navigator && !Capacitor.isNativePlatform()) {
+  let waitingWorker: ServiceWorker | null = null;
+  let updateRequested = false;
+  let reloading = false;
+
+  function tryApplyUpdate() {
+    if (!updateRequested || !waitingWorker || reloading) return;
+    if (!isReloadSafe()) return;                          // mid-class/mid-exam — wait
+    if (document.visibilityState !== "visible") return;    // never touch anything while hidden
+    waitingWorker.postMessage({ type: "SKIP_WAITING" });
+  }
+
+  // Public hook for the UpdateAvailableBanner component.
+  window.addEventListener("ta:apply-update", () => {
+    updateRequested = true;
+    tryApplyUpdate(); // applies now if already safe+visible; otherwise the listeners below retry
+  });
+
+  onReloadSafe(tryApplyUpdate);
+  document.addEventListener("visibilitychange", tryApplyUpdate);
+
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("/sw.js", { scope: "/" })
+      .then((registration) => {
+        registration.update();
+        registration.addEventListener("updatefound", () => {
+          const newWorker = registration.installing;
+          if (!newWorker) return;
+          newWorker.addEventListener("statechange", () => {
+            if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+              // Detecting an update no longer applies it automatically — it only
+              // surfaces the banner. The ONLY thing that can ever call
+              // tryApplyUpdate() now is the user explicitly tapping "Update" in
+              // that banner (see the ta:apply-update listener above). Nothing
+              // reloads on its own — not on resume, not on redeploy, not while
+              // hidden. A plain manual browser refresh will also pick up the
+              // new version as soon as every open tab of the app has closed
+              // (standard service-worker behavior) — or immediately, the
+              // moment you tap Update.
+              waitingWorker = newWorker;
+              window.dispatchEvent(new Event("ta:update-available"));
+            }
+            // If there's no existing controller, this is a first install —
+            // the browser activates it on its own; nothing for us to do.
+          });
+        });
+      })
+      .catch((err) => console.warn("[Tahleem SW] Registration failed:", err));
+
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (reloading) return;
+      reloading = true;
+      // This can only fire as a direct result of tryApplyUpdate() above, which
+      // is itself gated on visible+safe — so reloading immediately here is
+      // always the expected, already-consented-to outcome, never a surprise.
+      logDiag("sw_update_reload", { path: location.pathname });
+      window.location.replace(window.location.href);
+    });
+  });
+}
+
+// ── Mount React ───────────────────────────────────────────────────────────────
+const root = createRoot(document.getElementById("root")!);
+root.render(
+  <HelmetProvider>
+    <App />
+  </HelmetProvider>
+);
+
+// ── Signal splash screen to dismiss ──────────────────────────────────────────
+// Dispatched after React renders so index.html knows to fade out the splash.
+// requestIdleCallback (or rAF fallback) ensures the first React paint has
+// actually flushed to screen before we fade — avoids a flash of unstyled content.
+const dismissSplash = () => {
+  window.dispatchEvent(new Event("ta-app-ready"));
+};
+if ("requestIdleCallback" in window) {
+  requestIdleCallback(dismissSplash, { timeout: 1500 });
+} else {
+  requestAnimationFrame(() => requestAnimationFrame(dismissSplash));
+}

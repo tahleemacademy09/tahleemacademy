@@ -1,0 +1,3055 @@
+/*  src/pages/student/Majlis.tsx
+    FIXED + WhatsApp 100% — Complete rewrite
+    Fixes: broken media links, upload errors, capture attribute,
+    missing bounce animation, bubble tails, attachment sheet,
+    seen_by guard, scroll FAB positioning, desktop layout.
+    UI: Full WhatsApp-grade redesign.
+*/
+import React, { useEffect, useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
+import {
+  Send, MessageCircle, Reply, CheckCheck, Mic,
+  Image, Paperclip, Smile, ArrowLeft, FileText, Trash2,
+  X, Pin, Search, Star, Volume2, VolumeX, MoreVertical,
+  Copy, Camera, Check, Download, Loader2, Forward,
+  Edit2, CheckSquare, Square, AtSign, ChevronRight,
+  Menu, Settings, User, Bell, HelpCircle, Bookmark,
+  ChevronDown, Archive, Eye, Moon, LayoutDashboard, Users,
+  Music, MapPin, Phone, File, Clock,
+  Video, UserCircle2, BarChart3, Sticker as StickerIcon, Ban, PhoneIncoming, PhoneOff as PhoneOffIcon, Link2, PlayCircle, Radio
+} from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import CreateChannelDialog from "@/components/majlis/CreateChannelDialog";
+import BrowseChannelsDialog from "@/components/majlis/BrowseChannelsDialog";
+import GroupInfoPanel from "@/components/majlis/GroupInfoPanel";
+import MajlisCallRoom from "@/components/majlis/MajlisCallRoom";
+import MajlisLive from "@/components/majlis/MajlisLive";
+import { useMajlisLive } from "@/components/majlis/useMajlisLive";
+import type { ChatChannel, ChatMessage, UserProfile } from "@/components/majlis/types";
+
+// ── Constants ────────────────────────────────────────────────────
+const WA_GREEN      = "#075E54";
+const WA_LIGHT_GREEN= "#128C7E";
+const WA_TEAL       = "#25D366";
+const WA_BUBBLE_ME  = "#DCF8C6";
+const BUCKET        = "majlis-media";
+const EDIT_WINDOW   = 15 * 60 * 1000;
+const LP_DELAY      = 500;
+
+// Profiles of other people go through a SECURITY DEFINER RPC because students are not
+// allowed to read other students' rows in `profiles` directly (that is why names showed
+// as "Unknown"). Falls back to a direct select (works for your own row / teachers).
+const PROFILE_COLS = "user_id,full_name,full_name_ar,avatar_url,level,email,student_id";
+const loadProfiles = async (ids:string[]): Promise<UserProfile[]> => {
+  const uniq=[...new Set((ids||[]).filter(Boolean))];
+  if(uniq.length===0) return [];
+  try{
+    const {data,error}=await supabase.rpc("majlis_profiles" as any,{p_ids:uniq});
+    if(!error&&Array.isArray(data)) return data as unknown as UserProfile[];
+  }catch{}
+  try{
+    const {data}=await supabase.from("profiles").select(PROFILE_COLS).in("user_id",uniq);
+    return (data||[]) as unknown as UserProfile[];
+  }catch{ return []; }
+};
+const normalizeChannel = (c:any):ChatChannel => (c&&c.type==="direct"?{...c,type:"dm"}:c) as ChatChannel;
+
+// ── Types ────────────────────────────────────────────────────────
+interface AppSettings {
+  lastSeen: "everyone"|"contacts"|"nobody";
+  readReceipts: boolean;
+  profilePhotoVisibility: "everyone"|"contacts"|"nobody";
+  notifications: boolean;
+  notifSound: boolean;
+  notifVibration: boolean;
+  notifPreview: boolean;
+  wallpaper: string;
+  fontSize: "small"|"medium"|"large";
+  enterSends: boolean;
+  darkMode: boolean;
+  about: string;
+}
+
+const DEFAULT_SETTINGS: AppSettings = {
+  lastSeen:"everyone", readReceipts:true, profilePhotoVisibility:"everyone",
+  notifications:true, notifSound:true, notifVibration:true, notifPreview:true,
+  wallpaper:"default", fontSize:"medium", enterSends:true, darkMode:false, about:"Available",
+};
+
+const WALLPAPERS = [
+  { id:"default",  label:"Classic",  bg:"#FAFAF5", pattern:`url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none'%3E%3Cg fill='%23064E3B' fill-opacity='0.03'%3E%3Cpath d='M30 0l30 30-30 30L0 30z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")` },
+  { id:"dark",     label:"Dark",     bg:"#0d1117", pattern:undefined },
+  { id:"warm",     label:"Warm",     bg:"#f5ede0", pattern:undefined },
+  { id:"forest",   label:"Forest",   bg:"#1a2e1a", pattern:undefined },
+  { id:"ocean",    label:"Ocean",    bg:"#e8f4f8", pattern:undefined },
+  { id:"lavender", label:"Lavender", bg:"#f0e6ff", pattern:undefined },
+  { id:"mint",     label:"Mint",     bg:"#e8f5e9", pattern:undefined },
+  { id:"sand",     label:"Sand",     bg:"#fef9e7", pattern:undefined },
+];
+const FONT_SIZES: Record<string,string> = { small:"12px", medium:"14px", large:"16px" };
+
+// ── Sound Engine ─────────────────────────────────────────────────
+const createSound = (type:"send"|"receive"|"notification"|"open"|"error") => {
+  try {
+    const ctx = new (window.AudioContext||(window as any).webkitAudioContext)();
+    const playTone = (freq:number,start:number,dur:number,vol:number,wave:OscillatorType="sine") => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type=wave; o.frequency.value=freq;
+      g.gain.setValueAtTime(0,ctx.currentTime+start);
+      g.gain.linearRampToValueAtTime(vol,ctx.currentTime+start+0.01);
+      g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+start+dur);
+      o.start(ctx.currentTime+start); o.stop(ctx.currentTime+start+dur+0.05);
+    };
+    if (type==="send")         { playTone(880,0,0.08,0.15); playTone(1320,0.09,0.08,0.12); }
+    else if (type==="receive") { playTone(1046,0,0.1,0.18); playTone(784,0.11,0.1,0.15); }
+    else if (type==="notification") { playTone(1200,0,0.15,0.2); playTone(900,0.16,0.1,0.1); }
+    else if (type==="open")    { playTone(600,0,0.06,0.08); }
+    else if (type==="error")   { playTone(200,0,0.2,0.15,"square"); }
+    setTimeout(()=>ctx.close(),2000);
+  } catch(_){}
+};
+const playSound = (type:"send"|"receive"|"notification"|"open"|"error", enabled=true) => {
+  if (!enabled) return;
+  createSound(type);
+};
+
+interface MajlisProps { adminMode?:boolean; onBroadcast?:()=>void; onCreateChannel?:()=>void; }
+
+// ── Media helpers ────────────────────────────────────────────────
+const isStoragePath = (s:string) =>
+  s && !s.startsWith("http") && !s.startsWith("data:") && !s.startsWith("blob:");
+
+const resolveMedia = async (path:string): Promise<string|null> => {
+  if (!path) return null;
+  if (!isStoragePath(path)) return path;
+  try {
+    const { data:pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
+    if (pub?.publicUrl) {
+      // Quick HEAD check — if bucket is public this succeeds instantly
+      try {
+        const r = await fetch(pub.publicUrl,{method:"HEAD",signal:AbortSignal.timeout(3000)});
+        if (r.ok || r.status===304) return pub.publicUrl;
+      } catch{}
+      // Still return publicUrl as fallback even if HEAD fails (offline/CORS)
+      return pub.publicUrl;
+    }
+  } catch{}
+  try {
+    const { data } = await supabase.storage.from(BUCKET).createSignedUrl(path,86400);
+    return data?.signedUrl||null;
+  } catch { return null; }
+};
+
+// ── FormattedText ────────────────────────────────────────────────
+const FormattedText = ({ text, sz }:{ text:string; sz:string }) => {
+  const html = text
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/\*([^*\n]+)\*/g,"<b>$1</b>")
+    .replace(/_([^_\n]+)_/g,"<i>$1</i>")
+    .replace(/~([^~\n]+)~/g,"<s>$1</s>")
+    .replace(/`([^`\n]+)`/g,`<code style="background:rgba(0,0,0,0.08);padding:1px 5px;border-radius:3px;font-family:monospace;font-size:11px">$1</code>`)
+    .replace(/@(\w[\w ]*)/g,`<span style="color:${WA_GREEN};font-weight:700">@$1</span>`);
+  return <span style={{ whiteSpace:"pre-wrap", fontSize:sz, wordBreak:"normal", overflowWrap:"break-word", lineHeight:1.35 }} dangerouslySetInnerHTML={{ __html:html }} />;
+};
+
+// ── Date separator ───────────────────────────────────────────────
+const DateSep = ({ date }:{ date:string }) => {
+  const d = new Date(date);
+  const today = new Date();
+  const yesterday = new Date(); yesterday.setDate(today.getDate()-1);
+  let label = d.toLocaleDateString([],{day:"2-digit",month:"long",year:"numeric"});
+  if (d.toDateString()===today.toDateString()) label="Today";
+  else if (d.toDateString()===yesterday.toDateString()) label="Yesterday";
+  return (
+    <div style={{ display:"flex",justifyContent:"center",margin:"10px 0" }}>
+      <span style={{ background:"rgba(255,255,255,0.88)",color:"#555",fontSize:11,padding:"4px 12px",borderRadius:12,boxShadow:"0 1px 2px rgba(0,0,0,.1)" }}>{label}</span>
+    </div>
+  );
+};
+
+// Stable waveform heights
+const WAVE_H = [4,8,14,10,18,12,6,16,9,13,7,15,11,5,17,8,12,6,14,10,7,16,9,13,5,18,11,8];
+
+// ── AudioMsg ─────────────────────────────────────────────────────
+const AudioMsg = ({ path, text }:{ path?:string|null; text?:string|null }) => {
+  const [url,setUrl]           = useState<string|null>(null);
+  const [err,setErr]           = useState(false);
+  const [playing,setPlaying]   = useState(false);
+  const [progress,setProgress] = useState(0);
+  const [duration,setDuration] = useState(0);
+  const [speed,setSpeed]       = useState(1);
+  const [listened,setListened] = useState(false);
+  const audioRef = useRef<HTMLAudioElement|null>(null);
+
+  useEffect(()=>{
+    if (text?.startsWith("data:audio")) { setUrl(text); return; }
+    const src = path||"";
+    if (!src) { setErr(true); return; }
+    if (src.startsWith("http")||src.startsWith("blob:")) { setUrl(src); return; }
+    resolveMedia(src).then(u => u?setUrl(u):setErr(true));
+  },[path,text]);
+
+  useEffect(()=>{
+    if (!url) return;
+    const a = new Audio(url);
+    audioRef.current=a;
+    a.onloadedmetadata=()=>setDuration(isNaN(a.duration)?0:a.duration);
+    a.ontimeupdate    =()=>setProgress(a.duration?(a.currentTime/a.duration)*100:0);
+    a.onended         =()=>{ setPlaying(false); setProgress(0); setListened(true); };
+    a.onerror         =()=>setErr(true);
+    return ()=>{ a.pause(); a.src=""; };
+  },[url]);
+
+  const toggle = () => {
+    const a=audioRef.current; if(!a) return;
+    if(playing){ a.pause(); setPlaying(false); }
+    else{ a.playbackRate=speed; a.play().catch(()=>setErr(true)); setPlaying(true); setListened(true); }
+  };
+  const cycleSpeed = () => {
+    const next=speed===1?1.5:speed===1.5?2:1;
+    setSpeed(next);
+    if(audioRef.current) audioRef.current.playbackRate=next;
+  };
+  const scrub = (e:React.MouseEvent<HTMLDivElement>) => {
+    const rect=e.currentTarget.getBoundingClientRect();
+    const pct=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
+    if(audioRef.current?.duration){ audioRef.current.currentTime=pct*audioRef.current.duration; setProgress(pct*100); }
+  };
+  const fmtT=(s:number)=>isNaN(s)||!isFinite(s)?"0:00":`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+  const barColor=listened?"#53BDEB":WA_GREEN;
+  const elapsed=duration>0?(progress/100)*duration:0;
+
+  if(err) return <span style={{fontSize:11,opacity:.6,fontStyle:"italic"}}>Audio unavailable</span>;
+  if(!url) return (
+    <div style={{display:"flex",alignItems:"center",gap:8,minWidth:200,opacity:.6}}>
+      <div style={{width:36,height:36,borderRadius:"50%",background:WA_GREEN,display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <Loader2 style={{width:16,height:16,color:"#fff",animation:"spin .8s linear infinite"}}/>
+      </div>
+      <span style={{fontSize:12}}>Loading audio…</span>
+    </div>
+  );
+  return (
+    <div style={{display:"flex",alignItems:"center",gap:8,minWidth:220,maxWidth:260}}>
+      <button onClick={toggle} style={{width:40,height:40,borderRadius:"50%",background:WA_GREEN,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+        {playing
+          ? <div style={{display:"flex",gap:2}}><div style={{width:3,height:14,background:"#fff",borderRadius:2}}/><div style={{width:3,height:14,background:"#fff",borderRadius:2}}/></div>
+          : <div style={{width:0,height:0,borderTop:"7px solid transparent",borderBottom:"7px solid transparent",borderLeft:"12px solid #fff",marginLeft:4}}/>
+        }
+      </button>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:1.5,height:30,cursor:"pointer"}} onClick={scrub}>
+          {WAVE_H.map((h,i)=>(
+            <div key={i} style={{width:2.5,height:h*1.7,borderRadius:2,background:(progress>0&&(i/WAVE_H.length)*100<progress)?barColor:"#ccc",flexShrink:0,transition:"background .15s"}}/>
+          ))}
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}>
+          <span style={{fontSize:10,color:"#999"}}>{playing||progress>0?fmtT(elapsed):fmtT(duration)}</span>
+          <button onClick={cycleSpeed} style={{background:"none",border:"1px solid #ddd",borderRadius:10,padding:"1px 6px",fontSize:9,cursor:"pointer",color:"#888",fontWeight:700}}>{speed}×</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ── ImageMsg ─────────────────────────────────────────────────────
+const ImageMsg = ({ path, text }:{ path?:string|null; text?:string|null }) => {
+  const [url,setUrl]           = useState<string|null>(null);
+  const [err,setErr]           = useState(false);
+  const [loading,setLoading]   = useState(true);
+  const [fullscreen,setFullscreen] = useState(false);
+
+  useEffect(()=>{
+    if (text?.startsWith("data:image")) { setUrl(text); setLoading(false); return; }
+    const src=path||text||"";
+    if (!src) { setErr(true); setLoading(false); return; }
+    if (src.startsWith("http")) { setUrl(src); setLoading(false); return; }
+    resolveMedia(src).then(u=>{ u?setUrl(u):setErr(true); setLoading(false); });
+  },[path,text]);
+
+  if(loading) return (
+    <div style={{width:200,height:140,borderRadius:10,background:"#e8e8e8",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <Loader2 style={{width:22,height:22,color:"#aaa",animation:"spin .8s linear infinite"}}/>
+    </div>
+  );
+  if(err||!url) return (
+    <div style={{width:160,height:100,borderRadius:10,background:"#f0f0f0",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6}}>
+      <Image style={{width:24,height:24,color:"#bbb"}}/>
+      <span style={{fontSize:10,color:"#bbb"}}>Image unavailable</span>
+    </div>
+  );
+  return (
+    <>
+      <img src={url} style={{maxWidth:240,maxHeight:280,borderRadius:10,cursor:"pointer",display:"block",objectFit:"cover",width:"100%"}} alt="" loading="lazy"
+        onClick={()=>setFullscreen(true)} onError={()=>setErr(true)}/>
+      {fullscreen&&(
+        <div onClick={()=>setFullscreen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.95)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <img src={url} style={{maxWidth:"100vw",maxHeight:"100vh",objectFit:"contain"}} alt=""/>
+          <button onClick={()=>setFullscreen(false)} style={{position:"absolute",top:16,right:16,background:"rgba(255,255,255,.2)",border:"none",borderRadius:"50%",width:40,height:40,color:"#fff",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+          <a href={url} download style={{position:"absolute",top:16,right:66,background:"rgba(255,255,255,.2)",border:"none",borderRadius:"50%",width:40,height:40,color:"#fff",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",textDecoration:"none"}}>
+            <Download size={18} color="#fff"/>
+          </a>
+        </div>
+      )}
+    </>
+  );
+};
+
+// ── VideoMsg ─────────────────────────────────────────────────────
+const VideoMsg = ({ path, text }:{ path?:string|null; text?:string|null }) => {
+  const [url,setUrl]=useState<string|null>(null);
+  const [err,setErr]=useState(false);
+  const [loading,setLoading]=useState(true);
+  useEffect(()=>{
+    if(text?.startsWith("data:video")){setUrl(text);setLoading(false);return;}
+    const src=path||"";
+    if(!src){setErr(true);setLoading(false);return;}
+    if(src.startsWith("http")){setUrl(src);setLoading(false);return;}
+    resolveMedia(src).then(u=>{u?setUrl(u):setErr(true);setLoading(false);});
+  },[path,text]);
+  if(loading) return <div style={{width:220,height:140,borderRadius:10,background:"#e8e8e8",display:"flex",alignItems:"center",justifyContent:"center"}}><Loader2 style={{width:22,height:22,color:"#aaa",animation:"spin .8s linear infinite"}}/></div>;
+  if(err||!url) return <div style={{width:160,height:100,borderRadius:10,background:"#f0f0f0",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6}}><Video style={{width:24,height:24,color:"#bbb"}}/><span style={{fontSize:10,color:"#bbb"}}>Video unavailable</span></div>;
+  return <video src={url} controls playsInline style={{maxWidth:250,maxHeight:280,borderRadius:10,display:"block",width:"100%"}}/>;
+};
+
+// ── LocationMsg ──────────────────────────────────────────────────
+const LocationMsg = ({ text }:{ text?:string|null }) => {
+  let lat=0,lng=0;
+  try{ const j=JSON.parse(text||"{}"); lat=j.lat; lng=j.lng; }catch{ return <span style={{fontSize:12,opacity:.6}}>Location unavailable</span>; }
+  const mapsUrl=`https://www.google.com/maps?q=${lat},${lng}`;
+  const staticImg=`https://maps.googleapis.com/maps/api/staticmap?center=${lat},${lng}&zoom=15&size=260x140&markers=color:red|${lat},${lng}`;
+  return (
+    <a href={mapsUrl} target="_blank" rel="noopener noreferrer" style={{display:"block",textDecoration:"none",width:240,borderRadius:10,overflow:"hidden",background:"#eee"}}>
+      <img src={staticImg} alt="Location" style={{width:"100%",height:120,objectFit:"cover",display:"block"}} onError={e=>{(e.target as HTMLImageElement).style.display="none";}}/>
+      <div style={{display:"flex",alignItems:"center",gap:6,padding:"8px 10px",background:"rgba(0,0,0,.05)"}}>
+        <MapPin size={14} color="#E74C3C"/><span style={{fontSize:12,color:"#333",fontWeight:600}}>Shared location</span>
+      </div>
+    </a>
+  );
+};
+
+// ── ContactMsg ───────────────────────────────────────────────────
+const ContactMsg = ({ text, onOpen }:{ text?:string|null; onOpen:(userId:string)=>void }) => {
+  let data:any={};
+  try{ data=JSON.parse(text||"{}"); }catch{ return <span style={{fontSize:12,opacity:.6}}>Contact unavailable</span>; }
+  return (
+    <div onClick={()=>onOpen(data.user_id)} style={{display:"flex",alignItems:"center",gap:10,background:"rgba(0,0,0,0.06)",padding:"10px 12px",borderRadius:10,minWidth:190,cursor:"pointer"}}>
+      {data.avatar_url
+        ? <img src={data.avatar_url} style={{width:38,height:38,borderRadius:"50%",objectFit:"cover"}} alt=""/>
+        : <div style={{width:38,height:38,borderRadius:"50%",background:WA_GREEN,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700}}>{(data.name||"?").charAt(0).toUpperCase()}</div>
+      }
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:13,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{data.name||"Contact"}</div>
+        <div style={{fontSize:11,color:"#888"}}>Tap to view contact</div>
+      </div>
+      <UserCircle2 size={18} color={WA_GREEN}/>
+    </div>
+  );
+};
+
+// ── PollMsg ──────────────────────────────────────────────────────
+const PollMsg = ({ messageId, text, myUserId, onVote }:{ messageId:string; text?:string|null; myUserId?:string; onVote:(messageId:string,i:number)=>void }) => {
+  const [votes,setVotes]=useState<{user_id:string;option_index:number}[]>([]);
+  let data:any={question:"",options:[] as string[]};
+  try{ data=JSON.parse(text||"{}"); }catch{ /* noop */ }
+
+  useEffect(()=>{
+    let active=true;
+    supabase.from("majlis_poll_votes" as any).select("user_id,option_index").eq("message_id",messageId).then(({data})=>{
+      if(active) setVotes((data as any)||[]);
+    });
+    const ch=supabase.channel(`poll-${messageId}`)
+      .on("postgres_changes" as any,{event:"*",schema:"public",table:"majlis_poll_votes",filter:`message_id=eq.${messageId}`},()=>{
+        supabase.from("majlis_poll_votes" as any).select("user_id,option_index").eq("message_id",messageId).then(({data})=>{ if(active) setVotes((data as any)||[]); });
+      }).subscribe();
+    return ()=>{active=false;supabase.removeChannel(ch);};
+  },[messageId]);
+
+  const myVote=votes.find(v=>v.user_id===myUserId)?.option_index;
+  const total=votes.length;
+
+  return (
+    <div style={{minWidth:220,maxWidth:260}}>
+      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+        <BarChart3 size={15} color={WA_GREEN}/><span style={{fontSize:13,fontWeight:700}}>{data.question}</span>
+      </div>
+      {(data.options||[]).map((opt:string,i:number)=>{
+        const count=votes.filter(v=>v.option_index===i).length;
+        const pct=total>0?Math.round((count/total)*100):0;
+        const mine=myVote===i;
+        return (
+          <button key={i} onClick={()=>onVote(messageId,i)} style={{width:"100%",textAlign:"left",position:"relative",background:mine?"rgba(37,211,102,.15)":"rgba(0,0,0,.05)",border:mine?`1px solid ${WA_GREEN}`:"1px solid transparent",borderRadius:8,padding:"7px 10px",marginBottom:5,cursor:"pointer",overflow:"hidden"}}>
+            <div style={{position:"absolute",left:0,top:0,bottom:0,width:`${pct}%`,background:mine?"rgba(37,211,102,.18)":"rgba(0,0,0,.04)",transition:"width .3s"}}/>
+            <div style={{position:"relative",display:"flex",justifyContent:"space-between",fontSize:12.5}}>
+              <span>{mine&&"✓ "}{opt}</span><span style={{color:"#888"}}>{pct}%</span>
+            </div>
+          </button>
+        );
+      })}
+      <div style={{fontSize:10.5,color:"#888",marginTop:2}}>{total} vote{total!==1?"s":""}</div>
+    </div>
+  );
+};
+
+// ── LinkPreviewCard ────────────────────────────────────────────────
+const LinkPreviewCard = ({ preview, url }:{ preview:any; url:string }) => {
+  if(preview==="loading") return <div style={{display:"flex",alignItems:"center",gap:6,marginTop:6,fontSize:11,opacity:.6}}><Loader2 style={{width:12,height:12,animation:"spin .8s linear infinite"}}/> Loading preview…</div>;
+  if(!preview) return null;
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" style={{display:"block",marginTop:6,textDecoration:"none",borderRadius:8,overflow:"hidden",border:"1px solid rgba(0,0,0,.08)",maxWidth:250,background:"rgba(0,0,0,.03)"}}>
+      {preview.image&&<img src={preview.image} alt="" style={{width:"100%",height:100,objectFit:"cover",display:"block"}} onError={e=>{(e.target as HTMLImageElement).style.display="none";}}/>}
+      <div style={{padding:"6px 9px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:4,fontSize:9.5,color:"#888",textTransform:"uppercase",marginBottom:2}}><Link2 size={10}/>{preview.site_name}</div>
+        <div style={{fontSize:12,fontWeight:700,color:"#222",overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical" as any}}>{preview.title}</div>
+        {preview.description&&<div style={{fontSize:11,color:"#666",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical" as any}}>{preview.description}</div>}
+      </div>
+    </a>
+  );
+};
+
+// ── FileMsg ──────────────────────────────────────────────────────
+const FileMsg = ({ path, text }:{ path:string; text:string|null }) => {
+  const [dl,setDl] = useState(false);
+  const fn=text||path.split("/").pop()||"file";
+  const ext=fn.split(".").pop()?.toUpperCase()||"FILE";
+  const open=async()=>{ setDl(true); const u=await resolveMedia(path); setDl(false); if(u) window.open(u,"_blank"); else alert("File unavailable"); };
+  return (
+    <button onClick={open} style={{display:"flex",alignItems:"center",gap:10,background:"rgba(0,0,0,0.06)",border:"none",cursor:"pointer",padding:"8px 12px",borderRadius:10,minWidth:180,textAlign:"left"}}>
+      <div style={{width:40,height:40,borderRadius:10,background:WA_GREEN,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+        {dl?<Loader2 style={{width:18,height:18,color:"#fff",animation:"spin .8s linear infinite"}}/>:<FileText style={{width:18,height:18,color:"#fff"}}/>}
+      </div>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:150}}>{fn}</div>
+        <div style={{fontSize:10,color:"#888",marginTop:2}}>{ext} · tap to open</div>
+      </div>
+      <Download style={{width:14,height:14,color:"#666",flexShrink:0}}/>
+    </button>
+  );
+};
+
+// ── SwipeBubble: swipe right on a message to reply ──────────
+interface SwipeBubbleProps {
+  children: React.ReactNode;
+  onReply: () => void;
+  disabled?: boolean;
+  isMe: boolean;
+}
+const SwipeBubble = ({ children, onReply, disabled, isMe }:SwipeBubbleProps) => {
+  const wrapRef  = useRef<HTMLDivElement>(null);
+  const startX   = useRef(0);
+  const startY   = useRef(0);
+  const dragging = useRef(false);
+  const triggered= useRef(false);
+  const THRESHOLD = 55;
+
+  const onTouchStart = (e:React.TouchEvent) => {
+    if (disabled) return;
+    startX.current=e.touches[0].clientX;
+    startY.current=e.touches[0].clientY;
+    dragging.current=false; triggered.current=false;
+  };
+  const onTouchMove = (e:React.TouchEvent) => {
+    if (disabled) return;
+    const dx=e.touches[0].clientX - startX.current;
+    const dy=Math.abs(e.touches[0].clientY - startY.current);
+    if (!dragging.current) {
+      if (Math.abs(dx)>8 && dy<12) dragging.current=true;
+      else if (dy>12) return;
+    }
+    if (!dragging.current) return;
+    // Only swipe right (positive dx) to reply
+    const clamped=Math.max(0, Math.min(THRESHOLD+12, dx));
+    if (wrapRef.current) wrapRef.current.style.transform=`translateX(${clamped}px)`;
+    if (clamped>=THRESHOLD && !triggered.current) {
+      triggered.current=true;
+      if (navigator.vibrate) navigator.vibrate(35);
+    }
+  };
+  const onTouchEnd = () => {
+    if (!dragging.current) return;
+    if (wrapRef.current) {
+      wrapRef.current.style.transition="transform .2s cubic-bezier(.25,.46,.45,.94)";
+      wrapRef.current.style.transform="translateX(0)";
+      setTimeout(()=>{ if(wrapRef.current) wrapRef.current.style.transition=""; },220);
+    }
+    if (triggered.current) onReply();
+    dragging.current=false;
+  };
+  return (
+    <div ref={wrapRef} style={{position:"relative",display:"flex",flexDirection:isMe?"row-reverse":"row",alignItems:"center",minWidth:0,maxWidth:"100%"}}
+      onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
+      {/* Reply hint icon that appears as you swipe */}
+      <div style={{position:"absolute",left:isMe?"auto":"100%",right:isMe?"100%":"auto",padding:"0 6px",opacity:0,transform:"scale(.5)",transition:"opacity .15s,transform .15s",pointerEvents:"none"}}
+        id={`swipe-hint-${Math.random()}`}
+      >
+        <Reply size={18} color={WA_GREEN}/>
+      </div>
+      {children}
+    </div>
+  );
+};
+
+
+// ════════════════════════════════════════════════════════════════
+const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) => {
+  const { language }           = useLanguage();
+  const { user, profile, hasRole } = useAuth();
+  const { toast }              = useToast();
+  const navigate               = useNavigate();
+
+  // ── Settings ─────────────────────────────────────────────
+  // The Majlis settings screen was removed — the chat always uses the defaults.
+  const settings: AppSettings = DEFAULT_SETTINGS;
+
+  // ── Core state ────────────────────────────────────────────
+  const [channels,setChannels]                 = useState<ChatChannel[]>([]);
+  const [memberCounts,setMemberCounts]         = useState<Record<string,number>>({});
+  const [activeChannelId,setActiveChannelId]   = useState<string|null>(null);
+  const [messages,setMessages]                 = useState<ChatMessage[]>([]);
+  const [profiles,setProfiles]                 = useState<Record<string,UserProfile>>({});
+  const [allStudents,setAllStudents]           = useState<UserProfile[]>([]);
+  const [reactions,setReactions]               = useState<Record<string,Record<string,string[]>>>({});
+  const [pinnedMessages,setPinnedMessages]     = useState<ChatMessage[]>([]);
+  const [typingUsers,setTypingUsers]           = useState<string[]>([]);
+  const [starredMessages,setStarredMessages]   = useState<Set<string>>(new Set());
+  const [onlineUsers,setOnlineUsers]           = useState<Set<string>>(new Set());
+  const [unreadCounts,setUnreadCounts]         = useState<Record<string,number>>({});
+  const [channelLocked,setChannelLocked]       = useState(false);
+  const [loadingMessages,setLoadingMessages]   = useState(false);
+  const [uploading,setUploading]               = useState(false);
+
+  const [mutedChannels,setMutedChannels]     = useState<Set<string>>(()=>{ try{return new Set(JSON.parse(localStorage.getItem("majlis-muted")||"[]"));}catch{return new Set();} });
+  const [pinnedChannels,setPinnedChannels]   = useState<Set<string>>(()=>{ try{return new Set(JSON.parse(localStorage.getItem("majlis-pinned-ch")||"[]"));}catch{return new Set();} });
+  const [archivedChannels,setArchivedChannels] = useState<Set<string>>(()=>{ try{return new Set(JSON.parse(localStorage.getItem("majlis-archived")||"[]"));}catch{return new Set();} });
+
+  // ── Input state ───────────────────────────────────────────
+  const [input,setInput]                   = useState("");
+  const [replyTo,setReplyTo]               = useState<ChatMessage|null>(null);
+  const [editingMsg,setEditingMsg]         = useState<ChatMessage|null>(null);
+  const [isRecording,setIsRecording]       = useState(false);
+  const [recordingTime,setRecordingTime]   = useState(0);
+  const [recordingLocked,setRecordingLocked] = useState(false);
+  const [recordingCancelled,setRecordingCancelled] = useState(false);
+  const cancelledRef = useRef(false);
+  const [mentionList,setMentionList]       = useState<UserProfile[]>([]);
+  const [mentionQuery,setMentionQuery]     = useState<string|null>(null);
+  const [disappearTimer,setDisappearTimer] = useState(0);
+
+  // ── UI state ──────────────────────────────────────────────
+  const [mobileShowChat,setMobileShowChat]           = useState(false);
+  const [selectMode,setSelectMode]                   = useState(false);
+  const [selectedIds,setSelectedIds]                 = useState<Set<string>>(new Set());
+  const [forwardMsg,setForwardMsg]                   = useState<ChatMessage|null>(null);
+  const [showForwardSheet,setShowForwardSheet]       = useState(false);
+  const [showCreateDialog,setShowCreateDialog]       = useState(false);
+  const [showBrowseChannels,setShowBrowseChannels]   = useState(false);
+  // Al-Majlis Live (meetings / urgent discussions, run through the classroom)
+  const [showMajlisLive,setShowMajlisLive]           = useState(false);
+  const majlisLive = useMajlisLive();
+  useEffect(()=>{ if(new URLSearchParams(window.location.search).get("live")==="1") setShowMajlisLive(true); },[]);
+  const [showNewSheet,setShowNewSheet]               = useState(false);
+  const [newDmSearch,setNewDmSearch]                 = useState("");
+  const [activeFilter,setActiveFilter]               = useState<"all"|"unread"|"groups"|"announcements">("all");
+  const [showGroupInfo,setShowGroupInfo]             = useState(false);
+  const [selectedMember,setSelectedMember]           = useState<any>(null);
+  const [showStudentProfile,setShowStudentProfile]   = useState(false);
+  const [showChatSearch,setShowChatSearch]           = useState(false);
+  const [chatSearchQuery,setChatSearchQuery]         = useState("");
+  const [sidebarSearch,setSidebarSearch]             = useState("");
+  const [searchTab,setSearchTab]                     = useState<"messages"|"contacts"|"groups">("contacts");
+  const [showMessageMenu,setShowMessageMenu]         = useState<{id:string;x:number;y:number}|null>(null);
+  const [showDeleteSheet,setShowDeleteSheet]         = useState<{id:string;isOwner:boolean}|null>(null);
+  const [showPinnedBar,setShowPinnedBar]             = useState(true);
+  const [showEmojiBar,setShowEmojiBar]               = useState(false);
+  // ── FIXED: Attachment sheet replaces bare camera/paperclip labels ──
+  const [showAttachSheet,setShowAttachSheet]         = useState(false);
+  const [editingChannel,setEditingChannel]           = useState(false);
+  const [editName,setEditName]                       = useState("");
+  const [editDesc,setEditDesc]                       = useState("");
+  const [showHeaderMenu,setShowHeaderMenu]           = useState(false);
+  const [showSidebarMenu,setShowSidebarMenu]       = useState(false);
+  const [showPeople,setShowPeople]                   = useState(false);
+  const [peopleSearch,setPeopleSearch]               = useState("");
+  const [directory,setDirectory]                     = useState<(UserProfile&{kind?:string})[]>([]);
+  const [directoryLoaded,setDirectoryLoaded]         = useState(false);
+  const [selectableId,setSelectableId]               = useState<string|null>(null);
+  const [showStarredSheet,setShowStarredSheet]       = useState(false);
+  const [starredList,setStarredList]                 = useState<ChatMessage[]>([]);
+  const [activeMemberIds,setActiveMemberIds]         = useState<string[]>([]);
+  const [reloadTick,setReloadTick]                   = useState(0);
+  const lpFiredRef       = useRef(false);
+  const lpStartRef       = useRef({x:0,y:0});
+  const activeChannelRef = useRef<string|null>(null);
+  const channelIdsRef    = useRef<Set<string>>(new Set());
+  const nonMemberRef     = useRef<Set<string>>(new Set());
+  const mobileShowChatRef = useRef(false);
+  mobileShowChatRef.current = mobileShowChat;
+  const isChatVisible = ()=> document.visibilityState==="visible" && (mobileShowChatRef.current || window.innerWidth>=768);
+  const [showArchived,setShowArchived]               = useState(false);
+  const [swipedChannel,setSwipedChannel]             = useState<string|null>(null);
+  const [channelMenu,setChannelMenu]                 = useState<string|null>(null);
+  const [showScrollFab,setShowScrollFab]             = useState(false);
+  const [floatingDate,setFloatingDate]               = useState<string|null>(null);
+  const floatingDateTimerRef                         = useRef<any>(null);
+  const [channelMemberNames,setChannelMemberNames]   = useState<Record<string,string>>({});
+
+  // ── Refs ──────────────────────────────────────────────────
+  const scrollRef        = useRef<HTMLDivElement>(null);
+  const inputRef         = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef     = useRef<HTMLInputElement>(null);
+  const galleryInputRef  = useRef<HTMLInputElement>(null);   // FIX: gallery, no capture
+  const cameraInputRef   = useRef<HTMLInputElement>(null);   // FIX: camera only
+  const audioFileRef     = useRef<HTMLInputElement>(null);   // FIX: audio files
+  const avatarInputRef   = useRef<HTMLInputElement>(null);
+  const mediaRecRef      = useRef<MediaRecorder|null>(null);
+  const chunksRef        = useRef<Blob[]>([]);
+  const recTimerRef      = useRef<any>(null);
+  const typingTimerRef   = useRef<any>(null);
+  const lpTimerRef           = useRef<any>(null);
+  const micTouchStartX       = useRef(0);
+  const micTouchStartY       = useRef(0);
+
+  const isAdmin     = hasRole("admin");
+  const isTeacher   = hasRole("teacher");
+  const canModerate = isAdmin||isTeacher||adminMode;
+  const [showMajlisCall,setShowMajlisCall]           = useState(false);
+  const [channelHasLiveCall,setChannelHasLiveCall]    = useState(false);
+  const [callChannelId,setCallChannelId]              = useState<string|null>(null);
+  const [incomingCall,setIncomingCall]                = useState<{channelId:string;callerName:string}|null>(null);
+  const [blockedByMe,setBlockedByMe]                  = useState<Set<string>>(new Set());
+  const [showPollComposer,setShowPollComposer]        = useState(false);
+  const [pollQuestion,setPollQuestion]                = useState("");
+  const [pollOptions,setPollOptions]                  = useState<string[]>(["",""]);
+  const [showStickerPicker,setShowStickerPicker]      = useState(false);
+  const [showContactPicker,setShowContactPicker]      = useState(false);
+  const [showBroadcastComposer,setShowBroadcastComposer] = useState(false);
+  const [broadcastStep,setBroadcastStep]              = useState<"pick"|"compose">("pick");
+  const [broadcastName,setBroadcastName]              = useState("");
+  const [broadcastPool,setBroadcastPool]              = useState<UserProfile[]>([]);
+  const [broadcastSelected,setBroadcastSelected]      = useState<Set<string>>(new Set());
+  const [broadcastText,setBroadcastText]              = useState("");
+  const [broadcastSending,setBroadcastSending]        = useState(false);
+  const [linkPreviews,setLinkPreviews]                = useState<Record<string,any>>({});
+  const [viewOnceNext,setViewOnceNext]                = useState(false);
+  const [revealedOnce,setRevealedOnce]                = useState<Set<string>>(new Set());
+  const videoInputRef                                  = useRef<HTMLInputElement>(null);
+  const videoCameraInputRef                            = useRef<HTMLInputElement>(null);
+  const activeChannel = channels.find(c=>c.id===activeChannelId)||null;
+  const isDark    = settings.darkMode||settings.wallpaper==="dark"||settings.wallpaper==="forest";
+  const msgFontSz = FONT_SIZES[settings.fontSize]||"14px";
+  const WP        = WALLPAPERS.find(w=>w.id===settings.wallpaper)||WALLPAPERS[0];
+  const customBg  = settings.wallpaper==="custom"?(localStorage.getItem("majlis-custom-bg")||""):"";
+
+  const getBgStyle = ()=>{
+    if (settings.wallpaper==="custom"&&customBg) return { background:`url(${customBg}) center/cover` };
+    return { background:WP.bg, backgroundImage:WP.pattern||undefined } as React.CSSProperties;
+  };
+
+  // For DM channels, show the OTHER person's name, not the generic "DM" string
+  const getDMPartner = (ch:ChatChannel): UserProfile|null => {
+    if(ch.type!=="dm") return null;
+    // Find the member who is NOT the current user
+    // We stored members in profiles during channel load
+    const memberIds = Object.keys(profiles).filter(uid =>
+      uid !== user?.id &&
+      channels.find(c => c.id === ch.id) // channel exists
+    );
+    // Check channelMemberNames to find the partner's uid
+    // The DM name is stored as the partner's name during creation
+    // Fall back: parse from channel name or description
+    const partnerName = (ch as any).dm_partner_name || (ch as any).description || ch.name || "DM";
+    const partnerId = (ch as any).dm_partner_id || null;
+    if(partnerId && profiles[partnerId]) return profiles[partnerId];
+    return null;
+  };
+  const getCN = (ch:ChatChannel)=>{
+    if(ch.type==="dm"){
+      // Try to resolve DM partner name from profiles
+      const dmPartnerId = (ch as any).dm_partner_id;
+      if(dmPartnerId && profiles[dmPartnerId]) return profiles[dmPartnerId].full_name || "Direct Message";
+      // Fallback: stored name (not "DM")
+      const stored = language==="ar" ? ((ch as any).name_ar||ch.name||"") : (ch.name||"");
+      return stored === "DM" ? "Direct Message" : (stored||"Direct Message");
+    }
+    return language==="ar"?((ch as any).name_ar||ch.name||""):(ch.name||"");
+  };
+  const ft  = (d:string)=>new Date(d).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+  const fr  = (s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
+  const canSend = ()=>{
+    if(!activeChannel) return false;
+    if(activeChannel.type==="dm"){
+      const partnerId=(activeChannel as any).dm_partner_id;
+      if(partnerId&&blockedByMe.has(partnerId)) return false;
+      return true; // DMs are always open between the two members
+    }
+    if(channelLocked&&!canModerate) return false;
+    if(activeChannel.type==="announcement") return canModerate;
+    return true;
+  };
+
+  // ── Channel sorting ───────────────────────────────────────
+  const sortedChannels = [...channels]
+    .filter(c=>!archivedChannels.has(c.id))
+    .sort((a,b)=>{
+      const ap=pinnedChannels.has(a.id)?1:0, bp=pinnedChannels.has(b.id)?1:0;
+      if(ap!==bp) return bp-ap;
+      return new Date((b as any).last_message_at||0).getTime()-new Date((a as any).last_message_at||0).getTime();
+    });
+
+  const filteredForSidebar = sidebarSearch
+    ? sortedChannels.filter(c=>getCN(c).toLowerCase().includes(sidebarSearch.toLowerCase()))
+    : sortedChannels;
+
+  const filterChannels=(chList:ChatChannel[])=>{
+    if(activeFilter==="all") return chList;
+    if(activeFilter==="unread") return chList.filter(c=>(unreadCounts[c.id]||0)>0);
+    if(activeFilter==="groups") return chList.filter(c=>c.type==="group");
+    if(activeFilter==="announcements") return chList.filter(c=>c.type==="announcement");
+    return chList;
+  };
+
+  const grouped = {
+    pinned: filterChannels(filteredForSidebar.filter(c=>pinnedChannels.has(c.id))),
+    dms:    filterChannels(filteredForSidebar.filter(c=>c.type==="dm"&&!pinnedChannels.has(c.id))),
+    groups: filterChannels(filteredForSidebar.filter(c=>c.type==="group"&&!pinnedChannels.has(c.id))),
+    level:  filterChannels(filteredForSidebar.filter(c=>c.type==="level"&&!pinnedChannels.has(c.id)&&(!profile?.level||getCN(c).toLowerCase().includes((profile.level||"").toLowerCase())))),
+    anns:   filterChannels(filteredForSidebar.filter(c=>c.type==="announcement"&&!pinnedChannels.has(c.id))),
+  };
+
+  const kindLabel=(s:any)=>s?.kind==="admin"?"Admin":s?.kind==="teacher"?"Teacher":(s?.level?String(s.level).charAt(0).toUpperCase()+String(s.level).slice(1):"Student");
+  const contactResults = allStudents.filter(s=>sidebarSearch&&((s.full_name||"").toLowerCase().includes(sidebarSearch.toLowerCase())||(s.email||"").toLowerCase().includes(sidebarSearch.toLowerCase())));
+  const groupResults   = channels.filter(c=>sidebarSearch&&getCN(c).toLowerCase().includes(sidebarSearch.toLowerCase()));
+  const msgResults     = messages.filter(m=>sidebarSearch&&(m.text||"").toLowerCase().includes(sidebarSearch.toLowerCase()));
+  const filteredMessages = chatSearchQuery ? messages.filter(m=>(m.text||"").toLowerCase().includes(chatSearchQuery.toLowerCase())) : messages;
+
+  // ── Effects ───────────────────────────────────────────────
+  useEffect(()=>{
+    // Ensure bucket exists
+    supabase.storage.getBucket(BUCKET).then(({error})=>{
+      if(error) supabase.storage.createBucket(BUCKET,{public:true}).catch(()=>{});
+    });
+    if(!user) return;
+    // Who I'm allowed to see/message: students → classmates in my level + my teachers + admin.
+    // (Teachers/admins get everyone.) Enforced in the database, not just here.
+    supabase.rpc("majlis_directory" as any).then(({data,error})=>{
+      if(error||!Array.isArray(data)) return;
+      const rows=data as unknown as UserProfile[];
+      setAllStudents(rows);
+      const map:Record<string,UserProfile>={};
+      rows.forEach((r:any)=>{map[r.user_id]=r;});
+      setProfiles(prev=>({...prev,...map}));
+    });
+    loadProfiles([user.id]).then(rows=>{
+      if(rows[0]) setProfiles(prev=>({...prev,[rows[0].user_id]:{...(prev[rows[0].user_id]||{}),...rows[0]}}));
+    });
+  },[user?.id]);
+
+  // Android back button
+  useEffect(()=>{
+    const onBack=(e:PopStateEvent)=>{
+      // If this pop came from the live-class back-button guard, ignore it —
+      // LiveClassContext handles minimizing the classroom and re-pushes its guard.
+      if(e.state?.["tahleem-live-class"]) return;
+      if(showMessageMenu){setShowMessageMenu(null);window.history.pushState({layer:"chat"},"",window.location.href);return;}  // showMessageMenu is now {id,x,y}|null
+      if(showDeleteSheet){setShowDeleteSheet(null);window.history.pushState({layer:"chat"},"",window.location.href);return;}  // showDeleteSheet is now {id,isOwner}|null
+      if(showAttachSheet){setShowAttachSheet(false);window.history.pushState({layer:"chat"},"",window.location.href);return;}
+      if(showNewSheet){setShowNewSheet(false);window.history.pushState({layer:"sidebar"},"",window.location.href);return;}
+      if(showStudentProfile){setShowStudentProfile(false);window.history.pushState({layer:"chat"},"",window.location.href);return;}
+      if(showGroupInfo){setShowGroupInfo(false);window.history.pushState({layer:"chat"},"",window.location.href);return;}
+      if(showStarredSheet){setShowStarredSheet(false);window.history.pushState({layer:mobileShowChat?"chat":"sidebar"},"",window.location.href);return;}
+      if(showPeople){setShowPeople(false);window.history.pushState({layer:"sidebar"},"",window.location.href);return;}
+      if(showSidebarMenu){setShowSidebarMenu(false);window.history.pushState({layer:"sidebar"},"",window.location.href);return;}
+      if(showForwardSheet){setShowForwardSheet(false);window.history.pushState({layer:"chat"},"",window.location.href);return;}
+      if(selectMode){setSelectMode(false);setSelectedIds(new Set());window.history.pushState({layer:"chat"},"",window.location.href);return;}
+      if(editingMsg){setEditingMsg(null);setInput("");window.history.pushState({layer:"chat"},"",window.location.href);return;}
+      if(replyTo){setReplyTo(null);window.history.pushState({layer:"chat"},"",window.location.href);return;}
+      if(showChatSearch){setShowChatSearch(false);setChatSearchQuery("");window.history.pushState({layer:"chat"},"",window.location.href);return;}
+      if(showHeaderMenu){setShowHeaderMenu(false);window.history.pushState({layer:"chat"},"",window.location.href);return;}
+      if(mobileShowChat){setMobileShowChat(false);setActiveChannelId(null);return;}
+      navigate("/student");
+    };
+    if(window.history.state===null) window.history.pushState({layer:"sidebar"},"",window.location.href);
+    window.addEventListener("popstate",onBack);
+    return ()=>window.removeEventListener("popstate",onBack);
+  },[showMessageMenu,showDeleteSheet,showAttachSheet,showNewSheet,showStudentProfile,showGroupInfo,showStarredSheet,showPeople,showSidebarMenu,showForwardSheet,selectMode,editingMsg,replyTo,showChatSearch,showHeaderMenu,mobileShowChat]);
+
+  // Online presence
+  //
+  // FIX (recurring reload on minimize — students only): this channel used to
+  // stay open for the entire time Majlis was mounted, background or not. An
+  // always-on Realtime WebSocket is exactly what makes Android/Chrome treat a
+  // backgrounded tab as evictable — it gets killed within seconds of the app
+  // being minimized instead of just suspended, so returning to it looks like
+  // a full reload. Teachers/admins never hit this because they have no
+  // equivalent always-on chat socket. Same fix already applied to
+  // DashboardLayout's notifications channel and useClassRing's realtime
+  // listener: tear the socket down the moment the tab is hidden, rebuild it
+  // (and re-sync presence) the moment it's visible again.
+  useEffect(()=>{
+    if(!user) return;
+    let pCh: ReturnType<typeof supabase.channel> | null = null;
+
+    const build = () => {
+      if (pCh) return; // already open
+      pCh = supabase.channel("online-presence")
+        .on("presence",{event:"sync"},()=>{
+          const ids=new Set<string>(Object.values(pCh!.presenceState()).flatMap((s:any)=>s.map((x:any)=>x.user_id)));
+          setOnlineUsers(ids);
+        })
+        .subscribe(async s=>{if(s==="SUBSCRIBED") await pCh!.track({user_id:user.id});});
+    };
+    const teardown = () => {
+      if (!pCh) return;
+      supabase.removeChannel(pCh);
+      pCh = null;
+    };
+
+    if (document.visibilityState === "visible") build();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") build();
+      else teardown();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return ()=>{
+      document.removeEventListener("visibilitychange", onVisibility);
+      teardown();
+    };
+  },[user]);
+
+  // Load channels
+  useEffect(()=>{
+    if(!user) return;
+    const load=async()=>{
+      const {data:md}=await supabase.from("chat_members" as any).select("channel_id").eq("user_id",user.id);
+      const memberIds=(md||[]).map((m:any)=>m.channel_id);
+      if(memberIds.length===0){setChannels([]);channelIdsRef.current=new Set();return;}
+      const {data:chData}=await supabase.from("chat_channels" as any).select("*").in("id",memberIds);
+      const all=((chData||[]) as unknown as ChatChannel[]).map(normalizeChannel);
+
+      const defs=all.filter(c=>(c.type==="group"&&c.name==="General")||c.type==="announcement");
+      for(const ch of defs)
+        await supabase.from("chat_members" as any).upsert({channel_id:ch.id,user_id:user.id,role:"member"},{onConflict:"channel_id,user_id"});
+
+      // Enrich DM channels with partner's user_id for name/avatar resolution
+      const enrichedAll = await Promise.all(all.map(async ch => {
+        if(ch.type!=="dm") return ch;
+        const {data:members}=await supabase.from("chat_members" as any)
+          .select("user_id").eq("channel_id",ch.id);
+        const partnerRow=((members||[]) as any[]).find((m:any)=>m.user_id!==user!.id);
+        if(!partnerRow) return ch;
+        const partnerId=partnerRow.user_id;
+        const [partnerProf]=await loadProfiles([partnerId]);
+        if(partnerProf){
+          setProfiles(prev=>({...prev,[partnerId]:partnerProf as unknown as UserProfile}));
+          return {...ch, dm_partner_id:partnerId, dm_partner_name:(partnerProf as any).full_name||"DM"};
+        }
+        return {...ch, dm_partner_id:partnerId};
+      }));
+      setChannels(enrichedAll as unknown as ChatChannel[]);
+      channelIdsRef.current=new Set((enrichedAll as any[]).map((c:any)=>c.id));
+      const all2=enrichedAll as unknown as ChatChannel[];
+
+      const counts:Record<string,number>={};
+      const memberNames:Record<string,string>={};
+      await Promise.all(all2.map(async ch=>{
+        const {data:memRows}=await supabase.from("chat_members" as any).select("user_id").eq("channel_id",ch.id).limit(5);
+        counts[ch.id]=memRows?.length||0;
+        if(memRows&&memRows.length>0){
+          const uids=(memRows as any[]).map((m:any)=>m.user_id);
+          const pData=await loadProfiles(uids);
+          if(pData){
+            const names=(pData as any[]).map((p:any)=>p.user_id===user!.id?"You":(p.full_name||"").split(" ")[0]).filter(Boolean).slice(0,3);
+            memberNames[ch.id]=names.join(", ");
+            const map:Record<string,UserProfile>={};
+            (pData as any[]).forEach((p:any)=>{map[p.user_id]=p as unknown as UserProfile;});
+            setProfiles(prev=>({...prev,...map}));
+          }
+        }
+      }));
+      setMemberCounts(counts);
+      setChannelMemberNames(memberNames);
+
+      const unread:Record<string,number>={};
+      await Promise.all(all2.map(async ch=>{
+        const {data:mem}=await supabase.from("chat_members" as any).select("last_read_at").eq("channel_id",ch.id).eq("user_id",user.id).maybeSingle();
+        const lastRead=(mem as any)?.last_read_at||"1970-01-01";
+        const {count:uc}=await supabase.from("chat_messages").select("*",{count:"exact",head:true}).eq("channel_id",ch.id).gt("created_at",lastRead).neq("user_id",user.id);
+        unread[ch.id]=uc||0;
+      }));
+      setUnreadCounts(unread);
+      if(!activeChannelId&&all2.length>0) setActiveChannelId(all2[0].id);
+    };
+    load();
+  },[user,profile?.level,reloadTick]);
+
+  // Load messages for active channel
+  useEffect(()=>{
+    if(!activeChannelId) return;
+    // ── FIX: cancelled flag prevents stale async state updates (React error #310) ──
+    let cancelled = false;
+
+    setSelectMode(false); setSelectedIds(new Set());
+
+    // ── ZERO FLASH: load from cache instantly, refresh in background ──
+    const cacheKey = `majlis_msgs_${activeChannelId}`;
+    const dmKeyLocal = `majlis_deleted_${user?.id||"anon"}`;
+    const getDeletedSetLocal = ():Set<string> => {
+      try{ return new Set(JSON.parse(localStorage.getItem(dmKeyLocal)||"[]")); }catch{ return new Set(); }
+    };
+    const cached = sessionStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        const cachedMsgs = JSON.parse(cached) as ChatMessage[];
+        const deleted = getDeletedSetLocal();
+        setMessages(cachedMsgs.filter(m => !deleted.has(m.id)));
+        setTimeout(()=>{ if(scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, 50);
+      } catch {}
+    } else {
+      setMessages([]);
+    }
+    setLoadingMessages(false); // never show spinner — stale cache or empty is fine
+
+    const load=async()=>{
+      const {data:memData}=await supabase.from("chat_members" as any).select("user_id").eq("channel_id",activeChannelId);
+      if(cancelled) return;
+      if(memData&&memData.length>0){
+        const memberUids=[...new Set((memData as any[]).map((m:any)=>m.user_id))];
+        setActiveMemberIds(memberUids as string[]);
+        const memberProfs=await loadProfiles(memberUids as string[]);
+        if(cancelled) return;
+        if(memberProfs){
+          const map:Record<string,UserProfile>={};
+          (memberProfs as any[]).forEach((p:any)=>{map[p.user_id]=p;});
+          setProfiles(prev=>({...prev,...map}));
+        }
+      }
+      const {data}=await supabase.from("chat_messages").select("*").eq("channel_id",activeChannelId).order("created_at",{ascending:false}).limit(80);
+      if(cancelled) return;
+      // Filter out messages the user deleted "for me" from localStorage
+      const deletedForMeSet=new Set<string>(
+        (()=>{try{return JSON.parse(localStorage.getItem(`majlis_deleted_${user?.id||"anon"}`)||"[]");}catch{return [];}})()
+      );
+      const msgs=((data||[]) as unknown as ChatMessage[]).reverse().filter(m=>!deletedForMeSet.has(m.id));
+      setMessages(msgs);
+      // Update cache so next visit is instant
+      try { sessionStorage.setItem(cacheKey, JSON.stringify(msgs)); } catch {}
+
+      const uids=[...new Set(msgs.map(m=>m.user_id))];
+      if(uids.length>0){
+        const profs=await loadProfiles(uids as string[]);
+        if(cancelled) return;
+        const map:Record<string,UserProfile>={};
+        (profs||[]).forEach((p:any)=>{map[p.user_id]=p;});
+        setProfiles(prev=>({...prev,...map}));
+      }
+
+      // Members can't UPDATE chat_members directly, so read state is saved through an RPC.
+      // Only mark as read when the chat is really on screen.
+      if(isChatVisible()){
+        await supabase.rpc("majlis_mark_seen" as any,{p_channel:activeChannelId});
+        if(cancelled) return;
+        setUnreadCounts(prev=>({...prev,[activeChannelId]:0}));
+      }
+
+      const ids=msgs.map(m=>m.id);
+      if(ids.length>0){
+        const {data:rd}=await supabase.from("message_reactions" as any).select("message_id,user_id,emoji").in("message_id",ids);
+        if(cancelled) return;
+        const rm:Record<string,Record<string,string[]>>={};
+        (rd||[]).forEach((r:any)=>{if(!rm[r.message_id])rm[r.message_id]={};if(!rm[r.message_id][r.emoji])rm[r.message_id][r.emoji]=[];rm[r.message_id][r.emoji].push(r.user_id);});
+        setReactions(rm);
+      }
+      if(cancelled) return;
+      setPinnedMessages(msgs.filter(m=>(m as any).is_pinned));
+      setLoadingMessages(false);
+    };
+    load();
+
+    // FIX (recurring reload on minimize — students only): same root cause as
+    // the online-presence channel above — a second always-on Realtime socket
+    // per open chat, which never closed while the tab was backgrounded. Only
+    // keep it open while the chat is actually visible on screen; tear it down
+    // on hide and rebuild it (plus re-run load() as a catch-up) on return, so
+    // the socket never gives Android/Chrome a reason to evict the tab while
+    // it's minimized.
+    let rCh: ReturnType<typeof supabase.channel> | null = null;
+
+    const buildChannel = () => {
+      if (rCh) return; // already open
+      rCh=supabase.channel(`majlis-${activeChannelId}`)
+        .on("postgres_changes",{event:"*",schema:"public",table:"chat_messages",filter:`channel_id=eq.${activeChannelId}`},p=>{
+          if(p.eventType==="INSERT"){
+            const nm=p.new as unknown as ChatMessage;
+            // Skip if this user deleted this message locally
+            const dmSet=new Set<string>((()=>{try{return JSON.parse(localStorage.getItem(`majlis_deleted_${user?.id||"anon"}`)||"[]");}catch{return [];}})());
+            if(dmSet.has(nm.id)) return;
+            setMessages(prev=>{
+              const updated=prev.find(m=>m.id===nm.id)?prev:[...prev,nm];
+              try { sessionStorage.setItem(`majlis_msgs_${nm.channel_id}`, JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+            if(nm.user_id!==user?.id){
+              playSound("receive",settings.notifSound);
+              if(navigator.vibrate&&settings.notifVibration) navigator.vibrate(100);
+            }
+            if(!profiles[nm.user_id])
+              loadProfiles([nm.user_id]).then(rows=>{const r=rows[0];if(r)setProfiles(prev=>({...prev,[r.user_id]:r}));});
+          } else if(p.eventType==="UPDATE"){
+            setMessages(prev=>{
+              const updated=prev.map(m=>m.id===(p.new as any).id?p.new as unknown as ChatMessage:m);
+              try { sessionStorage.setItem(cacheKey, JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          } else if(p.eventType==="DELETE"){
+            setMessages(prev=>{
+              const updated=prev.filter(m=>m.id!==(p.old as any).id);
+              try { sessionStorage.setItem(cacheKey, JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          }
+        })
+        .on("broadcast",{event:"typing"},p=>{
+          if(p.payload.userId!==user?.id){
+            setTypingUsers(prev=>[...new Set([...prev,p.payload.name])]);
+            clearTimeout(typingTimerRef.current);
+            typingTimerRef.current=setTimeout(()=>setTypingUsers([]),3000);
+          }
+        }).subscribe();
+    };
+    const teardownChannel = () => {
+      if (!rCh) return;
+      supabase.removeChannel(rCh);
+      rCh = null;
+    };
+
+    if (document.visibilityState === "visible") buildChannel();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        buildChannel();
+        load(); // catch up on anything sent while we were backgrounded
+      } else {
+        teardownChannel();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return ()=>{
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibility);
+      teardownChannel();
+    };
+  },[activeChannelId]);
+
+  // ── Majlis live-call presence: poll + realtime so the header can show
+  //    "call in progress" and members can tap in to join. ──
+  useEffect(()=>{
+    if(!activeChannelId){setChannelHasLiveCall(false);return;}
+    let cancelled=false;
+    const check=async()=>{
+      const{data}=await supabase.from("majlis_calls" as any).select("id").eq("channel_id",activeChannelId).eq("status","live").maybeSingle();
+      if(!cancelled)setChannelHasLiveCall(!!data);
+    };
+    check();
+    const ch=supabase.channel(`majlis-call-presence-${activeChannelId}`)
+      .on("postgres_changes" as any,{event:"*",schema:"public",table:"majlis_calls",filter:`channel_id=eq.${activeChannelId}`},check)
+      .subscribe();
+    return()=>{cancelled=true;supabase.removeChannel(ch);};
+  },[activeChannelId]);
+
+  // ── Link previews: scan visible text messages for URLs, fetch once ──
+  useEffect(()=>{
+    const urls=new Set<string>();
+    messages.forEach(m=>{
+      if((m.content_type==="text"||!m.content_type)&&m.text){
+        const match=m.text.match(/https?:\/\/[^\s]+/);
+        if(match) urls.add(match[0]);
+      }
+    });
+    urls.forEach(url=>{ if(linkPreviews[url]===undefined) fetchLinkPreview(url); });
+  },[messages]);
+
+  // ── Blocked contacts (mine) ──────────────────────────────────────
+  useEffect(()=>{
+    if(!user) return;
+    supabase.from("majlis_blocks" as any).select("blocked_id").eq("blocker_id",user.id).then(({data})=>{
+      setBlockedByMe(new Set((data||[]).map((r:any)=>r.blocked_id)));
+    });
+  },[user?.id]);
+
+  const toggleBlock=async(partnerId:string,partnerName:string)=>{
+    if(!user) return;
+    if(blockedByMe.has(partnerId)){
+      await supabase.from("majlis_blocks" as any).delete().eq("blocker_id",user.id).eq("blocked_id",partnerId);
+      setBlockedByMe(prev=>{const n=new Set(prev);n.delete(partnerId);return n;});
+      toast({title:`Unblocked ${partnerName}`});
+    } else {
+      await supabase.from("majlis_blocks" as any).insert({blocker_id:user.id,blocked_id:partnerId});
+      setBlockedByMe(prev=>new Set(prev).add(partnerId));
+      toast({title:`Blocked ${partnerName}`,description:"They can no longer message you here."});
+    }
+  };
+
+  // ── Global incoming-call listener (DM calls ring even when you're
+  //    looking at a different channel) ─────────────────────────────
+  useEffect(()=>{
+    if(!user||channels.length===0) return;
+    const myDmChannelIds=new Set(channels.filter(c=>c.type==="dm").map(c=>c.id));
+    const ch=supabase.channel(`majlis-incoming-calls-${user.id}`)
+      .on("postgres_changes" as any,{event:"INSERT",schema:"public",table:"majlis_calls"},(payload:any)=>{
+        const row=payload.new;
+        if(!row||row.host_id===user.id) return;
+        if(!myDmChannelIds.has(row.channel_id)) return; // only ring for DM calls, not group calls
+        if(showMajlisCall) return; // already in a call
+        const dmCh=channels.find(c=>c.id===row.channel_id);
+        const callerName=dmCh?getCN(dmCh):"Someone";
+        setIncomingCall({channelId:row.channel_id,callerName});
+        playSound("send",settings.notifSound);
+        if(navigator.vibrate) navigator.vibrate([200,100,200,100,200]);
+      })
+      .subscribe();
+    return()=>{supabase.removeChannel(ch);};
+  },[user?.id,channels.length,showMajlisCall]);
+
+  useEffect(()=>{ if(scrollRef.current) scrollRef.current.scrollTop=scrollRef.current.scrollHeight; },[messages]);
+
+  // keep a ref of the open chat for the realtime inbox handler
+  useEffect(()=>{ activeChannelRef.current=activeChannelId; },[activeChannelId]);
+
+  // ── Delivery receipts + live sidebar (previews, unread, new DMs) ──────────
+  // One lightweight realtime listener for every chat I'm in. Torn down while the tab is
+  // hidden (same reason as the other sockets in this file) and rebuilt with a catch-up.
+  useEffect(()=>{
+    if(!user) return;
+    let ch: ReturnType<typeof supabase.channel> | null = null;
+    const markDelivered=(id?:string)=>{
+      supabase.rpc("majlis_mark_delivered" as any, id?{p_message:id}:{}).then(()=>{},()=>{});
+    };
+    const build=()=>{
+      if(ch) return;
+      ch=supabase.channel(`majlis-inbox-${user.id}`)
+        .on("postgres_changes" as any,{event:"INSERT",schema:"public",table:"chat_messages"},(payload:any)=>{
+          const nm=payload.new as ChatMessage;
+          if(!nm||!nm.channel_id) return;
+          if(!channelIdsRef.current.has(nm.channel_id)){
+            // a chat I don't have in my list yet — new DM / added to a group? check once, then reload the list
+            if(nm.user_id===user.id||nonMemberRef.current.has(nm.channel_id)) return;
+            supabase.from("chat_members" as any).select("channel_id").eq("channel_id",nm.channel_id).eq("user_id",user.id).maybeSingle()
+              .then(({data})=>{ if(data) setReloadTick(t=>t+1); else nonMemberRef.current.add(nm.channel_id); });
+            return;
+          }
+          const preview=(nm.content_type==="text"||!nm.content_type)?(nm.text||"").slice(0,100):(CONTENT_PREVIEW_ICON[nm.content_type]||`📎 ${nm.content_type}`);
+          setChannels(prev=>prev.map(c=>c.id===nm.channel_id?{...c,last_message:preview,last_message_at:nm.created_at} as any:c));
+          if(nm.user_id===user.id) return;
+          markDelivered(nm.id);
+          const watching = nm.channel_id===activeChannelRef.current && isChatVisible();
+          if(!watching){
+            setUnreadCounts(prev=>({...prev,[nm.channel_id]:(prev[nm.channel_id]||0)+1}));
+            if(!mutedChannels.has(nm.channel_id)) playSound("notification",settings.notifSound);
+          }
+        })
+        .subscribe();
+    };
+    const teardown=()=>{ if(!ch) return; supabase.removeChannel(ch); ch=null; };
+    if(document.visibilityState==="visible"){ build(); markDelivered(); }
+    const onVis=()=>{
+      if(document.visibilityState==="visible"){ build(); markDelivered(); setReloadTick(t=>t+1); }
+      else teardown();
+    };
+    document.addEventListener("visibilitychange",onVis);
+    return ()=>{ document.removeEventListener("visibilitychange",onVis); teardown(); };
+  },[user?.id]);
+
+  // Mark incoming messages as read — only while the chat is actually on screen.
+  // Saved through an RPC (chat_messages has no client UPDATE path for other people's rows).
+  useEffect(()=>{
+    if(!activeChannelId||!user||messages.length===0) return;
+    if(!isChatVisible()) return;
+    const needs=(m:any)=>m.user_id!==user.id&&!String(m.id).startsWith("temp-")&&!((m.seen_by||[]) as string[]).includes(user.id);
+    if(!messages.some(needs)) return;
+    supabase.rpc("majlis_mark_seen" as any,{p_channel:activeChannelId}).then(()=>{},()=>{});
+    setUnreadCounts(prev=>prev[activeChannelId]?{...prev,[activeChannelId]:0}:prev);
+    setMessages(prev=>prev.map(m=>needs(m)?({...m,seen_by:[...(((m as any).seen_by)||[]),user.id]} as any):m));
+  },[activeChannelId,messages,mobileShowChat]);
+
+  // ── CSS ───────────────────────────────────────────────────
+  useEffect(()=>{
+    const id="majlis-css"; if(document.getElementById(id)) return;
+    const s=document.createElement("style"); s.id=id;
+    s.textContent=`
+      @keyframes spin { to { transform:rotate(360deg); } }
+      @keyframes fadeIn { from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;} }
+      @keyframes slideUp { from{transform:translateY(100%);}to{transform:translateY(0);} }
+      @keyframes slideIn { from{transform:translateX(-100%);}to{transform:translateX(0);} }
+      @keyframes slideInRight { from{transform:translateX(100%);}to{transform:translateX(0);} }
+      @keyframes waveBar { from{transform:scaleY(0.4);}to{transform:scaleY(1);} }
+      @keyframes pulse { 0%,100%{opacity:1;}50%{opacity:.4;} }
+      @keyframes bounce { 0%,80%,100%{transform:scaleY(1);}40%{transform:scaleY(1.5);} }
+      @keyframes popIn { 0%{transform:scale(.5);opacity:0;}100%{transform:scale(1);opacity:1;} }
+      @keyframes msgIn { from{opacity:0;transform:scale(.96) translateY(4px);}to{opacity:1;transform:none;} }
+      @keyframes onlinePulse { 0%,100%{box-shadow:0 0 0 0 rgba(37,211,102,.4);}50%{box-shadow:0 0 0 4px rgba(37,211,102,0);} }
+
+      .majlis-wrap { display:flex; height:100dvh; overflow:hidden; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
+      .majlis-sidebar { width:100%; max-width:380px; display:flex; flex-direction:column; border-right:1px solid #e0e0e0; background:#fff; flex-shrink:0; height:100dvh; }
+      .majlis-chat { flex:1; display:none; flex-direction:column; min-width:0; height:100dvh; overflow:hidden; position:relative; }
+      .majlis-chat.show { display:flex; }
+      @media(max-width:767px){
+        .majlis-sidebar { max-width:100%; flex:1; }
+        .majlis-chat { position:fixed !important; inset:0; z-index:50; height:100dvh !important; }
+      }
+      @media(min-width:768px){
+        .majlis-chat { display:flex !important; }
+        .majlis-sidebar { display:flex !important; }
+      }
+
+      .msg-bubble { animation:msgIn .18s ease; }
+      /* Long-press must open the app's message menu, not the browser's select/copy toolbar.
+         Text only becomes selectable after the person taps the text directly. */
+      .msg-noselect, .msg-noselect * { -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+      .msg-noselect img, .msg-noselect video { -webkit-user-drag:none; pointer-events:auto; }
+      .msg-selectable, .msg-selectable * { -webkit-user-select:text; user-select:text; -webkit-touch-callout:default; }
+      .msg-noselect { -webkit-tap-highlight-color:transparent; }
+
+      /* WhatsApp-exact message bubble tails */
+      .bubble-tail-me::after {
+        content:''; position:absolute; bottom:0; right:-7px;
+        width:0; height:0;
+        border-left:8px solid #DCF8C6;
+        border-bottom:8px solid transparent;
+      }
+      .bubble-tail-me-dark::after {
+        content:''; position:absolute; bottom:0; right:-7px;
+        width:0; height:0;
+        border-left:8px solid #005c4b;
+        border-bottom:8px solid transparent;
+      }
+      .bubble-tail-other::after {
+        content:''; position:absolute; bottom:0; left:-7px;
+        width:0; height:0;
+        border-right:8px solid #fff;
+        border-bottom:8px solid transparent;
+      }
+      .bubble-tail-other-dark::after {
+        content:''; position:absolute; bottom:0; left:-7px;
+        width:0; height:0;
+        border-right:8px solid #202c33;
+        border-bottom:8px solid transparent;
+      }
+
+      .ch-row-wrap { overflow:hidden; position:relative; }
+      .ch-row-inner { display:flex; transition:transform .25s cubic-bezier(.25,.46,.45,.94); will-change:transform; }
+      .ch-row-inner.swiped { transform:translateX(-160px); }
+      .ch-row-content { flex:0 0 100%; display:flex; align-items:center; gap:12px; padding:10px 16px; cursor:pointer; transition:background .1s; }
+      .ch-row-content:active { background:rgba(0,0,0,.04) !important; }
+      .ch-row-actions { flex:0 0 160px; display:flex; }
+      .ch-row-action-btn { width:80px; display:flex; flex-direction:column; align-items:center; justify-content:center; border:none; cursor:pointer; font-size:11px; gap:4px; color:#fff; font-weight:600; }
+
+      @media(min-width:768px){ .majlis-chat{display:flex !important;} .majlis-sidebar{display:flex !important;} }
+
+      .hamburger-drawer { animation:slideIn .22s ease; }
+      .settings-panel { animation:slideUp .22s ease; }
+      .attach-sheet { animation:slideUp .18s ease; }
+
+      ::-webkit-scrollbar { width:4px; } ::-webkit-scrollbar-thumb { background:#ccc; border-radius:4px; }
+      input:focus, textarea:focus { outline:none; }
+
+      .unread-badge { background:#25D366; color:#fff; border-radius:50%; min-width:20px; height:20px; font-size:11px; display:flex; align-items:center; justify-content:center; font-weight:800; padding:0 5px; box-shadow:0 1px 4px rgba(37,211,102,.4); }
+
+      .attach-btn-item { display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer; }
+      .attach-icon-circle { width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center; animation:popIn .2s ease; transition:transform .15s; }
+      .attach-btn-item span { font-size:11px; color:#555; font-weight:500; }
+      .attach-btn-item:active .attach-icon-circle { transform:scale(.9); }
+
+      .msg-bubble:hover .msg-actions-hint { opacity:1; }
+      .msg-actions-hint { opacity:0; transition:opacity .15s; }
+
+      .typing-dot { width:7px; height:7px; border-radius:50%; background:#999; display:inline-block; animation:bounce .8s infinite; }
+      .typing-dot:nth-child(2) { animation-delay:.15s; }
+      .typing-dot:nth-child(3) { animation-delay:.3s; }
+
+      .online-dot { animation:onlinePulse 2s infinite; }
+
+      .send-btn:active { transform:scale(.92); }
+      .ch-row-content:hover { background:rgba(0,0,0,.02); }
+
+      /* WhatsApp wallpaper texture */
+      .wa-wallpaper { 
+        background-image: url("data:image/svg+xml,%3Csvg width='300' height='300' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23000' fill-opacity='.03'%3E%3Cpath d='M150 75l75 130H75z'/%3E%3Cpath d='M150 225l75-130H75z'/%3E%3C/g%3E%3C/svg%3E");
+      }
+    `;
+    document.head.appendChild(s);
+  },[]);
+
+  // ── Derived values ────────────────────────────────────────
+  const myProfile=profiles[user?.id||""]||{full_name:profile?.full_name||"You",avatar_url:profile?.avatar_url||"",user_id:user?.id||""};
+  const myInitial=(myProfile.full_name||"U")[0].toUpperCase();
+  const initials=(name:string)=>(name||"?").split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
+
+  const sidebarBg  = isDark?"#111b21":"#fff";
+  const sidebarHdr = isDark?"#202c33":WA_GREEN;
+  const textMain   = isDark?"#e9edef":"#111";
+  const textSub    = isDark?"#8696a0":"#667";
+  const divider    = isDark?"#2a3942":"#f0f0f0";
+  const inputBg    = isDark?"#2a3942":"#f0f2f5";
+  const chatHdr    = isDark?"#202c33":WA_GREEN;
+
+  const avatarEl=(uid:string, sz=38)=>{
+    const p=profiles[uid];
+    const av=p?.avatar_url||"";
+    const nm=p?.full_name||uid;
+    if(av) return <img src={av} style={{width:sz,height:sz,borderRadius:"50%",objectFit:"cover",flexShrink:0}} alt=""/>;
+    const colours=["#075E54","#128C7E","#25D366","#34B7F1","#ECB22E","#E74C3C","#9B59B6","#3498DB"];
+    const bg=colours[(nm.charCodeAt(0)||0)%colours.length];
+    return <div style={{width:sz,height:sz,borderRadius:"50%",background:bg,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:sz*0.36,flexShrink:0}}>{initials(nm)}</div>;
+  };
+
+  const chAvatarEl=(ch:ChatChannel, sz=48)=>{
+    const av=(ch as any).avatar||"";
+    const nm=getCN(ch);
+    if(av) return <img src={av} style={{width:sz,height:sz,borderRadius:"50%",objectFit:"cover",flexShrink:0}} alt=""/>;
+    const emoji=ch.type==="announcement"?"📢":ch.type==="level"?"📚":"👥";
+    return <div style={{width:sz,height:sz,borderRadius:"50%",background:WA_GREEN,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:sz*0.4,flexShrink:0}}>{emoji}</div>;
+  };
+
+  // WhatsApp-style ticks: clock = sending, ✓ = sent, ✓✓ grey = delivered, ✓✓ blue = read.
+  // Direct chats: the other person. Groups: delivered = at least one member got it,
+  // read (blue) = every other member has seen it.
+  const renderTicks=(m:ChatMessage)=>{
+    if(m.user_id!==user?.id) return null;
+    const grey="#8696a0", blue="#53BDEB";
+    if(String(m.id).startsWith("temp-")) return <Clock style={{width:11,height:11,color:grey}}/>;
+    const seenBy:string[]=((m as any).seen_by||[]).filter((id:string)=>id!==user?.id);
+    const deliveredTo:string[]=[...new Set([...(((m as any).delivered_to||[]) as string[]),...seenBy])].filter((id:string)=>id!==user?.id);
+    const others=activeMemberIds.filter(id=>id!==user?.id);
+    const isRead = others.length>0 ? others.every(id=>seenBy.includes(id)) : seenBy.length>0;
+    if(isRead) return <CheckCheck style={{width:15,height:15,color:blue}}/>;
+    if(deliveredTo.length>0) return <CheckCheck style={{width:15,height:15,color:grey}}/>;
+    return <Check style={{width:14,height:14,color:grey}}/>;
+  };
+
+  // ── Handlers ──────────────────────────────────────────────
+  const handleScrollMessages=(e:React.UIEvent<HTMLDivElement>)=>{
+    const el=e.currentTarget;
+    setShowScrollFab(el.scrollHeight-el.scrollTop-el.clientHeight>200);
+    // Floating date: find topmost visible message date
+    const containerTop=el.getBoundingClientRect().top;
+    const msgEls=el.querySelectorAll("[data-msg-date]");
+    let topDate:string|null=null;
+    for(const msgEl of Array.from(msgEls)){
+      const rect=(msgEl as HTMLElement).getBoundingClientRect();
+      if(rect.top-containerTop>-30){ topDate=(msgEl as HTMLElement).dataset.msgDate||null; break; }
+    }
+    if(topDate){
+      setFloatingDate(topDate);
+      clearTimeout(floatingDateTimerRef.current);
+      floatingDateTimerRef.current=setTimeout(()=>setFloatingDate(null),1200);
+    }
+  };
+  const scrollToBottom=()=>{ if(scrollRef.current) scrollRef.current.scrollTop=scrollRef.current.scrollHeight; };
+
+  const handleInputChange=(val:string)=>{
+    setInput(val);
+    const at=val.match(/@(\w*)$/);
+    if(at){ setMentionQuery(at[1].toLowerCase()); setMentionList(Object.values(profiles).filter(p=>(p.full_name||"").toLowerCase().includes(at[1].toLowerCase())).slice(0,6)); }
+    else{ setMentionQuery(null); setMentionList([]); }
+    if(activeChannelId&&user)
+      supabase.channel(`majlis-${activeChannelId}`).send({type:"broadcast",event:"typing",payload:{userId:user.id,name:profile?.full_name||"Someone"}});
+  };
+  const insertMention=(p:UserProfile)=>{
+    setInput(input.replace(/@\w*$/,`@${p.full_name} `));
+    setMentionQuery(null); setMentionList([]);
+    setTimeout(()=>inputRef.current?.focus(),50);
+  };
+
+  const startLongPress=(id:string, e?: React.TouchEvent|React.MouseEvent)=>{
+    lpFiredRef.current=false;
+    let sx=window.innerWidth/2, sy=window.innerHeight/2;
+    if(e){
+      if("touches" in e && e.touches.length>0){ sx=e.touches[0].clientX; sy=e.touches[0].clientY; }
+      else if("clientX" in e){ sx=(e as React.MouseEvent).clientX; sy=(e as React.MouseEvent).clientY; }
+    }
+    lpStartRef.current={x:sx,y:sy};
+    if(lpTimerRef.current) clearTimeout(lpTimerRef.current);
+    lpTimerRef.current=setTimeout(()=>{
+      lpTimerRef.current=null;
+      lpFiredRef.current=true;
+      setTimeout(()=>{ lpFiredRef.current=false; },800);
+      setSelectableId(null);
+      setShowMessageMenu({id,x:sx,y:sy}); setShowDeleteSheet(null);
+      if(navigator.vibrate) navigator.vibrate(50);
+      window.history.pushState({layer:"messageMenu"},"",window.location.href);
+    },LP_DELAY);
+  };
+  const cancelLongPress=()=>{ if(lpTimerRef.current){clearTimeout(lpTimerRef.current);lpTimerRef.current=null;} };
+  // scrolling / dragging the finger must not trigger the long-press menu
+  const moveLongPress=(e:React.TouchEvent)=>{
+    const t=e.touches[0]; if(!t||!lpTimerRef.current) return;
+    if(Math.abs(t.clientX-lpStartRef.current.x)>10||Math.abs(t.clientY-lpStartRef.current.y)>10) cancelLongPress();
+  };
+
+  const CONTENT_PREVIEW_ICON:Record<string,string>={image:"📷 Photo",video:"🎥 Video",audio:"🎤 Voice message",file:"📄 Document",location:"📍 Location",contact:"👤 Contact",poll:"📊 Poll",sticker:"🌟 Sticker"};
+
+  const sendMessage=async(contentType="text",mediaPath?:string,extraText?:string)=>{
+    if(!user||!activeChannelId) return;
+    if(contentType==="text"&&!input.trim()) return;
+    if(channelLocked&&!canModerate){toast({title:"Channel is locked",variant:"destructive"});return;}
+    if(activeChannel?.type==="announcement"&&!canModerate){toast({title:"Only admins can post here",variant:"destructive"});return;}
+    const dmPartnerId=(activeChannel as any)?.dm_partner_id;
+    if(activeChannel?.type==="dm"&&dmPartnerId&&blockedByMe.has(dmPartnerId)){
+      toast({title:"You have blocked this contact",description:"Unblock them to send a message.",variant:"destructive"});
+      return;
+    }
+
+    if(editingMsg){
+      const newText=input.trim();
+      const editedAt=new Date().toISOString();
+      const {data:upd,error:upErr}=await supabase.from("chat_messages").update({text:newText,edited_at:editedAt,edited_by:user.id} as any).eq("id",editingMsg.id).select("id");
+      if(upErr||!upd||upd.length===0){
+        toast({title:"Couldn't edit message",description:upErr?.message||"You can only edit your own messages",variant:"destructive"});
+        return;
+      }
+      setMessages(prev=>prev.map(m=>m.id===editingMsg.id?{...m,text:newText,edited_at:editedAt} as any:m));
+      setEditingMsg(null); setInput(""); return;
+    }
+
+    const text=contentType==="text"?input.trim():(extraText||null);
+
+    // Structured @mentions: match "@Full Name" against known members
+    let mentions:string[]=[];
+    if(contentType==="text"&&text){
+      Object.values(profiles).forEach(p=>{
+        if(p.user_id!==user.id&&p.full_name&&text.includes(`@${p.full_name}`)) mentions.push(p.user_id);
+      });
+    }
+
+    const isViewOnceMedia=(contentType==="image"||contentType==="video")&&viewOnceNext;
+
+    const tempId=`temp-${Date.now()}`;
+    const optimistic:any={id:tempId,channel_id:activeChannelId,user_id:user.id,content_type:contentType,text,media_path:mediaPath||null,created_at:new Date().toISOString(),is_pinned:false,reply_to_id:replyTo?.id||null,view_once:isViewOnceMedia};
+    setInput(""); setReplyTo(null); setShowEmojiBar(false); setMentionQuery(null); setMentionList([]); setViewOnceNext(false);
+    setMessages(prev=>[...prev,optimistic]);
+
+    const msgData:any={class_level_id:activeChannelId,channel_id:activeChannelId,user_id:user.id,content_type:contentType,text,media_path:mediaPath||null};
+    if(replyTo){msgData.reply_to_id=replyTo.id;msgData.reply_preview=(replyTo.text||"").slice(0,100);}
+    if(disappearTimer>0) msgData.expires_at=new Date(Date.now()+disappearTimer*60*1000).toISOString();
+    if(mentions.length>0) msgData.mentions=mentions;
+    if(isViewOnceMedia) msgData.view_once=true;
+
+    const {data:inserted,error}=await supabase.from("chat_messages").insert(msgData).select().single();
+    if(error){
+      setMessages(prev=>prev.filter(m=>m.id!==tempId));
+      playSound("error");
+      toast({title:"Failed to send",description:error.message,variant:"destructive"});
+    } else {
+      playSound("send",settings.notifSound);
+      setMessages(prev=>prev.some(m=>m.id===(inserted as any).id)?prev.filter(m=>m.id!==tempId):prev.map(m=>m.id===tempId?inserted as unknown as ChatMessage:m));
+      const preview=contentType==="text"?(text||"").slice(0,100):(CONTENT_PREVIEW_ICON[contentType]||`📎 ${contentType}`);
+      await supabase.from("chat_channels" as any).update({last_message:preview,last_message_at:new Date().toISOString()}).eq("id",activeChannelId);
+      setChannels(prev=>prev.map(c=>c.id===activeChannelId?{...c,last_message:preview,last_message_at:new Date().toISOString()} as any:c));
+    }
+    inputRef.current?.focus();
+  };
+
+  // ── New WhatsApp-parity senders ─────────────────────────────────
+  const shareLocation=()=>{
+    if(!navigator.geolocation){toast({title:"Location not supported on this device",variant:"destructive"});return;}
+    toast({title:"Getting your location…"});
+    navigator.geolocation.getCurrentPosition(
+      (pos)=>{
+        const {latitude,longitude}=pos.coords;
+        sendMessage("location",null,JSON.stringify({lat:latitude,lng:longitude}));
+      },
+      ()=>toast({title:"Couldn't get location",description:"Check location permission for this app.",variant:"destructive"}),
+      {enableHighAccuracy:true,timeout:10000}
+    );
+  };
+
+  const shareContact=(member:UserProfile)=>{
+    sendMessage("contact",null,JSON.stringify({user_id:member.user_id,name:member.full_name,avatar_url:member.avatar_url||null}));
+    setShowContactPicker(false);
+  };
+
+  const sendPoll=()=>{
+    const opts=pollOptions.map(o=>o.trim()).filter(Boolean);
+    if(!pollQuestion.trim()||opts.length<2){toast({title:"Add a question and at least 2 options",variant:"destructive"});return;}
+    sendMessage("poll",null,JSON.stringify({question:pollQuestion.trim(),options:opts}));
+    setShowPollComposer(false); setPollQuestion(""); setPollOptions(["",""]);
+  };
+
+  const votePoll=async(messageId:string,optionIndex:number)=>{
+    if(!user) return;
+    await supabase.from("majlis_poll_votes" as any).upsert({message_id:messageId,user_id:user.id,option_index:optionIndex},{onConflict:"message_id,user_id"});
+  };
+
+  const sendSticker=(emoji:string)=>{
+    sendMessage("sticker",null,emoji);
+    setShowStickerPicker(false);
+  };
+
+  const fetchLinkPreview=async(url:string)=>{
+    if(linkPreviews[url]!==undefined) return;
+    setLinkPreviews(prev=>({...prev,[url]:"loading"}));
+    try{
+      const {data}=await supabase.functions.invoke("link-preview",{body:{url}});
+      setLinkPreviews(prev=>({...prev,[url]:data&&!data.error?data:null}));
+    }catch{
+      setLinkPreviews(prev=>({...prev,[url]:null}));
+    }
+  };
+
+  const markViewedOnce=async(messageId:string)=>{
+    if(!user) return;
+    setRevealedOnce(prev=>new Set(prev).add(messageId));
+    const msg=messages.find(m=>m.id===messageId);
+    const already:string[]=(msg as any)?.viewed_by||[];
+    if(already.includes(user.id)) return;
+    const updated=[...already,user.id];
+    await supabase.from("chat_messages").update({viewed_by:updated} as any).eq("id",messageId);
+    setMessages(prev=>prev.map(m=>m.id===messageId?{...m,viewed_by:updated} as any:m));
+  };
+
+  // ── Broadcast lists ──────────────────────────────────────────────
+  // DMs are created by a database function that also enforces who may message whom
+  // (students: classmates in their level, their teachers and admins; staff: anyone).
+  const findOrCreateDM=async(partnerId:string,_partnerName:string):Promise<string|null>=>{
+    if(!user) return null;
+    const {data,error}=await supabase.rpc("majlis_open_dm" as any,{p_partner:partnerId});
+    if(error||!data) return null;
+    return data as unknown as string;
+  };
+
+  const openDirectMessage=async(partner:any)=>{
+    if(!user||!partner?.user_id) return;
+    const {data,error}=await supabase.rpc("majlis_open_dm" as any,{p_partner:partner.user_id});
+    if(error||!data){
+      toast({title:"Can't start this chat",description:error?.message||"Please try again.",variant:"destructive"});
+      return;
+    }
+    const chId=data as unknown as string;
+    const {data:chRow}=await supabase.from("chat_channels" as any).select("*").eq("id",chId).maybeSingle();
+    const enriched:any={...normalizeChannel(chRow||{id:chId,type:"dm",name:partner.full_name||"Direct Message",name_ar:null,description:null,level:null,created_by:user.id,is_private:true,avatar:null,last_message:null,last_message_at:null,member_count:2,created_at:new Date().toISOString()}),dm_partner_id:partner.user_id,dm_partner_name:partner.full_name||"Direct Message"};
+    channelIdsRef.current.add(chId);
+    setChannels(prev=>prev.some(c=>c.id===chId)?prev.map(c=>c.id===chId?{...c,dm_partner_id:partner.user_id,dm_partner_name:partner.full_name||"Direct Message"} as any:c):[enriched as ChatChannel,...prev]);
+    setProfiles(prev=>({...prev,[partner.user_id]:{...(prev[partner.user_id]||{}),...partner}}));
+    setMemberCounts(prev=>({...prev,[chId]:2}));
+    setShowPeople(false); setShowNewSheet(false); setShowStudentProfile(false); setPeopleSearch(""); setSidebarSearch("");
+    selectChannel(chId);
+  };
+
+  const sendBroadcast=async()=>{
+    if(!user||!broadcastText.trim()||broadcastSelected.size===0) return;
+    setBroadcastSending(true);
+    try{
+      const {data:list}=await supabase.from("majlis_broadcast_lists" as any).insert({owner_id:user.id,name:broadcastName.trim()||"Broadcast List"}).select().single();
+      if(list){
+        await supabase.from("majlis_broadcast_members" as any).insert(Array.from(broadcastSelected).map(mid=>({broadcast_id:(list as any).id,member_id:mid})));
+      }
+      let sent=0;
+      for(const memberId of Array.from(broadcastSelected)){
+        const member=broadcastPool.find(p=>p.user_id===memberId);
+        const chId=await findOrCreateDM(memberId,member?.full_name||"Student");
+        if(chId){
+          await supabase.from("chat_messages").insert({class_level_id:chId,channel_id:chId,user_id:user.id,content_type:"text",text:broadcastText.trim(),is_broadcast:true});
+          await supabase.from("chat_channels" as any).update({last_message:broadcastText.trim().slice(0,100),last_message_at:new Date().toISOString()}).eq("id",chId);
+          sent++;
+        }
+      }
+      toast({title:`Broadcast sent to ${sent} ${sent===1?"person":"people"}`});
+      setShowBroadcastComposer(false); setBroadcastText(""); setBroadcastSelected(new Set()); setBroadcastName("");
+    }catch(e:any){
+      toast({title:"Broadcast failed",description:e.message||"Unknown error",variant:"destructive"});
+    }finally{
+      setBroadcastSending(false);
+    }
+  };
+
+  // ── FIXED: File upload with better error messages ─────────
+  const handleFileUpload=async(file:File, type:"image"|"file"|"audio"|"video")=>{
+    if(!activeChannelId||!user) return;
+    // Gallery accepts image/*,video/* but always tags "image" — route by real mime type.
+    if(type==="image"&&file.type.startsWith("video/")) type="video";
+    const maxSize=type==="video"?60*1024*1024:25*1024*1024;
+    if(file.size>maxSize){toast({title:`Max ${type==="video"?60:25}MB`,variant:"destructive"});return;}
+    setUploading(true);
+    try{
+      const ext=file.name.split(".").pop()||"bin";
+      const folder=type==="image"?"images":type==="audio"?"voice":type==="video"?"videos":"files";
+      const path=`${folder}/${activeChannelId}/${user.id}/${Date.now()}.${ext}`;
+      const {error:upErr}=await supabase.storage.from(BUCKET).upload(path,file,{upsert:true,contentType:file.type});
+      if(!upErr){
+        await sendMessage(type,path,type==="file"?file.name:null);
+      } else {
+        // Storage failed — base64 fallback for images
+        if(type==="image"){
+          const b64=await new Promise<string>(res=>{const r=new FileReader();r.onloadend=()=>res(r.result as string);r.readAsDataURL(file);});
+          const tempId=`temp-${Date.now()}`;
+          setMessages(prev=>[...prev,{id:tempId,channel_id:activeChannelId,user_id:user.id,content_type:"image",text:b64,media_path:null,created_at:new Date().toISOString()} as any]);
+          const {data:ins,error:insE}=await supabase.from("chat_messages").insert({class_level_id:activeChannelId,channel_id:activeChannelId,user_id:user.id,content_type:"image",text:b64}).select().single();
+          if(insE) setMessages(prev=>prev.filter(m=>m.id!==tempId));
+          else setMessages(prev=>prev.some(m=>m.id===(ins as any).id)?prev.filter(m=>m.id!==tempId):prev.map(m=>m.id===tempId?ins as unknown as ChatMessage:m));
+        } else {
+          toast({title:"Upload failed",description:upErr.message||"Storage unavailable. Check bucket permissions.",variant:"destructive"});
+        }
+      }
+    }catch(e:any){
+      toast({title:"Upload error",description:e.message||"Unknown error",variant:"destructive"});
+    }finally{
+      setUploading(false);
+    }
+  };
+
+  const cancelRecording=()=>{
+    cancelledRef.current=true;
+    if(mediaRecRef.current&&mediaRecRef.current.state!=="inactive"){setRecordingCancelled(true);mediaRecRef.current.stop();}
+    clearInterval(recTimerRef.current);
+    setIsRecording(false);setRecordingLocked(false);setRecordingTime(0);
+    if(navigator.vibrate) navigator.vibrate([30,30]);
+  };
+
+  const startRecording=async()=>{
+    try{
+      setRecordingCancelled(false);cancelledRef.current=false;
+      const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+      const mimeType=["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t=>{try{return MediaRecorder.isTypeSupported(t);}catch{return false;}})||"";
+      const mr=new MediaRecorder(stream,mimeType?{mimeType}:undefined);
+      chunksRef.current=[];
+      mr.ondataavailable=e=>{if(e.data&&e.data.size>0)chunksRef.current.push(e.data);};
+      mr.onstop=async()=>{
+        stream.getTracks().forEach(t=>t.stop());
+        clearInterval(recTimerRef.current);setRecordingTime(0);setRecordingLocked(false);
+        if(cancelledRef.current){cancelledRef.current=false;return;}
+        const blob=new Blob(chunksRef.current,{type:mimeType||"audio/webm"});
+        if(blob.size===0){toast({title:"Recording was empty",variant:"destructive"});return;}
+        const ext=mimeType.includes("mp4")?"mp4":mimeType.includes("ogg")?"ogg":"webm";
+        const path=`voice/${activeChannelId}/${user!.id}/${Date.now()}.${ext}`;
+        const {error}=await supabase.storage.from(BUCKET).upload(path,blob,{contentType:mimeType||"audio/webm",upsert:true});
+        if(!error){
+          await sendMessage("audio",path);
+        } else {
+          // Fallback to base64
+          const reader=new FileReader();
+          reader.onloadend=async()=>{
+            const b64=reader.result as string;
+            await supabase.from("chat_messages").insert({class_level_id:activeChannelId,channel_id:activeChannelId,user_id:user!.id,content_type:"audio",text:b64,media_path:null});
+          };
+          reader.readAsDataURL(blob);
+        }
+      };
+      mr.start(200);
+      mediaRecRef.current=mr;setIsRecording(true);
+      if(navigator.vibrate)navigator.vibrate(50);
+      recTimerRef.current=setInterval(()=>setRecordingTime(t=>t+1),1000);
+    }catch(e:any){
+      if(e.name==="NotAllowedError"||e.name==="PermissionDeniedError")
+        toast({title:"Microphone permission denied",description:"Allow mic access in browser settings",variant:"destructive"});
+      else
+        toast({title:"Recording failed",description:e.message,variant:"destructive"});
+    }
+  };
+  const stopRecording=()=>{ if(mediaRecRef.current&&mediaRecRef.current.state!=="inactive") mediaRecRef.current.stop(); setIsRecording(false); };
+
+  const forwardToChannel=async(targetId:string)=>{
+    if(!user) return;
+    const toSend=selectedIds.size>0?messages.filter(m=>selectedIds.has(m.id)):forwardMsg?[forwardMsg]:[];
+    for(const m of toSend)
+      await supabase.from("chat_messages").insert({class_level_id:targetId,channel_id:targetId,user_id:user.id,content_type:m.content_type,text:m.text?`↪️ Forwarded:\n${m.text}`:null,media_path:m.media_path||null});
+    await supabase.from("chat_channels" as any).update({last_message:"↪️ Forwarded",last_message_at:new Date().toISOString()}).eq("id",targetId);
+    setForwardMsg(null);setShowForwardSheet(false);setSelectMode(false);setSelectedIds(new Set());
+    toast({title:"Forwarded!"});
+  };
+
+  const reloadReactions=async()=>{
+    if(!messages.length) return;
+    const ids=messages.map(m=>m.id);
+    const {data}=await supabase.from("message_reactions" as any).select("message_id,user_id,emoji").in("message_id",ids);
+    const rm:Record<string,Record<string,string[]>>={};
+    (data||[]).forEach((r:any)=>{if(!rm[r.message_id])rm[r.message_id]={};if(!rm[r.message_id][r.emoji])rm[r.message_id][r.emoji]=[];rm[r.message_id][r.emoji].push(r.user_id);});
+    setReactions(rm);
+  };
+
+  // ── Helpers for "delete for me" persistence ───────────────
+  const dmKey=`majlis_deleted_${user?.id||"anon"}`;
+  const getDeletedSet=():Set<string>=>{
+    try{ return new Set(JSON.parse(localStorage.getItem(dmKey)||"[]")); }catch{ return new Set(); }
+  };
+  const persistDeletedForMe=(id:string)=>{
+    try{
+      const s=getDeletedSet(); s.add(id);
+      localStorage.setItem(dmKey,JSON.stringify([...s]));
+    }catch{}
+  };
+
+  const deleteForMe=(id:string)=>{
+    persistDeletedForMe(id);
+    setMessages(prev=>{
+      const updated=prev.filter(m=>m.id!==id);
+      if(activeChannelId){ try{sessionStorage.setItem(`majlis_msgs_${activeChannelId}`,JSON.stringify(updated));}catch{} }
+      return updated;
+    });
+    setShowDeleteSheet(null);
+    setShowMessageMenu(null);
+    toast({title:"Message removed from your view"});
+  };
+
+  const deleteForAll=async(id:string)=>{
+    setShowDeleteSheet(null);
+    // Save the message in case we need to rollback
+    const msgToDelete = messages.find(m=>m.id===id);
+    // Optimistically remove
+    setMessages(prev=>prev.filter(m=>m.id!==id));
+    const {error}=await supabase.from("chat_messages").delete().eq("id",id);
+    if(error){
+      // Rollback — restore the deleted message
+      if(msgToDelete) setMessages(prev=>{
+        // Insert back in chronological position
+        const idx=prev.findIndex(m=>new Date(m.created_at)>new Date(msgToDelete.created_at));
+        if(idx===-1) return [...prev,msgToDelete];
+        return [...prev.slice(0,idx),msgToDelete,...prev.slice(idx)];
+      });
+      toast({title:"Could not delete",description:error.code=="42501"?"You can only delete your own messages":error.message,variant:"destructive"});
+      return;
+    }
+    setShowMessageMenu(null);
+    toast({title:"Deleted for everyone"});
+  };
+
+  const deleteSelected=async()=>{
+    const ids=[...selectedIds];
+    const savedMsgs=messages.filter(m=>selectedIds.has(m.id)); // save for rollback
+    // Optimistically remove first
+    setMessages(prev=>{
+      const updated=prev.filter(m=>!selectedIds.has(m.id));
+      if(activeChannelId){ try{sessionStorage.setItem(`majlis_msgs_${activeChannelId}`,JSON.stringify(updated));}catch{} }
+      return updated;
+    });
+    setSelectedIds(new Set()); setSelectMode(false);
+    let failed=0;
+    const failedMsgs:ChatMessage[]=[];
+    for(const id of ids){
+      const {error}=await supabase.from("chat_messages").delete().eq("id",id);
+      if(error){ failed++; const m=savedMsgs.find(x=>x.id===id); if(m)failedMsgs.push(m); }
+    }
+    if(failed>0){
+      // Rollback failed ones
+      setMessages(prev=>{
+        const updated=[...prev,...failedMsgs].sort((a,b)=>new Date(a.created_at).getTime()-new Date(b.created_at).getTime());
+        if(activeChannelId){ try{sessionStorage.setItem(`majlis_msgs_${activeChannelId}`,JSON.stringify(updated));}catch{} }
+        return updated;
+      });
+    }
+    toast({title:failed===0?`${ids.length} message${ids.length>1?"s":""} deleted`:`${ids.length-failed} deleted, ${failed} failed (permission denied)`});
+  };
+  const pinMessage=async(m:ChatMessage)=>{
+    const ip=!(m as any).is_pinned;
+    const {data:pinUpd,error:pinErr}=await supabase.from("chat_messages").update({is_pinned:ip} as any).eq("id",m.id).select("id");
+    if(pinErr||!pinUpd||pinUpd.length===0){ setShowMessageMenu(null); toast({title:"Couldn't pin message",description:"Only admins, teachers and the sender can pin it.",variant:"destructive"}); return; }
+    setMessages(prev=>prev.map(x=>x.id===m.id?{...x,is_pinned:ip} as any:x));
+    setPinnedMessages(prev=>ip?[...prev,m]:prev.filter(x=>x.id!==m.id));
+    setShowMessageMenu(null);toast({title:ip?"Pinned":"Unpinned"});
+  };
+  // Stars are personal — saved on this device per user so they survive a reload.
+  useEffect(()=>{
+    try{ setStarredMessages(new Set(JSON.parse(localStorage.getItem(`majlis-starred-${user?.id||"anon"}`)||"[]"))); }catch{}
+  },[user?.id]);
+  const starMsg  =(id:string)=>{
+    setStarredMessages(prev=>{
+      const n=new Set(prev); n.has(id)?n.delete(id):n.add(id);
+      try{ localStorage.setItem(`majlis-starred-${user?.id||"anon"}`,JSON.stringify([...n])); }catch{}
+      return n;
+    });
+    setShowMessageMenu(null);
+  };
+  const openStarred=async()=>{
+    const ids=[...starredMessages];
+    setShowSidebarMenu(false); setShowHeaderMenu(false);
+    setShowStarredSheet(true);
+    window.history.pushState({layer:"starred"},"",window.location.href);
+    if(ids.length===0){ setStarredList([]); return; }
+    const {data}=await supabase.from("chat_messages").select("*").in("id",ids).order("created_at",{ascending:false});
+    const rows=(data||[]) as unknown as ChatMessage[];
+    setStarredList(rows);
+    const need=rows.map(r=>r.user_id).filter(u=>!profiles[u]);
+    if(need.length){ const ps=await loadProfiles(need); setProfiles(prev=>{const n={...prev}; ps.forEach(pp=>{n[pp.user_id]=pp;}); return n;}); }
+  };
+  const copyMsg  =(text:string)=>{ navigator.clipboard?.writeText(text); setShowMessageMenu(null); toast({title:"Copied!"}); };
+  const jumpTo   =(id:string)=>{ document.getElementById(`msg-${id}`)?.scrollIntoView({behavior:"smooth",block:"center"}); };
+
+  const exportChat=()=>{
+    if(!activeChannel) return;
+    const lines=messages.map(m=>`[${new Date(m.created_at).toLocaleString()}] ${profiles[m.user_id]?.full_name||m.user_id}: ${m.content_type==="text"?(m.text||""):`[${m.content_type}]`}`);
+    const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([lines.join("\n")],{type:"text/plain"}));a.download=`${getCN(activeChannel)}.txt`;a.click();
+    toast({title:"Exported!"});
+  };
+  const clearChat=async()=>{
+    if(!activeChannelId||!canModerate||!confirm("Clear all messages?")) return;
+    await supabase.from("chat_messages").delete().eq("channel_id",activeChannelId);
+    setMessages([]);toast({title:"Chat cleared"});
+  };
+  const deleteGroup=async()=>{
+    if(!activeChannelId||!canModerate||!confirm("Delete group permanently?")) return;
+    await supabase.from("chat_messages").delete().eq("channel_id",activeChannelId);
+    await supabase.from("chat_members" as any).delete().eq("channel_id",activeChannelId);
+    await supabase.from("chat_channels" as any).delete().eq("id",activeChannelId);
+    setChannels(prev=>prev.filter(c=>c.id!==activeChannelId));
+    setActiveChannelId(null);setMobileShowChat(false);toast({title:"Group deleted"});
+  };
+  const leaveChannel=async(chId:string)=>{
+    if(!user||!confirm("Leave this group?")) return;
+    await supabase.from("chat_members" as any).delete().eq("channel_id",chId).eq("user_id",user.id);
+    setChannels(prev=>prev.filter(c=>c.id!==chId));
+    if(activeChannelId===chId){setActiveChannelId(null);setMobileShowChat(false);}
+    toast({title:"Left group"});
+  };
+  const toggleMuteCh =(id:string)=>{ setMutedChannels(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);localStorage.setItem("majlis-muted",JSON.stringify([...n]));return n;}); setChannelMenu(null);setSwipedChannel(null); };
+  const togglePinCh  =(id:string)=>{ setPinnedChannels(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);localStorage.setItem("majlis-pinned-ch",JSON.stringify([...n]));return n;}); setChannelMenu(null); };
+  const toggleArchive=(id:string)=>{ setArchivedChannels(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);localStorage.setItem("majlis-archived",JSON.stringify([...n]));return n;}); setChannelMenu(null);setSwipedChannel(null); };
+
+  const saveChannelEdit=async()=>{
+    if(!activeChannelId) return;
+    await supabase.from("chat_channels" as any).update({name:editName,description:editDesc}).eq("id",activeChannelId);
+    setChannels(prev=>prev.map(c=>c.id===activeChannelId?{...c,name:editName,description:editDesc}:c));
+    setEditingChannel(false);toast({title:"Group updated!"});
+  };
+  const handleAvatarUpload=async(file:File)=>{
+    if(!activeChannelId||!canModerate) return;
+    const path=`avatars/${activeChannelId}/${Date.now()}.${file.name.split(".").pop()}`;
+    const {error}=await supabase.storage.from(BUCKET).upload(path,file,{upsert:true});
+    if(!error){
+      const {data}=supabase.storage.from(BUCKET).getPublicUrl(path);
+      await supabase.from("chat_channels" as any).update({avatar:data.publicUrl}).eq("id",activeChannelId);
+      setChannels(prev=>prev.map(c=>c.id===activeChannelId?{...c,avatar:data.publicUrl} as any:c));
+      toast({title:"Photo updated!"});
+    }
+  };
+  const selectChannel=(id:string)=>{
+    setActiveChannelId(id);setMobileShowChat(true);setEditingChannel(false);
+    setUnreadCounts(prev=>({...prev,[id]:0}));
+    supabase.rpc("majlis_mark_seen" as any,{p_channel:id}).then(()=>{},()=>{});
+    playSound("open",settings.notifSound);
+    window.history.pushState({layer:"chat"},"",window.location.href);
+  };
+  const handleChannelCreated=async(id:string)=>{
+    const {data}=await supabase.from("chat_channels" as any).select("*").eq("id",id).single();
+    if(data) setChannels(prev=>prev.find(c=>c.id===id)?prev:[data as unknown as ChatChannel,...prev]);
+    setActiveChannelId(id);setMobileShowChat(true);
+    const {count}=await supabase.from("chat_members" as any).select("*",{count:"exact",head:true}).eq("channel_id",id);
+    setMemberCounts(prev=>({...prev,[id]:count||0}));
+  };
+
+  const QUICK_EMOJIS=["👍","❤️","😂","😮","😢","🙏","🔥","✅"];
+
+  // Group messages by date
+  const msgsWithSeps:Array<{type:"date";date:string}|{type:"msg";msg:ChatMessage}>=[];
+  let lastDate="";
+  for(const m of filteredMessages){
+    const d=new Date(m.created_at).toDateString();
+    if(d!==lastDate){msgsWithSeps.push({type:"date",date:m.created_at});lastDate=d;}
+    msgsWithSeps.push({type:"msg",msg:m});
+  }
+
+  // ── Channel row renderer ───────────────────────────────────
+  const renderChRow=(ch:ChatChannel)=>{
+    const isActive =ch.id===activeChannelId;
+    const isMuted  =mutedChannels.has(ch.id);
+    const isPinned =pinnedChannels.has(ch.id);
+    const isSwiped =swipedChannel===ch.id;
+    const unread   =unreadCounts[ch.id]||0;
+    const nm       =getCN(ch);
+    const lastMsg  =(ch as any).last_message||"";
+    const lastTime =(ch as any).last_message_at?ft((ch as any).last_message_at):"";
+    const memberPreview=channelMemberNames[ch.id]||"";
+
+    return (
+      <div key={ch.id} className="ch-row-wrap" style={{borderBottom:`1px solid ${divider}`}}>
+        <div
+          className={`ch-row-inner${isSwiped?" swiped":""}`}
+          onTouchStart={e=>{
+            const sx=e.touches[0].clientX, sy=e.touches[0].clientY; let moved=false;
+            const onMove=(me:TouchEvent)=>{
+              const dx=sx-me.touches[0].clientX, dy=Math.abs(me.touches[0].clientY-sy);
+              if(dy>10&&!moved) return;
+              if(dx>40){moved=true;setSwipedChannel(ch.id);}
+              else if(me.touches[0].clientX-sx>20){moved=true;setSwipedChannel(null);}
+            };
+            const onEnd=()=>{document.removeEventListener("touchmove",onMove);document.removeEventListener("touchend",onEnd);};
+            document.addEventListener("touchmove",onMove,{passive:true});
+            document.addEventListener("touchend",onEnd);
+          }}
+        >
+          <div
+            className="ch-row-content"
+            style={{background:isActive?(isDark?"#2a3942":"#f0f2f5"):sidebarBg}}
+            onClick={()=>{if(isSwiped){setSwipedChannel(null);return;}selectChannel(ch.id);}}
+            onContextMenu={e=>{e.preventDefault();setChannelMenu(ch.id);}}
+          >
+            <div style={{position:"relative"}}>
+              {chAvatarEl(ch,50)}
+              {onlineUsers.size>0&&(
+                <div className="online-dot" style={{position:"absolute",bottom:1,right:1,width:13,height:13,borderRadius:"50%",background:WA_TEAL,border:"2px solid "+(isDark?"#111b21":"#fff")}}/>
+              )}
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <div style={{display:"flex",alignItems:"center",gap:4}}>
+                  {isPinned&&<Pin style={{width:12,height:12,color:textSub}}/>}
+                  <span style={{fontWeight:unread>0?700:600,fontSize:15,color:textMain,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:170}}>{nm}</span>
+                  {isMuted&&<VolumeX style={{width:12,height:12,color:textSub}}/>}
+                </div>
+                <span style={{fontSize:11,color:unread>0&&!isMuted?WA_TEAL:textSub,flexShrink:0,marginLeft:4,fontWeight:unread>0?700:400}}>{lastTime}</span>
+              </div>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:3}}>
+                <span style={{fontSize:13,color:unread>0?textMain:textSub,fontWeight:unread>0?600:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:210}}>
+                  {lastMsg||(memberPreview?memberPreview:"Tap to chat")}
+                </span>
+                <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
+                  {unread>0&&!isMuted&&<span className="unread-badge">{unread>99?"99+":unread}</span>}
+                  {unread>0&&isMuted&&<span className="unread-badge" style={{background:"#8696a0"}}>{unread>99?"99+":unread}</span>}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="ch-row-actions">
+            <button className="ch-row-action-btn" onClick={e=>{e.stopPropagation();toggleMuteCh(ch.id);}} style={{background:"#E67E22"}}>
+              {isMuted?<Volume2 size={18}/>:<VolumeX size={18}/>}
+              {isMuted?"Unmute":"Mute"}
+            </button>
+            <button className="ch-row-action-btn" onClick={e=>{e.stopPropagation();leaveChannel(ch.id);setSwipedChannel(null);}} style={{background:"#E74C3C"}}>
+              <X size={18}/>Leave
+            </button>
+          </div>
+        </div>
+
+        {channelMenu===ch.id&&(
+          <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",background:isDark?"#233138":"#fff",borderRadius:16,boxShadow:"0 8px 40px rgba(0,0,0,.35)",zIndex:400,minWidth:220,overflow:"hidden"}} onClick={e=>e.stopPropagation()}>
+            <div style={{padding:"14px 18px",borderBottom:`1px solid ${divider}`,fontWeight:700,fontSize:14,color:textMain}}>{nm}</div>
+            {[
+              {icon:<Pin size={16}/>,   label:isPinned?"Unpin chat":"Pin chat",      fn:()=>togglePinCh(ch.id)},
+              {icon:isMuted?<Volume2 size={16}/>:<VolumeX size={16}/>,label:isMuted?"Unmute":"Mute notifications",fn:()=>toggleMuteCh(ch.id)},
+              {icon:<Archive size={16}/>,label:"Archive chat",                       fn:()=>toggleArchive(ch.id)},
+              {icon:<Bell size={16}/>, label:"Mark as unread",                       fn:()=>{setUnreadCounts(p=>({...p,[ch.id]:1}));setChannelMenu(null);}},
+              {icon:<X size={16}/>,    label:"Exit group",                           fn:()=>{leaveChannel(ch.id);setChannelMenu(null);},danger:true},
+            ].map((item,i)=>(
+              <button key={i} onClick={item.fn} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 18px",background:"none",border:"none",cursor:"pointer",color:(item as any).danger?"#E74C3C":textMain,fontSize:14,borderBottom:`1px solid ${divider}`}}>
+                <span style={{color:(item as any).danger?"#E74C3C":WA_GREEN}}>{item.icon}</span>{item.label}
+              </button>
+            ))}
+            <button onClick={()=>setChannelMenu(null)} style={{width:"100%",padding:"14px",background:"none",border:"none",cursor:"pointer",color:textSub,fontSize:14,textAlign:"center"}}>Cancel</button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── Message bubble renderer ───────────────────────────────
+  const renderMsg=(m:ChatMessage)=>{
+    const isMe    =m.user_id===user?.id;
+    const p       =profiles[m.user_id];
+    const nm      =p?.full_name||"Unknown";
+    const isSelected=selectedIds.has(m.id);
+    const rxns    =reactions[m.id]||{};
+    const isExp   =(m as any).expires_at&&new Date((m as any).expires_at)<new Date();
+    if(isExp) return null;
+    const isStarred=starredMessages.has(m.id);
+
+    const bubbleBg=isMe?(isDark?"#005c4b":WA_BUBBLE_ME):(isDark?"#202c33":"#fff");
+    const tailClass=isMe?(isDark?"bubble-tail-me-dark":"bubble-tail-me"):(isDark?"bubble-tail-other-dark":"bubble-tail-other");
+
+    return (
+      <div id={`msg-${m.id}`} key={m.id} data-msg-date={new Date(m.created_at).toDateString()} className="msg-bubble"
+        style={{display:"flex",flexDirection:isMe?"row-reverse":"row",alignItems:"flex-end",gap:6,padding:"1px 10px",minWidth:0,background:isSelected?"rgba(37,211,102,0.12)":"transparent"}}
+        onClick={()=>{ if(selectMode){setSelectedIds(prev=>{const n=new Set(prev);n.has(m.id)?n.delete(m.id):n.add(m.id);return n;});} }}
+      >
+        {selectMode&&(
+          <div style={{display:"flex",alignItems:"center",marginBottom:4}}>
+            {isSelected?<CheckSquare style={{width:18,height:18,color:WA_TEAL}}/>:<Square style={{width:18,height:18,color:"#999"}}/>}
+          </div>
+        )}
+
+        {/* Avatar for others */}
+        {!isMe&&!selectMode&&(
+          <div style={{cursor:"pointer",marginBottom:2}} onClick={()=>{
+            const mp=profiles[m.user_id];
+            if(mp){setSelectedMember({...mp,user_id:m.user_id});setShowStudentProfile(true);window.history.pushState({layer:"profile"},"",window.location.href);}
+            else{
+              supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id").eq("user_id",m.user_id).maybeSingle()
+                .then(({data})=>{
+                  setProfiles(prev=>data?{...prev,[m.user_id]:data as unknown as UserProfile}:prev);
+                  setSelectedMember({...(data||{full_name:"Student",avatar_url:""}),user_id:m.user_id});
+                  setShowStudentProfile(true);
+                  window.history.pushState({layer:"profile"},"",window.location.href);
+                });
+            }
+          }}>
+            {avatarEl(m.user_id,28)}
+          </div>
+        )}
+
+        <SwipeBubble disabled={selectMode||!canSend()} onReply={()=>{setReplyTo(m);setTimeout(()=>inputRef.current?.focus(),50);}} isMe={isMe}>
+        <div
+          className={selectableId===m.id?"msg-selectable":"msg-noselect"}
+          style={{width:"fit-content",maxWidth:"min(calc(100vw - 64px), 560px)",minWidth:60}}
+          onContextMenu={(e)=>{ if(selectableId!==m.id) e.preventDefault(); }}
+          onMouseDown={(e)=>!selectMode&&selectableId!==m.id&&startLongPress(m.id,e)}
+          onMouseUp={cancelLongPress}
+          onMouseLeave={cancelLongPress}
+          onTouchStart={(e)=>!selectMode&&selectableId!==m.id&&startLongPress(m.id,e)}
+          onTouchMove={moveLongPress}
+          onTouchEnd={cancelLongPress}
+          onTouchCancel={cancelLongPress}
+          onClick={()=>{
+            // tapping the text directly makes it selectable (so a person can copy part of it)
+            if(selectMode||lpFiredRef.current) return;
+            if(m.content_type==="text"&&!(window.getSelection()?.toString())) setSelectableId(m.id);
+          }}
+        >
+          <div className={tailClass} style={{background:bubbleBg,borderRadius:isMe?"10px 2px 10px 10px":"2px 10px 10px 10px",padding:"6px 10px 4px 10px",boxShadow:"0 1px 2px rgba(0,0,0,.1)",position:"relative"}}>
+            {/* Sender name */}
+            {!isMe&&activeChannel?.type!=="dm"&&(
+              <div onClick={()=>{const mp=profiles[m.user_id];if(mp){setSelectedMember({...mp,user_id:m.user_id});setShowStudentProfile(true);}}} style={{fontSize:12,fontWeight:700,color:WA_GREEN,marginBottom:2,cursor:"pointer"}}>{nm}</div>
+            )}
+            {/* Reply preview */}
+            {(m as any).reply_to_id&&(
+              <div onClick={()=>jumpTo((m as any).reply_to_id)} style={{borderLeft:`3px solid ${WA_GREEN}`,paddingLeft:8,marginBottom:4,cursor:"pointer",background:"rgba(0,0,0,0.04)",borderRadius:"0 6px 6px 0",padding:"4px 8px"}}>
+                <div style={{fontSize:11,fontWeight:700,color:WA_GREEN}}>
+                  {profiles[(messages.find(x=>x.id===(m as any).reply_to_id)?.user_id||"")]?.full_name||"Message"}
+                </div>
+                <div style={{fontSize:11,color:"#667",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:180}}>
+                  {(m as any).reply_preview||messages.find(x=>x.id===(m as any).reply_to_id)?.text||"Media"}
+                </div>
+              </div>
+            )}
+            {/* Content */}
+            {(()=>{
+              const isViewOnce=(m as any).view_once&&(m.content_type==="image"||m.content_type==="video");
+              const viewedByMe=((m as any).viewed_by||[]).includes(user?.id)||revealedOnce.has(m.id);
+              if(isViewOnce&&!isMe&&!viewedByMe){
+                return (
+                  <button onClick={()=>markViewedOnce(m.id)} style={{display:"flex",alignItems:"center",gap:8,background:"rgba(0,0,0,.06)",border:"none",borderRadius:10,padding:"10px 14px",cursor:"pointer",width:200}}>
+                    <Eye size={18} color={WA_GREEN}/>
+                    <span style={{fontSize:12.5,fontWeight:600}}>View once {m.content_type}</span>
+                  </button>
+                );
+              }
+              if(isViewOnce&&!isMe&&viewedByMe){
+                return <div style={{display:"flex",alignItems:"center",gap:6,opacity:.5,fontSize:12,fontStyle:"italic",padding:"6px 2px"}}><Eye size={13}/> Opened</div>;
+              }
+              return (
+                <>
+                  {isViewOnce&&<div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:WA_GREEN,fontWeight:700,marginBottom:3}}><Eye size={11}/> VIEW ONCE {((m as any).viewed_by||[]).length>0?"· Opened":""}</div>}
+                  {m.content_type==="image"&&<ImageMsg path={m.media_path} text={m.text}/>}
+                  {m.content_type==="video"&&<VideoMsg path={m.media_path} text={m.text}/>}
+                </>
+              );
+            })()}
+            {m.content_type==="audio"&&<AudioMsg path={m.media_path} text={m.text}/>}
+            {m.content_type==="file"&&m.media_path&&<FileMsg path={m.media_path} text={m.text}/>}
+            {m.content_type==="location"&&<LocationMsg text={m.text}/>}
+            {m.content_type==="contact"&&<ContactMsg text={m.text} onOpen={(uid)=>{const mp=profiles[uid];if(mp){setSelectedMember({...mp,user_id:uid});setShowStudentProfile(true);}}}/>}
+            {m.content_type==="poll"&&<PollMsg messageId={m.id} text={m.text} myUserId={user?.id} onVote={votePoll}/>}
+            {m.content_type==="sticker"&&<div style={{fontSize:64,lineHeight:1}}>{m.text}</div>}
+            {(m.content_type==="text"||!m.content_type)&&m.text&&(
+              <>
+                <FormattedText text={m.text} sz={msgFontSz}/>
+                {(()=>{
+                  const urlMatch=m.text.match(/https?:\/\/[^\s]+/);
+                  if(!urlMatch) return null;
+                  const url=urlMatch[0];
+                  return <LinkPreviewCard preview={linkPreviews[url]} url={url}/>;
+                })()}
+              </>
+            )}
+            {(m as any).is_deleted&&<span style={{fontSize:12,color:"#9e9e9e",fontStyle:"italic"}}>🚫 This message was deleted</span>}
+            {((m as any).edited_at||(m as any).is_edited)&&<span style={{fontSize:10,color:"#9e9e9e",marginLeft:4}}>edited</span>}
+
+            {/* Time + ticks */}
+            <div style={{display:"flex",alignItems:"center",gap:3,justifyContent:"flex-end",marginTop:2}}>
+              {isStarred&&<Star style={{width:10,height:10,color:"#F4D03F",fill:"#F4D03F"}}/>}
+              <span style={{fontSize:10,color:isMe?"rgba(0,0,0,.45)":(isDark?"#8696a0":"#999")}}>{ft(m.created_at)}</span>
+              {renderTicks(m)}
+            </div>
+          </div>
+
+          {/* Reactions */}
+          {Object.keys(rxns).length>0&&(
+            <div style={{display:"flex",gap:4,marginTop:3,flexWrap:"wrap",justifyContent:isMe?"flex-end":"flex-start"}}>
+              {Object.entries(rxns).map(([emoji,uids])=>(
+                <button key={emoji} onClick={()=>supabase.from("message_reactions" as any).upsert({message_id:m.id,user_id:user!.id,emoji},{onConflict:"message_id,user_id"}).then(reloadReactions)} style={{background:isDark?"#2a3942":"#f0f2f5",border:`1px solid ${uids.includes(user?.id||"")?"#25D366":"rgba(0,0,0,.1)"}`,borderRadius:12,padding:"1px 7px",cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",gap:3}}>
+                  {emoji} <span style={{fontSize:10,color:textSub,fontWeight:700}}>{uids.length}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        </SwipeBubble>
+
+        {/* Long-press message menu */}
+        {showMessageMenu?.id===m.id&&(()=>{
+          const vw=window.innerWidth, vh=window.innerHeight;
+          const menuW=270, menuH=400;
+          let left=showMessageMenu.x-menuW/2;
+          let top=showMessageMenu.y-menuH-10;
+          if(left+menuW>vw-10) left=vw-menuW-10;
+          if(left<10) left=10;
+          if(top<60) top=showMessageMenu.y+20;
+          return (
+          <div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,.45)"}} onClick={()=>setShowMessageMenu(null)}>
+            <div style={{position:"fixed",left,top,background:isDark?"#233138":"#fff",borderRadius:16,overflow:"hidden",width:menuW,boxShadow:"0 8px 32px rgba(0,0,0,.35)",animation:"popIn .15s ease"}} onClick={e=>e.stopPropagation()}>
+              <div style={{display:"flex",justifyContent:"space-around",padding:"14px 16px",borderBottom:`1px solid ${divider}`}}>
+                {QUICK_EMOJIS.map(e=>(
+                  <button key={e} onClick={async()=>{
+                    await supabase.from("message_reactions" as any).upsert({message_id:m.id,user_id:user!.id,emoji:e},{onConflict:"message_id,user_id"});
+                    reloadReactions();setShowMessageMenu(null);
+                  }} style={{background:"none",border:"none",cursor:"pointer",fontSize:24,padding:"2px 3px",borderRadius:8,transition:"transform .1s"}}>{e}</button>
+                ))}
+              </div>
+              {[
+                {icon:<Reply size={16}/>,label:"Reply",fn:()=>{setReplyTo(m);setShowMessageMenu(null);inputRef.current?.focus();}},
+                ...(m.content_type==="text"?[{icon:<Copy size={16}/>,label:"Copy",fn:()=>copyMsg(m.text||"")}]:[]),
+                {icon:<Forward size={16}/>,label:"Forward",fn:()=>{setForwardMsg(m);setShowForwardSheet(true);setShowMessageMenu(null);}},
+                {icon:<Star size={16}/>,label:isStarred?"Unstar":"Star",fn:()=>starMsg(m.id)},
+                {icon:<Pin size={16}/>,label:(m as any).is_pinned?"Unpin":"Pin",fn:()=>pinMessage(m)},
+                ...(isMe&&Date.now()-new Date(m.created_at).getTime()<EDIT_WINDOW&&m.content_type==="text"?[{icon:<Edit2 size={16}/>,label:"Edit",fn:()=>{setEditingMsg(m);setInput(m.text||"");setShowMessageMenu(null);inputRef.current?.focus();}}]:[]),
+                {icon:<CheckSquare size={16}/>,label:"Select",fn:()=>{setSelectMode(true);setSelectedIds(new Set([m.id]));setShowMessageMenu(null);}},
+                {icon:<Trash2 size={16}/>,label:"Delete",fn:()=>{setShowMessageMenu(null);setShowDeleteSheet({id:m.id,isOwner:isMe});}},
+              ].map((item,i)=>(
+                <button key={i} onClick={item.fn} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:textMain,fontSize:14,borderBottom:`1px solid ${divider}`}}>
+                  <span style={{color:WA_GREEN}}>{item.icon}</span>{item.label}
+                </button>
+              ))}
+              <button onClick={()=>setShowMessageMenu(null)} style={{width:"100%",padding:"13px",background:"none",border:"none",cursor:"pointer",color:"#E74C3C",fontSize:14,fontWeight:600}}>Cancel</button>
+            </div>
+          </div>
+          );
+        })()}
+      </div>
+    );
+  };
+
+  // ── MAIN RETURN ─────────────────────────────────────────────
+  return (
+    <div className="majlis-wrap" style={{background:isDark?"#0b141a":"#f0f2f5"}}>
+
+      {/* ═══ SIDEBAR ════════════════════════════════════════════ */}
+      <div className="majlis-sidebar" style={{background:sidebarBg,display:mobileShowChat?"none":"flex"}}>
+
+        {/* Sidebar Header */}
+        <div style={{background:sidebarHdr,padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            {/* ── Back to Dashboard ── */}
+            <button
+              onClick={()=>navigate("/student")}
+              title="Back to Dashboard"
+              style={{background:"none",border:"none",cursor:"pointer",color:"#fff",padding:"4px 6px",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",opacity:.9}}
+            >
+              <ArrowLeft size={20}/>
+            </button>
+            <div style={{position:"relative"}}>
+              {myProfile.avatar_url
+                ?<img src={myProfile.avatar_url} style={{width:36,height:36,borderRadius:"50%",objectFit:"cover"}} alt=""/>
+                :<div style={{width:36,height:36,borderRadius:"50%",background:"rgba(255,255,255,0.3)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:15}}>{myInitial}</div>
+              }
+            </div>
+            <span style={{color:"#fff",fontWeight:700,fontSize:17}}>Al-Majlis</span>
+          </div>
+          <div style={{display:"flex",gap:4}}>
+            <button onClick={()=>setShowMajlisLive(true)} title="Majlis Live" style={{background:majlisLive.isLive?"#DC2626":"none",border:"none",color:"#fff",cursor:"pointer",padding:6,borderRadius:8,position:"relative",display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:700}}>
+              <Radio size={18}/>{majlisLive.isLive&&<span>LIVE</span>}
+            </button>
+            {/* Search → people you are allowed to message */}
+            <button onClick={()=>{setShowPeople(true);setPeopleSearch("");window.history.pushState({layer:"people"},"",window.location.href);}} title="Search people" style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6,borderRadius:8}}>
+              <Search size={18}/>
+            </button>
+            {/* "+ New" is for teachers/admins only — students can't create groups */}
+            {canModerate&&(
+              <button onClick={()=>{setShowNewSheet(true);window.history.pushState({layer:"newSheet"},"",window.location.href);}} style={{background:"rgba(255,255,255,0.15)",border:"none",color:"#fff",cursor:"pointer",padding:"6px 10px",borderRadius:8,fontSize:13,fontWeight:600}}>
+                + New
+              </button>
+            )}
+            <button onClick={()=>{setShowSidebarMenu(true);window.history.pushState({layer:"sidebarMenu"},"",window.location.href);}} title="Menu" style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6,borderRadius:8}}>
+              <MoreVertical size={18}/>
+            </button>
+          </div>
+        </div>
+
+        {/* Majlis Live banner — shows while a meeting / urgent discussion is on */}
+        {majlisLive.isLive&&(
+          <div onClick={()=>setShowMajlisLive(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",cursor:"pointer",background:majlisLive.liveMeeting?.kind==="urgent"?"#DC2626":"#1a3d27",color:"#fff"}}>
+            <Radio size={16}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:12,fontWeight:800}}>{majlisLive.liveMeeting?.kind==="urgent"?"🚨 Urgent — live now":"🔴 Majlis Live now"}</div>
+              <div style={{fontSize:12,opacity:.85,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{majlisLive.liveMeeting?.title||majlisLive.liveSession?.topic||"Tap to join"}</div>
+            </div>
+            <span style={{fontSize:12,fontWeight:800,background:"rgba(255,255,255,.2)",padding:"5px 12px",borderRadius:16}}>Join</span>
+          </div>
+        )}
+
+        {/* Search bar */}
+        <div style={{padding:"8px 12px",background:isDark?"#111b21":"#fff"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,background:inputBg,borderRadius:24,padding:"8px 14px"}}>
+            <Search style={{width:16,height:16,color:textSub}}/>
+            <input value={sidebarSearch} onChange={e=>setSidebarSearch(e.target.value)} placeholder="Search chats" style={{border:"none",background:"transparent",flex:1,fontSize:14,color:textMain,outline:"none"}}/>
+            {sidebarSearch&&<button onClick={()=>setSidebarSearch("")} style={{background:"none",border:"none",cursor:"pointer",color:textSub,padding:0}}><X size={14}/></button>}
+          </div>
+        </div>
+
+        {/* Filter chips */}
+        {!sidebarSearch&&(
+          <div style={{display:"flex",gap:8,padding:"6px 12px 8px",overflowX:"auto",background:isDark?"#111b21":"#fff"}}>
+            {(["all","unread","groups","announcements"] as const).map(chip=>{
+              const isAct=activeFilter===chip;
+              const label=chip==="all"?"All":chip==="unread"?"Unread":chip==="groups"?"Groups":"Announcements";
+              const unreadTotal=Object.values(unreadCounts).reduce((a,b)=>a+b,0);
+              return (
+                <button key={chip} onClick={()=>setActiveFilter(chip)} style={{padding:"5px 14px",borderRadius:20,border:isAct?"none":`1px solid ${divider}`,cursor:"pointer",fontSize:12,fontWeight:600,whiteSpace:"nowrap",flexShrink:0,transition:"all .15s",background:isAct?WA_GREEN:(isDark?"#2a3942":"#f0f2f5"),color:isAct?"#fff":textSub}}>
+                  {label}
+                  {chip==="unread"&&unreadTotal>0&&(
+                    <span style={{marginLeft:5,background:isAct?"rgba(255,255,255,.3)":WA_TEAL,color:"#fff",borderRadius:10,padding:"0 5px",fontSize:10}}>{unreadTotal}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Search tabs */}
+        {sidebarSearch&&(
+          <div style={{display:"flex",borderBottom:`1px solid ${divider}`,background:isDark?"#202c33":"#f8f8f8"}}>
+            {(["contacts","messages","groups"] as const).map(tab=>(
+              <button key={tab} onClick={()=>setSearchTab(tab)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",cursor:"pointer",fontSize:12,fontWeight:searchTab===tab?700:400,color:searchTab===tab?WA_GREEN:textSub,borderBottom:searchTab===tab?`2px solid ${WA_GREEN}`:"2px solid transparent",textTransform:"capitalize"}}>{tab}</button>
+            ))}
+          </div>
+        )}
+
+        {/* Channel list */}
+        <div style={{flex:1,overflowY:"auto"}}>
+          {sidebarSearch?(
+            <>
+              {searchTab==="contacts"&&contactResults.map(s=>(
+                <div key={s.user_id} onClick={()=>openDirectMessage(s)} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 16px",cursor:"pointer",borderBottom:`1px solid ${divider}`}}>
+                  {avatarEl(s.user_id,46)}
+                  <div>
+                    <div style={{fontWeight:600,fontSize:15,color:textMain}}>{s.full_name||"Student"}</div>
+                    <div style={{fontSize:12,color:WA_GREEN}}>{kindLabel(s)}</div>
+                  </div>
+                </div>
+              ))}
+              {searchTab==="messages"&&msgResults.map(m=>(
+                <div key={m.id} onClick={()=>{selectChannel(m.channel_id);setTimeout(()=>jumpTo(m.id),400);}} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 16px",cursor:"pointer",borderBottom:`1px solid ${divider}`}}>
+                  {avatarEl(m.user_id,40)}
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:600,fontSize:14,color:textMain}}>{profiles[m.user_id]?.full_name||"Message"}</div>
+                    <div style={{fontSize:12,color:textSub,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.text}</div>
+                  </div>
+                </div>
+              ))}
+              {searchTab==="groups"&&groupResults.map(ch=>renderChRow(ch))}
+            </>
+          ):(
+            <>
+              {grouped.pinned.length>0&&(
+                <><div style={{padding:"6px 16px",fontSize:11,fontWeight:700,color:textSub,background:inputBg,textTransform:"uppercase",letterSpacing:1}}>📌 Pinned</div>{grouped.pinned.map(renderChRow)}</>
+              )}
+              {grouped.groups.length>0&&(
+                <><div style={{padding:"6px 16px",fontSize:11,fontWeight:700,color:textSub,background:inputBg,textTransform:"uppercase",letterSpacing:1}}>MY GROUPS</div>{grouped.groups.map(renderChRow)}</>
+              )}
+              {grouped.level.length>0&&(
+                <><div style={{padding:"6px 16px",fontSize:11,fontWeight:700,color:textSub,background:inputBg,textTransform:"uppercase",letterSpacing:1}}>BY LEVEL</div>{grouped.level.map(renderChRow)}</>
+              )}
+              {grouped.anns.length>0&&(
+                <><div style={{padding:"6px 16px",fontSize:11,fontWeight:700,color:textSub,background:inputBg,textTransform:"uppercase",letterSpacing:1}}>ANNOUNCEMENTS</div>{grouped.anns.map(renderChRow)}</>
+              )}
+              {archivedChannels.size>0&&(
+                <div onClick={()=>setShowArchived(p=>!p)} style={{padding:"10px 16px",display:"flex",alignItems:"center",gap:10,cursor:"pointer",borderTop:`1px solid ${divider}`}}>
+                  <Archive size={16} color={textSub}/>
+                  <span style={{fontSize:14,color:textSub}}>Archived ({archivedChannels.size})</span>
+                  <ChevronDown size={14} color={textSub} style={{marginLeft:"auto",transform:showArchived?"rotate(180deg)":"none",transition:"transform .2s"}}/>
+                </div>
+              )}
+              {showArchived&&channels.filter(c=>archivedChannels.has(c.id)).map(renderChRow)}
+              {channels.length===0&&(
+                <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flex:1,padding:40,gap:12,textAlign:"center",marginTop:40}}>
+                  <MessageCircle style={{width:52,height:52,color:"#ccc"}}/>
+                  <div style={{fontSize:17,fontWeight:600,color:textSub}}>No chats yet</div>
+                  <div style={{fontSize:13,color:textSub}}>Join a group or browse channels</div>
+                  <button onClick={()=>setShowBrowseChannels(true)} style={{marginTop:6,background:WA_GREEN,color:"#fff",border:"none",borderRadius:20,padding:"10px 22px",cursor:"pointer",fontSize:14,fontWeight:600}}>Browse Channels</button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ═══ CHAT AREA ══════════════════════════════════════════ */}
+      {/* FIXED: use CSS class instead of inline display style so media query can override */}
+      <div className={`majlis-chat${mobileShowChat?" show":""}`} style={{flexDirection:"column",...getBgStyle()}}>
+        {!activeChannel?(
+          <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,background:isDark?"#0d1117":"#f8f8f8"}}>
+            <div style={{width:80,height:80,borderRadius:"50%",background:WA_GREEN,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 20px rgba(7,94,84,.3)"}}>
+              <MessageCircle style={{width:40,height:40,color:"#fff"}}/>
+            </div>
+            <div style={{fontSize:22,fontWeight:700,color:textMain}}>Al-Majlis</div>
+            <div style={{fontSize:14,color:textSub,maxWidth:280,textAlign:"center",lineHeight:1.6}}>Select a conversation from the left to start chatting with your classmates</div>
+            <div style={{fontSize:12,color:textSub,marginTop:8,display:"flex",alignItems:"center",gap:6,background:"rgba(0,0,0,.04)",padding:"8px 16px",borderRadius:20}}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#075E54" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              End-to-end style messaging
+            </div>
+          </div>
+        ):(
+          <>
+            {/* Chat Header */}
+            <div style={{background:chatHdr,padding:"8px 14px",display:"flex",alignItems:"center",gap:10,boxShadow:"0 2px 6px rgba(0,0,0,.2)",zIndex:10,flexShrink:0}}>
+              <button onClick={()=>{setMobileShowChat(false);setActiveChannelId(null);}} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:4,display:"flex"}}>
+                <ArrowLeft size={20}/>
+              </button>
+              <div style={{cursor:"pointer",position:"relative"}} onClick={()=>{setShowGroupInfo(true);window.history.pushState({layer:"groupInfo"},"",window.location.href);}}>
+                {chAvatarEl(activeChannel,38)}
+              </div>
+              <div style={{flex:1,minWidth:0,cursor:"pointer"}} onClick={()=>setShowGroupInfo(true)}>
+                <div style={{color:"#fff",fontWeight:700,fontSize:16,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                  {activeChannel.type==="dm"?(
+                    (()=>{const pid=(activeChannel as any).dm_partner_id;return pid&&profiles[pid]?profiles[pid].full_name||"Direct Message":"Direct Message";})()
+                  ):getCN(activeChannel)}
+                </div>
+                <div style={{color:"rgba(255,255,255,.8)",fontSize:11}}>
+                  {typingUsers.length>0
+                    ?<span style={{fontStyle:"italic"}}>{typingUsers[0]} is typing…</span>
+                    :(()=>{
+                        const total=memberCounts[activeChannel.id]||0;
+                        const online=Object.values(profiles).filter(p=>onlineUsers.has(p.user_id)).length;
+                        return online>0?`${total} members, ${online} online`:`${total} members`;
+                      })()
+                  }
+                </div>
+              </div>
+              <div style={{display:"flex",gap:2,alignItems:"center"}}>
+                {loadingMessages&&<div style={{width:8,height:8,borderRadius:"50%",border:"2px solid rgba(255,255,255,.4)",borderTopColor:"#fff",animation:"spin .8s linear infinite",marginRight:4,flexShrink:0}}/>}
+                <button onClick={()=>{setShowChatSearch(p=>!p);setChatSearchQuery("");}} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6}}><Search size={18}/></button>
+                <button onClick={()=>setShowHeaderMenu(p=>!p)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6}}><MoreVertical size={18}/></button>
+              </div>
+
+              {/* Header dropdown */}
+              {showHeaderMenu&&(
+                <div style={{position:"fixed",inset:0,zIndex:400,background:"rgba(0,0,0,.5)"}} onClick={()=>setShowHeaderMenu(false)}>
+                  <div style={{position:"absolute",bottom:0,left:0,right:0,maxWidth:480,margin:"0 auto",background:isDark?"#202c33":"#fff",borderRadius:"20px 20px 0 0",overflow:"hidden",animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
+                    <div style={{width:36,height:4,borderRadius:2,background:isDark?"#444":"#ddd",margin:"10px auto 14px"}}/>
+                    {[
+                      {icon:"ℹ️",label:activeChannel.type==="dm"?"Contact Info":"Group Info",          fn:()=>{setShowGroupInfo(true);setShowHeaderMenu(false);window.history.pushState({layer:"groupInfo"},"",window.location.href);}},
+                      {icon:"🔍",label:"Search Messages",      fn:()=>{setShowChatSearch(true);setShowHeaderMenu(false);}},
+                      {icon:"⭐",label:"Starred Messages",     fn:()=>openStarred()},
+                      {icon:"🔕",label:mutedChannels.has(activeChannel.id)?"Unmute":"Mute Notifications",fn:()=>{toggleMuteCh(activeChannel.id);setShowHeaderMenu(false);}},
+                      {icon:"📤",label:"Export Chat",          fn:()=>{exportChat();setShowHeaderMenu(false);}},
+                      ...(activeChannel.type==="dm"&&(activeChannel as any).dm_partner_id?[
+                        {icon:"🚫",label:blockedByMe.has((activeChannel as any).dm_partner_id)?"Unblock Contact":"Block Contact",
+                         fn:()=>{toggleBlock((activeChannel as any).dm_partner_id,getCN(activeChannel));setShowHeaderMenu(false);},danger:true},
+                      ]:[]),
+                      ...(canModerate?[
+                        {icon:"🗑️",label:"Clear Chat",        fn:()=>{clearChat();setShowHeaderMenu(false);},danger:true},
+                        ...(activeChannel.type!=="dm"?[{icon:"💥",label:"Delete Group",       fn:()=>{deleteGroup();setShowHeaderMenu(false);},danger:true}]:[]),
+                      ]:[]),
+                      ...(activeChannel.type!=="dm"?[{icon:"🚪",label:"Leave Group",          fn:()=>{leaveChannel(activeChannel.id);setShowHeaderMenu(false);},danger:true}]:[]),
+                    ].map((item,i)=>(
+                      <button key={i} onClick={item.fn} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"15px 20px",background:"none",border:"none",cursor:"pointer",textAlign:"left",fontSize:15,color:(item as any).danger?"#E74C3C":textMain,borderBottom:`1px solid ${divider}`}}>
+                        <span style={{fontSize:18}}>{item.icon}</span>{item.label}
+                      </button>
+                    ))}
+                    <div style={{height:16}}/>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Chat search bar */}
+            {showChatSearch&&(
+              <div style={{background:isDark?"#202c33":"#fff",padding:"8px 12px",display:"flex",alignItems:"center",gap:8,borderBottom:`1px solid ${divider}`}}>
+                <Search size={16} color={textSub}/>
+                <input autoFocus value={chatSearchQuery} onChange={e=>setChatSearchQuery(e.target.value)} placeholder="Search messages…" style={{flex:1,border:"none",background:"transparent",fontSize:14,color:textMain,outline:"none"}}/>
+                {filteredMessages.length>0&&chatSearchQuery&&<span style={{fontSize:12,color:textSub}}>{filteredMessages.length} result{filteredMessages.length>1?"s":""}</span>}
+                <button onClick={()=>{setShowChatSearch(false);setChatSearchQuery("");}} style={{background:"none",border:"none",cursor:"pointer"}}><X size={16} color={textSub}/></button>
+              </div>
+            )}
+
+            {/* Pinned message bar */}
+            {pinnedMessages.length>0&&showPinnedBar&&(
+              <div style={{background:isDark?"#202c33":"#fff",borderBottom:`2px solid ${WA_GREEN}`,padding:"8px 16px",display:"flex",alignItems:"center",gap:10,cursor:"pointer"}} onClick={()=>jumpTo(pinnedMessages[pinnedMessages.length-1].id)}>
+                <Pin style={{width:14,height:14,color:WA_GREEN,flexShrink:0}}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:11,fontWeight:700,color:WA_GREEN}}>Pinned Message</div>
+                  <div style={{fontSize:12,color:textSub,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pinnedMessages[pinnedMessages.length-1].text||"[Media]"}</div>
+                </div>
+                <button onClick={e=>{e.stopPropagation();setShowPinnedBar(false);}} style={{background:"none",border:"none",cursor:"pointer"}}><X size={14} color={textSub}/></button>
+              </div>
+            )}
+
+            {/* Select mode bar */}
+            {selectMode&&(
+              <div style={{background:isDark?"#202c33":"#fff",padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${divider}`}}>
+                <span style={{fontSize:14,color:textMain}}>{selectedIds.size} selected</span>
+                <div style={{display:"flex",gap:12}}>
+                  <button onClick={()=>{setForwardMsg(null);setShowForwardSheet(true);}} disabled={selectedIds.size===0} style={{background:"none",border:"none",cursor:"pointer",color:WA_GREEN,fontSize:13}}>Forward</button>
+                  <button onClick={deleteSelected} disabled={selectedIds.size===0} style={{background:"none",border:"none",cursor:"pointer",color:"#E74C3C",fontSize:13}}>Delete</button>
+                  <button onClick={()=>{setSelectMode(false);setSelectedIds(new Set());}} style={{background:"none",border:"none",cursor:"pointer",color:textSub,fontSize:13}}>Cancel</button>
+                </div>
+              </div>
+            )}
+
+            {/* Message list */}
+            <div ref={scrollRef} onClick={(e)=>{ if(selectableId&&!(e.target as HTMLElement).closest(".msg-selectable")) setSelectableId(null); }} onScroll={handleScrollMessages} style={{flex:1,overflowY:"auto",padding:"6px 0 4px",position:"relative"}}>
+              {/* Floating date pill — appears while scrolling through history */}
+              {floatingDate&&(
+                <div style={{position:"sticky",top:8,display:"flex",justifyContent:"center",zIndex:20,pointerEvents:"none",marginBottom:-28}}>
+                  <span style={{background:"rgba(255,255,255,.9)",color:"#555",fontSize:11,padding:"4px 12px",borderRadius:12,boxShadow:"0 1px 4px rgba(0,0,0,.15)",backdropFilter:"blur(4px)",animation:"fadeIn .15s ease"}}>
+                    {(()=>{const d=new Date(floatingDate);const today=new Date();const yesterday=new Date();yesterday.setDate(today.getDate()-1);if(d.toDateString()===today.toDateString())return"Today";if(d.toDateString()===yesterday.toDateString())return"Yesterday";return d.toLocaleDateString([],{day:"2-digit",month:"long",year:"numeric"});})()}
+                  </span>
+                </div>
+              )}
+              {/* No loading spinner — stale cache shown instantly.
+                  Background refresh indicator is a tiny dot in the chat header. */}
+              {!loadingMessages&&messages.length===80&&(
+                <div style={{display:"flex",justifyContent:"center",padding:"8px 0"}}>
+                  <button onClick={async()=>{
+                    const oldest=messages[0];
+                    if(!oldest||!activeChannelId) return;
+                    const {data}=await supabase.from("chat_messages").select("*").eq("channel_id",activeChannelId).order("created_at",{ascending:false}).lt("created_at",oldest.created_at).limit(40);
+                    const older=((data||[]) as unknown as ChatMessage[]).reverse();
+                    if(older.length>0) setMessages(prev=>[...older,...prev]);
+                  }} style={{background:"rgba(255,255,255,.9)",border:"none",borderRadius:20,padding:"6px 16px",fontSize:12,color:"#555",cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,.1)",fontWeight:600}}>
+                    Load older messages
+                  </button>
+                </div>
+              )}
+              {!loadingMessages&&messages.length===0&&(
+                <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flex:1,padding:40,gap:10,textAlign:"center",marginTop:60}}>
+                  <div style={{width:60,height:60,borderRadius:"50%",background:"rgba(255,255,255,.9)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px rgba(0,0,0,.08)"}}><MessageCircle style={{width:28,height:28,color:WA_GREEN}}/></div>
+                  <div style={{fontSize:14,fontWeight:600,color:"#555"}}>No messages yet</div>
+                  <div style={{fontSize:12,color:"#888"}}>Be the first to say السلام عليكم! 🌙</div>
+                </div>
+              )}
+              {msgsWithSeps.map((item,i)=>
+                item.type==="date"
+                  ?<DateSep key={`d-${i}-${item.date}`} date={item.date}/>
+                  :<div key={item.msg.id}>{renderMsg(item.msg)}</div>
+              )}
+              {/* FIXED: Typing indicator uses CSS .typing-dot class with bounce animation */}
+              {typingUsers.length>0&&(
+                <div style={{display:"flex",alignItems:"center",gap:8,padding:"4px 16px 4px 48px"}}>
+                  <div style={{background:isDark?"#202c33":"#fff",padding:"10px 14px",borderRadius:"2px 10px 10px 10px",boxShadow:"0 1px 2px rgba(0,0,0,.1)",display:"flex",gap:4,alignItems:"center"}}>
+                    <span className="typing-dot"/>
+                    <span className="typing-dot"/>
+                    <span className="typing-dot"/>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Scroll to bottom FAB — FIXED: position:absolute needs parent position:relative (added to .majlis-chat) */}
+            {showScrollFab&&(
+              <button onClick={scrollToBottom} style={{position:"absolute",bottom:80,right:16,width:42,height:42,borderRadius:"50%",background:isDark?"#202c33":"#fff",border:"none",boxShadow:"0 2px 8px rgba(0,0,0,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",zIndex:10}}>
+                <ChevronDown size={20} color={textSub}/>
+                {Object.values(unreadCounts).reduce((a,b)=>a+b,0)>0&&(
+                  <span style={{position:"absolute",top:-4,right:-4,background:WA_TEAL,color:"#fff",borderRadius:"50%",width:18,height:18,fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800}}>
+                    {Object.values(unreadCounts).reduce((a,b)=>a+b,0)}
+                  </span>
+                )}
+              </button>
+            )}
+
+            {/* Mention autocomplete */}
+            {mentionList.length>0&&(
+              <div style={{position:"absolute",bottom:70,left:12,right:12,background:isDark?"#202c33":"#fff",borderRadius:12,boxShadow:"0 4px 20px rgba(0,0,0,.2)",overflow:"hidden",zIndex:100}}>
+                {mentionList.map(p=>(
+                  <div key={p.user_id} onClick={()=>insertMention(p)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",cursor:"pointer",borderBottom:`1px solid ${divider}`}}>
+                    {avatarEl(p.user_id,30)}
+                    <div>
+                      <div style={{fontSize:14,fontWeight:600,color:textMain}}>{p.full_name}</div>
+                      <div style={{fontSize:11,color:textSub}}>{(p as any).level||"Student"}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Reply bar */}
+            {replyTo&&(
+              <div style={{background:isDark?"#202c33":"#f0f2f5",borderTop:`3px solid ${WA_GREEN}`,padding:"8px 16px",display:"flex",alignItems:"center",gap:10}}>
+                <Reply style={{width:16,height:16,color:WA_GREEN,flexShrink:0}}/>
+                <div style={{flex:1,minWidth:0,borderLeft:`3px solid ${WA_GREEN}`,paddingLeft:8}}>
+                  <div style={{fontSize:12,fontWeight:700,color:WA_GREEN}}>{profiles[replyTo.user_id]?.full_name||"..."}</div>
+                  <div style={{fontSize:12,color:textSub,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{replyTo.text||"[Media]"}</div>
+                </div>
+                <button onClick={()=>setReplyTo(null)} style={{background:"none",border:"none",cursor:"pointer"}}><X size={16} color={textSub}/></button>
+              </div>
+            )}
+
+            {/* Edit bar */}
+            {editingMsg&&(
+              <div style={{background:isDark?"#202c33":"#f0f2f5",borderTop:`3px solid #ECB22E`,padding:"8px 16px",display:"flex",alignItems:"center",gap:10}}>
+                <Edit2 style={{width:16,height:16,color:"#ECB22E",flexShrink:0}}/>
+                <div style={{flex:1,fontSize:12,color:textSub}}>Editing message</div>
+                <button onClick={()=>{setEditingMsg(null);setInput("");}} style={{background:"none",border:"none",cursor:"pointer"}}><X size={16} color={textSub}/></button>
+              </div>
+            )}
+
+            {/* Quick emoji bar */}
+            {showEmojiBar&&(
+              <div style={{background:isDark?"#202c33":"#fff",borderTop:`1px solid ${divider}`,padding:"8px 16px",display:"flex",gap:10,overflowX:"auto"}}>
+                {["😊","😂","❤️","👍","🙏","🔥","😢","😮","🎉","✅","💯","🤔","👏","😍","🥺","😅","🌹","☀️","🤲","📖"].map(e=>(
+                  <button key={e} onClick={()=>setInput(input+e)} style={{background:"none",border:"none",cursor:"pointer",fontSize:26,padding:4,lineHeight:1}}>{e}</button>
+                ))}
+              </div>
+            )}
+
+            {/* ── Input toolbar ─────────────────────────────── */}
+            <div style={{background:isDark?"#202c33":"#f0f2f5",padding:"8px 8px",display:"flex",alignItems:"flex-end",gap:6,flexShrink:0,position:"relative"}}>
+
+              {/* Recording overlay */}
+              {isRecording&&!recordingLocked&&(
+                <div style={{position:"absolute",inset:0,background:isDark?"#202c33":"#f0f2f5",display:"flex",alignItems:"center",paddingLeft:14,paddingRight:8,gap:8,zIndex:5}}>
+                  <div style={{width:9,height:9,borderRadius:"50%",background:"#E74C3C",flexShrink:0,animation:"pulse 1s infinite"}}/>
+                  <span style={{fontSize:13,fontWeight:700,color:"#E74C3C",flexShrink:0}}>{fr(recordingTime)}</span>
+                  <div style={{flex:1,display:"flex",alignItems:"center",gap:1.5,height:28,overflow:"hidden"}}>
+                    {[4,10,16,8,14,6,18,11,7,15,9,13,5,17,8,12,6,14,10,7].map((h,i)=>(
+                      <div key={i} style={{width:2.5,borderRadius:2,height:h*1.4,background:"#E74C3C",flexShrink:0,animation:`waveBar ${0.5+(i%4)*0.1}s ease-in-out infinite alternate`,animationDelay:`${i*0.04}s`}}/>
+                    ))}
+                  </div>
+                  <span style={{fontSize:11,color:textSub,flexShrink:0}}>◀ Slide to cancel</span>
+                  <button onClick={cancelRecording} style={{background:"none",border:"none",cursor:"pointer",color:"#E74C3C",padding:4,flexShrink:0}}><Trash2 size={18}/></button>
+                </div>
+              )}
+              {isRecording&&recordingLocked&&(
+                <div style={{position:"absolute",inset:0,background:isDark?"#202c33":"#f0f2f5",display:"flex",alignItems:"center",paddingLeft:14,paddingRight:8,gap:8,zIndex:5}}>
+                  <div style={{width:9,height:9,borderRadius:"50%",background:"#E74C3C",flexShrink:0,animation:"pulse 1s infinite"}}/>
+                  <span style={{fontSize:13,fontWeight:700,color:"#E74C3C",flexShrink:0}}>{fr(recordingTime)}</span>
+                  <div style={{flex:1,display:"flex",alignItems:"center",gap:1.5,height:28,overflow:"hidden"}}>
+                    {[8,14,6,18,11,7,15,9,13,5,17,8,12,6,14,10,7,16,9,13].map((h,i)=>(
+                      <div key={i} style={{width:2.5,borderRadius:2,height:h*1.4,background:"#E74C3C",flexShrink:0,animation:`waveBar ${0.5+(i%4)*0.1}s ease-in-out infinite alternate`,animationDelay:`${i*0.04}s`}}/>
+                    ))}
+                  </div>
+                  <button onClick={cancelRecording} style={{width:36,height:36,borderRadius:"50%",background:isDark?"#2a3942":"#f0f0f0",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Trash2 size={16} color="#E74C3C"/></button>
+                  <button onClick={stopRecording} style={{width:36,height:36,borderRadius:"50%",background:WA_GREEN,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Send size={16} color="#fff"/></button>
+                </div>
+              )}
+
+              {/* Emoji toggle */}
+              <button onClick={()=>setShowEmojiBar(p=>!p)} style={{background:"none",border:"none",cursor:"pointer",padding:6,color:showEmojiBar?WA_GREEN:textSub,display:"flex",marginBottom:4,transition:"color .15s"}}>
+                <Smile size={22}/>
+              </button>
+
+              {/* Text input bubble */}
+              <div style={{flex:1,background:isDark?"#2a3942":"#fff",borderRadius:22,display:"flex",alignItems:"flex-end",padding:"6px 10px",gap:4,minHeight:44,boxShadow:"0 1px 2px rgba(0,0,0,.08)"}}>
+                <textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={e=>{handleInputChange(e.target.value);e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,100)+"px";}}
+                  onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey&&settings.enterSends){e.preventDefault();sendMessage();}}}
+                  placeholder={canSend()?"Message…":activeChannel.type==="dm"?"You blocked this contact":activeChannel.type==="announcement"?"Only admins can post":"Channel locked"}
+                  disabled={!canSend()}
+                  rows={1}
+                  style={{flex:1,border:"none",background:"transparent",fontSize:msgFontSz,color:textMain,outline:"none",resize:"none",lineHeight:"1.4",maxHeight:100,overflow:"auto",paddingTop:2,fontFamily:"inherit"}}
+                />
+                {/* View-once toggle — arms the next photo/video to disappear after one open */}
+                <button
+                  onClick={()=>setViewOnceNext(v=>!v)}
+                  title={viewOnceNext?"View once: ON — next photo/video disappears after opening":"Send next photo/video as view-once"}
+                  style={{background:viewOnceNext?"rgba(37,211,102,.18)":"none",border:"none",cursor:"pointer",color:viewOnceNext?WA_GREEN:textSub,padding:"3px 2px",display:"flex",borderRadius:6,marginBottom:1}}
+                >
+                  <Eye size={19}/>
+                </button>
+                {/* FIXED: Attachment button opens bottom sheet, not bare labels */}
+                <button
+                  onClick={()=>{if(canSend())setShowAttachSheet(true);}}
+                  disabled={!canSend()}
+                  style={{background:"none",border:"none",cursor:canSend()?"pointer":"not-allowed",color:textSub,padding:"3px 2px",display:"flex",opacity:canSend()?1:0.4,marginBottom:1}}
+                  title="Attach"
+                >
+                  <Paperclip size={20}/>
+                </button>
+              </div>
+
+              {/* Send or Mic */}
+              {input.trim()?(
+                <button onClick={()=>sendMessage()} className="send-btn" style={{width:46,height:46,borderRadius:"50%",background:WA_GREEN,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 2px 8px rgba(7,94,84,.35)",transition:"transform .1s"}}>
+                  {uploading?<Loader2 style={{width:18,height:18,color:"#fff",animation:"spin .8s linear infinite"}}/>:<Send style={{width:18,height:18,color:"#fff"}}/>}
+                </button>
+              ):(
+                <button
+                  onMouseDown={e=>{e.preventDefault();if(!isRecording)startRecording();}}
+                  onMouseUp={e=>{e.preventDefault();if(isRecording&&!recordingLocked)stopRecording();}}
+                  onTouchStart={e=>{e.preventDefault();micTouchStartX.current=e.touches[0].clientX;micTouchStartY.current=e.touches[0].clientY;if(!isRecording)startRecording();}}
+                  onTouchMove={e=>{
+                    if(!isRecording) return;
+                    const t=e.touches[0];
+                    // micStartX/Y set on touchStart; slide LEFT >80px to cancel, UP >70px to lock
+                    const dx = micTouchStartX.current - t.clientX;
+                    const dy = micTouchStartY.current - t.clientY;
+                    if(dx>80 && !recordingLocked) { cancelRecording(); return; }
+                    if(dy>70 && !recordingLocked) { setRecordingLocked(true); if(navigator.vibrate)navigator.vibrate(30); }
+                  }}
+                  onTouchEnd={e=>{e.preventDefault();if(isRecording&&!recordingLocked)stopRecording();}}
+                  style={{width:46,height:46,borderRadius:"50%",background:isRecording?"#E74C3C":WA_GREEN,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:isRecording?"0 0 0 8px rgba(231,76,60,.2)":"0 2px 8px rgba(7,94,84,.35)",transition:"all .2s"}}
+                >
+                  <Mic style={{width:20,height:20,color:"#fff"}}/>
+                </button>
+              )}
+            </div>
+
+            {/* FIXED hidden file inputs — separated gallery/camera/file/audio */}
+            {/* Gallery: no capture — shows gallery on mobile */}
+            <input ref={galleryInputRef} id="majlis-gallery-input" type="file" accept="image/*,video/*" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"image")}/>
+            {/* Camera: capture="camera" — opens camera directly */}
+            <input ref={cameraInputRef} id="majlis-camera-input" type="file" accept="image/*" capture="environment" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"image")}/>
+            {/* Document: any file type */}
+            <input ref={fileInputRef} id="majlis-file-input" type="file" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"file")}/>
+            {/* Audio files */}
+            <input ref={audioFileRef} id="majlis-audio-input" type="file" accept="audio/*" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"audio")}/>
+            {/* Avatar inputs */}
+            <input ref={avatarInputRef} id="majlis-group-avatar" type="file" accept="image/*" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleAvatarUpload(e.target.files[0])}/>
+            {/* Video: gallery pick */}
+            <input ref={videoInputRef} id="majlis-video-input" type="file" accept="video/*" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"video")}/>
+            {/* Video: record via camera */}
+            <input ref={videoCameraInputRef} id="majlis-video-camera-input" type="file" accept="video/*" capture="environment" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"video")}/>
+          </>
+        )}
+      </div>
+
+      {/* ═══ SHEETS & OVERLAYS ═══════════════════════════════════ */}
+
+      {/* ── ATTACHMENT BOTTOM SHEET (WhatsApp-style) ──────────── */}
+      {showAttachSheet&&(
+        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.5)"}} onClick={()=>setShowAttachSheet(false)}>
+          <div className="attach-sheet" style={{position:"absolute",bottom:0,left:0,right:0,maxWidth:480,margin:"0 auto",background:isDark?"#202c33":"#fff",borderRadius:"20px 20px 0 0",padding:"20px 20px 32px",overflow:"hidden"}} onClick={e=>e.stopPropagation()}>
+            <div style={{width:36,height:4,borderRadius:2,background:isDark?"#444":"#ddd",margin:"0 auto 20px"}}/>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:20}}>
+              {[
+                {icon:<Camera size={24} color="#fff"/>,   bg:"#2ecc71", label:"Camera",   action:()=>{setShowAttachSheet(false);setTimeout(()=>cameraInputRef.current?.click(),100);}},
+                {icon:<Image size={24} color="#fff"/>,    bg:"#9b59b6", label:"Gallery",  action:()=>{setShowAttachSheet(false);setTimeout(()=>galleryInputRef.current?.click(),100);}},
+                {icon:<Video size={24} color="#fff"/>,    bg:"#e91e63", label:"Video",    action:()=>{setShowAttachSheet(false);setTimeout(()=>videoCameraInputRef.current?.click(),100);}},
+                {icon:<File size={24} color="#fff"/>,     bg:"#3498db", label:"Document", action:()=>{setShowAttachSheet(false);setTimeout(()=>fileInputRef.current?.click(),100);}},
+                {icon:<Music size={24} color="#fff"/>,    bg:"#e67e22", label:"Audio",    action:()=>{setShowAttachSheet(false);setTimeout(()=>audioFileRef.current?.click(),100);}},
+                {icon:<MapPin size={24} color="#fff"/>,   bg:"#E74C3C", label:"Location", action:()=>{setShowAttachSheet(false);shareLocation();}},
+                {icon:<UserCircle2 size={24} color="#fff"/>, bg:"#16a085", label:"Contact", action:()=>{setShowAttachSheet(false);setShowContactPicker(true);}},
+                {icon:<BarChart3 size={24} color="#fff"/>, bg:"#8e44ad", label:"Poll",     action:()=>{setShowAttachSheet(false);setShowPollComposer(true);}},
+                {icon:<StickerIcon size={24} color="#fff"/>, bg:"#f39c12", label:"Sticker", action:()=>{setShowAttachSheet(false);setShowStickerPicker(true);}},
+              ].map(item=>(
+                <div key={item.label} className="attach-btn-item" onClick={item.action}>
+                  <div className="attach-icon-circle" style={{background:item.bg,boxShadow:`0 4px 12px ${item.bg}55`}}>{item.icon}</div>
+                  <span style={{fontSize:11,color:isDark?"#e9edef":"#555",fontWeight:500}}>{item.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Poll composer */}
+      {showPollComposer&&(
+        <div style={{position:"fixed",inset:0,zIndex:600,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-end"}} onClick={()=>setShowPollComposer(false)}>
+          <div style={{width:"100%",maxWidth:480,margin:"0 auto",background:isDark?"#202c33":"#fff",borderRadius:"20px 20px 0 0",padding:"20px 20px 28px"}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}><BarChart3 size={18} color={WA_GREEN}/><span style={{fontWeight:700,fontSize:16,color:textMain}}>New Poll</span></div>
+            <input value={pollQuestion} onChange={e=>setPollQuestion(e.target.value)} placeholder="Ask a question" style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1px solid ${divider}`,background:inputBg,color:textMain,fontSize:14,marginBottom:10,outline:"none"}}/>
+            {pollOptions.map((opt,i)=>(
+              <div key={i} style={{display:"flex",gap:8,marginBottom:8}}>
+                <input value={opt} onChange={e=>setPollOptions(prev=>prev.map((o,idx)=>idx===i?e.target.value:o))} placeholder={`Option ${i+1}`} style={{flex:1,padding:"9px 12px",borderRadius:10,border:`1px solid ${divider}`,background:inputBg,color:textMain,fontSize:13.5,outline:"none"}}/>
+                {pollOptions.length>2&&<button onClick={()=>setPollOptions(prev=>prev.filter((_,idx)=>idx!==i))} style={{background:"none",border:"none",cursor:"pointer"}}><X size={16} color={textSub}/></button>}
+              </div>
+            ))}
+            {pollOptions.length<8&&(
+              <button onClick={()=>setPollOptions(prev=>[...prev,""])} style={{background:"none",border:"none",color:WA_GREEN,fontSize:13,fontWeight:600,cursor:"pointer",padding:"4px 0",marginBottom:14}}>+ Add option</button>
+            )}
+            <button onClick={sendPoll} style={{width:"100%",padding:12,borderRadius:12,background:WA_GREEN,border:"none",color:"#fff",fontWeight:700,fontSize:14,cursor:"pointer"}}>Send Poll</button>
+          </div>
+        </div>
+      )}
+
+      {/* Sticker picker */}
+      {showStickerPicker&&(
+        <div style={{position:"fixed",inset:0,zIndex:600,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-end"}} onClick={()=>setShowStickerPicker(false)}>
+          <div style={{width:"100%",maxWidth:480,margin:"0 auto",background:isDark?"#202c33":"#fff",borderRadius:"20px 20px 0 0",padding:"20px 20px 28px",maxHeight:"55vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}><StickerIcon size={18} color={WA_GREEN}/><span style={{fontWeight:700,fontSize:16,color:textMain}}>Stickers</span></div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:14}}>
+              {["😀","😂","🥰","😎","🤔","😴","🥳","😭","🤲","🕌","📖","🌙","⭐","🔥","👏","🙏","💚","✅","👍","🎉"].map(e=>(
+                <button key={e} onClick={()=>sendSticker(e)} style={{background:"none",border:"none",fontSize:34,cursor:"pointer",padding:6}}>{e}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Contact picker */}
+      {showContactPicker&&(
+        <div style={{position:"fixed",inset:0,zIndex:600,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-end"}} onClick={()=>setShowContactPicker(false)}>
+          <div style={{width:"100%",maxWidth:480,margin:"0 auto",background:isDark?"#202c33":"#fff",borderRadius:"20px 20px 0 0",padding:"20px 20px 28px",maxHeight:"60vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}><UserCircle2 size={18} color={WA_GREEN}/><span style={{fontWeight:700,fontSize:16,color:textMain}}>Share a Contact</span></div>
+            {Object.values(profiles).filter(p=>p.user_id!==user?.id).length===0&&<div style={{fontSize:13,color:textSub,padding:"10px 0"}}>No contacts to show yet — chat with someone first.</div>}
+            {(allStudents.length>0?allStudents:Object.values(profiles)).filter(p=>p.user_id!==user?.id).map(p=>(
+              <div key={p.user_id} onClick={()=>shareContact(p)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 4px",cursor:"pointer",borderBottom:`1px solid ${divider}`}}>
+                {avatarEl(p.user_id,36)}
+                <span style={{fontSize:14,color:textMain,fontWeight:500}}>{p.full_name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Broadcast list composer */}
+      {showBroadcastComposer&&(
+        <div style={{position:"fixed",inset:0,zIndex:600,background:isDark?"#111b21":"#fff",display:"flex",flexDirection:"column"}}>
+          <div style={{background:"#8e44ad",padding:"16px 20px",display:"flex",alignItems:"center",gap:12}}>
+            <button onClick={()=>setShowBroadcastComposer(false)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer"}}><ArrowLeft size={20}/></button>
+            <span style={{color:"#fff",fontWeight:700,fontSize:17}}>{broadcastStep==="pick"?"New Broadcast List":"Broadcast Message"}</span>
+          </div>
+          {broadcastStep==="pick"?(
+            <>
+              <div style={{padding:"12px 16px"}}>
+                <input value={broadcastName} onChange={e=>setBroadcastName(e.target.value)} placeholder="List name (optional)" style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1px solid ${divider}`,background:inputBg,color:textMain,fontSize:14,outline:"none"}}/>
+                <div style={{fontSize:12,color:textSub,marginTop:8}}>{broadcastSelected.size} selected</div>
+              </div>
+              <div style={{flex:1,overflowY:"auto"}}>
+                {broadcastPool.filter(p=>p.user_id!==user?.id).map(p=>(
+                  <div key={p.user_id} onClick={()=>setBroadcastSelected(prev=>{const n=new Set(prev);n.has(p.user_id)?n.delete(p.user_id):n.add(p.user_id);return n;})} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 20px",cursor:"pointer",borderBottom:`1px solid ${divider}`}}>
+                    {avatarEl(p.user_id,42)}
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:600,fontSize:15,color:textMain}}>{p.full_name||"Student"}</div>
+                      <div style={{fontSize:12,color:WA_GREEN}}>{(p as any).level||"Student"}</div>
+                    </div>
+                    {broadcastSelected.has(p.user_id)
+                      ?<CheckSquare size={20} color="#8e44ad"/>
+                      :<Square size={20} color={textSub}/>
+                    }
+                  </div>
+                ))}
+              </div>
+              <div style={{padding:16}}>
+                <button disabled={broadcastSelected.size===0} onClick={()=>setBroadcastStep("compose")} style={{width:"100%",padding:13,borderRadius:12,background:broadcastSelected.size===0?"#999":"#8e44ad",border:"none",color:"#fff",fontWeight:700,fontSize:14,cursor:broadcastSelected.size===0?"not-allowed":"pointer"}}>
+                  Next ({broadcastSelected.size})
+                </button>
+              </div>
+            </>
+          ):(
+            <>
+              <div style={{flex:1,padding:20}}>
+                <div style={{fontSize:13,color:textSub,marginBottom:10}}>This message will be sent as an individual chat to {broadcastSelected.size} {broadcastSelected.size===1?"person":"people"}. Replies come back to you privately.</div>
+                <textarea value={broadcastText} onChange={e=>setBroadcastText(e.target.value)} placeholder="Type your broadcast message…" rows={6} style={{width:"100%",padding:12,borderRadius:12,border:`1px solid ${divider}`,background:inputBg,color:textMain,fontSize:14,outline:"none",resize:"vertical"}}/>
+              </div>
+              <div style={{padding:16,display:"flex",gap:10}}>
+                <button onClick={()=>setBroadcastStep("pick")} style={{flex:1,padding:13,borderRadius:12,background:"none",border:`1px solid ${divider}`,color:textMain,fontWeight:600,fontSize:14,cursor:"pointer"}}>Back</button>
+                <button disabled={!broadcastText.trim()||broadcastSending} onClick={sendBroadcast} style={{flex:2,padding:13,borderRadius:12,background:(!broadcastText.trim()||broadcastSending)?"#999":"#8e44ad",border:"none",color:"#fff",fontWeight:700,fontSize:14,cursor:(!broadcastText.trim()||broadcastSending)?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                  {broadcastSending?<Loader2 style={{width:16,height:16,animation:"spin .8s linear infinite"}}/>:<Send size={16}/>} Send Broadcast
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Incoming Majlis call banner */}
+      {incomingCall&&!showMajlisCall&&(
+        <div style={{position:"fixed",top:16,left:12,right:12,maxWidth:456,margin:"0 auto",zIndex:9998,background:isDark?"#202c33":"#fff",borderRadius:16,boxShadow:"0 8px 30px rgba(0,0,0,.35)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,animation:"slideUp .25s ease"}}>
+          <div style={{width:44,height:44,borderRadius:"50%",background:WA_GREEN,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+            <PhoneIncoming size={20} color="#fff"/>
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:14,fontWeight:700,color:textMain}}>{incomingCall.callerName}</div>
+            <div style={{fontSize:12,color:textSub}}>Incoming Majlis call…</div>
+          </div>
+          <button onClick={()=>setIncomingCall(null)} style={{width:40,height:40,borderRadius:"50%",background:"#c0392b",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><PhoneOffIcon size={17} color="#fff"/></button>
+          <button onClick={()=>{selectChannel(incomingCall.channelId);setCallChannelId(incomingCall.channelId);setShowMajlisCall(true);setIncomingCall(null);}} style={{width:40,height:40,borderRadius:"50%",background:WA_GREEN,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Phone size={17} color="#fff"/></button>
+        </div>
+      )}
+
+      {/* People sheet — opened by the Search icon. Students only see classmates in their
+          level, their teachers and the admin; tapping a person opens a direct message. */}
+      {showPeople&&(()=>{
+        const q=peopleSearch.trim().toLowerCase();
+        const list=allStudents.filter(u=>u.user_id!==user?.id&&(!q||(u.full_name||"").toLowerCase().includes(q)||((u as any).full_name_ar||"").toLowerCase().includes(q)));
+        const order:Record<string,number>={admin:0,teacher:1,student:2};
+        list.sort((a,b)=>(order[(a as any).kind||"student"]-order[(b as any).kind||"student"])||(a.full_name||"").localeCompare(b.full_name||""));
+        const groups:[string,any[]][]=[["Admin",list.filter(u=>(u as any).kind==="admin")],["Teachers",list.filter(u=>(u as any).kind==="teacher")],[canModerate?"Students":"Classmates",list.filter(u=>((u as any).kind||"student")==="student")]];
+        return (
+        <div style={{position:"fixed",inset:0,zIndex:500,background:isDark?"#0b141a":"#fff",display:"flex",flexDirection:"column"}}>
+          <div style={{background:sidebarHdr,padding:"10px 12px",display:"flex",alignItems:"center",gap:8}}>
+            <button onClick={()=>setShowPeople(false)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6,display:"flex"}}><ArrowLeft size={20}/></button>
+            <div style={{flex:1,display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,.18)",borderRadius:20,padding:"8px 14px"}}>
+              <Search size={16} color="#fff"/>
+              <input autoFocus value={peopleSearch} onChange={e=>setPeopleSearch(e.target.value)} placeholder="Search name…" style={{flex:1,border:"none",background:"transparent",color:"#fff",fontSize:14,outline:"none"}}/>
+              {peopleSearch&&<button onClick={()=>setPeopleSearch("")} style={{background:"none",border:"none",cursor:"pointer",padding:0,display:"flex"}}><X size={14} color="#fff"/></button>}
+            </div>
+          </div>
+          <div style={{flex:1,overflowY:"auto"}}>
+            {groups.map(([label,rows])=>rows.length>0&&(
+              <div key={label}>
+                <div style={{padding:"6px 16px",fontSize:11,fontWeight:700,color:textSub,background:inputBg,textTransform:"uppercase",letterSpacing:1}}>{label}</div>
+                {rows.map((u:any)=>(
+                  <div key={u.user_id} onClick={()=>openDirectMessage(u)} style={{display:"flex",alignItems:"center",gap:14,padding:"11px 16px",cursor:"pointer",borderBottom:`1px solid ${divider}`}}>
+                    {avatarEl(u.user_id,46)}
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:600,fontSize:15,color:textMain,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.full_name||"Student"}</div>
+                      <div style={{fontSize:12,color:WA_GREEN}}>{kindLabel(u)}</div>
+                    </div>
+                    <MessageCircle size={18} color={textSub}/>
+                  </div>
+                ))}
+              </div>
+            ))}
+            {list.length===0&&(
+              <div style={{padding:40,textAlign:"center",color:textSub,fontSize:14}}>{q?"No one found":"No one to message yet"}</div>
+            )}
+          </div>
+        </div>
+        );
+      })()}
+
+      {/* Sidebar ⋮ menu */}
+      {showSidebarMenu&&(
+        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.4)"}} onClick={()=>setShowSidebarMenu(false)}>
+          <div style={{position:"absolute",top:52,right:10,minWidth:220,background:isDark?"#233138":"#fff",borderRadius:12,overflow:"hidden",boxShadow:"0 8px 30px rgba(0,0,0,.3)",animation:"popIn .15s ease"}} onClick={e=>e.stopPropagation()}>
+            {[
+              {label:"Starred Messages",fn:()=>openStarred()},
+              {label:showArchived?"Hide Archived Chats":`Archived Chats${archivedChannels.size?` (${archivedChannels.size})`:""}`,fn:()=>{setShowArchived(p=>!p);setShowSidebarMenu(false);}},
+              {label:"Browse Channels",fn:()=>{setShowSidebarMenu(false);setShowBrowseChannels(true);}},
+              ...(canModerate?[
+                {label:"New Group",fn:()=>{setShowSidebarMenu(false);setShowCreateDialog(true);}},
+                {label:"New Broadcast List",fn:()=>{setShowSidebarMenu(false);setBroadcastStep("pick");setBroadcastSelected(new Set());setBroadcastName("");setBroadcastPool(allStudents.length>0?allStudents:Object.values(profiles));setShowBroadcastComposer(true);}},
+              ]:[]),
+            ].map((item,i)=>(
+              <button key={i} onClick={item.fn} style={{width:"100%",textAlign:"left",padding:"14px 18px",background:"none",border:"none",cursor:"pointer",fontSize:15,color:textMain,borderBottom:`1px solid ${divider}`}}>{item.label}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Starred messages */}
+      {showStarredSheet&&(
+        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.5)"}} onClick={()=>setShowStarredSheet(false)}>
+          <div style={{position:"absolute",bottom:0,left:0,right:0,maxWidth:480,margin:"0 auto",background:isDark?"#111b21":"#fff",borderRadius:"20px 20px 0 0",maxHeight:"80vh",display:"flex",flexDirection:"column",overflow:"hidden",animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
+            <div style={{background:WA_GREEN,padding:"14px 18px",display:"flex",alignItems:"center",gap:12,color:"#fff"}}>
+              <button onClick={()=>setShowStarredSheet(false)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",display:"flex"}}><ArrowLeft size={20}/></button>
+              <span style={{fontWeight:700,fontSize:17}}>Starred Messages</span>
+            </div>
+            <div style={{overflowY:"auto"}}>
+              {starredList.length===0&&<div style={{padding:36,textAlign:"center",color:textSub,fontSize:14}}>No starred messages yet</div>}
+              {starredList.map(m=>(
+                <div key={m.id} onClick={()=>{setShowStarredSheet(false);selectChannel(m.channel_id||"");setTimeout(()=>jumpTo(m.id),500);}} style={{padding:"12px 18px",borderBottom:`1px solid ${divider}`,cursor:"pointer"}}>
+                  <div style={{fontSize:12,fontWeight:700,color:WA_GREEN}}>{profiles[m.user_id]?.full_name||"Message"} · <span style={{color:textSub,fontWeight:400}}>{new Date(m.created_at).toLocaleDateString()}</span></div>
+                  <div style={{fontSize:14,color:textMain,marginTop:2,wordBreak:"break-word"}}>{m.content_type==="text"?m.text:(CONTENT_PREVIEW_ICON[m.content_type]||"Media")}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* + New Sheet */}
+      {showNewSheet&&(
+        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.5)"}} onClick={()=>setShowNewSheet(false)}>
+          <div style={{position:"absolute",bottom:0,left:0,right:0,maxWidth:480,margin:"0 auto",background:isDark?"#111b21":"#fff",borderRadius:"20px 20px 0 0",maxHeight:"90vh",display:"flex",flexDirection:"column",overflow:"hidden",animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
+            <div style={{background:WA_GREEN,padding:"16px 20px",display:"flex",alignItems:"center",gap:12}}>
+              <button onClick={()=>setShowNewSheet(false)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer"}}><ArrowLeft size={20}/></button>
+              <span style={{color:"#fff",fontWeight:700,fontSize:17}}>New Conversation</span>
+            </div>
+            <div style={{borderBottom:`1px solid ${divider}`}}>
+              <div onClick={()=>{setShowNewSheet(false);setShowCreateDialog(true);}} style={{display:"flex",alignItems:"center",gap:14,padding:"16px 20px",cursor:"pointer"}}>
+                <div style={{width:46,height:46,borderRadius:"50%",background:WA_GREEN,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <Users size={20} color="#fff"/>
+                </div>
+                <div>
+                  <div style={{fontWeight:700,fontSize:15,color:textMain}}>New Group</div>
+                  <div style={{fontSize:12,color:textSub}}>Create a new group chat</div>
+                </div>
+              </div>
+              <div onClick={()=>{setShowNewSheet(false);setShowBrowseChannels(true);}} style={{display:"flex",alignItems:"center",gap:14,padding:"16px 20px",cursor:"pointer",borderTop:`1px solid ${divider}`}}>
+                <div style={{width:46,height:46,borderRadius:"50%",background:WA_LIGHT_GREEN,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <Search size={20} color="#fff"/>
+                </div>
+                <div>
+                  <div style={{fontWeight:700,fontSize:15,color:textMain}}>Browse Channels</div>
+                  <div style={{fontSize:12,color:textSub}}>Join existing groups & channels</div>
+                </div>
+              </div>
+              <div onClick={()=>{setShowNewSheet(false);setBroadcastStep("pick");setBroadcastSelected(new Set());setBroadcastName("");setBroadcastPool(allStudents.length>0?allStudents:Object.values(profiles));setShowBroadcastComposer(true);}} style={{display:"flex",alignItems:"center",gap:14,padding:"16px 20px",cursor:"pointer",borderTop:`1px solid ${divider}`}}>
+                <div style={{width:46,height:46,borderRadius:"50%",background:"#8e44ad",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <Users size={20} color="#fff"/>
+                </div>
+                <div>
+                  <div style={{fontWeight:700,fontSize:15,color:textMain}}>New Broadcast List</div>
+                  <div style={{fontSize:12,color:textSub}}>Send one message to several people at once</div>
+                </div>
+              </div>
+            </div>
+            <div style={{padding:"10px 16px",background:isDark?"#111b21":"#fff"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,background:inputBg,borderRadius:24,padding:"8px 14px"}}>
+                <Search size={15} color={textSub}/>
+                <input value={newDmSearch} onChange={e=>setNewDmSearch(e.target.value)} placeholder="Search for a student to message…" style={{border:"none",background:"transparent",flex:1,fontSize:14,color:textMain,outline:"none"}} autoFocus/>
+                {newDmSearch&&<button onClick={()=>setNewDmSearch("")} style={{background:"none",border:"none",cursor:"pointer"}}><X size={14} color={textSub}/></button>}
+              </div>
+            </div>
+            <div style={{flex:1,overflowY:"auto"}}>
+              {(newDmSearch
+                ?allStudents.filter(s=>s.user_id!==user?.id&&(s.full_name||"").toLowerCase().includes(newDmSearch.toLowerCase()))
+                :allStudents.filter(s=>s.user_id!==user?.id).slice(0,20)
+              ).map(s=>(
+                <div key={s.user_id} onClick={()=>{playSound("open",settings.notifSound);openDirectMessage(s);}} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 20px",cursor:"pointer",borderBottom:`1px solid ${divider}`}}>
+                  {avatarEl(s.user_id,46)}
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:600,fontSize:15,color:textMain}}>{s.full_name||"Student"}</div>
+                    <div style={{fontSize:12,color:WA_GREEN}}>{(s as any).level||"Student"}</div>
+                  </div>
+                  <MessageCircle size={18} color={textSub}/>
+                </div>
+              ))}
+              {newDmSearch&&allStudents.filter(s=>s.user_id!==user?.id&&(s.full_name||"").toLowerCase().includes(newDmSearch.toLowerCase())).length===0&&(
+                <div style={{padding:30,textAlign:"center",color:textSub,fontSize:14}}>No students found</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Sheet */}
+      {showDeleteSheet&&(
+        <div style={{position:"fixed",inset:0,zIndex:400,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-end"}} onClick={()=>setShowDeleteSheet(null)}>
+          <div style={{width:"100%",maxWidth:480,margin:"0 auto",background:isDark?"#202c33":"#fff",borderRadius:"20px 20px 0 0",overflow:"hidden",animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
+            <div style={{width:36,height:4,borderRadius:2,background:isDark?"#444":"#ddd",margin:"12px auto 10px"}}/>
+            <div style={{padding:"8px 20px 14px",fontSize:14,color:textSub,textAlign:"center",fontWeight:600}}>Delete Message?</div>
+            <button onClick={()=>deleteForMe(showDeleteSheet.id)} style={{width:"100%",padding:"16px 20px",background:"none",border:"none",cursor:"pointer",textAlign:"left",fontSize:15,color:textMain,borderBottom:`1px solid ${divider}`,display:"flex",alignItems:"center",gap:12}}>
+              <span style={{fontSize:18}}>👁️</span>
+              <div><div style={{fontWeight:600}}>Delete for me</div><div style={{fontSize:12,color:textSub,marginTop:2}}>Removes from your chat only</div></div>
+            </button>
+            {(showDeleteSheet.isOwner || canModerate)&&(
+              <button onClick={()=>deleteForAll(showDeleteSheet.id)} style={{width:"100%",padding:"16px 20px",background:"none",border:"none",cursor:"pointer",textAlign:"left",fontSize:15,color:"#E74C3C",borderBottom:`1px solid ${divider}`,display:"flex",alignItems:"center",gap:12}}>
+                <span style={{fontSize:18}}>🗑️</span>
+                <div><div style={{fontWeight:600}}>Delete for everyone</div><div style={{fontSize:12,color:"rgba(231,76,60,.7)",marginTop:2}}>Removes for all members</div></div>
+              </button>
+            )}
+            <button onClick={()=>setShowDeleteSheet(null)} style={{width:"100%",padding:"16px 20px",background:"none",border:"none",cursor:"pointer",textAlign:"center",fontSize:15,color:textSub}}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Forward Sheet */}
+      {showForwardSheet&&(
+        <div style={{position:"fixed",inset:0,zIndex:400,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-end"}} onClick={()=>setShowForwardSheet(false)}>
+          <div style={{width:"100%",maxWidth:480,margin:"0 auto",background:isDark?"#202c33":"#fff",borderRadius:"20px 20px 0 0",maxHeight:"70vh",display:"flex",flexDirection:"column",overflow:"hidden",animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
+            <div style={{padding:"16px 20px",borderBottom:`1px solid ${divider}`,fontSize:16,fontWeight:700,color:textMain,display:"flex",alignItems:"center",gap:10}}>
+              <Forward size={18} color={WA_GREEN}/> Forward to…
+            </div>
+            <div style={{flex:1,overflowY:"auto"}}>
+              {channels.map(ch=>(
+                <div key={ch.id} onClick={()=>forwardToChannel(ch.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 20px",cursor:"pointer",borderBottom:`1px solid ${divider}`}}>
+                  {chAvatarEl(ch,42)}
+                  <div>
+                    <div style={{fontWeight:600,fontSize:15,color:textMain}}>{getCN(ch)}</div>
+                    <div style={{fontSize:12,color:textSub}}>{memberCounts[ch.id]||0} members</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button onClick={()=>setShowForwardSheet(false)} style={{width:"100%",padding:16,background:"none",border:"none",cursor:"pointer",fontSize:15,color:"#E74C3C",borderTop:`1px solid ${divider}`}}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Channel context menu backdrop */}
+      {channelMenu&&<div style={{position:"fixed",inset:0,zIndex:199}} onClick={()=>setChannelMenu(null)}/>}
+
+      {/* Settings Panel */}
+
+      {/* Group Info */}
+      {showGroupInfo&&activeChannel&&(
+        <GroupInfoPanel channel={activeChannel} onClose={()=>setShowGroupInfo(false)} canModerate={canModerate} memberCount={memberCounts[activeChannel.id]||0}
+          onEditName={()=>{setEditName(getCN(activeChannel));setEditDesc((activeChannel as any).description||"");setEditingChannel(true);setShowGroupInfo(false);}}
+          onAvatarClick={()=>avatarInputRef.current?.click()} avatarInputId="majlis-group-avatar" onDeleteGroup={deleteGroup} onLeaveGroup={()=>leaveChannel(activeChannel.id)}
+          onMemberClick={(m:any)=>{setSelectedMember(m);setShowStudentProfile(true);setShowGroupInfo(false);}}
+        />
+      )}
+
+      {/* Dialogs */}
+      {showCreateDialog&&<CreateChannelDialog open onOpenChange={(v:boolean)=>{if(!v)setShowCreateDialog(false);}} mode="group" onCreated={handleChannelCreated}/>}
+      {showBrowseChannels&&<BrowseChannelsDialog open onOpenChange={(v:boolean)=>{if(!v)setShowBrowseChannels(false);}} myChannelIds={[]} onJoined={handleChannelCreated}/>}
+
+      {/* Student profile sheet */}
+      {showStudentProfile&&selectedMember&&(
+        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.5)"}} onClick={()=>setShowStudentProfile(false)}>
+          <div style={{position:"absolute",bottom:0,left:0,right:0,maxWidth:480,margin:"0 auto",background:isDark?"#111b21":"#fff",borderRadius:"20px 20px 0 0",maxHeight:"85vh",overflowY:"auto",animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
+            <div style={{background:`linear-gradient(135deg,${WA_GREEN},${WA_LIGHT_GREEN})`,padding:"36px 20px 24px",display:"flex",flexDirection:"column",alignItems:"center",gap:10,position:"relative"}}>
+              <button onClick={()=>setShowStudentProfile(false)} style={{position:"absolute",top:12,right:12,background:"rgba(255,255,255,.15)",border:"none",borderRadius:"50%",width:32,height:32,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"#fff"}}><X size={16}/></button>
+              {selectedMember.avatar_url
+                ?<img src={selectedMember.avatar_url} style={{width:80,height:80,borderRadius:"50%",objectFit:"cover",border:"3px solid rgba(255,255,255,.4)"}} alt=""/>
+                :<div style={{width:80,height:80,borderRadius:"50%",background:"rgba(255,255,255,.2)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:32,fontWeight:700}}>{(selectedMember.full_name||"S")[0].toUpperCase()}</div>
+              }
+              <div style={{color:"#fff",fontWeight:700,fontSize:18}}>{selectedMember.full_name||"Student"}</div>
+              {selectedMember.full_name_ar&&<div style={{color:"rgba(255,255,255,.7)",fontSize:13}} dir="rtl">{selectedMember.full_name_ar}</div>}
+              {onlineUsers.has(selectedMember.user_id)
+                ?<span style={{fontSize:11,color:WA_TEAL,background:"rgba(37,211,102,.15)",padding:"3px 12px",borderRadius:20,fontWeight:700}}>● Online</span>
+                :<span style={{fontSize:11,color:"rgba(255,255,255,.5)"}}>Offline</span>
+              }
+            </div>
+            <div style={{padding:"0 0 16px"}}>
+              {[{label:"Level",val:(selectedMember as any).level||"—"},{label:"Student ID",val:(selectedMember as any).student_id||"—"},{label:"Email",val:(selectedMember as any).email||"—"},{label:"About",val:"Available"}].map((row,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${divider}`}}>
+                  <span style={{fontSize:13,color:textSub,minWidth:90}}>{row.label}</span>
+                  <span style={{fontSize:14,color:textMain,fontWeight:500}}>{row.val}</span>
+                </div>
+              ))}
+              <div style={{padding:"14px 20px",borderBottom:`1px solid ${divider}`}}>
+                <div style={{fontSize:13,color:textSub,marginBottom:6}}>Shared groups</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                  {channels.filter(c=>c.type!=="dm"&&c.type!=="announcement").slice(0,5).map(c=>(
+                    <span key={c.id} style={{fontSize:12,background:inputBg,color:textMain,padding:"3px 10px",borderRadius:20}}>{getCN(c)}</span>
+                  ))}
+                </div>
+              </div>
+              <div style={{padding:"14px 20px",display:"flex",gap:12}}>
+                {selectedMember.user_id!==user?.id&&(
+                  <button onClick={()=>openDirectMessage(selectedMember)} style={{flex:1,padding:"12px",borderRadius:12,background:WA_GREEN,border:"none",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                    <MessageCircle size={16}/> Message
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit channel sheet */}
+      {editingChannel&&(
+        <div style={{position:"fixed",inset:0,zIndex:400,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-end"}} onClick={()=>setEditingChannel(false)}>
+          <div style={{width:"100%",maxWidth:480,margin:"0 auto",background:isDark?"#202c33":"#fff",borderRadius:"20px 20px 0 0",padding:20,display:"flex",flexDirection:"column",gap:14,animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:17,fontWeight:700,color:textMain}}>Edit Group</div>
+            {[{label:"Group Name",val:editName,set:setEditName,placeholder:"Group name"},{label:"Description",val:editDesc,set:setEditDesc,placeholder:"About this group…"}].map(f=>(
+              <div key={f.label}>
+                <div style={{fontSize:12,color:WA_GREEN,marginBottom:4}}>{f.label}</div>
+                <input value={f.val} onChange={e=>f.set(e.target.value)} placeholder={f.placeholder} style={{width:"100%",padding:"10px 14px",borderRadius:10,border:`1px solid ${divider}`,background:inputBg,color:textMain,fontSize:14,boxSizing:"border-box"}}/>
+              </div>
+            ))}
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>setEditingChannel(false)} style={{flex:1,padding:"12px",borderRadius:10,border:`1px solid ${divider}`,background:"transparent",color:textMain,cursor:"pointer",fontSize:15}}>Cancel</button>
+              <button onClick={saveChannelEdit} style={{flex:1,padding:"12px",borderRadius:10,border:"none",background:WA_GREEN,color:"#fff",cursor:"pointer",fontSize:15,fontWeight:700}}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showMajlisLive&&<MajlisLive isPrivileged={canModerate} onClose={()=>setShowMajlisLive(false)}/>}
+
+      {/* Al-Majlis discussion call — multi-party LiveKit room, distinct from the Go Live broadcast */}
+      {showMajlisCall&&(callChannelId||activeChannel)&&(()=>{
+        const callCh=channels.find(c=>c.id===callChannelId)||activeChannel!;
+        return (
+          <MajlisCallRoom
+            channelId={callCh.id}
+            channelName={getCN(callCh)}
+            isPrivileged={canModerate}
+            onLeave={()=>{setShowMajlisCall(false);setCallChannelId(null);}}
+          />
+        );
+      })()}
+    </div>
+  );
+};
+
+export default Majlis;

@@ -1,0 +1,1077 @@
+/*  src/hooks/useProctoring.ts — SMART PROCTORING v3
+    ✅ Face detection every 800ms (was 3s)
+    ✅ Eye/gaze analysis via canvas brightness zones
+    ✅ Camera covered detection (too dark)
+    ✅ Auto-submit on beforeunload/pagehide/visibilityhidden
+    ✅ No face for 4s → warning; 8s → strike
+    ✅ Eyes not visible / not concentrating detected separately
+*/
+import { useEffect, useRef, useCallback, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../integrations/supabase/storageClient";
+import { logger } from "@/lib/logger";
+
+// Note: this captures the exam page's own rendered content (via html2canvas),
+// not the physical device screen. Mobile web/Capacitor has no API to grab
+// the OS-level screen without the user granting a MediaProjection-style
+// screen-recording permission (a system dialog + persistent notification),
+// which isn't practical to prompt for mid-exam. This is the closest
+// same-tab equivalent and needs no extra permission.
+let html2canvasPromise: Promise<typeof import("html2canvas").default> | null = null;
+const loadHtml2Canvas = () => {
+  if (!html2canvasPromise) html2canvasPromise = import("html2canvas").then(m => m.default);
+  return html2canvasPromise;
+};
+
+interface ProctoringConfig {
+  attemptId: string; userId: string;
+  proctoring_enabled?: boolean; fullscreen_required?: boolean;
+  tab_switch_limit?: number; screenshot_interval_seconds?: number;
+  max_warnings?: number; auto_submit_on_violation?: boolean;
+  webcam_required?: boolean; record_audio?: boolean;
+  /** 'exam' (default) or 'hifdh' — stored in proctoring_sessions for dashboard filtering */
+  sessionType?: "exam" | "hifdh";
+  /** Human-readable label, e.g. "Hifdh Test: Al-Baqarah" */
+  contextLabel?: string;
+  /** Exam ID — when set, enables the live-video grid: this student's camera is
+   *  published to LiveKit ONLY while an admin actually has the live monitor
+   *  grid open (via presence), never continuously. Omit to keep snapshot-only
+   *  behaviour (e.g. Hifdh sessions, which don't have an admin live grid). */
+  examId?: string;
+  /** How often to capture the exam page itself, in seconds. Set 0/undefined
+   *  to disable the periodic timer (manual captureScreenshot() calls, e.g.
+   *  on question navigation, still work either way). Default 5. */
+  screen_capture_interval_seconds?: number;
+  /** CSS selector for the element to capture; defaults to the whole page. */
+  screenCaptureTargetSelector?: string;
+}
+
+interface ProctoringState {
+  violations: number; warnings: number; strikes: number; maxStrikes: number;
+  integrityScore: number; suspicionLevel: string; fullscreenActive: boolean;
+  shouldAutoSubmit: boolean; cameraReady: boolean; faceDetected: boolean;
+  audioMonitoring: boolean; lastWarningType: string | null;
+  /** Face is occupying too much of the frame — student is leaning in too
+   *  close. UI-only signal; never touches integrity score or strikes. */
+  tooClose: boolean;
+}
+
+const rndInterval = (minS: number, maxS: number) =>
+  (Math.floor(Math.random() * (maxS - minS + 1)) + minS) * 1000;
+
+export const useProctoring = (
+  config: ProctoringConfig,
+  enabled: boolean,
+  onAutoSubmit?: () => void
+) => {
+  const [state, setState] = useState<ProctoringState>({
+    violations: 0, warnings: 0, strikes: 0,
+    maxStrikes: config.max_warnings || 3,
+    integrityScore: 100, suspicionLevel: "low",
+    fullscreenActive: false, shouldAutoSubmit: false,
+    cameraReady: false, faceDetected: true,
+    audioMonitoring: false, lastWarningType: null,
+    tooClose: false,
+  });
+  const [recentViolations, setRecentViolations] = useState<
+    Array<{ type: string; time: string; details: string }>
+  >([]);
+
+  const sessionId       = useRef<string | null>(null);
+  const violationCount  = useRef(0);
+  const warningCount    = useRef(0);
+  const strikeCount     = useRef(0);
+  const streamRef       = useRef<MediaStream | null>(null);
+  const audioStreamRef  = useRef<MediaStream | null>(null);
+  const audioCtxRef     = useRef<AudioContext | null>(null);
+  const analyserRef     = useRef<AnalyserNode | null>(null);
+  const audioMonRef     = useRef<ReturnType<typeof setInterval>>();
+  const cameraReadyRef  = useRef(false);
+  const enabledRef      = useRef(enabled);
+  const snapshotTimer   = useRef<ReturnType<typeof setTimeout>>();
+  const screenTimer     = useRef<ReturnType<typeof setInterval>>();
+  const screenShotCount = useRef(0);
+  const screenCapBusy   = useRef(false);
+  const faceDetectIv    = useRef<ReturnType<typeof setInterval>>();
+  const tabAwayStart    = useRef<number | null>(null);
+  const reconnecting    = useRef(false);
+  const snapshotCount   = useRef(0);
+  const noiseCount      = useRef(0);
+  // Face absence tracking
+  const faceAbsStart    = useRef<number | null>(null);
+  const lastViolTime    = useRef<Record<string, number>>({});
+  const fdInstance      = useRef<any>(null);
+  // Continuous-condition violations should log ONCE per episode (when they
+  // start), then go silent until the condition is corrected and happens
+  // again — not repeatedly for as long as the condition persists.
+  const faceWarnFired   = useRef(false);
+  const faceStrikeFired = useRef(false);
+  const lookingAwayActive     = useRef(false);
+  const eyesNotVisibleActive  = useRef(false);
+  const cameraCoveredActive   = useRef(false);
+  const cameraCoveredStart    = useRef<number | null>(null);
+  const multipleFacesActive   = useRef(false);
+  // Sustained-duration tracking — "looking away" / "eyes not visible" only
+  // count once they've held for 3s straight (avoids flagging a quick glance),
+  // then log ONCE for that episode (paired with the *Active flags above).
+  const lookingAwayStart      = useRef<number | null>(null);
+  const eyesNotVisibleStart   = useRef<number | null>(null);
+  // Camera-too-close tracking — a framing reminder, not a violation: no
+  // integrity/strike impact, just drives a UI hint telling the student to
+  // move back so head+shoulders stay in frame. Same sustain/hysteresis
+  // pattern as looking-away above (avoids flicker on a brief lean-in).
+  const tooCloseStart   = useRef<number | null>(null);
+  const tooCloseActive  = useRef(false);
+
+  // Hidden video element attached to DOM — prevents Android killing stream
+  const videoElRef = useRef<HTMLVideoElement | null>(null);
+
+  // ── Live grid publishing (LiveKit) — gated by admin presence ───────
+  const lkRoomRef        = useRef<any>(null);
+  const lkTrackRef       = useRef<any>(null);
+  const lkAudioTrackRef  = useRef<any>(null);
+  const lkConnectingRef  = useRef(false);
+  const presenceChanRef  = useRef<any>(null);
+  const adminWatchingRef = useRef(false);
+
+  useEffect(() => { enabledRef.current = enabled; }, [enabled]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const el = document.createElement("video");
+    el.setAttribute("playsinline", "true");
+    el.muted = true; el.autoplay = true;
+    el.style.cssText = "position:fixed;width:1px;height:1px;opacity:0;top:0;left:0;pointer-events:none;z-index:-1;";
+    document.body.appendChild(el);
+    videoElRef.current = el;
+    // Init FaceDetector once
+    if ("FaceDetector" in window) {
+      try { fdInstance.current = new (window as any).FaceDetector({ maxDetectedFaces: 4, fastMode: false }); } catch (_) {}
+    }
+    // Diagnostic only — FaceDetector isn't supported on most mobile
+    // browsers, in which case detection silently falls back to a cruder
+    // skin-tone heuristic (see analyzeFrame's "Method B"). Logging which
+    // path is active makes that visible in the console instead of a silent
+    // "why didn't this flag" next time face detection looks wrong.
+    logger.log(`[proctor] face detection method: ${fdInstance.current ? "FaceDetector API" : "skin-tone fallback"}`);
+    return () => {
+      try { document.body.removeChild(el); } catch (_) {}
+      videoElRef.current = null;
+    };
+  }, [enabled]);
+
+  const calcSuspicion = (v: number) =>
+    v >= 10 ? "critical" : v >= 5 ? "high" : v >= 2 ? "medium" : "low";
+  const calcIntegrity = (v: number) => Math.max(0, 100 - v * 8);
+
+  const uploadWithRetry = useCallback(async (path: string, blob: Blob): Promise<boolean> => {
+    for (let i = 0; i < 3; i++) {
+      const { error } = await storageSupabase.storage.from("proctoring-media")
+        .upload(path, blob, { contentType: "image/jpeg", upsert: true });
+      if (!error) return true;
+      await new Promise(r => setTimeout(r, 1500 * (i + 1)));
+    }
+    return false;
+  }, []);
+
+  const captureSnapshot = useCallback(async (trigger = "periodic") => {
+    const video = videoElRef.current;
+    if (!video || !cameraReadyRef.current || video.readyState < 2) return;
+    if (!config.attemptId || !config.userId) return;
+    try {
+      const canvas = document.createElement("canvas");
+      const W = video.videoWidth || 320, H = video.videoHeight || 240;
+      const scale = Math.min(1, 480 / Math.max(W, H));
+      canvas.width = Math.round(W * scale); canvas.height = Math.round(H * scale);
+      const ctx = canvas.getContext("2d"); if (!ctx) return;
+      // Mirror horizontally to match the selfie-style preview the student saw
+      // during PreExamVerification (scaleX(-1)) and every other local camera
+      // view in the app — the raw video frame is unmirrored, so without this
+      // the uploaded snapshot comes out laterally flipped vs. what the
+      // student actually saw of themselves.
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      // Guard against uploading a pitch-black frame from an OS-suspended
+      // camera (readyState still "live" but no real frames decoding — see
+      // the mute/unmute handling in initCamera). Cheap downsample check.
+      const probe = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let sum = 0;
+      for (let i = 0; i < probe.length; i += 40) sum += probe[i];
+      const avg = sum / (probe.length / 40);
+      if (avg < 5) {
+        // Don't upload a useless black frame. Flag not-ready — the camera
+        // health-check interval (below) polls every 3s and will force a
+        // full reinit once it also sees the track muted/stuck.
+        cameraReadyRef.current = false;
+        setState(prev => ({ ...prev, cameraReady: false }));
+        return;
+      }
+      const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, "image/jpeg", 0.7));
+      if (!blob || blob.size < 500 || blob.size > 800_000) return;
+      const ts = Date.now();
+      const path = `${config.userId}/${config.attemptId}/face_${trigger}_${ts}.jpg`;
+      const ok = await uploadWithRetry(path, blob);
+      if (!ok) return;
+      snapshotCount.current++;
+      await supabase.from("proctoring_media").insert({
+        attempt_id: config.attemptId, file_type: "face_snapshot",
+        file_url: path, file_name: `face_${trigger}_${ts}.jpg`,
+        file_size: blob.size,
+        metadata: { timestamp: new Date(ts).toISOString(), type: trigger, seq: snapshotCount.current },
+      });
+    } catch (_) {}
+  }, [config.attemptId, config.userId, uploadWithRetry]);
+
+  // ── Page/"screen" capture — snapshots the exam DOM itself, not the
+  // physical device screen (see note near the html2canvas import above).
+  // Called on a timer and manually (e.g. on question navigation).
+  const captureScreenshot = useCallback(async (trigger = "periodic") => {
+    if (!config.attemptId || !config.userId) return;
+    if (screenCapBusy.current) return; // don't overlap captures
+    screenCapBusy.current = true;
+    try {
+      const target = (config.screenCaptureTargetSelector
+        ? document.querySelector(config.screenCaptureTargetSelector)
+        : document.body) as HTMLElement | null;
+      if (!target) return;
+      const html2canvas = await loadHtml2Canvas();
+      const canvas = await html2canvas(target, {
+        useCORS: true, logging: false, backgroundColor: "#ffffff",
+        scale: Math.min(1, 1000 / target.clientWidth || 1),
+        onclone: (clonedDoc) => {
+          // html2canvas doesn't support the CSS `zoom` property: it paints
+          // an element's background/box at the zoomed size but measures its
+          // children at their native size, producing a solid color block
+          // with overflowing, overlapping content (exactly what shows up
+          // around the exam question card, which uses zoom:0.8).
+          //
+          // `transform: scale()` renders correctly in html2canvas, but unlike
+          // `zoom` it does NOT shrink the element's layout box — only what's
+          // painted inside it. So swapping zoom for a bare transform leaves
+          // the box at its full pre-zoom footprint, with the now-smaller
+          // content sitting in its top-left corner and the rest of that box
+          // rendering as blank background (the "half blank" screenshots).
+          // Fix: capture the zoomed (already-shrunk) box size FIRST, then
+          // pin the box to that size explicitly before scaling its content,
+          // so layout doesn't leave a gap for the vacated space.
+          clonedDoc.querySelectorAll<HTMLElement>("*").forEach(el => {
+            const style = el.style as any;
+            const z = style.zoom || (getComputedStyle(el) as any).zoom;
+            if (z && z !== "1" && z !== "normal") {
+              const factor = parseFloat(z);
+              if (!isNaN(factor) && factor > 0) {
+                const rect = el.getBoundingClientRect(); // size WITH zoom still in effect
+                style.zoom = "1";
+                el.style.width = `${rect.width}px`;
+                el.style.height = `${rect.height}px`;
+                el.style.overflow = "hidden";
+                el.style.transform = `scale(${factor})`;
+                el.style.transformOrigin = "top left";
+              }
+            }
+          });
+        },
+      });
+      const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, "image/jpeg", 0.6));
+      if (!blob || blob.size < 500) return;
+      const ts = Date.now();
+      const path = `${config.userId}/${config.attemptId}/screen_${trigger}_${ts}.jpg`;
+      const ok = await uploadWithRetry(path, blob);
+      if (!ok) return;
+      screenShotCount.current++;
+      await supabase.from("proctoring_media").insert({
+        attempt_id: config.attemptId, file_type: "screen_capture",
+        file_url: path, file_name: `screen_${trigger}_${ts}.jpg`,
+        file_size: blob.size,
+        metadata: { timestamp: new Date(ts).toISOString(), type: trigger, seq: screenShotCount.current },
+      });
+    } catch (_) {
+      // html2canvas can fail on cross-origin content, mid-navigation DOM
+      // swaps, etc. — never let a screen capture failure affect the exam.
+    } finally {
+      screenCapBusy.current = false;
+    }
+  }, [config.attemptId, config.userId, config.screenCaptureTargetSelector, uploadWithRetry]);
+
+  // Periodic screen capture — independent of the face-snapshot timer above.
+  useEffect(() => {
+    if (!enabled || !config.attemptId) return;
+    const interval = config.screen_capture_interval_seconds;
+    if (!interval || interval <= 0) return;
+    screenTimer.current = setInterval(() => captureScreenshot("periodic"), interval * 1000);
+    return () => clearInterval(screenTimer.current);
+  }, [enabled, config.attemptId, config.screen_capture_interval_seconds, captureScreenshot]);
+
+  const logViolation = useCallback(async (type: string, severity: number, details?: string) => {
+    if (!config.attemptId) return;
+    // Per-type cooldown to avoid spam
+    const cooldowns: Record<string, number> = {
+      face_not_detected: 2500, eyes_not_visible: 4000, looking_away: 4000,
+      camera_covered: 3000, tab_switch: 3000, fullscreen_exit: 4000,
+    };
+    const cooldown = cooldowns[type] || 6000;
+    const now = Date.now();
+    if (lastViolTime.current[type] && now - lastViolTime.current[type] < cooldown) return;
+    lastViolTime.current[type] = now;
+
+    violationCount.current++;
+    const newCount = violationCount.current;
+    const newSusp  = calcSuspicion(newCount);
+    const newInteg = calcIntegrity(newCount);
+
+    setState(prev => ({ ...prev, violations: newCount, integrityScore: newInteg, suspicionLevel: newSusp, lastWarningType: type }));
+
+    try {
+      await (supabase as any).from("violations").insert({
+        attempt_id: config.attemptId, violation_type: type,
+        severity_score: severity, details,
+      });
+      if (sessionId.current) {
+        await supabase.from("proctoring_sessions").update({
+          total_violations: newCount, integrity_score: newInteg,
+          suspicion_level: newSusp, updated_at: new Date().toISOString(),
+        }).eq("id", sessionId.current);
+      }
+      await supabase.from("exam_attempts").update({
+        suspicion_level: newSusp, integrity_score: newInteg,
+      }).eq("id", config.attemptId);
+    } catch (_) {}
+
+    if (severity >= 2 && cameraReadyRef.current) captureSnapshot(`violation_${type}`);
+
+    if (severity >= 2) {
+      warningCount.current++;
+      setState(prev => ({ ...prev, warnings: warningCount.current }));
+      const isHighRisk = ["multiple_faces","phone_detected","webcam_disabled","dev_tools","camera_covered"].includes(type);
+      strikeCount.current += isHighRisk ? 2 : 1;
+      const maxStrikes = config.max_warnings || 3;
+      setState(prev => ({ ...prev, strikes: strikeCount.current, maxStrikes }));
+      if (config.auto_submit_on_violation && strikeCount.current >= maxStrikes) {
+        setState(prev => ({ ...prev, shouldAutoSubmit: true }));
+        onAutoSubmit?.();
+      }
+    }
+
+    try {
+      const { data } = await (supabase as any).from("violations")
+        .select("violation_type,created_at,details")
+        .eq("attempt_id", config.attemptId)
+        .order("created_at", { ascending: false }).limit(15);
+      if (data) setRecentViolations((data as any[]).map((v: any) => ({
+        type: v.violation_type, time: new Date(v.created_at).toLocaleTimeString(), details: v.details || "",
+      })));
+    } catch (_) {}
+  }, [config.attemptId, config.max_warnings, config.auto_submit_on_violation, onAutoSubmit, captureSnapshot]);
+
+  // ── Smart face / eye / concentration analysis ────────────────────
+  const analyzeFrame = useCallback(async () => {
+    const video = videoElRef.current;
+    if (!video || !cameraReadyRef.current || video.readyState < 2) return;
+
+    const W = 160, H = 120;
+    const canvas = document.createElement("canvas");
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext("2d"); if (!ctx) return;
+    ctx.drawImage(video, 0, 0, W, H);
+    const { data } = ctx.getImageData(0, 0, W, H);
+
+    // ── 1. Camera covered? (frame is too dark overall) ──────────────
+    let totalBrightness = 0;
+    for (let i = 0; i < data.length; i += 4) totalBrightness += (data[i] + data[i+1] + data[i+2]) / 3;
+    const avgBrightness = totalBrightness / (data.length / 4);
+    if (avgBrightness < 15) {
+      // A single dark frame is often just a transient camera-pipeline hiccup
+      // (mobile cameras briefly drop/freeze a frame under load — not an
+      // actual covered lens), so this only logs once darkness has been
+      // sustained for 2s straight, same debounce pattern as looking_away /
+      // eyes_not_visible below. A one-off dip now just resets silently.
+      if (!cameraCoveredStart.current) cameraCoveredStart.current = Date.now();
+      if (Date.now() - cameraCoveredStart.current >= 2000) {
+        setState(prev => ({ ...prev, faceDetected: false }));
+        if (!cameraCoveredActive.current) {
+          cameraCoveredActive.current = true;
+          logViolation("camera_covered", 3, `Frame too dark for 2s+: avg brightness ${avgBrightness.toFixed(1)}`);
+        }
+        faceAbsStart.current = null;
+      }
+      return;
+    }
+    cameraCoveredStart.current = null;
+    cameraCoveredActive.current = false; // recovered — next cover is a new episode
+
+    // ── 2. Face detection ────────────────────────────────────────────
+    let facePresent = false, faceCount = 0;
+
+    // Method A: FaceDetector API (most accurate)
+    if (fdInstance.current) {
+      try {
+        const faces = await fdInstance.current.detect(video);
+        faceCount = faces.length;
+        facePresent = faceCount >= 1;
+
+        // ── 3. Eye/gaze analysis from FaceDetector bounding box ──────
+        if (facePresent && faces[0]) {
+          const face = faces[0];
+          const fx = face.boundingBox.x, fy = face.boundingBox.y;
+          const fw = face.boundingBox.width, fh = face.boundingBox.height;
+
+          // Check if face is in an unusual position (looking away / down)
+          const faceCenterX = fx + fw / 2;
+          const faceCenterY = fy + fh / 2;
+          const frameW = video.videoWidth || W;
+          const frameH = video.videoHeight || H;
+
+          // Face too far to the side = looking away
+          const xRatio = faceCenterX / frameW;
+          const yRatio = faceCenterY / frameH;
+          // Tightened from 0.25/0.75 & 0.15/0.85 — catches a real head turn
+          // sooner, while the 3s sustain requirement below (not an instant
+          // trigger) keeps a quick glance from counting.
+          if (xRatio < 0.32 || xRatio > 0.68 || yRatio < 0.20 || yRatio > 0.80) {
+            if (!lookingAwayStart.current) lookingAwayStart.current = Date.now();
+            if (Date.now() - lookingAwayStart.current >= 3000 && !lookingAwayActive.current) {
+              lookingAwayActive.current = true;
+              logViolation("looking_away", 1, `Sustained off-center 3s+: ${xRatio.toFixed(2)}, ${yRatio.toFixed(2)}`);
+            }
+          } else {
+            lookingAwayStart.current = null;
+            lookingAwayActive.current = false; // back on-center — next drift is a new episode
+          }
+
+          // ── Too close to camera? ─────────────────────────────────────
+          // Face bounding box as a fraction of total frame area. A student
+          // sitting at a normal distance has a face that's a small fraction
+          // of the frame (head+shoulders both visible); leaning in close
+          // fills most of the frame with just the face. Hysteresis (enter
+          // above 0.42, only clear once below 0.32) avoids flicker right at
+          // the boundary; a 1.2s sustain avoids flagging a brief lean-in.
+          const faceAreaRatio = (fw * fh) / (frameW * frameH);
+          if (faceAreaRatio > 0.42) {
+            if (!tooCloseStart.current) tooCloseStart.current = Date.now();
+            if (Date.now() - tooCloseStart.current >= 1200 && !tooCloseActive.current) {
+              tooCloseActive.current = true;
+              setState(prev => ({ ...prev, tooClose: true }));
+            }
+          } else if (faceAreaRatio < 0.32 && tooCloseActive.current) {
+            tooCloseStart.current = null;
+            tooCloseActive.current = false;
+            setState(prev => ({ ...prev, tooClose: false }));
+          }
+
+          // Eye region brightness analysis
+          // Eyes are roughly in the top 40% of the face bounding box
+          const eyeRegionY = Math.round((fy * H / frameH));
+          const eyeRegionH = Math.round((fh * 0.4 * H / frameH));
+          const eyeRegionX = Math.round((fx * W / frameW));
+          const eyeRegionW = Math.round((fw * W / frameW));
+
+          if (eyeRegionH > 3 && eyeRegionW > 5) {
+            const eyeData = ctx.getImageData(eyeRegionX, eyeRegionY, eyeRegionW, eyeRegionH);
+            let darkPixels = 0;
+            for (let i = 0; i < eyeData.data.length; i += 4) {
+              const lum = (eyeData.data[i] + eyeData.data[i+1] + eyeData.data[i+2]) / 3;
+              if (lum < 60) darkPixels++;
+            }
+            const darkRatio = darkPixels / (eyeData.data.length / 4);
+            // If eye region is mostly dark, eyes might be closed or looking down.
+            // Lowered from 0.60 → 0.55 (more sensitive) and now requires 3s
+            // sustained before logging, same reasoning as looking_away above.
+            if (darkRatio > 0.55) {
+              if (!eyesNotVisibleStart.current) eyesNotVisibleStart.current = Date.now();
+              if (Date.now() - eyesNotVisibleStart.current >= 3000 && !eyesNotVisibleActive.current) {
+                eyesNotVisibleActive.current = true;
+                logViolation("eyes_not_visible", 1, `Eye region ${(darkRatio * 100).toFixed(0)}% dark for 3s+ — eyes closed or looking down`);
+              }
+            } else {
+              eyesNotVisibleStart.current = null;
+              eyesNotVisibleActive.current = false; // eyes visible again — next occurrence is a new episode
+            }
+          }
+        }
+      } catch (_) { fdInstance.current = null; }
+    }
+
+    // Method B: Skin-tone canvas fallback
+    if (!fdInstance.current) {
+      let skinPixels = 0;
+      // Focus on center 60% of frame where face should be
+      const startX = Math.round(W * 0.2), endX = Math.round(W * 0.8);
+      const startY = Math.round(H * 0.1), endY = Math.round(H * 0.9);
+      const totalCenter = (endX - startX) * (endY - startY);
+      for (let y = startY; y < endY; y++) {
+        for (let x = startX; x < endX; x++) {
+          const i = (y * W + x) * 4;
+          const r = data[i], g = data[i+1], b = data[i+2];
+          if (r > 60 && g > 30 && b > 15 && r > g && r > b &&
+              Math.abs(r - g) < 120 && (r - b) > 12 && r < 250) skinPixels++;
+        }
+      }
+      facePresent = (skinPixels / totalCenter) > 0.03; // 3% skin = face present (more sensitive)
+      faceCount = facePresent ? 1 : 0;
+
+      // Simple looking-away: check if skin is concentrated off-center
+      if (!facePresent) {
+        let skinLeft = 0, skinRight = 0;
+        for (let y = 0; y < H; y++) {
+          for (let x = 0; x < W / 2; x++) {
+            const i = (y * W + x) * 4;
+            const r = data[i], g = data[i+1], b = data[i+2];
+            if (r > 60 && g > 30 && b > 15 && r > g && r > b) skinLeft++;
+          }
+          for (let x = W / 2; x < W; x++) {
+            const i = (y * W + x) * 4;
+            const r = data[i], g = data[i+1], b = data[i+2];
+            if (r > 60 && g > 30 && b > 15 && r > g && r > b) skinRight++;
+          }
+        }
+        if ((skinLeft > 600 || skinRight > 600) && Math.abs(skinLeft - skinRight) > 300) {
+          facePresent = true; // face is there but off-center
+          faceCount = 1;
+          if (!lookingAwayStart.current) lookingAwayStart.current = Date.now();
+          if (Date.now() - lookingAwayStart.current >= 3000 && !lookingAwayActive.current) {
+            lookingAwayActive.current = true;
+            logViolation("looking_away", 1, `Sustained off-center 3s+ L:${skinLeft} R:${skinRight}`);
+          }
+        } else {
+          lookingAwayStart.current = null;
+          lookingAwayActive.current = false;
+        }
+      }
+    }
+
+    setState(prev => ({ ...prev, faceDetected: facePresent }));
+
+    if (!facePresent) {
+      if (!faceAbsStart.current) faceAbsStart.current = Date.now();
+      const absTime = Date.now() - faceAbsStart.current;
+      // Face is gone entirely — any in-progress "looking away"/"eyes not
+      // visible" timers are meaningless without a face to measure; reset
+      // them so a later reappearance starts a clean 3s window, not a
+      // stale one carried over from before the face disappeared.
+      lookingAwayStart.current = null;
+      eyesNotVisibleStart.current = null;
+      lookingAwayActive.current = false;
+      eyesNotVisibleActive.current = false;
+      if (tooCloseActive.current) {
+        tooCloseStart.current = null;
+        tooCloseActive.current = false;
+        setState(prev => ({ ...prev, tooClose: false }));
+      }
+
+      if (absTime >= 1500 && absTime < 4000 && !faceWarnFired.current) {
+        // 1.5s absent → immediate warning (logged once for this absence episode)
+        faceWarnFired.current = true;
+        logViolation("face_not_detected", 1, `Face absent ${Math.round(absTime/1000)}s`);
+      } else if (absTime >= 4000 && !faceStrikeFired.current) {
+        // 4s absent → strike + snapshot (logged once — no longer repeats every 4s
+        // while the student stays out of frame; correcting it resets both flags)
+        faceStrikeFired.current = true;
+        logViolation("face_not_detected", 2, `Face absent ${Math.round(absTime/1000)}s — possible cheating`);
+        captureSnapshot("face_absent_extended");
+      }
+    } else {
+      faceAbsStart.current = null; // reset timer
+      faceWarnFired.current = false;
+      faceStrikeFired.current = false; // face is back — next absence is a new episode
+      if (faceCount > 1) {
+        if (!multipleFacesActive.current) {
+          multipleFacesActive.current = true;
+          logViolation("multiple_faces", 3, `${faceCount} faces detected in frame`);
+          captureSnapshot("multiple_faces");
+        }
+      } else {
+        multipleFacesActive.current = false; // back to one face — next occurrence is a new episode
+      }
+    }
+  }, [logViolation, captureSnapshot]);
+
+  const initCamera = useCallback(async (retry = 0): Promise<boolean> => {
+    if (reconnecting.current && retry === 0) return false;
+    reconnecting.current = true;
+    try {
+      if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+      // Matches PreExamVerification.tsx's constraints exactly — that screen's
+      // capture is what the student saw and approved ("shows down to the
+      // chest"). This used to request a forced portrait 3:4 crop on mobile
+      // (480x640, aspectRatio ideal 3/4), which pushed phone cameras into a
+      // much tighter, closer-in frame than the plain 640x480 request below
+      // produces — same camera, visibly different framing. Keeping both
+      // capture points on the same constraints keeps what the student
+      // verified before the exam consistent with what's captured during it.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480, facingMode: "user" },
+      });
+      streamRef.current = stream;
+      const video = videoElRef.current;
+      if (video) {
+        video.srcObject = stream;
+        await new Promise<void>((res, rej) => {
+          const timeout = setTimeout(() => rej(new Error("timeout")), 8000);
+          video.onloadeddata = () => { clearTimeout(timeout); res(); };
+          video.onerror = () => { clearTimeout(timeout); rej(new Error("error")); };
+          video.play().catch(rej);
+        });
+      }
+      cameraReadyRef.current = true;
+      reconnecting.current = false;
+      setState(prev => ({ ...prev, cameraReady: true, faceDetected: true }));
+      // Mobile OS-level suspension guard — Android/Chrome (and iOS Safari)
+      // suspend the camera's frame delivery when the screen locks or the
+      // app backgrounds, WITHOUT ending the track (readyState stays "live").
+      // The camera-health interval below never catches this because it only
+      // checks readyState. `mute`/`unmute` are the events actually fired for
+      // this case — without them every canvas draw after a suspension is
+      // solid black (avg brightness ~0) even though nothing is "wrong".
+      const vTrack = stream.getVideoTracks()[0];
+      if (vTrack) {
+        vTrack.onmute = () => {
+          cameraReadyRef.current = false;
+          setState(prev => ({ ...prev, cameraReady: false }));
+        };
+        vTrack.onunmute = () => {
+          cameraReadyRef.current = true;
+          setState(prev => ({ ...prev, cameraReady: true }));
+          videoElRef.current?.play().catch(() => {});
+        };
+      }
+      // If we're currently live-publishing to LiveKit (admin has the grid
+      // open) and this init call is a *replacement* (reinit after the old
+      // track ended/stayed muted too long — see camera-health interval
+      // below), swap the new MediaStreamTrack into the existing published
+      // track instead of leaving the admin's viewer stuck forever on the
+      // now-dead old one. replaceTrack() keeps the same publication alive —
+      // no unpublish/republish/renegotiation, so the admin's viewer doesn't
+      // even need to resubscribe.
+      if (vTrack && lkTrackRef.current) {
+        lkTrackRef.current.replaceTrack(vTrack).catch(() => {});
+      }
+      // Attach to display element with retry — Android needs extra time
+      const attachDisplay = (retries = 0) => {
+        const displayEl = document.getElementById("proctor-display-video") as HTMLVideoElement;
+        if (displayEl) {
+          displayEl.srcObject = stream;
+          displayEl.muted = true;
+          displayEl.setAttribute("playsinline", "true");
+          displayEl.play().catch(() => {});
+        } else if (retries < 5) {
+          setTimeout(() => attachDisplay(retries + 1), 500);
+        }
+      };
+      attachDisplay();
+      stream.getVideoTracks()[0]?.addEventListener("ended", () => {
+        cameraReadyRef.current = false;
+        setState(prev => ({ ...prev, cameraReady: false, faceDetected: false }));
+        reconnecting.current = false;
+        if (enabledRef.current) { setTimeout(() => initCamera(), 2000); logViolation("webcam_disabled", 3, "Camera ended"); }
+      });
+      return true;
+    } catch (e: any) {
+      const isPermission = e.name === "NotAllowedError" || e.name === "PermissionDeniedError";
+      if (isPermission) {
+        // Permission denied — don't retry (repeatedly re-prompting is
+        // pointless once denied), but this must still show up on the
+        // admin's radar. Previously this only console.warn'd — a student
+        // could deny the camera entirely and submit a fully "clean" exam.
+        reconnecting.current = false;
+        console.warn("Camera permission denied:", e.message);
+        setState(prev => ({ ...prev, cameraReady: false }));
+        if (config.webcam_required) logViolation("webcam_disabled", 3, "Camera permission denied");
+        return false;
+      }
+      if (retry < 3) {
+        // Exponential backoff: 1s, 2s, 4s
+        await new Promise(r => setTimeout(r, Math.pow(2, retry) * 1000));
+        return initCamera(retry + 1);
+      }
+      reconnecting.current = false;
+      logViolation("webcam_disabled", 3, `Camera failed after ${retry} retries: ${e.message}`);
+      return false;
+    }
+  }, [logViolation]);
+
+  const scheduleSnapshot = useCallback(() => {
+    if (snapshotTimer.current) clearTimeout(snapshotTimer.current);
+    const base = config.screenshot_interval_seconds || 30;
+    const delay = rndInterval(Math.max(10, Math.floor(base * 0.6)), Math.floor(base * 1.4));
+    snapshotTimer.current = setTimeout(async () => {
+      if (!enabledRef.current) return;
+      if (cameraReadyRef.current) await captureSnapshot("periodic");
+      scheduleSnapshot();
+    }, delay);
+  }, [config.screenshot_interval_seconds, captureSnapshot]);
+
+  // ── Main init ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!enabled || !config.attemptId) return;
+    (async () => {
+      try {
+        // webcam_enabled starts false — we don't know yet whether the camera
+        // will actually work. It gets flipped to the real result right after
+        // initCamera() resolves below. Previously this was hardcoded `true`
+        // unconditionally, so the admin dashboard's "Webcam: on/off" badge
+        // was meaningless — it said "on" even for students whose camera
+        // permission was denied outright and never captured a single frame.
+        const { data } = await supabase.from("proctoring_sessions").insert({
+          attempt_id: config.attemptId, webcam_enabled: false,
+          microphone_enabled: config.record_audio || false,
+          fullscreen_active: false, max_warnings: config.max_warnings || 3,
+          session_type: config.sessionType || "exam",
+          context_label: config.contextLabel || null,
+          student_id: config.userId || null,
+        }).select("id").single();
+        if (data) sessionId.current = data.id;
+      } catch (_) {}
+
+      const camOk = await initCamera();
+      if (sessionId.current) {
+        supabase.from("proctoring_sessions").update({ webcam_enabled: camOk }).eq("id", sessionId.current).then(() => {});
+      }
+      if (camOk) {
+        setTimeout(() => captureSnapshot("initial_capture"), 1000);
+        scheduleSnapshot();
+      }
+
+      if (config.record_audio) {
+        try {
+          const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          audioStreamRef.current = audioStream;
+          const ctx = new AudioContext();
+          const src = ctx.createMediaStreamSource(audioStream);
+          const ana = ctx.createAnalyser(); ana.fftSize = 256;
+          src.connect(ana);
+          audioCtxRef.current = ctx; analyserRef.current = ana;
+          const buf = new Uint8Array(ana.frequencyBinCount);
+          audioMonRef.current = setInterval(() => {
+            if (!enabledRef.current || !analyserRef.current) return;
+            analyserRef.current.getByteFrequencyData(buf);
+            const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
+            if ((avg / 128) * 100 > 40) {
+              noiseCount.current++;
+              if (noiseCount.current >= 3) { logViolation("unusual_audio", 2, `Noise: ${Math.round((avg/128)*100)}%`); noiseCount.current = 0; }
+            } else { noiseCount.current = Math.max(0, noiseCount.current - 1); }
+          }, 2000);
+          setState(prev => ({ ...prev, audioMonitoring: true }));
+        } catch (_) {}
+      }
+    })();
+
+    return () => {
+      if (sessionId.current) supabase.from("proctoring_sessions").update({ ended_at: new Date().toISOString() }).eq("id", sessionId.current).then(() => {});
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      audioStreamRef.current?.getTracks().forEach(t => t.stop());
+      if (audioCtxRef.current?.state !== "closed") audioCtxRef.current?.close().catch(() => {});
+      if (audioMonRef.current)  clearInterval(audioMonRef.current);
+      if (snapshotTimer.current) clearTimeout(snapshotTimer.current);
+      if (faceDetectIv.current)  clearInterval(faceDetectIv.current);
+      cameraReadyRef.current = false;
+    };
+  }, [enabled, config.attemptId]);
+
+  // ── Fast face/eye detection — 800ms ──────────────────────────
+  useEffect(() => {
+    if (!enabled) return;
+    faceDetectIv.current = setInterval(analyzeFrame, 400); // 400ms — fast enough to catch blinks
+    return () => { if (faceDetectIv.current) clearInterval(faceDetectIv.current); };
+  }, [enabled, analyzeFrame]);
+
+  // ── Camera health monitor ──────────────────────────────────
+  useEffect(() => {
+    if (!enabled) return;
+    let mutedSince: number | null = null;
+    const iv = setInterval(() => {
+      if (!enabledRef.current) return;
+      const track = streamRef.current?.getVideoTracks()[0];
+      if (!streamRef.current || track?.readyState === "ended") {
+        cameraReadyRef.current = false;
+        setState(prev => ({ ...prev, cameraReady: false }));
+        reconnecting.current = false;
+        mutedSince = null;
+        initCamera();
+        return;
+      }
+      // Track is "live" but OS-suspended (screen lock / app backgrounded) —
+      // a soft resume usually isn't enough to bring Android's camera back,
+      // so escalate to a full reinit if it's been muted/not-ready 8s+.
+      // Also covers browsers that freeze frames without firing `mute`
+      // (caught instead by captureSnapshot's black-frame probe, which sets
+      // cameraReadyRef false).
+      if (track?.muted || !cameraReadyRef.current) {
+        if (!mutedSince) mutedSince = Date.now();
+        videoElRef.current?.play().catch(() => {});
+        if (Date.now() - mutedSince > 8000) {
+          mutedSince = null;
+          cameraReadyRef.current = false;
+          setState(prev => ({ ...prev, cameraReady: false }));
+          initCamera();
+        }
+      } else {
+        mutedSince = null;
+      }
+    }, 3000);
+    return () => clearInterval(iv);
+  }, [enabled, initCamera]);
+
+  // ── Live grid publishing — connect to LiveKit ONLY while an admin has ──
+  // the live monitor grid open (tracked via Supabase Presence), so idle
+  // exams never pay for a live video connection. Video only, no audio,
+  // low bitrate/framerate since this is just for cheating detection.
+  useEffect(() => {
+    if (!enabled || !config.examId || !config.attemptId || !config.userId) return;
+
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const teardownLive = () => {
+      if (retryTimer) clearTimeout(retryTimer);
+      try { lkTrackRef.current?.stop(); } catch (_) {}
+      try { lkAudioTrackRef.current?.stop(); } catch (_) {}
+      try { lkRoomRef.current?.disconnect(); } catch (_) {}
+      lkRoomRef.current = null;
+      lkTrackRef.current = null;
+      lkAudioTrackRef.current = null;
+      lkConnectingRef.current = false;
+    };
+
+    const publishLive = async () => {
+      if (cancelled || lkRoomRef.current || lkConnectingRef.current) return;
+      if (!cameraReadyRef.current || !streamRef.current) {
+        retryTimer = setTimeout(publishLive, 1000);
+        return;
+      }
+      lkConnectingRef.current = true;
+      try {
+        const [{ data }, lk] = await Promise.all([
+          supabase.functions.invoke("livekit-token", { body: { room_name: `exam-proctor-${config.examId}` } }),
+          import("livekit-client"),
+        ]);
+        if (cancelled || !adminWatchingRef.current || !data?.token || !data?.url) { lkConnectingRef.current = false; return; }
+        const { Room, LocalVideoTrack, LocalAudioTrack, Track, RoomEvent } = lk;
+        const room = new Room({ adaptiveStream: false, dynacast: false });
+        // A refreshed admin page (or any server-side kick/network blip) fires
+        // this even after a previously-successful publish. Previously nothing
+        // listened for it, so the feed just went black forever until the
+        // student manually reloaded — this reconnects automatically instead.
+        room.on(RoomEvent.Disconnected, () => {
+          lkRoomRef.current = null;
+          lkTrackRef.current = null;
+          lkAudioTrackRef.current = null;
+          lkConnectingRef.current = false;
+          if (!cancelled && adminWatchingRef.current) retryTimer = setTimeout(publishLive, 2000);
+        });
+        await room.connect(data.url, data.token);
+        if (cancelled || !adminWatchingRef.current) { room.disconnect(); lkConnectingRef.current = false; return; }
+        const videoTrack = streamRef.current.getVideoTracks()[0];
+        if (!videoTrack) { room.disconnect(); lkConnectingRef.current = false; return; }
+        const localTrack = new LocalVideoTrack(videoTrack);
+        await room.localParticipant.publishTrack(localTrack, {
+          name: "proctor-cam",
+          source: Track.Source.Camera,
+          simulcast: false,
+          videoEncoding: { maxBitrate: 150_000, maxFramerate: 8 },
+        });
+        lkRoomRef.current = room;
+        lkTrackRef.current = localTrack;
+
+        // Mic audio — only when the exam has audio monitoring turned on
+        // (config.record_audio) and only while an admin is actually watching,
+        // same consent-gated pattern as the video track above. Reuses the
+        // MediaStream already captured for local noise-level analysis if
+        // present; otherwise requests one fresh so admins can still listen
+        // even if that analysis loop wasn't running for some reason.
+        if (config.record_audio) {
+          try {
+            let audioStream = audioStreamRef.current;
+            if (!audioStream || audioStream.getAudioTracks().every(t => t.readyState === "ended")) {
+              audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              audioStreamRef.current = audioStream;
+            }
+            const audioTrack = audioStream.getAudioTracks()[0];
+            if (audioTrack && !cancelled && adminWatchingRef.current) {
+              const localAudioTrack = new LocalAudioTrack(audioTrack);
+              await room.localParticipant.publishTrack(localAudioTrack, {
+                name: "proctor-mic",
+                source: Track.Source.Microphone,
+              });
+              lkAudioTrackRef.current = localAudioTrack;
+            }
+          } catch (audioErr) {
+            // Mic permission denied or unavailable — video-only monitoring
+            // still works fine, so don't tear down the connection for this.
+            logger.warn("[proctor] mic publish failed", audioErr);
+          }
+        }
+      } catch (err) {
+        // Used to be a silent no-op — any transient failure (token race,
+        // room not fully torn down yet, brief network hiccup) meant the
+        // live feed died permanently, since publishLive() only re-runs on
+        // the next presence "sync" event and that had already fired. Now
+        // it logs and retries instead of giving up.
+        logger.warn("[proctor] live publish failed, retrying", err);
+        if (!cancelled && adminWatchingRef.current) retryTimer = setTimeout(publishLive, 3000);
+      } finally {
+        lkConnectingRef.current = false;
+      }
+    };
+
+    const channel = supabase.channel(`exam-proctor-presence-${config.examId}`, {
+      config: { presence: { key: `student-${config.userId}` } },
+    });
+    channel.on("presence", { event: "sync" }, () => {
+      const state = channel.presenceState() as Record<string, any[]>;
+      const adminWatching = Object.values(state).some(list =>
+        list.some((p: any) => p.role === "admin_watching")
+      );
+      adminWatchingRef.current = adminWatching;
+      if (adminWatching) publishLive(); else teardownLive();
+    });
+    channel.subscribe();
+    presenceChanRef.current = channel;
+
+    return () => {
+      cancelled = true;
+      teardownLive();
+      try { channel.unsubscribe(); } catch (_) {}
+      presenceChanRef.current = null;
+    };
+  }, [enabled, config.examId, config.attemptId, config.userId]);
+
+  // ── Auto-submit on page close/hide ───────────────────────────
+  // Uses sendBeacon for guaranteed delivery even on page unload
+  // sendBeacon cannot call Supabase SDK directly — uses the REST API URL
+  useEffect(() => {
+    if (!enabled || !config.attemptId) return;
+
+    const SUPA_URL = import.meta.env.VITE_SUPABASE_URL as string;
+    const SUPA_KEY = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY) as string;
+
+    // sendBeacon — guaranteed to fire even when page is closing
+    const beaconSubmit = () => {
+      if (!SUPA_URL || !SUPA_KEY) return;
+      const payload = JSON.stringify({
+        status: "submitted",
+        submitted_at: new Date().toISOString(),
+        notes: "Auto-submitted: exam window closed",
+        suspicion_level: "window_closed",
+      });
+      const url = `${SUPA_URL}/rest/v1/exam_attempts?id=eq.${config.attemptId}`;
+      navigator.sendBeacon(url,
+        new Blob([payload], { type: "application/json" })
+      );
+      // Also log the violation via beacon
+      const vPayload = JSON.stringify({
+        attempt_id: config.attemptId,
+        violation_type: "window_closed",
+        severity_score: 3,
+        details: "Student closed exam window or navigated away",
+      });
+      navigator.sendBeacon(
+        `${SUPA_URL}/rest/v1/violations`,
+        new Blob([vPayload], { type: "application/json" })
+      );
+    };
+
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "Your exam will be auto-submitted if you leave!";
+      beaconSubmit(); // synchronous, guaranteed
+    };
+
+    const onPageHide = (e: PageTransitionEvent) => {
+      if (!e.persisted) beaconSubmit(); // only if not entering bfcache
+    };
+
+    // Note: there is deliberately no visibilitychange-based auto-submit here
+    // anymore. It used to fire after just 8s of the tab/app being hidden —
+    // a phone call, notification, or app switch was enough to trigger it on
+    // mobile — and it flipped exam_attempts.status straight to "submitted"
+    // without ever saving the student's answers first. Once status left
+    // in_progress, RLS then blocked every subsequent answer save, so
+    // whatever the student had picked was silently lost. Closing the
+    // tab/page for real is still covered by beforeunload/pagehide above.
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+    window.addEventListener("pagehide", onPageHide);
+
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, [enabled, config.attemptId]);
+
+  // ── Fullscreen ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!enabled || !config.fullscreen_required) return;
+    document.documentElement.requestFullscreen().catch(() => {});
+    const h = () => {
+      const isFS = !!document.fullscreenElement;
+      setState(prev => ({ ...prev, fullscreenActive: isFS }));
+      if (!isFS) logViolation("fullscreen_exit", 2, "Exited fullscreen");
+      else if (!cameraReadyRef.current) setTimeout(() => initCamera(), 500);
+    };
+    document.addEventListener("fullscreenchange", h);
+    return () => document.removeEventListener("fullscreenchange", h);
+  }, [enabled, config.fullscreen_required, logViolation, initCamera]);
+
+  // ── Tab switch (lockdown) ───────────────────────────────────────
+  // Listens to both visibilitychange (tab hidden) and window blur
+  // (e.g. alt-tab to another app, split screen, opening another
+  // window) so leaving the exam is caught either way.
+  useEffect(() => {
+    if (!enabled) return;
+    const away = () => {
+      if (tabAwayStart.current) return; // already flagged as away
+      tabAwayStart.current = Date.now();
+      logViolation("tab_switch", 2, "Left exam window");
+    };
+    const back = () => {
+      if (!tabAwayStart.current) return;
+      const secs = Math.round((Date.now() - tabAwayStart.current) / 1000);
+      tabAwayStart.current = null;
+      if (secs > 1) logViolation("tab_switch_return", 1, `Away for ${secs}s`);
+    };
+    const onVis = () => { document.hidden ? away() : back(); };
+    const onBlur = () => away();
+    const onFocus = () => back();
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [enabled, logViolation]);
+
+  // ── Copy/paste/right-click ────────────────────────────────────
+  useEffect(() => {
+    if (!enabled) return;
+    const onCopy  = (e: ClipboardEvent) => { e.preventDefault(); logViolation("copy_paste", 2, "Copy attempt"); };
+    const onPaste = (e: ClipboardEvent) => { logViolation("copy_paste", 1, "Paste attempt"); };
+    const onRC    = (e: MouseEvent)     => { e.preventDefault(); logViolation("right_click", 1, "Right-click"); };
+    document.addEventListener("copy",        onCopy);
+    document.addEventListener("paste",       onPaste);
+    document.addEventListener("contextmenu", onRC);
+    return () => {
+      document.removeEventListener("copy",        onCopy);
+      document.removeEventListener("paste",       onPaste);
+      document.removeEventListener("contextmenu", onRC);
+    };
+  }, [enabled, logViolation]);
+
+  // ── Dev tools ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!enabled) return;
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "F12" || (e.ctrlKey && e.shiftKey && "IJC".includes(e.key))) {
+        e.preventDefault(); logViolation("dev_tools", 3, "DevTools shortcut");
+      }
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [enabled, logViolation]);
+
+  const getStream = useCallback(() => streamRef.current, []);
+
+  return { ...state, recentViolations, logViolation, sessionId: sessionId.current, getStream, captureScreenshot };
+};

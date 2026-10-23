@@ -1,0 +1,7 @@
+name = "tahleem-ota"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "tahleem-mushaf"

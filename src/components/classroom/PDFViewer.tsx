@@ -1,0 +1,844 @@
+// PDFViewer.tsx
+// • First open ever:        pdf.js streams via HTTP range requests, so page 1
+//                           renders as soon as ITS bytes arrive — not after the
+//                           whole file downloads. The rest streams in behind it,
+//                           then gets stashed on-device for next time.
+// • Reopen same session:    draws from in-memory bitmap cache — instant, zero network
+// • Reopen after restart:   bytes already on-device (Cache Storage) — instant, works
+//                           fully OFFLINE; only re-renders pages from local bytes
+// • prewarmPDF(url):        call ahead of time (e.g. when a material list loads, or a
+//                           teacher shares a material) so it's already cached/rendered
+//                           by the time the user actually taps to open it
+// • Scroll position saved per materialId and restored on reopen
+
+import React, { useEffect, useRef, useState, useCallback } from "react";
+
+const PDFJS_VERSION = "3.11.174";
+const PDFJS_SRC    = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.min.js`;
+const PDFJS_WORKER = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.js`;
+const OFFLINE_CACHE_NAME = "tahleem-pdf-offline-v1";
+
+// Module-level caches — survive React unmount/remount, NOT app restart
+const PAGE_CACHE    = new Map<string, ImageBitmap[]>();
+const DIM_CACHE     = new Map<string, Array<{w:number;h:number}>>();
+const RENDER_PROMISE= new Map<string, Promise<ImageBitmap[]>>();
+const TOTAL_CACHE   = new Map<string, number>(); // known the instant the doc opens, before pages render
+
+function ensureScript(src: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+    const s = document.createElement("script");
+    s.src = src; s.onload = () => resolve(); s.onerror = () => reject(new Error(`Failed: ${src}`));
+    document.head.appendChild(s);
+  });
+}
+
+function ensureKeyframes() {
+  if (document.getElementById("pdfv-kf")) return;
+  const s = document.createElement("style");
+  s.id = "pdfv-kf";
+  s.textContent = `@keyframes pdfv-spin { to { transform: rotate(360deg); } }`;
+  document.head.appendChild(s);
+}
+
+const scrollKey = (id: string) => `pdfv-scroll-${id}`;
+function saveScroll(id: string, top: number) {
+  try { localStorage.setItem(scrollKey(id), String(Math.round(top))); } catch {}
+}
+function loadScroll(id: string): number {
+  try { return parseInt(localStorage.getItem(scrollKey(id)) || "0", 10) || 0; } catch { return 0; }
+}
+
+// Position persisted as {page, frac-within-page, zoom, rotate} — survives re-layout at a different
+// width (px offsets do not), so minimize/restore or reopening resumes at the same place.
+type SyncPos = { page: number; frac: number; zoom: number; rotate: number };
+const posKey = (id: string) => `pdfv-pos-${id}`;
+function savePosLS(id: string, pos: SyncPos) {
+  try { localStorage.setItem(posKey(id), JSON.stringify(pos)); } catch {}
+}
+function loadPosLS(id: string): SyncPos | null {
+  try {
+    const raw = localStorage.getItem(posKey(id));
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (p && typeof p.page === "number" && typeof p.frac === "number") return p;
+  } catch {}
+  return null;
+}
+// Min gap between live-sync sends (Supabase realtime allows ~10 msgs/s per client).
+const SYNC_MIN_MS = 120;
+
+/** True if this PDF's bytes are already on-device (will open instantly, even offline). */
+export async function isPDFCached(url: string): Promise<boolean> {
+  if (PAGE_CACHE.has(url)) return true;
+  if (!("caches" in window)) return false;
+  try {
+    const cache = await caches.open(OFFLINE_CACHE_NAME);
+    return !!(await cache.match(url));
+  } catch { return false; }
+}
+
+/** Stash already-fetched bytes on-device so the NEXT open on this device is instant + offline. */
+async function stashBytes(url: string, data: Uint8Array | ArrayBuffer) {
+  if (!("caches" in window)) return;
+  try {
+    const cache = await caches.open(OFFLINE_CACHE_NAME);
+    const body = data instanceof ArrayBuffer ? data : data.slice().buffer;
+    await cache.put(url, new Response(body, { headers: { "Content-Type": "application/pdf" } }));
+  } catch { /* quota / unsupported — just means next open re-streams, still works */ }
+}
+
+/**
+ * Fire-and-forget: start downloading + rendering a PDF ahead of time so it's
+ * ready (cached bytes + rendered bitmaps) the instant the user taps to open it.
+ * Safe to call repeatedly — renderPDF() de-dupes in-flight/cached work.
+ */
+export function prewarmPDF(url: string): void {
+  if (!url) return;
+  renderPDF(url).catch(() => { /* silent — viewer will retry & surface the real error if opened */ });
+}
+
+async function renderPDF(url: string, onProgress?: (done: number, total: number) => void): Promise<ImageBitmap[]> {
+  if (PAGE_CACHE.has(url) && !RENDER_PROMISE.has(url)) return PAGE_CACHE.get(url)!;
+  if (RENDER_PROMISE.has(url)) return RENDER_PROMISE.get(url)!;
+
+  const promise = (async () => {
+    await ensureScript(PDFJS_SRC);
+    const lib = (window as any).pdfjsLib;
+    if (!lib) throw new Error("pdf.js did not load");
+    lib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+
+    // Already on this device (returning visit / prewarmed earlier) — parse
+    // straight from local bytes, no network at all, works fully offline.
+    let pdf: any;
+    let needsStash = false;
+    if ("caches" in window) {
+      try {
+        const cache = await caches.open(OFFLINE_CACHE_NAME);
+        const hit = await cache.match(url);
+        if (hit) pdf = await lib.getDocument({ data: await hit.arrayBuffer() }).promise;
+      } catch { /* fall through to network path */ }
+    }
+    if (!pdf) {
+      try {
+        // Brand-new file on this device: stream via HTTP range requests so
+        // page 1 only needs ITS bytes to render — not the whole document.
+        // (Supabase/S3-backed storage supports Range out of the box.)
+        pdf = await lib.getDocument({ url, rangeChunkSize: 1 << 16 }).promise;
+        needsStash = true;
+      } catch {
+        // Range requests blocked somewhere upstream — fall back to a plain
+        // whole-file fetch so it still works, just without the fast-first-page win.
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.arrayBuffer();
+        pdf = await lib.getDocument({ data }).promise;
+        stashBytes(url, data); // already have the full bytes — cache immediately
+        needsStash = false;
+      }
+    }
+
+    const total = pdf.numPages;
+    TOTAL_CACHE.set(url, total);
+    const dpr   = Math.min(window.devicePixelRatio || 1, 2);
+    const bitmaps: ImageBitmap[] = [];
+    const dims: Array<{w:number;h:number}> = [];
+
+    for (let i = 1; i <= total; i++) {
+      const page = await pdf.getPage(i);
+      const vp   = page.getViewport({ scale: dpr });
+      const oc   = new OffscreenCanvas(vp.width, vp.height);
+      await page.render({ canvasContext: oc.getContext("2d") as any, viewport: vp }).promise;
+      const bmp = await createImageBitmap(oc);
+      bitmaps.push(bmp);
+      dims.push({ w: vp.width, h: vp.height });
+      // Store partial so poll can draw as they arrive
+      PAGE_CACHE.set(url, [...bitmaps]);
+      DIM_CACHE.set(url, [...dims]);
+      onProgress?.(i, total);
+    }
+
+    PAGE_CACHE.set(url, bitmaps);
+    DIM_CACHE.set(url, dims);
+    RENDER_PROMISE.delete(url);
+
+    // Paging through the document means pdf.js has now pulled in (almost) all
+    // of it via ranges — grab the assembled bytes and stash them so the NEXT
+    // open on this device is instant + offline. Runs after rendering, so it
+    // never delays what the user sees.
+    if (needsStash) {
+      pdf.getData().then((bytes: Uint8Array) => stashBytes(url, bytes)).catch(() => {});
+    }
+
+    return bitmaps;
+  })();
+
+  RENDER_PROMISE.set(url, promise);
+  return promise;
+}
+
+interface Props {
+  url: string;
+  bg?: string;
+  materialId?: string;
+  // ── Live "follow the teacher" scroll sync (classroom only) ───────────────
+  // syncActive:   true on the teacher's side while this document is the one
+  //               being actively broadcast — captures scroll position.
+  // onSyncScroll: fired (throttled) with the scroll fraction (0-1) and the
+  //               current/total page, for the parent to broadcast onward.
+  // following:    true on a student's side while they're following the
+  //               teacher's live position — disables independent scrolling
+  //               so the two views can't drift apart.
+  // remoteScrollPct: the teacher's latest scroll fraction (0-1) to drive to
+  //               while following.
+  syncActive?: boolean;
+  onSyncScroll?: (scrollPct: number, page: number, total: number, pos?: SyncPos) => void;
+  following?: boolean;
+  remoteScrollPct?: number | null;
+  // Teacher's exact position (page + fraction within page + zoom/rotate). Preferred over
+  // remoteScrollPct, which depends on how many pages each device has rendered so far.
+  remotePos?: { page?: number; pageFrac?: number; zoom?: number; rotate?: number; scrollPct?: number } | null;
+}
+
+export default function PDFViewer({ url, bg = "#1c1c1e", materialId, syncActive = false, onSyncScroll, following = false, remoteScrollPct = null, remotePos = null }: Props) {
+  const scrollRef    = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [phase, setPhase] = useState<"instant"|"loading"|"rendering"|"done"|"error">("loading");
+  const [pct,   setPct]   = useState(0);
+  const [errMsg,setErrMsg]= useState("");
+  const cancelRef = useRef(false);
+  const lastDrawn = useRef(0);
+
+  // ── Zoom / rotate / download state ───────────────────────────────────────
+  const [zoom,   setZoom]   = useState(1);
+  const [rotate, setRotate] = useState(0); // degrees: 0 90 180 270
+  const rotateRef = useRef(0);
+  useEffect(() => { rotateRef.current = rotate; }, [rotate]);
+  const zoomRef  = useRef(1);
+
+  // Pinch-to-zoom touch tracking
+  const touch1         = useRef<Touch | null>(null);
+  const touch2         = useRef<Touch | null>(null);
+  const pinchStartDist = useRef(0);
+  const pinchStartZoom = useRef(1);
+  const lastTap        = useRef(0);
+
+  const clampZoom = (z: number) => Math.min(5, Math.max(0.5, z));
+
+  const applyZoom = useCallback((z: number) => {
+    const clamped = clampZoom(z);
+    zoomRef.current = clamped;
+    setZoom(clamped);
+  }, []);
+
+  const zoomIn    = useCallback(() => applyZoom(zoomRef.current + 0.25), [applyZoom]);
+  const zoomOut   = useCallback(() => applyZoom(zoomRef.current - 0.25), [applyZoom]);
+  const resetView = useCallback(() => { applyZoom(1); setRotate(0); }, [applyZoom]);
+  const rotateCW  = useCallback(() => setRotate(r => (r + 90) % 360), []);
+
+  // ── Page-swipe mode ──────────────────────────────────────────────────────
+  const [pageMode, setPageMode] = useState(false); // false = scroll, true = single-page swipe
+  const pageModeRef    = useRef(false);  // mirror of pageMode for use inside event handlers
+  const currentPageRef = useRef(1);      // mirror of currentPage — avoids stale closure in swipe handler
+  const goToPageRef    = useRef<(n: number) => void>(() => {}); // stable ref to goToPage
+  const swipeStartX = useRef(0);
+  const swipeStartY = useRef(0);
+  const isPinching  = useRef(false); // true while 2 fingers are down
+
+  // Ctrl/Cmd + scroll = zoom (desktop)
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      applyZoom(zoomRef.current - e.deltaY * 0.002);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [applyZoom]);
+
+  // Unified touch handler: pinch-zoom + double-tap + page-swipe
+  // Key insight: we track isPinching so single-finger scroll is NEVER
+  // blocked — only 2-finger moves are intercepted for zoom.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const dist = (a: Touch, b: Touch) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        // Two fingers down → start pinch, record state
+        isPinching.current = true;
+        touch1.current = { ...e.touches[0] } as any;
+        touch2.current = { ...e.touches[1] } as any;
+        pinchStartDist.current = dist(e.touches[0], e.touches[1]);
+        pinchStartZoom.current = zoomRef.current;
+        // Prevent scroll from firing during pinch
+        e.preventDefault();
+      } else if (e.touches.length === 1 && !isPinching.current) {
+        // Single finger — record for double-tap and swipe
+        swipeStartX.current = e.touches[0].clientX;
+        swipeStartY.current = e.touches[0].clientY;
+        const now = Date.now();
+        if (now - lastTap.current < 300) {
+          // Double-tap: toggle 2× zoom
+          e.preventDefault();
+          applyZoom(zoomRef.current > 1.1 ? 1 : 2);
+        }
+        lastTap.current = now;
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2 && isPinching.current) {
+        // Pinch in progress — block scroll, update zoom only
+        e.preventDefault();
+        keepNavAlive();
+        const newDist = dist(e.touches[0], e.touches[1]);
+        applyZoom(pinchStartZoom.current * (newDist / pinchStartDist.current));
+      }
+      // Single-finger moves: let the browser handle scroll naturally (no preventDefault)
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) {
+        // Last finger lifted after pinch
+        if (isPinching.current) {
+          isPinching.current = false;
+          touch1.current = null;
+          touch2.current = null;
+          releaseNavAlive();
+          return; // don't treat this as a swipe
+        }
+      }
+
+      // Page-swipe mode: detect horizontal swipe to go prev/next
+      if (pageModeRef.current && e.changedTouches.length === 1 && !isPinching.current) {
+        const dx = e.changedTouches[0].clientX - swipeStartX.current;
+        const dy = e.changedTouches[0].clientY - swipeStartY.current;
+        // Only register as swipe if horizontal movement dominates and > 40px
+        if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+          if (dx < 0) goToPageRef.current(currentPageRef.current + 1); // swipe left → next
+          else        goToPageRef.current(currentPageRef.current - 1); // swipe right → prev
+        }
+      }
+    };
+
+    el.addEventListener("touchstart", onTouchStart, { passive: false });
+    el.addEventListener("touchmove",  onTouchMove,  { passive: false });
+    el.addEventListener("touchend",   onTouchEnd,   { passive: true });
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove",  onTouchMove);
+      el.removeEventListener("touchend",   onTouchEnd);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applyZoom]); // pageModeRef/currentPageRef/goToPageRef are refs — stable, no re-registration needed
+
+  // ── Page navigator (always-visible "N / total" + jump-to-page) ───────────
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages,  setTotalPages]  = useState(0);
+  const [pageInput,   setPageInput]   = useState("1");
+  const editingRef = useRef(false);
+  // Show the navigator while actively scrolling, fade out once scrolling settles
+  const [navVisible, setNavVisible] = useState(false);
+  const navHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Sync-broadcast bookkeeping (teacher side) — refs so the scroll
+  //    listener always sees the latest callback/flag without needing to be
+  //    re-attached every render. ──────────────────────────────────────────
+  const onSyncScrollRef = useRef(onSyncScroll);
+  useEffect(() => { onSyncScrollRef.current = onSyncScroll; }, [onSyncScroll]);
+  const syncActiveRef = useRef(syncActive);
+  useEffect(() => { syncActiveRef.current = syncActive; }, [syncActive]);
+  const totalPagesRef = useRef(0);
+  useEffect(() => { totalPagesRef.current = totalPages; }, [totalPages]);
+  const lastSyncSentRef = useRef(0);
+  // Guards against the "apply remote scroll" effect re-triggering a fresh
+  // outgoing broadcast on the follower's own side (it never has syncActive
+  // set, but this also protects against any future dual-role case).
+  const applyingRemoteRef = useRef(false);
+
+  // Keep the navigator visible while the user is actively touching/pressing
+  // it (e.g. holding the ▲/▼ buttons or typing a page number), so it doesn't
+  // fade out mid-interaction. Restarts the hide countdown on release.
+  const keepNavAlive = useCallback(() => {
+    setNavVisible(true);
+    if (navHideTimer.current) clearTimeout(navHideTimer.current);
+  }, []);
+  const releaseNavAlive = useCallback(() => {
+    if (navHideTimer.current) clearTimeout(navHideTimer.current);
+    navHideTimer.current = setTimeout(() => setNavVisible(false), 1500);
+  }, []);
+
+  const updateCurrentPageFromScroll = useCallback(() => {
+    const sc = scrollRef.current, cont = containerRef.current;
+    if (!sc || !cont || !cont.children.length) return;
+    const top = sc.scrollTop + 40; // a page counts as "current" once its top has just entered view
+    let page = 1;
+    for (let i = 0; i < cont.children.length; i++) {
+      if ((cont.children[i] as HTMLElement).offsetTop <= top) page = i + 1; else break;
+    }
+    setCurrentPage(page);
+  }, []);
+
+  const goToPage = useCallback((n: number) => {
+    const cont = containerRef.current, sc = scrollRef.current;
+    if (!cont || !sc || !cont.children.length) return;
+    // Clamp to pages actually rendered so far — pages still streaming in aren't in the DOM yet
+    const clamped = Math.max(1, Math.min(n, cont.children.length));
+    const el = cont.children[clamped - 1] as HTMLElement;
+    sc.scrollTo({ top: Math.max(0, el.offsetTop - 8), behavior: "smooth" });
+    setCurrentPage(clamped);
+    setPageInput(String(clamped));
+  }, []);
+
+  // Keep refs in sync so event handlers never have stale values
+  useEffect(() => { goToPageRef.current = goToPage; }, [goToPage]);
+  useEffect(() => { currentPageRef.current = currentPage; }, [currentPage]);
+  useEffect(() => { pageModeRef.current = pageMode; }, [pageMode]);
+
+  // Keep the input showing the live page while the user isn't actively typing in it
+  useEffect(() => {
+    if (!editingRef.current) setPageInput(String(currentPage));
+  }, [currentPage]);
+
+  const makePage = useCallback((bmp: ImageBitmap, dim: {w:number;h:number}, last: boolean): HTMLCanvasElement => {
+    const c = document.createElement("canvas");
+    c.width = dim.w; c.height = dim.h;
+    c.style.width = "100%"; c.style.display = "block";
+    c.style.borderRadius = "6px";
+    c.style.marginBottom = last ? "0" : "10px";
+    c.style.boxShadow = "0 2px 14px rgba(0,0,0,.4)";
+    (c.getContext("2d") as CanvasRenderingContext2D).drawImage(bmp, 0, 0);
+    return c;
+  }, []);
+
+  const followingRef = useRef(following);
+  useEffect(() => { followingRef.current = following; }, [following]);
+  const applyPosRef = useRef<(p: SyncPos) => void>(() => {});
+
+  const restoreScroll = useCallback(() => {
+    if (!materialId) return;
+    if (followingRef.current) return; // a follower is driven by the teacher, not by its own history
+    const pos = loadPosLS(materialId);
+    if (pos) {
+      requestAnimationFrame(() => applyPosRef.current(pos));
+      setTimeout(() => applyPosRef.current(pos), 350); // once more after zoom/layout settles
+      return;
+    }
+    const saved = loadScroll(materialId);
+    if (saved > 0) requestAnimationFrame(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = saved;
+    });
+  }, [materialId]);
+
+  useEffect(() => {
+    ensureKeyframes();
+    cancelRef.current = false;
+    lastDrawn.current = 0;
+    setCurrentPage(1);
+    setTotalPages(TOTAL_CACHE.get(url) || 0);
+
+    const cached = PAGE_CACHE.get(url);
+    const dims   = DIM_CACHE.get(url);
+    const isFullyCached = cached && cached.length > 0 && !RENDER_PROMISE.has(url);
+
+    if (isFullyCached && dims) {
+      // ── INSTANT: draw all from cache ───────────────────────────────────────
+      if (containerRef.current) {
+        containerRef.current.innerHTML = "";
+        cached.forEach((bmp, i) =>
+          containerRef.current!.appendChild(makePage(bmp, dims[i] ?? { w: bmp.width, h: bmp.height }, i === cached.length - 1))
+        );
+      }
+      lastDrawn.current = cached.length;
+      setTotalPages(dims.length);
+      setPhase("done");
+      restoreScroll();
+      return;
+    }
+
+    // ── FIRST RENDER ────────────────────────────────────────────────────────
+    setPhase("loading"); setErrMsg(""); setPct(0);
+    if (containerRef.current) containerRef.current.innerHTML = "";
+
+    // Poll every 250ms to draw newly-rendered pages progressively
+    const poll = setInterval(() => {
+      if (cancelRef.current) { clearInterval(poll); return; }
+      const partial = PAGE_CACHE.get(url);
+      const pdims   = DIM_CACHE.get(url);
+      if (!partial || !pdims || !containerRef.current) return;
+      if (partial.length > lastDrawn.current) {
+        setPhase("rendering");
+        for (let i = lastDrawn.current; i < partial.length; i++) {
+          const last = !RENDER_PROMISE.has(url) && i === partial.length - 1;
+          containerRef.current.appendChild(makePage(partial[i], pdims[i] ?? { w: partial[i].width, h: partial[i].height }, last));
+        }
+        lastDrawn.current = partial.length;
+        const total = TOTAL_CACHE.get(url) || pdims.length || partial.length;
+        setTotalPages(total);
+        setPct(Math.round((lastDrawn.current / total) * 100));
+      }
+    }, 250);
+
+    renderPDF(url)
+      .then(bitmaps => {
+        if (cancelRef.current) return;
+        clearInterval(poll);
+        const fdims = DIM_CACHE.get(url) || bitmaps.map(b => ({ w: b.width, h: b.height }));
+        if (containerRef.current) {
+          for (let i = lastDrawn.current; i < bitmaps.length; i++) {
+            containerRef.current.appendChild(makePage(bitmaps[i], fdims[i] ?? { w: bitmaps[i].width, h: bitmaps[i].height }, i === bitmaps.length - 1));
+          }
+        }
+        setTotalPages(fdims.length);
+        setPhase("done");
+        restoreScroll();
+      })
+      .catch(e => {
+        if (cancelRef.current) return;
+        clearInterval(poll);
+        setErrMsg(e?.message || "Unknown error");
+        setPhase("error");
+      });
+
+    return () => { cancelRef.current = true; clearInterval(poll); };
+  }, [url, makePage, restoreScroll]);
+
+  // ── Position helpers (rect-based: correct under zoom, any width, partial rendering) ──
+  const computePos = useCallback((): SyncPos | null => {
+    const sc = scrollRef.current, cont = containerRef.current;
+    if (!sc || !cont || !cont.children.length) return null;
+    const scTop = sc.getBoundingClientRect().top;
+    const y = sc.scrollTop;
+    let idx = 0, top0 = 0, h0 = 1;
+    for (let i = 0; i < cont.children.length; i++) {
+      const r = (cont.children[i] as HTMLElement).getBoundingClientRect();
+      const absTop = r.top - scTop + sc.scrollTop;
+      if (absTop <= y + 1) { idx = i; top0 = absTop; h0 = Math.max(1, r.height); } else break;
+    }
+    const frac = Math.min(1.5, Math.max(0, (y - top0) / h0));
+    return { page: idx + 1, frac, zoom: zoomRef.current, rotate: rotateRef.current };
+  }, []);
+
+  // Returns false if the target page isn't rendered yet (caller retries as pages stream in).
+  const applyPos = useCallback((pos: SyncPos): boolean => {
+    const sc = scrollRef.current, cont = containerRef.current;
+    if (!sc || !cont) return false;
+    if (pos.zoom != null && Math.abs(pos.zoom - zoomRef.current) > 0.001) { applyZoom(pos.zoom); }
+    if (pos.rotate != null && pos.rotate !== rotateRef.current) { setRotate(pos.rotate); }
+    const child = cont.children[pos.page - 1] as HTMLElement | undefined;
+    if (!child) return false;
+    const r = child.getBoundingClientRect();
+    const target = (r.top - sc.getBoundingClientRect().top + sc.scrollTop) + pos.frac * r.height;
+    if (Math.abs(sc.scrollTop - target) > 1.5) {
+      applyingRemoteRef.current = true;
+      sc.scrollTop = target;
+      setTimeout(() => { applyingRemoteRef.current = false; }, 80);
+    }
+    return true;
+  }, [applyZoom]);
+  useEffect(() => { applyPosRef.current = (p: SyncPos) => { applyPos(p); }; }, [applyPos]);
+
+  // How many pages are in the DOM right now (so a late joiner can retry once its target page exists)
+  const [renderedCount, setRenderedCount] = useState(0);
+  useEffect(() => {
+    const c = containerRef.current;
+    if (!c) return;
+    const mo = new MutationObserver(() => setRenderedCount(c.children.length));
+    mo.observe(c, { childList: true });
+    setRenderedCount(c.children.length);
+    return () => mo.disconnect();
+  }, []);
+
+  // ── Teacher side: send latest position. Throttled WITH a trailing send, so the final resting
+  //    position is never dropped (the old leading-edge-only throttle lost it → student stuck). ──
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sendSyncNow = useCallback(() => {
+    if (!syncActiveRef.current || !onSyncScrollRef.current || applyingRemoteRef.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    lastSyncSentRef.current = Date.now();
+    const max = el.scrollHeight - el.clientHeight;
+    const pct = max > 0 ? Math.min(1, Math.max(0, el.scrollTop / max)) : 0;
+    onSyncScrollRef.current(pct, currentPageRef.current, totalPagesRef.current, computePos() || undefined);
+  }, [computePos]);
+  const scheduleSync = useCallback(() => {
+    const wait = SYNC_MIN_MS - (Date.now() - lastSyncSentRef.current);
+    if (wait <= 0) {
+      if (syncTimerRef.current) { clearTimeout(syncTimerRef.current); syncTimerRef.current = null; }
+      sendSyncNow();
+    } else if (!syncTimerRef.current) {
+      syncTimerRef.current = setTimeout(() => { syncTimerRef.current = null; sendSyncNow(); }, wait);
+    }
+  }, [sendSyncNow]);
+  useEffect(() => () => { if (syncTimerRef.current) clearTimeout(syncTimerRef.current); }, []);
+
+  // When sync turns ON (or the viewer is restored after a minimize) push the CURRENT position at
+  // once, so students open exactly where the teacher is instead of at page 1.
+  useEffect(() => {
+    if (!syncActive || (phase !== "done" && phase !== "rendering")) return;
+    const t = setTimeout(sendSyncNow, 250);
+    return () => clearTimeout(t);
+  }, [syncActive, phase, sendSyncNow]);
+  // Zoom / rotate changes don't fire a scroll event — sync them too.
+  useEffect(() => { if (syncActiveRef.current) scheduleSync(); }, [zoom, rotate, scheduleSync]);
+
+  // Save scroll position + track current page while reading
+  useEffect(() => {
+    if (phase !== "done" && phase !== "rendering") return;
+    const el = scrollRef.current;
+    if (!el) return;
+    let lastPosSave = 0;
+    const fn = () => {
+      if (materialId) {
+        saveScroll(materialId, el.scrollTop);
+        const now = Date.now();
+        if (!applyingRemoteRef.current && now - lastPosSave > 250) {
+          lastPosSave = now;
+          const p = computePos();
+          if (p) savePosLS(materialId, p);
+        }
+      }
+      updateCurrentPageFromScroll();
+      // Show the navigator while the user is actively scrolling; fade it
+      // out 500ms after the last scroll event so it doesn't block the page.
+      setNavVisible(true);
+      if (navHideTimer.current) clearTimeout(navHideTimer.current);
+      navHideTimer.current = setTimeout(() => setNavVisible(false), 1200);
+
+      // Teacher side: report scroll position (throttled + trailing). Skipped while WE are the
+      // ones applying a REMOTE position (follower side) so we never echo it back.
+      if (syncActiveRef.current && onSyncScrollRef.current && !applyingRemoteRef.current) scheduleSync();
+    };
+    fn(); // set the initial page right away, don't wait for the first scroll event
+    el.addEventListener("scroll", fn, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", fn);
+      if (navHideTimer.current) clearTimeout(navHideTimer.current);
+    };
+  }, [materialId, phase, updateCurrentPageFromScroll, computePos, scheduleSync]);
+
+  // ── Follower side: drive the view to the teacher's latest position. Re-asserted when the
+  //    position changes, when more pages render, when zoom/rotate settle, and on a slow timer —
+  //    so a dropped message, a late render or a layout change can never leave it out of step. ──
+  const remotePosRef = useRef<Props["remotePos"]>(null);
+  const reassert = useCallback(() => {
+    const pos = remotePosRef.current;
+    const sc = scrollRef.current;
+    if (!pos || !sc) return;
+    if (pos.page != null && pos.pageFrac != null) {
+      applyPos({ page: pos.page, frac: pos.pageFrac, zoom: pos.zoom ?? zoomRef.current, rotate: pos.rotate ?? rotateRef.current });
+    } else if (pos.scrollPct != null) {
+      const max = sc.scrollHeight - sc.clientHeight;
+      if (max <= 0) return;
+      const target = pos.scrollPct * max;
+      if (Math.abs(sc.scrollTop - target) > 1.5) {
+        applyingRemoteRef.current = true;
+        sc.scrollTop = target;
+        setTimeout(() => { applyingRemoteRef.current = false; }, 80);
+      }
+    }
+    updateCurrentPageFromScroll();
+  }, [applyPos, updateCurrentPageFromScroll]);
+
+  useEffect(() => {
+    remotePosRef.current = following
+      ? (remotePos ?? (remoteScrollPct != null ? { scrollPct: remoteScrollPct } : null))
+      : null;
+    reassert();
+  }, [following, remotePos, remoteScrollPct, phase, renderedCount, zoom, rotate, reassert]);
+
+  useEffect(() => {
+    if (!following) return;
+    const id = setInterval(reassert, 900);
+    return () => clearInterval(id);
+  }, [following, reassert]);
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: bg, position: "relative" }}>
+
+      {/* Nothing rendered yet — full-screen spinner is fine, there's nothing to block */}
+      {phase === "loading" && (
+        <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:10, padding:"24px 16px", pointerEvents:"none" }}>
+          <div style={{ width:38, height:38, borderRadius:"50%", border:"3px solid rgba(255,255,255,.1)", borderTopColor:"#10b981", animation:"pdfv-spin .7s linear infinite" }}/>
+          <p style={{ color:"#9ca3af", fontSize:12, margin:0 }}>Loading…</p>
+        </div>
+      )}
+
+      {/* Page 1+ already visible below — float a small chip instead of a layout-pushing banner */}
+      {phase === "rendering" && (
+        <div style={{
+          position:"absolute", bottom:14, right:14, zIndex:5, pointerEvents:"none",
+          display:"flex", alignItems:"center", gap:7, padding:"6px 12px", borderRadius:20,
+          background:"rgba(20,20,22,.85)", boxShadow:"0 2px 10px rgba(0,0,0,.4)",
+        }}>
+          <div style={{ width:13, height:13, borderRadius:"50%", border:"2px solid rgba(255,255,255,.2)", borderTopColor:"#10b981", animation:"pdfv-spin .7s linear infinite" }}/>
+          <span style={{ color:"#d1d5db", fontSize:11, fontWeight:600 }}>{pct}%</span>
+        </div>
+      )}
+
+      {phase === "error" && (
+        <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:10, padding:28, textAlign:"center" }}>
+          <p style={{ color:"#f87171", fontWeight:700, fontSize:15, margin:0 }}>Could not load PDF</p>
+          <p style={{ color:"#6b7280", fontSize:12, margin:0 }}>{errMsg}</p>
+          <a href={url} target="_blank" rel="noopener noreferrer"
+            style={{ marginTop:6, background:"#10b981", color:"#fff", padding:"9px 22px", borderRadius:10, textDecoration:"none", fontWeight:700, fontSize:13 }}>
+            Open in browser
+          </a>
+        </div>
+      )}
+
+      {/* Page navigator — current/total + jump to any rendered page.
+          Appears while scrolling, fades out 1.2s after scrolling stops
+          (paused while the navigator itself is being touched/pressed). */}
+      {(phase === "rendering" || phase === "done") && totalPages > 0 && (
+        <div
+          onPointerDown={keepNavAlive}
+          onPointerUp={releaseNavAlive}
+          onPointerLeave={releaseNavAlive}
+          onTouchStart={keepNavAlive}
+          onTouchEnd={releaseNavAlive}
+          style={{
+            position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", zIndex:6,
+            display:"flex", flexDirection:"column", alignItems:"center", gap:6,
+            background:"rgba(20,20,22,.82)", borderRadius:14, padding:"10px 7px",
+            boxShadow:"0 2px 10px rgba(0,0,0,.35)",
+            opacity: navVisible ? 1 : 0,
+            pointerEvents: navVisible ? "auto" : "none",
+            transition:"opacity .25s ease",
+          }}
+        >
+          <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1} style={{
+            width:26, height:26, borderRadius:8, border:"none", cursor: currentPage <= 1 ? "default" : "pointer",
+            background:"rgba(255,255,255,.08)", color: currentPage <= 1 ? "rgba(255,255,255,.25)" : "#d1d5db",
+            fontSize:12, display:"flex", alignItems:"center", justifyContent:"center",
+          }}>▲</button>
+
+          <input
+            type="number" inputMode="numeric" value={pageInput}
+            onFocus={() => { editingRef.current = true; keepNavAlive(); }}
+            onChange={e => setPageInput(e.target.value)}
+            onBlur={() => { editingRef.current = false; const n = parseInt(pageInput, 10); if (!isNaN(n)) goToPage(n); else setPageInput(String(currentPage)); releaseNavAlive(); }}
+            onKeyDown={e => { if (e.key === "Enter") { const n = parseInt(pageInput, 10); if (!isNaN(n)) goToPage(n); (e.target as HTMLInputElement).blur(); } }}
+            style={{
+              width:30, textAlign:"center", background:"rgba(255,255,255,.08)", border:"1px solid rgba(255,255,255,.15)",
+              borderRadius:7, color:"#fff", fontSize:12, fontWeight:700, padding:"3px 0", MozAppearance:"textfield" as any,
+            }}
+          />
+          <span style={{ color:"rgba(255,255,255,.45)", fontSize:10 }}>/ {totalPages}</span>
+
+          <button onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= totalPages} style={{
+            width:26, height:26, borderRadius:8, border:"none", cursor: currentPage >= totalPages ? "default" : "pointer",
+            background:"rgba(255,255,255,.08)", color: currentPage >= totalPages ? "rgba(255,255,255,.25)" : "#d1d5db",
+            fontSize:12, display:"flex", alignItems:"center", justifyContent:"center",
+          }}>▼</button>
+        </div>
+      )}
+
+      {/* ── Zoom / Rotate toolbar — fades with the page navigator ──────────── */}
+      {(phase === "rendering" || phase === "done") && (
+        <div style={{
+          position:"absolute", bottom:14, left:"50%", transform:"translateX(-50%)", zIndex:8,
+          display:"flex", alignItems:"center", gap:4,
+          background:"rgba(15,17,23,.88)", border:"1px solid rgba(255,255,255,.12)",
+          borderRadius:30, padding:"5px 8px", boxShadow:"0 4px 16px rgba(0,0,0,.5)",
+          backdropFilter:"blur(8px)",
+          opacity: navVisible ? 1 : 0,
+          pointerEvents: navVisible ? "auto" : "none",
+          transition:"opacity .25s ease",
+        }}
+          onPointerDown={keepNavAlive}
+          onPointerUp={releaseNavAlive}
+          onPointerLeave={releaseNavAlive}
+          onTouchStart={keepNavAlive}
+          onTouchEnd={releaseNavAlive}
+        >
+          {/* Zoom out */}
+          <button title="Zoom out" onClick={zoomOut} disabled={zoom <= 0.5} style={btnStyle(zoom <= 0.5)}>－</button>
+          {/* Zoom % — tap to reset to 100% */}
+          <button title="Reset zoom" onClick={resetView} style={{
+            minWidth:46, height:28, borderRadius:8, border:"1px solid rgba(255,255,255,.15)",
+            background:"rgba(255,255,255,.06)", color:"#d1d5db", fontSize:11, fontWeight:700,
+            cursor:"pointer", padding:"0 4px",
+          }}>{Math.round(zoom * 100)}%</button>
+          {/* Zoom in */}
+          <button title="Zoom in" onClick={zoomIn} disabled={zoom >= 5} style={btnStyle(zoom >= 5)}>＋</button>
+
+          <div style={{ width:1, height:20, background:"rgba(255,255,255,.12)", margin:"0 2px" }}/>
+
+          {/* Rotate */}
+          <button title="Rotate 90°" onClick={rotateCW} style={btnStyle(false)}>⟳</button>
+
+          <div style={{ width:1, height:20, background:"rgba(255,255,255,.12)", margin:"0 2px" }}/>
+
+          {/* Download */}
+          <a href={url} download title="Download PDF" style={{
+            width:28, height:28, borderRadius:8, border:"1px solid rgba(255,255,255,.15)",
+            background:"rgba(255,255,255,.06)", color:"#d1d5db", fontSize:14,
+            display:"flex", alignItems:"center", justifyContent:"center", textDecoration:"none",
+          }}>⬇</a>
+
+          <div style={{ width:1, height:20, background:"rgba(255,255,255,.12)", margin:"0 2px" }}/>
+
+          {/* Page-swipe mode toggle */}
+          <button
+            title={pageMode ? "Switch to scroll mode" : "Switch to page-swipe mode"}
+            onClick={() => setPageMode(p => !p)}
+            style={{
+              width:28, height:28, borderRadius:8, border:`1px solid ${pageMode ? "rgba(16,185,129,.5)" : "rgba(255,255,255,.15)"}`,
+              background: pageMode ? "rgba(16,185,129,.18)" : "rgba(255,255,255,.06)",
+              color: pageMode ? "#10b981" : "#d1d5db",
+              fontSize:13, cursor:"pointer",
+              display:"flex", alignItems:"center", justifyContent:"center",
+            }}
+          >⇄</button>
+        </div>
+      )}
+
+      <div
+        ref={scrollRef}
+        style={{
+          flex:1,
+          overflowY: (pageMode || following) ? "hidden" : "auto",
+          overflowX: zoom > 1 ? "auto" : "hidden",
+          padding:"8px",
+          display: phase === "error" ? "none" : "block",
+          // Let browser decide scroll direction naturally.
+          // We only intercept 2-finger moves in JS for pinch-zoom.
+          touchAction: "manipulation",
+          pointerEvents: following ? "none" : "auto",
+        }}
+      >
+        {/* Centering wrapper so transformOrigin:"top center" scales symmetrically */}
+        <div style={{ display:"flex", justifyContent:"center" }}>
+          <div style={{ width:"100%", paddingBottom: zoom > 1 ? `${(zoom - 1) * 50}%` : 0 }}>
+            <div
+              ref={containerRef}
+              style={{
+                transform: `scale(${zoom}) rotate(${rotate}deg)`,
+                transformOrigin: "top center",
+                transition: "transform 0.1s ease",
+                width: "100%",
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Small icon button shared by toolbar */
+function btnStyle(disabled: boolean): React.CSSProperties {
+  return {
+    width:28, height:28, borderRadius:8, border:"1px solid rgba(255,255,255,.15)",
+    background: disabled ? "rgba(255,255,255,.03)" : "rgba(255,255,255,.06)",
+    color: disabled ? "rgba(255,255,255,.25)" : "#d1d5db",
+    fontSize:16, cursor: disabled ? "default" : "pointer",
+    display:"flex", alignItems:"center", justifyContent:"center",
+    pointerEvents: disabled ? "none" : "auto",
+  } as React.CSSProperties;
+}

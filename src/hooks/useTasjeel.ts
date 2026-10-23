@@ -1,0 +1,416 @@
+// src/hooks/useTasjeel.ts
+// Fixed: hook now waits for auth to finish loading before resolving its own
+// loading state. Previously when user was null (auth still initialising),
+// it set loading=false and currentStep=null. Since null !== "completed",
+// the StudentDashboard gate redirected completed students to /student/awaiting-level.
+//
+// Fix (2026-06-18): useCallback depended on [user, authLoading] — the user object
+// is replaced with a new reference on every TOKEN_REFRESHED event (Supabase creates
+// a new object even when the userId hasn't changed). This caused useTasjeel to
+// re-run fetchStep on every app resume, setting loading=true and showing the
+// TasjeelGuard full-page spinner. Fix: depend on user?.id (stable string) instead
+// of the user object itself.
+
+import { useState, useEffect, useCallback } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
+
+// v2: the old key ("ta_tasjeel_completed:") could have been poisoned by an older
+// build that wrongly resolved a half-registered student as "completed" and saved
+// that on the device — the dashboard then opened without any server check.
+// Bumping the key makes every device ignore those stale flags and re-verify.
+const COMPLETED_CACHE_PREFIX = "ta_tasjeel_completed_v2:";
+const LEGACY_CACHE_PREFIX    = "ta_tasjeel_completed:";
+try { Object.keys(localStorage).filter(k => k.startsWith(LEGACY_CACHE_PREFIX)).forEach(k => localStorage.removeItem(k)); } catch { /* storage unavailable */ }
+
+function hasCompletedCache(userId: string | null): boolean {
+  if (!userId) return false;
+  try {
+    return localStorage.getItem(`${COMPLETED_CACHE_PREFIX}${userId}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function persistCompletedCache(userId: string, step: string): void {
+  try {
+    const key = `${COMPLETED_CACHE_PREFIX}${userId}`;
+    if (step === "completed") localStorage.setItem(key, "1");
+    else localStorage.removeItem(key);
+  } catch {
+    // Storage can be unavailable in private mode; the live query still works.
+  }
+}
+
+// ── Step → route mapping ───────────────────────────────────────────────────
+// SINGLE SOURCE OF TRUTH. Previously Login.tsx and TasjeelGuard each kept their
+// own copy of this map and they drifted apart (e.g. enrollment/payment pointed
+// to "/register" here but "/auth/register-continue" in Login.tsx). That drift,
+// combined with two independent timed Supabase queries reaching different
+// conclusions about the same user, is what produced the "reload right after
+// login on the dashboard" symptom — it wasn't a reload, it was two different
+// navigate() calls landing one after another. Everything that needs to know
+// "where does a mid-registration student belong" must import THIS map.
+export const TASJEEL_ROUTES: Record<string, string> = {
+  enrollment:       "/auth/register-continue", // resume registration where they left off
+  payment:          "/auth/register-continue",
+  onboarding:       "/onboarding",
+  exam:             "/student/entrance-exam",
+  recitation:       "/student/recitation-test",
+  schedule_session: "/student/recitation-test",
+  level_assignment: "/student/awaiting-level",
+  completed:        "/student",
+};
+
+// ── Step ordering (for progress display) ──────────────────────────────────
+export const STEP_ORDER = [
+  "enrollment", "payment", "onboarding", "exam",
+  "recitation", "schedule_session", "level_assignment", "completed",
+] as const;
+
+export type TasjeelStep = typeof STEP_ORDER[number];
+
+// ── healStuckPaymentStep ───────────────────────────────────────────────────
+// FIX: students who had already confirmed their email and paid were being
+// sent back to "pay again" / re-shown the payment screen. Root cause: after
+// payment, RegisterContinue.tsx runs an UPDATE on tasjeel_progress to move
+// current_step past "payment" — if that write fails for any reason (missing
+// RLS policy, dropped connection, etc.) it fails silently and current_step
+// stays on "enrollment"/"payment" forever, even though the payment actually
+// succeeded. Every subsequent login re-reads that stale value and routes the
+// student straight back to the payment screen.
+//
+// Rather than trust a single write to always have succeeded, whenever we
+// resolve a student's step and find them sitting on "enrollment" or
+// "payment", we cross-check the actual source of truth
+// (enrollments.registration_paid) and the current registration settings. If
+// they've genuinely already paid (or the fee is disabled entirely), we
+// re-derive the correct next step and skip them past it — self-healing the
+// stuck row (best effort) so this only has to happen once per user.
+export async function healStuckPaymentStep(userId: string, step: string): Promise<string> {
+  if (step !== "enrollment" && step !== "payment") return step;
+
+  try {
+    const [{ data: settingsRows }, { data: enrollment }, { data: profileRow }] = await Promise.all([
+      supabase.from("academy_settings" as any).select("key, value"),
+      // payment_history is written server-side only (admin/service role), so a
+      // success row is a trustworthy "registration paid" signal. (enrollments.
+      // registration_paid can't be written — course_id is NOT NULL — so it is not used.)
+      supabase.from("payment_history" as any).select("id").eq("user_id", userId)
+        .eq("payment_type", "registration").eq("status", "success").limit(1).maybeSingle(),
+      // An admin can exempt a student (Payment Management → Exempt). That sets
+      // payment_status to exempt/exempt_temp, which students cannot edit.
+      supabase.from("profiles").select("payment_status").eq("user_id", userId).maybeSingle(),
+    ]);
+
+    const cfg: Record<string, string> = {};
+    (settingsRows || []).forEach((r: any) => { if (r.value !== null) cfg[r.key] = r.value; });
+
+    const feeEnabled  = cfg.entrance_fee_enabled !== "false";
+    const adminExempt = ["exempt", "exempt_temp"].includes((profileRow as any)?.payment_status);
+    const alreadyPaid = !!enrollment || adminExempt;
+
+    // Nothing to heal — fee is required and genuinely not yet paid.
+    if (feeEnabled && !alreadyPaid) return step;
+
+    const onboardingRequired = cfg.onboarding_required !== "false";
+    const examRequired       = cfg.entrance_exam_required !== "false";
+    const recitationRequired = cfg.recitation_test_required !== "false";
+
+    const nextStep = onboardingRequired
+      ? "onboarding"
+      : examRequired
+        ? "exam"
+        : recitationRequired
+          ? "recitation"
+          : "level_assignment";
+
+    // Best-effort write-back so future logins don't need to heal again.
+    // If this UPDATE fails too (e.g. the RLS policy really is missing), we
+    // still return the healed step below so the student isn't blocked now.
+    try {
+      await supabase
+        .from("tasjeel_progress")
+        .update({ current_step: nextStep, updated_at: new Date().toISOString() })
+        .eq("user_id", userId);
+    } catch {
+      /* non-fatal — see comment above */
+    }
+
+    return nextStep;
+  } catch {
+    // Couldn't verify payment/settings (e.g. offline) — leave step as-is
+    // rather than guessing; showing the payment screen is still correct
+    // in that case.
+    return step;
+  }
+}
+
+// ── resolveTasjeelStep ────────────────────────────────────────────────────
+// SINGLE SOURCE OF TRUTH for "what step is this authenticated user actually
+// at, and where do they belong." Used by useTasjeel() (dashboard guard),
+// Login.tsx, Index.tsx, AuthCallback.tsx and RegisterContinue.tsx.
+//
+// FIX (verified students skipping the registration flow):
+//  1. A slow / failed / timed-out read used to look identical to "no row".
+//     Because a verified student always has email_confirmed_at, the old
+//     "no row + confirmed email = legacy user, back-fill completed" rule
+//     fired and sent a mid-registration student straight to the dashboard
+//     (and cached them as completed on that device). A failed read now
+//     returns "timeout" — callers must NOT treat that as completed.
+//  2. A genuinely missing row (the signup trigger is the normal creator, so
+//     this is rare) now starts the student at "enrollment" instead of
+//     "completed". The upsert ignores duplicates so it can never overwrite
+//     real progress, and we re-read afterwards in case a concurrent request
+//     created the row first.
+// Returns one of the step names, or "timeout" when the status could not be
+// determined.
+export async function resolveTasjeelStep(
+  userId: string,
+  _emailConfirmedAt?: string | null | undefined, // kept for call-site compatibility; no longer used
+  timeoutMs = 6000
+): Promise<string> {
+  const readStep = async (): Promise<{ step: string | null; failed: boolean }> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<{ data: null; error: { message: string } }>((resolve) => {
+      timer = setTimeout(() => resolve({ data: null, error: { message: "timeout" } }), timeoutMs);
+    });
+    try {
+      const res: any = await Promise.race([
+        supabase
+          .from("tasjeel_progress")
+          .select("current_step")
+          .eq("user_id", userId)
+          .maybeSingle() as any,
+        timeoutPromise,
+      ]);
+      if (res?.error) return { step: null, failed: true };
+      return { step: (res?.data?.current_step as string | undefined) ?? null, failed: false };
+    } catch {
+      return { step: null, failed: true };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
+  const first = await readStep();
+  if (first.failed) return "timeout";
+  if (first.step) return healStuckPaymentStep(userId, first.step);
+
+  // Confirmed: no row exists. Create it at the start of the pipeline.
+  const now = new Date().toISOString();
+  let upsertFailed = false;
+  try {
+    const { error } = await supabase
+      .from("tasjeel_progress")
+      .upsert(
+        { user_id: userId, current_step: "enrollment", created_at: now, updated_at: now },
+        { onConflict: "user_id", ignoreDuplicates: true }
+      );
+    if (error) upsertFailed = true;
+  } catch {
+    upsertFailed = true;
+  }
+
+  // Re-read: a concurrent request (signup trigger, another tab) may have
+  // created the row with real progress; always prefer what is stored.
+  const second = await readStep();
+  if (second.failed) return "timeout";
+  if (second.step) return healStuckPaymentStep(userId, second.step);
+
+  return upsertFailed ? "timeout" : "enrollment";
+}
+
+// ── createDashboardIfNotExists ────────────────────────────────────────────
+export async function createDashboardIfNotExists(userId: string) {
+  const { data } = await supabase
+    .from("dashboards")
+    .select("id")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!data) {
+    await supabase.from("dashboards").insert({ user_id: userId });
+  }
+}
+
+// ── initializeTasjeel ─────────────────────────────────────────────────────
+// Idempotent: the signup trigger normally creates the row already, so this
+// must never insert a duplicate (that produced tasjeel_progress_user_id_key
+// errors) and must never overwrite existing progress.
+export async function initializeTasjeel(userId: string, registrationEnabled = true) {
+  const step = registrationEnabled ? "enrollment" : "completed";
+  const now  = new Date().toISOString();
+
+  const { error } = await supabase.from("tasjeel_progress").upsert(
+    {
+      user_id:      userId,
+      current_step: step,
+      created_at:   now,
+      updated_at:   now,
+      ...(step === "completed" ? { completed_at: now } : {}),
+    },
+    { onConflict: "user_id", ignoreDuplicates: true }
+  );
+  if (error) throw error;
+}
+
+// ── useTasjeel hook ───────────────────────────────────────────────────────
+export function useTasjeel() {
+  const { user, loading: authLoading } = useAuth();
+
+  // KEY FIX: extract stable primitives from auth state.
+  // The user object is replaced with a NEW reference on every TOKEN_REFRESHED
+  // (Supabase always constructs a new object). Using user?.id (a stable string)
+  // as the dependency means we only re-fetch when the actual user changes
+  // (login / logout), NOT on every silent token refresh.
+  const userId = user?.id ?? null;
+
+  // Keep loading=true until both auth AND the tasjeel fetch are done.
+  // This prevents the StudentDashboard gate from firing with currentStep=null.
+  const cachedCompleted = hasCompletedCache(userId);
+  const [currentStep, setCurrentStep] = useState<string | null>(
+    cachedCompleted ? "completed" : null,
+  );
+  const [loading, setLoading] = useState(!cachedCompleted);
+
+  const fetchStep = useCallback(async () => {
+    // Don't resolve until auth itself has finished initialising
+    if (authLoading) return;
+
+    if (!userId) {
+      setCurrentStep(null);
+      setLoading(false);
+      return;
+    }
+
+    // ── CRITICAL: Teachers and admins are NEVER in the student pipeline ──
+    // Check user_roles first — if they are admin/teacher, short-circuit to
+    // "completed" immediately without querying tasjeel_progress at all.
+    // This prevents stale tasjeel rows (e.g. from accidental student enrollment)
+    // from ever routing a teacher to the student registration screens.
+    //
+    // FIX: this query previously had no timeout guard, unlike every other
+    // Supabase call in this hook. A try/catch only saves you from a *rejected*
+    // promise — it does nothing if the promise simply never resolves. On a
+    // stalled connection (iOS WebKit can hang concurrent connections to the
+    // same host — see the guard below), `await` would hang forever, so
+    // setLoading(false) was never reached and tasjeelLoading stayed true
+    // permanently, leaving StudentDashboard's spinner stuck with no retry.
+    // Same Promise.race pattern as resolveTasjeelStep — race against a 5s
+    // timeout instead of waiting on it indefinitely.
+    try {
+      const roleTimeout = new Promise<{ data: null }>((resolve) =>
+        setTimeout(() => resolve({ data: null }), 5000)
+      );
+      const roleQuery = supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", userId);
+      const { data: roleData } = await Promise.race([roleQuery, roleTimeout]);
+      const userRoles = (roleData || []).map((r: any) => r.role);
+      if (userRoles.includes("admin") || userRoles.includes("teacher")) {
+        setCurrentStep("completed");
+        setLoading(false);
+        return;
+      }
+    } catch {
+      // Non-fatal — continue to tasjeel_progress check
+    }
+
+    // A completed registration is stable. Preserve the already-authorized
+    // student screen while silently revalidating after an Android WebView
+    // remount instead of replacing it with a full-page spinner.
+    if (!hasCompletedCache(userId)) setLoading(true);
+
+    // ── iOS timeout guard ──────────────────────────────────────────────────
+    // On iOS, WebKit can stall concurrent connections to the same host.
+    // Without a timeout, this query hangs indefinitely, keeping tasjeelLoading=true
+    // which gates the StudentDashboard spinner forever (looks like blank screen).
+    // SECURITY: we use a dedicated "timeout" state rather than "completed" so that
+    // TasjeelGuard can show a retry prompt rather than silently granting dashboard
+    // access to students who haven't finished the registration pipeline.
+    let didTimeout = false;
+    const timeoutId = setTimeout(() => {
+      didTimeout = true;
+      // Never replace an already validated completed dashboard just because
+      // the resume-time revalidation is temporarily offline.
+      if (!hasCompletedCache(userId)) setCurrentStep("timeout");
+      setLoading(false);
+    }, 6000);
+
+    try {
+      // SINGLE SOURCE OF TRUTH: same resolver Login.tsx calls for the
+      // post-sign-in redirect. Previously this inline query had its own
+      // "no row → enrollment" fallback that did NOT back-fill confirmed
+      // legacy users, while Login.tsx's separate copy did — so a confirmed
+      // existing user landing here directly (e.g. PWA resume, deep link)
+      // without going through Login.tsx first could get bounced into
+      // registration. resolveTasjeelStep() now handles that consistently
+      // everywhere.
+      const step = await resolveTasjeelStep(userId, user?.email_confirmed_at);
+      if (!didTimeout) {
+        if (step === "timeout") {
+          // Could not determine the step. Never grant the dashboard on a
+          // failed read — show the Retry screen unless a previously
+          // validated "completed" cache exists for this device.
+          if (!hasCompletedCache(userId)) setCurrentStep("timeout");
+        } else {
+          setCurrentStep(step);
+          persistCompletedCache(userId, step);
+        }
+      }
+    } catch {
+      if (!didTimeout) {
+        if (!hasCompletedCache(userId)) setCurrentStep("timeout");
+      }
+    } finally {
+      clearTimeout(timeoutId);
+      if (!didTimeout) {
+        setLoading(false);
+      }
+    }
+  // KEY FIX: depend on userId (stable string) not user (new object every TOKEN_REFRESHED)
+  }, [userId, authLoading, user?.email_confirmed_at]);
+
+  useEffect(() => {
+    fetchStep();
+  }, [fetchStep]);
+
+  const advanceStep = useCallback(async (nextStep: string): Promise<{ ok: boolean; error?: string }> => {
+    if (!userId) return { ok: false, error: "Not signed in" };
+    // A student can never move themselves to "completed" — only an admin placing
+    // them in a level does (the database enforces this as well).
+    if (nextStep === "completed") return { ok: false, error: "Only an admin can complete registration" };
+    // Always update local state FIRST so guards on the destination page
+    // see the new step immediately — even if the DB call fails with 400.
+    // (A 400 here usually means an RLS UPDATE policy is missing; see the
+    // supabase/migrations note below for the fix.)
+    setCurrentStep(nextStep);
+    persistCompletedCache(userId, nextStep);
+    try {
+      const { error } = await supabase
+        .from("tasjeel_progress")
+        .update({ current_step: nextStep, updated_at: new Date().toISOString() })
+        .eq("user_id", userId);
+      if (error) {
+        console.error("[useTasjeel] advanceStep DB error — local state already updated:", error.message);
+        // RETURN the failure. Local state is per-hook-instance, so the next page
+        // re-reads the DB; if the DB refused the move (e.g. the no-skip trigger
+        // says payment is missing) callers must know instead of navigating on
+        // and bouncing back and forth between two pages.
+        return { ok: false, error: error.message };
+      }
+      return { ok: true };
+    } catch (err: any) {
+      console.error("[useTasjeel] advanceStep network error — local state already updated:", err);
+      return { ok: false, error: err?.message || "Network error" };
+    }
+  }, [userId]);
+
+  return {
+    currentStep: currentStep ?? (cachedCompleted ? "completed" : null),
+    loading: cachedCompleted ? false : loading,
+    refresh: fetchStep,
+    advanceStep,
+  };
+}

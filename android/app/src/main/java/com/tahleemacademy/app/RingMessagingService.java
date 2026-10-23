@@ -1,0 +1,228 @@
+package com.tahleemacademy.app;
+
+import androidx.annotation.NonNull;
+import com.google.firebase.messaging.FirebaseMessagingService;
+import com.google.firebase.messaging.RemoteMessage;
+import com.capacitorjs.plugins.pushnotifications.PushNotificationsPlugin;
+
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.Context;
+import android.content.Intent;
+import android.media.AudioAttributes;
+import android.media.RingtoneManager;
+import android.net.Uri;
+import android.os.Build;
+import android.service.notification.StatusBarNotification;
+import androidx.core.app.NotificationCompat;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+public class RingMessagingService extends FirebaseMessagingService {
+
+    private static final String RING_CHANNEL_ID    = "tahleem_ring_v2"; // v2: old "tahleem_ring" may exist on devices as a SILENT channel (Android never lets you change a channel's sound after creation)
+    private static final String LEGACY_RING_CHANNEL = "tahleem_ring";
+    private static final String GENERAL_CHANNEL_ID = "tahleem_general";
+    private static final String GROUP_KEY           = "com.tahleemacademy.app.NOTIFICATIONS";
+    private static final int    SUMMARY_ID          = 0;
+    private static final String ACTION_DISMISS_RING = "com.tahleemacademy.app.DISMISS_RING";
+
+    @Override
+    public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
+        Map<String, String> data = remoteMessage.getData();
+        String type = data.get("type");
+        boolean isRing = "class_ring".equals(type) || "admin_class_ring".equals(type) || "ring".equals(type);
+
+        // Ring pushes are fully handled natively. Do NOT forward them to the JS
+        // layer, or nativeApp.ts shows a second, silent "normal" notification
+        // (and replays it when the app next opens).
+        if (!isRing) PushNotificationsPlugin.sendRemoteMessage(remoteMessage);
+
+        if (isRing) {
+            showRing(data);
+        } else if (data.get("title") != null || data.get("message") != null) {
+            showGeneral(data);
+        }
+    }
+
+    @Override
+    public void onNewToken(@NonNull String token) {
+        PushNotificationsPlugin.onNewToken(token);
+    }
+
+    // send-notification sends absolute https URLs; the deep link needs a path
+    private static String toPath(String url) {
+        if (url == null || url.isEmpty()) return "/";
+        if (url.startsWith("http://") || url.startsWith("https://")) {
+            Uri u = Uri.parse(url);
+            String p = u.getEncodedPath();
+            if (p == null || p.isEmpty()) p = "/";
+            String q = u.getEncodedQuery();
+            return q != null ? p + "?" + q : p;
+        }
+        return url.startsWith("/") ? url : "/" + url;
+    }
+
+    private PendingIntent buildJoinPendingIntent(String path, int requestCode) {
+        Uri deepLinkUri = Uri.parse("tahleemacademy://ring" + path);
+        Intent joinIntent = new Intent(Intent.ACTION_VIEW, deepLinkUri);
+        joinIntent.setFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK |
+            Intent.FLAG_ACTIVITY_CLEAR_TOP |
+            Intent.FLAG_ACTIVITY_SINGLE_TOP
+        );
+        return PendingIntent.getActivity(
+            this, requestCode, joinIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+    }
+
+    private PendingIntent buildDismissPendingIntent(int notificationId, int requestCode) {
+        Intent dismissIntent = new Intent(this, DismissRingReceiver.class);
+        dismissIntent.setAction(ACTION_DISMISS_RING);
+        dismissIntent.putExtra("notification_id", notificationId);
+        return PendingIntent.getBroadcast(
+            this, requestCode, dismissIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+    }
+
+    private void showRing(Map<String, String> data) {
+        String title = data.get("title") != null ? data.get("title") : "Class is live now";
+        String message = data.get("message") != null ? data.get("message") : "";
+        String path = toPath(data.get("url"));
+
+        Uri ringUri = RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_RINGTONE);
+        if (ringUri == null) {
+            ringUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+        }
+
+        long[] vibrationPattern = { 0, 1000, 500, 1000, 500, 1000, 500, 1000 };
+
+        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm != null) {
+            nm.deleteNotificationChannel(LEGACY_RING_CHANNEL);
+            NotificationChannel channel = new NotificationChannel(
+                RING_CHANNEL_ID, "Class Ring", NotificationManager.IMPORTANCE_HIGH);
+            channel.setDescription("Rings when a live class starts");
+            channel.enableVibration(true);
+            channel.setVibrationPattern(vibrationPattern);
+            channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+
+            AudioAttributes audioAttributes = new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build();
+            channel.setSound(ringUri, audioAttributes);
+
+            nm.createNotificationChannel(channel);
+        }
+
+        int requestCode = path.hashCode();
+
+        Intent fullScreenIntent = new Intent(this, IncomingClassRingActivity.class);
+        fullScreenIntent.putExtra("title", title);
+        fullScreenIntent.putExtra("message", message);
+        fullScreenIntent.putExtra("path", path);
+        fullScreenIntent.setFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK |
+            Intent.FLAG_ACTIVITY_CLEAR_TOP |
+            Intent.FLAG_ACTIVITY_SINGLE_TOP
+        );
+        PendingIntent fullScreenPendingIntent = PendingIntent.getActivity(
+            this, requestCode, fullScreenIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+
+        PendingIntent tapPendingIntent = buildJoinPendingIntent(path, requestCode + 1);
+        PendingIntent joinActionPendingIntent = buildJoinPendingIntent(path, requestCode + 2);
+        PendingIntent dismissActionPendingIntent = buildDismissPendingIntent(requestCode, requestCode + 3);
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, RING_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_icon)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setFullScreenIntent(fullScreenPendingIntent, true)
+            .setContentIntent(tapPendingIntent)
+            .setSound(ringUri)
+            .setVibrate(vibrationPattern)
+            .addAction(0, "\ud83d\udcf9 Join Now", joinActionPendingIntent)
+            .addAction(0, "Dismiss", dismissActionPendingIntent)
+            .setTimeoutAfter(60_000)
+            .setAutoCancel(true);
+
+        Notification ringNotification = builder.build();
+        ringNotification.flags |= Notification.FLAG_INSISTENT; // keep ringing until acted on (pre-Android 8 / some OEMs)
+        if (nm != null) nm.notify(requestCode, ringNotification);
+    }
+
+    private void showGeneral(Map<String, String> data) {
+        String title = data.get("title") != null ? data.get("title") : "Tahleem Academy";
+        String message = data.get("message") != null ? data.get("message") : "";
+        String path = toPath(data.get("url"));
+
+        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm != null) {
+            NotificationChannel channel = new NotificationChannel(
+                GENERAL_CHANNEL_ID, "Tahleem Academy", NotificationManager.IMPORTANCE_DEFAULT);
+            channel.setDescription("General notifications");
+            channel.enableVibration(true);
+            nm.createNotificationChannel(channel);
+        }
+
+        int requestCode = (path + "-" + System.currentTimeMillis()).hashCode();
+        PendingIntent contentPendingIntent = buildJoinPendingIntent(path, requestCode);
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, GENERAL_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_icon)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setContentIntent(contentPendingIntent)
+            .setGroup(GROUP_KEY);
+
+        if (nm != null) {
+            nm.notify(requestCode, builder.build());
+            updateSummary(nm);
+        }
+    }
+
+    private void updateSummary(NotificationManager nm) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+
+        int count = 0;
+        List<String> lines = new ArrayList<>();
+        StatusBarNotification[] active = nm.getActiveNotifications();
+        for (StatusBarNotification sbn : active) {
+            if (sbn.getId() == SUMMARY_ID) continue;
+            if (!GROUP_KEY.equals(sbn.getNotification().getGroup())) continue;
+            count++;
+            CharSequence t = sbn.getNotification().extras.getCharSequence(Notification.EXTRA_TITLE);
+            if (t != null) lines.add(t.toString());
+        }
+        if (count <= 1) return;
+
+        NotificationCompat.InboxStyle inbox = new NotificationCompat.InboxStyle()
+            .setBigContentTitle("Tahleem Academy")
+            .setSummaryText(count + " new notifications");
+        for (String line : lines) inbox.addLine(line);
+
+        NotificationCompat.Builder summary = new NotificationCompat.Builder(this, GENERAL_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_icon)
+            .setContentTitle("Tahleem Academy")
+            .setContentText(count + " new notifications")
+            .setStyle(inbox)
+            .setGroup(GROUP_KEY)
+            .setGroupSummary(true)
+            .setAutoCancel(true);
+
+        nm.notify(SUMMARY_ID, summary.build());
+    }
+}

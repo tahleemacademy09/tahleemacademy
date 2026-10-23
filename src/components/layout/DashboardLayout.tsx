@@ -1,0 +1,1098 @@
+/*
+  DashboardLayout.tsx — Tahleem Academy
+  Mobile-first responsive layout with collapsible admin nav groups
+*/
+import { useState, useEffect, useRef, Suspense } from "react";
+import PageFallback from "@/components/layout/PageFallback";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { useRevisionAssignedCount } from "@/hooks/useRevisionAssignedCount";
+import { useSupportUnreadCount } from "@/hooks/useSupportUnreadCount";
+import { useAppRelease } from "@/hooks/useAppRelease";
+import { useImpersonation } from "@/hooks/useImpersonation";
+import { usePaymentAccess } from "@/hooks/usePaymentAccess";
+import { useSubjectRegistrationSettings } from "@/hooks/useSubjectRegistrationSettings";
+import { useAcademySettings } from "@/hooks/useAcademySettings";
+import {
+  BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,UserPlus,
+  CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
+  Menu, Video, Mic, Layers, UserCheck, BookMarked, Settings,
+  CreditCard, Calendar, ChevronDown, ChevronRight, Wallet, Bell,
+  BookOpenCheck, RefreshCw, Headphones, Trophy, X, Lock, Clock, FolderOpen,
+  Activity, BookText, LifeBuoy, Eye, Sparkles, Smartphone,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { supabase } from "@/integrations/supabase/client";
+import PaymentBanner from "./PaymentBanner";
+import HolidayBanner from "./HolidayBanner";
+import AdminPaymentIndicator from "./AdminPaymentIndicator";
+import ImpersonationBanner from "./ImpersonationBanner";
+
+interface DashboardLayoutProps { role: "student" | "admin"; }
+
+// ── PaymentLockScreen ────────────────────────────────────────────────────
+// Shown in-place of locked pages when student's subscription has expired.
+const PaymentLockScreen = () => {
+  const navigate = useNavigate();
+  return (
+    <div style={{
+      minHeight: "100%", display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center",
+      padding: "40px 20px", gap: 20, textAlign: "center",
+      background: "linear-gradient(160deg, #f9fafb 0%, #f0fff4 100%)",
+    }}>
+      {/* Lock icon */}
+      <div style={{
+        width: 72, height: 72, borderRadius: "50%",
+        background: "linear-gradient(135deg, #ffebee, #fce4ec)",
+        border: "2px solid #ef9a9a",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <Lock style={{ width: 32, height: 32, color: "#c62828" }} />
+      </div>
+
+      {/* Text */}
+      <div>
+        <p style={{ fontSize: 20, fontWeight: 900, color: "#111", margin: "0 0 6px" }}>
+          Feature Locked
+        </p>
+        <p style={{ fontSize: 14, color: "#666", margin: "0 0 4px", maxWidth: 280 }}>
+          Your subscription has expired.
+        </p>
+        <p style={{ fontSize: 13, color: "#999", margin: 0, maxWidth: 280 }}>
+          Renew now to restore access to courses, timetable, revision, exams, and more.
+        </p>
+      </div>
+
+      {/* Locked features list */}
+      <div style={{
+        background: "#fff", borderRadius: 14, border: "1px solid #f0f0f0",
+        padding: "14px 20px", width: "100%", maxWidth: 320,
+        display: "flex", flexDirection: "column", gap: 8,
+      }}>
+        {["Courses & Lessons","Timetable","Assignments","Al-Murājaʿah (Revision)","Al-Ḥifẓ Tracker","Exams & Transcripts","Al-Majlis Chat","Live Classes","Al-Musābaqah"].map(f => (
+          <div key={f} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#e53935" }}>
+            <span style={{ fontSize: 15 }}>🔒</span>
+            <span>{f}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* CTA */}
+      <button
+        onClick={() => navigate("/student/enrollment-payment")}
+        style={{
+          background: "linear-gradient(135deg, #064E3B, #075E54)",
+          color: "#fff", border: "none", borderRadius: 14,
+          padding: "16px 36px", cursor: "pointer",
+          fontWeight: 800, fontSize: 16,
+          display: "flex", alignItems: "center", gap: 10,
+          boxShadow: "0 6px 24px rgba(7,94,84,.35)",
+        }}
+      >
+        <CreditCard style={{ width: 18, height: 18 }} />
+        Renew Subscription
+      </button>
+
+      <p style={{ fontSize: 11, color: "#aaa" }}>
+        Secured by Paystack · SSL Encrypted
+      </p>
+    </div>
+  );
+};
+
+const DashboardLayout = ({ role }: DashboardLayoutProps) => {
+  const { t, language, setLanguage, dir } = useLanguage();
+  const { signOut, profile, user } = useAuth();
+  const { isEffectivelyOpen: subjectRegistrationOpen } = useSubjectRegistrationSettings();
+  // Admin/teacher-controlled on/off switches for the Exams and Timetable
+  // sections — meant to be flipped on only for the current test/exam
+  // period rather than left visible year-round. Nav items below hide when
+  // off; the pages themselves (StudentExams / StudentTimetable) also guard
+  // against direct URL access, not just the nav link.
+  const { isExamsModuleEnabled, isTimetableModuleEnabled } = useAcademySettings();
+  const { isImpersonating, impersonatedName, impersonatedEmail } = useImpersonation();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  // TasjeelGuard is the single registration gate. A second useTasjeel instance
+  // here used to repeat role/progress queries on every layout mount and could
+  // repaint the whole student shell after an Android resume.
+  const levelPending = false;
+
+  // ── Grading badge (admin) ────────────────────────────────────
+  // Same "someone submitted" indicator as the teacher sidebar, but
+  // school-wide since admins see every exam, not just their own subjects.
+  // Refetched on every route change (not just once on mount) so the count
+  // actually drops once the admin has been into Grading and cleared
+  // submissions, instead of staying frozen at whatever it was on login.
+  // NOTE: this must be declared before `adminNav` below, which reads it —
+  // declaring it after (as a later `const`) throws a ReferenceError /
+  // "Cannot access before initialization" on every render, for every role,
+  // since adminNav's array literal evaluates immediately, top-to-bottom.
+  const [gradingBadge, setGradingBadge] = useState(0);
+  // ── Help / Support badge (student + admin): threads waiting to be read ──
+  const supportBadge = useSupportUnreadCount(role);
+  useEffect(() => {
+    if (!user || role !== "admin") return;
+    (async () => {
+      const { count } = await supabase
+        .from("exam_attempts")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "submitted");
+      setGradingBadge(count || 0);
+    })();
+  }, [user, role, location.pathname]);
+
+  // ── Recitation Review badge (admin) ──────────────────────────
+  // Revision recordings nobody has reviewed yet — same rule the Recitation
+  // Review page uses for its "Pending" tab (no teacher review/override).
+  const [recitBadge, setRecitBadge] = useState(0);
+  useEffect(() => {
+    if (!user || role !== "admin") return;
+    (async () => {
+      const { data } = await (supabase as any)
+        .from("hifdh_daily_logs")
+        .select("id, review:session_data->review, override:session_data->teacher_override")
+        .order("log_date", { ascending: false })
+        .limit(300);
+      setRecitBadge((data || []).filter((l: any) => !l.review && !l.override).length);
+    })();
+  }, [user, role, location.pathname]);
+
+  // ── Murājaʿah badge (student) ────────────────────────────────
+  // Number of today's revision assignments still waiting. Re-checked on every
+  // route change so it clears right after the student finishes the session.
+  // Declared before `studentNav`, which reads it.
+  const revisionBadge = useRevisionAssignedCount(
+    role === "student" ? user?.id : undefined,
+    location.pathname,
+  );
+
+  // ── App update star (student) ────────────────────────────────
+  // Gold star on "Get the App" when a newer Android release is out.
+  const { hasUpdate: appHasUpdate } = useAppRelease(role === "student" || role === "admin");
+
+  // ── Payment-locking: block features when student subscription is locked ──
+  const { accessStatus: paymentStatus, isLoading: paymentLoading } = usePaymentAccess();
+  const isPaymentLocked = role === "student" && !paymentLoading && paymentStatus === "locked";
+
+  // Routes that are blocked when payment is locked (student must pay to enter)
+  const PAYMENT_GATED_ROUTES = new Set([
+    "/student/courses",
+    "/student/timetable",
+    "/student/live-now",
+    "/student/assignments",
+    "/student/revision",
+    "/student/hifdh",
+    "/student/majlis",
+    "/live-quiz",
+    "/student/live-classes",
+    "/student/exams",
+    "/student/transcripts",
+    "/student/report-card",
+    "/student/musabaqah",
+  ]);
+
+  const LOCKED_ROUTES = new Set([
+    "/student/courses",
+    "/student/timetable",
+    "/student/live-now",
+    "/student/assignments",
+    "/student/revision",
+    "/student/hifdh",
+    "/student/majlis",
+    "/live-quiz",
+    "/student/live-classes",
+    "/student/exams",
+    "/student/transcripts",
+    "/student/report-card",
+    "/student/musabaqah",
+  ]);
+
+  // NOTE: the Majlis full-screen branch used to early-return right here, above
+  // the notification hooks further down. That changed this component's hook
+  // count between renders and crashed the app with the minified React error
+  // #310 ("rendered more hooks than during the previous render"). The branch
+  // now renders from below the final hook — see the isMajlis return above the
+  // main layout return.
+  const isMajlis = location.pathname === "/student/majlis";
+
+  const toggle = (key: string) => setExpanded(p => ({ ...p, [key]: !p[key] }));
+  // The Hifdh hub owns four routes; keep its sidebar entry highlighted on all of them.
+  const HIFDH_HUB_PATHS = ["/admin/hifdh-program","/admin/hifdh-tracker","/admin/recitation-review"];
+  const pathMatches = (p: string) =>
+    p === "/admin/hifdh-program"
+      ? HIFDH_HUB_PATHS.some(h => location.pathname.startsWith(h))
+      : location.pathname.startsWith(p);
+  const groupActive = (paths: string[]) => paths.some(pathMatches);
+
+  // ── Student nav ──────────────────────────────────────────────
+  type NavItem =
+    | { type:"link"; to:string; icon:any; label:string; star?: boolean }
+    | { type:"group"; key:string; icon:any; label:string; children:{to:string;icon:any;label:string}[] };
+
+  const studentNav: NavItem[] = [
+    { type:"link", to:"/student",              icon:LayoutDashboard, label:t("Dashboard","الصفحة الرئيسية") },
+    { type:"group", key:"quran", icon:BookText, label:t("Al-Qur'an","القرآن الكريم"), children:[
+      { to:"/student/quran",   icon:BookText, label:t("Al-Qur'an","القرآن الكريم") },
+      { to:"/student/adhkaar", icon:Sparkles, label:t("Adhkaar","الأذكار") },
+    ]},
+    { type:"group", key:"taallum", icon:BookOpenCheck, label:t("At-Ta'allum","التعلّم"), children:[
+      { to:"/student/courses",     icon:BookOpenCheck, label:t("Courses","الدورات") },
+      ...(isTimetableModuleEnabled ? [{ to:"/student/timetable", icon:Calendar, label:t("Jadwal (Timetable)","الجدول الدراسي") }] : []),
+      { to:"/student/live-now",    icon:Video,          label:t("Live Now","مباشر الآن") },
+      { to:"/student/revision",    icon:RefreshCw,      label:t("Al-Murāja'ah","المراجعة") },
+      { to:"/student/hifdh-program", icon:BookMarked,   label:t("Hifdh Program","برنامج الحفظ"), badge: revisionBadge },
+      { to:"/student/musabaqah",   icon:Trophy,         label:t("Al-Musābaqah 🏆","المسابقة 🏆") },
+    ]},
+    { type:"group", key:"exams", icon:ClipboardList, label:t("Al-Ikhtibārāt","الاختبارات"), children:[
+      ...(isExamsModuleEnabled ? [{ to:"/student/exams", icon:ClipboardList, label:t("Ikhtibārātī","اختباراتي") }] : []),
+      ...(subjectRegistrationOpen ? [{ to:"/student/exams/register", icon:UserPlus,      label:t("Register for Exams","التسجيل للاختبارات") }] : []),
+      // One entry for transcript + report card + attendance (ProgressHub tabs).
+      // `match` keeps it highlighted on all three tab routes.
+      { to:"/student/transcripts",    icon:GraduationCap, label:t("Taqaddumī","تقدّمي"),
+        match:["/student/transcripts","/student/report-card","/student/attendance"] },
+    ]},
+    { type:"link", to:"/student/majlis",     icon:MessageCircle, label:t("Al-Majlis","المجلس") },
+    { type:"link", to:"/student/support",    icon:LifeBuoy,      label:t("Al-Musā'adah","المساعدة"), badge: supportBadge },
+    { type:"link", to:"/student/profile",    icon:UserCircle,    label:t("Al-I'dādāt","الإعدادات") },
+  ];
+
+  // ── Admin nav — fully organized, every page linked ──────────
+  type AdminNavItem =
+    | { type:"link";  to:string; icon:any; label:string; badge?: number }
+    | { type:"group"; key:string; icon:any; label:string; children:{to:string;icon:any;label:string;badge?:number}[] };
+
+  const adminNav: AdminNavItem[] = [
+    { type:"link", to:"/admin", icon:LayoutDashboard, label:t("Dashboard","لوحة التحكم") },
+    { type:"link", to:"/admin/analytics", icon:Eye, label:t("Site Analytics","إحصائيات الموقع") },
+
+    // 1 ── Student Pipeline ─────────────────────────────────────
+    // New Registrations, Pipeline Tracker, Registration Settings, Recitation
+    // Settings & Diagnostics all live as tabs on one page (RegistrationHub).
+    { type:"group", key:"pipeline", icon:UserPlus, label:t("Student Pipeline","سير التسجيل"), children:[
+      { to:"/admin/level-assignment",             icon:GraduationCap, label:t("Registration","التسجيل") },
+      { to:"/admin/levels",                       icon:Layers,        label:t("Manage Levels","إدارة المستويات") },
+    ]},
+
+    // 2 ── Students ─────────────────────────────────────────────
+    // All Students, Attendance, Transcripts & Private Sessions now live
+    // together as tabs on one page (StudentsHub) instead of four screens.
+    { type:"group", key:"students", icon:Users, label:t("Students","الطلاب"), children:[
+      { to:"/admin/students",         icon:Users,         label:t("Students","الطلاب") },
+    ]},
+
+    // 3 ── Academic ─────────────────────────────────────────────
+    { type:"group", key:"academic", icon:BookOpen, label:t("Academic","الأكاديمي"), children:[
+      { to:"/admin/courses",          icon:Layers,      label:t("Courses & Subjects","الدورات والمواد") },
+      { to:"/admin/timetable",        icon:Clock,       label:t("Timetable","الجدول الدراسي") },
+      { to:"/admin/material-manager", icon:FolderOpen,  label:t("Materials","المواد التعليمية") },
+      { to:"/admin/level-subject-mapping", icon:BookMarked,  label:t("Level–Subject Map","ربط المستويات") },
+      { to:"/admin/calendar",         icon:Calendar,    label:t("Academic Calendar","التقويم الأكاديمي") },
+      { to:"/admin/hifdh-program",    icon:BookMarked,  label:t("Hifdh","الحفظ") },
+    ]},
+
+    // 4 ── Classes ──────────────────────────────────────────────
+    { type:"group", key:"classes", icon:Video, label:t("Classes","الفصول"), children:[
+      { to:"/admin/live-classes",   icon:Video,      label:t("Live Classes","الفصول الحية") },
+      { to:"/admin/public-classes", icon:Globe,      label:t("Public Classes","الدروس العامة") },
+      { to:"/admin/recordings",     icon:Headphones, label:t("Recordings","التسجيلات") },
+    ]},
+
+    // 5 ── Assessments ──────────────────────────────────────────
+    { type:"group", key:"assess", icon:ClipboardList, label:t("Assessments","التقييمات"), children:[
+      { to:"/admin/exams",         icon:ClipboardList, label:t("Exams","الامتحانات") },
+      { to:"/admin/oral-exams",   icon:Mic,           label:t("Oral Exams","الامتحانات الشفوية") },
+      { to:"/admin/exam-timetable", icon:Clock,         label:t("Exam & Test Timetable","جدول الامتحانات والاختبارات") },
+      { to:"/admin/question-bank", icon:Library,       label:t("Question Bank","بنك الأسئلة") },
+      { to:"/admin/grading",       icon:CheckSquare,   label:t("Grading","التصحيح"),   badge: gradingBadge },
+      { to:"/admin/entrance-exam", icon:GraduationCap, label:t("Entrance Exam","اختبار القبول") },
+      { to:"/admin/proctoring",    icon:BarChart,      label:t("Proctoring","المراقبة") },
+    ]},
+
+    // 6 ── Recitation & Ḥifẓ ────────────────────────────────────
+    { type:"group", key:"recit", icon:Mic, label:t("Recitation & Ḥifẓ","التلاوة والحفظ"), children:[
+      { to:"/admin/recitation-review",        icon:Mic,      label:t("Recitation Review","مراجعة التلاوة"), badge: recitBadge },
+      { to:"/admin/quran-recitations",        icon:BookText, label:t("Qur'an Recitations","تسجيلات القرآن") },
+      { to:"/admin/letter-audio",             icon:Sparkles, label:t("Letter Audio Library","مكتبة صوت الحروف") },
+    ]},
+
+    // 7 ── Finance ──────────────────────────────────────────────
+    { type:"group", key:"finance", icon:CreditCard, label:t("Finance","المالية"), children:[
+      { to:"/admin/payments",         icon:CreditCard, label:t("All Payments","جميع المدفوعات") },
+      { to:"/admin/teacher-payments", icon:CreditCard, label:t("Teacher Salaries","رواتب المعلمين") },
+      { to:"/admin/payment-settings", icon:Settings,   label:t("Payment Settings","إعدادات الدفع") },
+    ]},
+
+    // 8 ── Communication ────────────────────────────────────────
+    { type:"group", key:"comms", icon:MessageCircle, label:t("Communication","التواصل"), children:[
+      { to:"/admin/majlis-moderation", icon:MessageCircle, label:t("Al-Majlis","المجلس") },
+      { to:"/admin/notifications",     icon:Bell,          label:t("Notifications","الإشعارات") },
+      { to:"/admin/support-tickets",   icon:LifeBuoy,      label:t("Support Tickets","تذاكر الدعم"), badge: supportBadge },
+    ]},
+
+    // 9 ── Al-Musābaqah (updated route) ─────────────────────────
+    { type:"link", to:"/admin/musabaqah", icon:Trophy, label:t("Al-Musābaqah 🏆","المسابقة 🏆") },
+
+
+    // 10 ── Admin Settings ────────────────────────────────────────
+    { type:"link", to:"/admin/settings", icon:UserCircle, label:t("My Settings","إعداداتي") },
+  ];
+
+  // ── Notification badge count for top bar ────────────────────
+  const [unreadNotifs, setUnreadNotifs] = useState(0);
+  const [showNotifPanel, setShowNotifPanel] = useState(false);
+  const [notifList, setNotifList] = useState<any[]>([]);
+  const [selectedNotif, setSelectedNotif] = useState<any>(null);
+
+  // FIX (background-eviction): this used to keep a realtime WebSocket
+  // channel AND a 15s poll running on every page, for the whole session,
+  // even while the tab was backgrounded — exactly the kind of "live
+  // background connection" that makes mobile Chrome/Safari kill a
+  // minimized tab within seconds instead of leaving it suspended. Push
+  // notifications already deliver these while we're backgrounded, so both
+  // the channel and the poll now only run while the tab is actually
+  // visible; we resync once immediately whenever it becomes visible again.
+  useEffect(() => {
+    if (!user) return;
+
+    const load = async () => {
+      const { data } = await supabase
+        .from("notifications")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      const list = data || [];
+      setNotifList(list);
+      setUnreadNotifs(list.filter((n: any) => !n.is_read).length);
+    };
+
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let iv: ReturnType<typeof setInterval> | null = null;
+
+    const start = () => {
+      if (channel) return; // already running
+      load();
+      channel = supabase
+        .channel(`notifications:${user.id}`)
+        .on(
+          "postgres_changes" as any,
+          { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
+          (payload: any) => {
+            setNotifList(prev => [payload.new, ...prev]);
+            setUnreadNotifs(p => p + 1);
+          }
+        )
+        .on(
+          "postgres_changes" as any,
+          { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
+          (payload: any) => {
+            setNotifList(prev => prev.map((n: any) => n.id === payload.new.id ? payload.new : n));
+            setUnreadNotifs(prev => Math.max(0, prev - (payload.old?.is_read === false && payload.new?.is_read === true ? 1 : 0)));
+          }
+        )
+        .subscribe();
+      iv = setInterval(load, 60000); // realtime delivers instantly; this is only a safety net
+    };
+
+    const stop = () => {
+      if (iv) { clearInterval(iv); iv = null; }
+      if (channel) { supabase.removeChannel(channel); channel = null; }
+    };
+
+    if (document.visibilityState === "visible") start();
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") start();
+      else stop();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      stop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  const markRead = async (id: string) => {
+    await supabase.from("notifications").update({ is_read: true }).eq("id", id);
+    setNotifList(p => p.map(n => n.id === id ? { ...n, is_read: true } : n));
+    setUnreadNotifs(p => Math.max(0, p - 1));
+  };
+
+  const markAllRead = async () => {
+    if (!user) return;
+    const unreadIds = notifList.filter((n: any) => !n.is_read).map((n: any) => n.id);
+    if (unreadIds.length === 0) return;
+    await supabase.from("notifications").update({ is_read: true }).eq("user_id", user.id).eq("is_read", false);
+    setNotifList(p => p.map(n => ({ ...n, is_read: true })));
+    setUnreadNotifs(0);
+  };
+
+  // ── Unread-per-route helper (numbered badges) ─────────────────
+  // Returns how many unread notifications have a `link` starting with the
+  // given route (or match any of the extra keywords in its type — used for
+  // cross-cutting categories like "new-registration" that live at
+  // /admin/students).
+  // Student sidebar: which notification links/types belong to which menu entry.
+  // Many notification links (live-classes, learning-hub, assignments, results…)
+  // are not nav routes themselves, so without this only the Dashboard lit up.
+  const NOTIF_ROOTS = ["/student", "/admin", "/teacher"];
+  const NOTIF_ALIASES: Record<string, { prefixes: string[]; types?: string[] }> = {
+    "/student":               { prefixes: ["/student/dashboard", "/dashboard"], types: ["announcement", "general"] },
+    "/student/courses":       { prefixes: ["/student/learning-hub", "/student/assignments"] },
+    "/student/live-now":      { prefixes: ["/student/live-classes"] },
+    "/student/hifdh-program": { prefixes: ["/student/hifdh"] },
+    "/student/exams":         { prefixes: ["/student/results", "/exams"], types: ["exam"] },
+    "/student/musabaqah":     { prefixes: ["/musabaqah"] },
+    "/admin":                 { prefixes: ["/admin/dashboard"], types: ["announcement", "general"] },
+  };
+  const notifLinkPath = (l: any) => String(l || "").split(/[?#]/)[0];
+  const notifMatchesRoute = (n: any, route: string): boolean => {
+    const al = NOTIF_ALIASES[route];
+    const p = notifLinkPath(n.link);
+    const prefixes = NOTIF_ROOTS.includes(route) ? (al?.prefixes ?? []) : [route, ...(al?.prefixes ?? [])];
+    if (p) return (NOTIF_ROOTS.includes(route) && p === route) || prefixes.some(x => p === x || p.startsWith(x + "/"));
+    return !!al?.types?.includes(n.type);
+  };
+
+  // Student: a light list of ALL unread notifications (id/type/link only) — the
+  // bell list above is capped at 50 and daily content would crowd out the rest.
+  const [unreadIdx, setUnreadIdx] = useState<{ id: string; type: string; link: string | null; is_read: boolean }[]>([]);
+  useEffect(() => {
+    if (!user) return;
+    let alive = true;
+    (async () => {
+      const { data } = await supabase.from("notifications").select("id,type,link")
+        .eq("user_id", user.id).eq("is_read", false).limit(1000);
+      if (alive) setUnreadIdx((data || []).map((n: any) => ({ ...n, is_read: false })));
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, unreadNotifs, location.pathname]);
+
+  const unreadCountFor = (route: string, extraTypes: string[] = []): number => {
+    if (!unreadIdx.length) return 0;
+    return unreadIdx.reduce((c, n) => (
+      !n.is_read && (notifMatchesRoute(n, route) || (extraTypes.length > 0 && extraTypes.includes(n.type))) ? c + 1 : c
+    ), 0);
+  };
+
+  // Student: opening a section clears that section's notifications (the star goes away).
+  const clearingRef = useRef(false);
+  useEffect(() => {
+    if (role !== "student" || !user || clearingRef.current || unreadIdx.length === 0) return;
+    const entries: { to: string; match?: string[] }[] = [];
+    (studentNav as any[]).forEach(it => it.type === "group" ? entries.push(...it.children) : entries.push(it));
+    const here = location.pathname;
+    const isHere = (e: { to: string; match?: string[] }) => {
+      const al = NOTIF_ALIASES[e.to]?.prefixes ?? [];
+      const prefixes = NOTIF_ROOTS.includes(e.to) ? al : [e.to, ...(e.match ?? []), ...al];
+      if (NOTIF_ROOTS.includes(e.to) && here === e.to) return true;
+      return prefixes.some(x => here === x || here.startsWith(x + "/"));
+    };
+    const ids = new Set<string>();
+    entries.filter(isHere).forEach(e => unreadIdx.forEach(n => { if (notifMatchesRoute(n, e.to)) ids.add(n.id); }));
+    if (ids.size === 0) return;
+    clearingRef.current = true;
+    const list = Array.from(ids);
+    (async () => {
+      try {
+        for (let i = 0; i < list.length; i += 200) {
+          await supabase.from("notifications").update({ is_read: true }).eq("user_id", user.id).in("id", list.slice(i, i + 200));
+        }
+        setUnreadIdx(p => p.filter(n => !ids.has(n.id)));
+        setNotifList(p => p.map(n => ids.has(n.id) ? { ...n, is_read: true } : n));
+        setUnreadNotifs(p => Math.max(0, p - list.length));
+      } finally { clearingRef.current = false; }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, unreadIdx, role, user?.id]);
+
+  // Gold numbered pill rendered inside nav items with unseen items — shows
+  // exactly how many things are waiting rather than just a generic marker.
+  const UnreadBadge = ({ count }: { count: number }) => (
+    <span
+      aria-label={`${count} unread`}
+      className="ms-auto inline-flex shrink-0 items-center justify-center rounded-full"
+      style={{
+        background: "#dc2626", color: "#fff", fontWeight: 800,
+        fontSize: 10, lineHeight: 1, minWidth: 18, height: 18, padding: "0 5px",
+      }}
+    >
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+
+  // ONE badge per item, same look for every role: small filled red circle with the number.
+  // A to-do count (e.g. revisions assigned, reviews pending) wins over the
+  // unread-notification count, because the notification is usually about the
+  // same thing — showing both made the item look like it had two different badges.
+  const NotifMark = ({ count, explicit = 0 }: { count: number; explicit?: number }) => {
+    const n = explicit > 0 ? explicit : count;
+    if (n <= 0) return null;
+    return (
+      <span aria-label={`${n} unread`} className="ms-auto inline-flex shrink-0 items-center justify-center rounded-full"
+        style={{ background: "#dc2626", color: "#fff", fontWeight: 800, fontSize: 10, lineHeight: 1,
+          minWidth: 18, height: 18, padding: "0 5px" }}>
+        {n > 99 ? "99+" : n}
+      </span>
+    );
+  };
+
+  // ── Detect whether a string is predominantly Arabic ──────────
+  const isArabicText = (s: string) => /[\u0600-\u06FF]/.test(s ?? "");
+
+  // ── Resolve bilingual fields for a notification row ───────────
+  // Cases:
+  //   1. New bilingual row: title=EN, title_ar=AR, message=EN, message_ar=AR
+  //   2. title_ar column exists but is null (bilingual columns exist, content is EN-only)
+  //   3. Legacy row: title=AR, message=AR (no title_ar column at all)
+  //   4. Legacy English-only row: title=EN, no title_ar column
+  const resolveLangs = (n: any) => {
+    // "title_ar" key present in the object = bilingual columns exist in DB
+    const bilingualColsExist = "title_ar" in n;
+    if (bilingualColsExist) {
+      const hasArContent = !!(n.title_ar || n.message_ar);
+      if (hasArContent) {
+        // Full bilingual — show both
+        return { en: { title: n.title, message: n.message }, ar: { title: n.title_ar, message: n.message_ar } };
+      }
+      // Column exists but empty — English only
+      return { en: { title: n.title, message: n.message }, ar: null };
+    }
+    // No bilingual columns in DB yet — fall back to Arabic detection on title
+    if (isArabicText(n.title)) {
+      // Legacy: Arabic stored in title/message
+      return { en: null, ar: { title: n.title, message: n.message } };
+    }
+    // Legacy English-only
+    return { en: { title: n.title, message: n.message }, ar: null };
+  };
+
+  // ── Shared sidebar content ────────────────────────────────────
+  const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => {
+    const nav = role === "student" ? studentNav : adminNav;
+    return (
+      <div className="flex h-full flex-col">
+        <div className="flex h-14 items-center gap-3 border-b border-sidebar-border px-4">
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-sidebar-primary shrink-0">
+            <BookOpen className="h-3.5 w-3.5 text-sidebar-primary-foreground" />
+          </div>
+          <span className="font-bold text-sidebar-foreground font-arabic text-base leading-tight">
+            {t("Tahleem","تعليم")}
+            <span className="text-sidebar-primary ms-1 text-xs font-normal opacity-80">{t("Academy","أكاديمية")}</span>
+          </span>
+          {onNavigate && (
+            <button onClick={onNavigate} className="ml-auto text-sidebar-foreground/50 hover:text-sidebar-foreground">
+              <X className="h-4 w-4"/>
+            </button>
+          )}
+        </div>
+
+        <nav className="flex-1 overflow-y-auto p-2 space-y-0.5">
+          {(nav as any[]).map((item: any) => {
+            if (item.type === "link") {
+              const active = item.to === "/admin" || item.to === "/student"
+                ? location.pathname === item.to
+                : location.pathname.startsWith(item.to);
+              const isLocked = levelPending && LOCKED_ROUTES.has(item.to);              if (isLocked) {
+                return (
+                  <div key={item.to}
+                    title="Available after level assignment"
+                    style={{ opacity: .45, cursor: "not-allowed" }}
+                    className="flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/40">
+                    <item.icon className="h-4 w-4 shrink-0"/>
+                    <span className="truncate flex-1">{item.label}</span>
+                    <Lock className="h-3 w-3 shrink-0 opacity-60"/>
+                  </div>
+                );
+              }
+              return (
+                <Link key={item.to} to={item.to} onClick={onNavigate}
+                  className={cn(
+                    "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                    active
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      : "text-sidebar-foreground/65 hover:bg-sidebar-accent/40 hover:text-sidebar-accent-foreground"
+                  )}>
+                  <item.icon className="h-4 w-4 shrink-0"/>
+                  <span className="truncate">{item.label}</span>
+                  <NotifMark explicit={item.badge ?? 0} count={unreadCountFor(item.to)} />
+                </Link>
+              );
+            }
+            const isActive = groupActive(item.children.flatMap((c: any) => c.match ?? [c.to]));
+            const isOpen   = expanded[item.key] ?? isActive; // auto-expand if a child is active
+            const groupLocked = levelPending && item.children.every((c: any) => LOCKED_ROUTES.has(c.to));
+                        const groupUnreadCount = item.children.reduce((sum: number, c: any) => sum + ((c.badge ?? 0) > 0 ? c.badge : unreadCountFor(c.to)), 0);
+            return (
+              <div key={item.key}>
+                <button onClick={() => !groupLocked && toggle(item.key)}
+                  title={groupLocked ? "Available after level assignment" : undefined}
+                  style={groupLocked ? { opacity: .45, cursor: "not-allowed" } : undefined}
+                  className={cn(
+                    "w-full flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                    isActive
+                      ? "bg-sidebar-accent/50 text-sidebar-accent-foreground"
+                      : "text-sidebar-foreground/65 hover:bg-sidebar-accent/40 hover:text-sidebar-accent-foreground"
+                  )}>
+                  <item.icon className="h-4 w-4 shrink-0"/>
+                  <span className="flex-1 text-left truncate">{item.label}</span>
+                  <NotifMark count={groupUnreadCount} />
+                  {isOpen
+                    ? <ChevronDown className="h-3.5 w-3.5 opacity-50 shrink-0"/>
+                    : <ChevronRight className="h-3.5 w-3.5 opacity-50 shrink-0"/>}
+                </button>
+                {isOpen && (
+                  <div className="ms-5 mt-0.5 mb-1 space-y-0.5 border-l border-sidebar-border/40 ps-3">
+                    {item.children.map((child: any) => {
+                      const ca = child.match ? child.match.some(pathMatches) : pathMatches(child.to);
+                      const cBadge = child.badge ?? 0;
+                      const cCount = unreadCountFor(child.to);
+                      return (                        <Link key={child.to} to={child.to} onClick={onNavigate}
+                          className={cn(
+                            "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors",
+                            ca
+                              ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                              : "text-sidebar-foreground/55 hover:bg-sidebar-accent/40 hover:text-sidebar-accent-foreground"
+                          )}>
+                          <child.icon className="h-3.5 w-3.5 shrink-0"/>
+                          <span className="truncate">{child.label}</span>
+                          <NotifMark explicit={cBadge} count={cCount} />
+                        </Link>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </nav>
+
+        <div className="border-t border-sidebar-border p-2 space-y-0.5">
+          {(isImpersonating ? impersonatedName : profile?.full_name) && (
+            <div className="px-3 py-2">
+              <p className="text-xs font-medium text-sidebar-foreground/70 truncate">
+                {isImpersonating ? impersonatedName : profile?.full_name}
+              </p>
+              <p className="text-[11px] text-sidebar-foreground/40 truncate">
+                {isImpersonating ? impersonatedEmail : (profile as any)?.email}
+              </p>
+            </div>
+          )}
+          {(role === "student" || role === "admin") && (() => {
+            const appTo = role === "admin" ? "/admin/app-releases" : "/student/app";
+            return (
+              <Link to={appTo} onClick={onNavigate}
+                className={cn(
+                  "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                  location.pathname === appTo
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground/65 hover:bg-sidebar-accent/40 hover:text-sidebar-accent-foreground"
+                )}>
+                <Smartphone className="h-4 w-4 shrink-0 text-yellow-400"/>
+                <span>{role === "admin" ? t("App Releases","إصدارات التطبيق") : t("Get the App","حمّل التطبيق")}</span>
+                <NotifMark count={appHasUpdate ? 1 : 0} />
+              </Link>
+            );
+          })()}
+          {role === "student" && (
+            <Link to="/student/enrollment-payment" onClick={onNavigate}
+              className={cn(
+                "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                location.pathname === "/student/enrollment-payment"
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "text-sidebar-foreground/65 hover:bg-sidebar-accent/40 hover:text-sidebar-accent-foreground"
+              )}>
+              <Wallet className="h-4 w-4 shrink-0 text-yellow-400"/>
+              <span>{t("Payment","الدفع")}</span>
+            </Link>
+          )}
+          <button
+            className="w-full flex items-center gap-2.5 rounded-md px-3 py-2 text-sm text-sidebar-foreground/65 hover:bg-sidebar-accent/40 hover:text-sidebar-accent-foreground transition-colors"
+            onClick={() => { setLanguage(language === "en" ? "ar" : "en"); onNavigate?.(); }}>
+            <Globe className="h-4 w-4"/>
+            <span>{t("العربية","English")}</span>
+          </button>
+          <button
+            className="w-full flex items-center gap-2.5 rounded-md px-3 py-2 text-sm text-sidebar-foreground/65 hover:bg-destructive/20 hover:text-destructive transition-colors"
+            onClick={() => { signOut(); onNavigate?.(); }}>
+            <LogOut className="h-4 w-4"/>
+            <span>{t("Sign Out","تسجيل الخروج")}</span>
+          </button>        </div>
+      </div>
+    );
+  };
+
+  // Majlis renders full-screen without the dashboard chrome. Kept below every
+  // hook so hook order/count stays identical on every render (React #310).
+  if (isMajlis) {
+    return <div style={{ position: "fixed", inset: 0, zIndex: 40 }}><Suspense fallback={<PageFallback />}><Outlet /></Suspense></div>;
+  }
+
+  return (
+    <div className="flex h-screen overflow-hidden" style={{ height: "100dvh" }}>
+      <aside className="hidden w-60 flex-col bg-sidebar md:flex flex-shrink-0 border-r border-sidebar-border">
+        <SidebarContent />
+      </aside>
+
+      <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
+        <header className="flex h-12 items-center gap-3 border-b bg-background px-4 md:hidden flex-shrink-0">
+          <Sheet open={open} onOpenChange={setOpen}>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8 relative">
+                <Menu className="h-4 w-4"/>
+                {(unreadNotifs > 0 || appHasUpdate) && <span aria-label="Unread" className="absolute top-0.5 right-0.5 h-2.5 w-2.5 rounded-full bg-red-600 border border-background"/>}
+              </Button>
+            </SheetTrigger>
+            <SheetContent
+              side={dir === "rtl" ? "right" : "left"}
+              className="w-64 p-0 bg-sidebar border-sidebar-border">
+              <SidebarContent onNavigate={() => setOpen(false)}/>
+            </SheetContent>
+          </Sheet>
+
+          <div className="flex-1 flex items-center justify-center">
+            <div className="flex items-center gap-1.5">
+              <BookOpen className="h-3.5 w-3.5 text-primary"/>
+              <span className="font-bold font-arabic text-sm">{t("Tahleem","تعليم")}</span>
+              <span className="text-muted-foreground text-xs">{t("Academy","أكاديمية")}</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1">
+              <div className="relative">
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setShowNotifPanel(true)}>
+                  <Bell className="h-4 w-4"/>
+                </Button>
+                {unreadNotifs > 0 && (
+                  <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-black text-white border border-background">
+                    {unreadNotifs > 9 ? "9+" : unreadNotifs}
+                  </span>
+                )}
+              </div>
+              <Link to="/student/enrollment-payment">
+                <Button variant="ghost" size="icon" className="h-8 w-8">
+                  <Wallet className="h-4 w-4 text-yellow-500"/>
+                </Button>
+              </Link>            </div>
+        </header>
+
+        <ImpersonationBanner/>
+        <HolidayBanner/>
+        {role === "student" && <PaymentBanner/>}
+        {role === "admin"   && <AdminPaymentIndicator/>}
+
+        {levelPending && (
+          <div style={{
+            background: "linear-gradient(90deg, #0f2d1f, #1a4731)",
+            borderBottom: "1px solid rgba(201,168,76,.2)",
+            padding: "10px 20px",
+            display: "flex", alignItems: "center", gap: 12, flexShrink: 0,
+          }}>
+            <div style={{ width: 28, height: 28, borderRadius: "50%", background: "rgba(201,168,76,.15)", border: "1.5px solid rgba(201,168,76,.3)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Clock style={{ width: 14, height: 14, color: "#c9a84c" }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ fontSize: 12, fontWeight: 800, color: "#c9a84c", margin: "0 0 1px" }}>
+                Awaiting Level Assignment
+              </p>
+              <p style={{ fontSize: 11, color: "rgba(255,255,255,.55)", margin: 0 }}>
+                Your application is under review. Full dashboard access unlocks once an admin assigns your learning level (within 48h).
+              </p>
+            </div>
+            <div style={{ flexShrink: 0 }}>
+              <Lock style={{ width: 14, height: 14, color: "rgba(255,255,255,.3)" }} />
+            </div>
+          </div>
+        )}
+
+        {/* ── Notification Panel ─────────────────────────────────────────── */}
+        {showNotifPanel && (
+          <div style={{ position:"fixed", inset:0, zIndex:50, background:"rgba(0,0,0,0.45)", backdropFilter:"blur(4px)" }}
+            onClick={() => setShowNotifPanel(false)}>
+            <div style={{ position:"absolute", top:0, left:0, right:0, maxHeight:"82vh", background:"#fff", borderBottomLeftRadius:28, borderBottomRightRadius:28, boxShadow:"0 20px 60px rgba(0,0,0,0.18)", display:"flex", flexDirection:"column", overflow:"hidden" }}
+              onClick={e => e.stopPropagation()}>
+
+              {/* Header */}
+              <div style={{ background:"linear-gradient(135deg,#0f2d1f,#1a4a2e)", padding:"18px 20px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                  <div style={{ width:34, height:34, borderRadius:10, background:"rgba(201,168,76,0.18)", border:"1.5px solid rgba(201,168,76,0.4)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                    <Bell style={{ width:15, height:15, color:"#c9a84c" }}/>
+                  </div>
+                  <div>
+                    <p style={{ margin:0, fontWeight:800, fontSize:15, color:"#fff", letterSpacing:"-0.3px" }}>Notifications</p>
+                    <p style={{ margin:0, fontWeight:600, fontSize:11, color:"rgba(201,168,76,0.8)", fontFamily:"serif" }}>الإشعارات</p>
+                  </div>
+                  {unreadNotifs > 0 && (
+                    <div style={{ background:"#c0392b", color:"#fff", fontSize:10, fontWeight:800, padding:"2px 8px", borderRadius:20, marginLeft:2 }}>
+                      {unreadNotifs} new
+                    </div>
+                  )}
+                </div>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  {unreadNotifs > 0 && (
+                    <button onClick={markAllRead}
+                      style={{ fontSize:11, fontWeight:700, padding:"6px 12px", borderRadius:20, background:"rgba(201,168,76,0.15)", color:"#c9a84c", border:"1px solid rgba(201,168,76,0.3)", cursor:"pointer" }}>
+                      Mark all read
+                    </button>
+                  )}
+                  <button onClick={() => setShowNotifPanel(false)}
+                    style={{ width:32, height:32, borderRadius:10, background:"rgba(255,255,255,0.08)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"rgba(255,255,255,0.7)", fontSize:16 }}>
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              {/* List */}
+              <div style={{ overflowY:"auto", flex:1 }}>
+                {notifList.length === 0 ? (
+                  <div style={{ textAlign:"center", padding:"48px 20px", color:"#aaa" }}>
+                    <div style={{ fontSize:32, marginBottom:8 }}>🔔</div>
+                    <p style={{ fontSize:13, fontWeight:600, margin:0 }}>No notifications yet</p>
+                    <p style={{ fontSize:11, color:"#bbb", margin:"4px 0 0", fontFamily:"serif" }}>لا توجد إشعارات</p>
+                  </div>
+                ) : notifList.map((n: any, idx: number) => {
+                    const langs = resolveLangs(n);
+                    const isClassType = n.type === "class_reminder" || n.type === "class_ring";
+                    const isExam = n.type === "exam_assigned" || n.type === "exam" || n.type === "result_released";
+                    const isPayment = n.type === "payment";
+                    const icon = isClassType ? "📚" : isExam ? "📋" : isPayment ? "💳" : n.type === "warning" ? "⚠️" : n.type === "result_released" ? "🎯" : "🔔";
+                    const accentColor = isClassType ? "#0f2d1f" : isPayment ? "#c0392b" : isExam ? "#1a5276" : "#92400e";
+                    const bgColor = n.is_read ? "#fafafa" : isClassType ? "#f0faf4" : isPayment ? "#fff5f5" : isExam ? "#eff6ff" : "#fffbeb";
+
+                    // Parse reminder:sessionId:mins link format
+                    // reminder:{sessionId}:{minsAhead}:{subjectId}
+                    const linkParts = n.link?.startsWith("reminder:") ? n.link.split(":") : null;
+                    const sessionIdFromLink = linkParts ? linkParts[1] : null;
+                    const subjectIdFromLink = linkParts && linkParts[3] ? linkParts[3] : null;
+
+                    // Also handle direct path links like /student/live-classes?subject=<id>
+                    let directPath: string | null = null;
+                    if (!linkParts && n.link) {
+                      if (n.link.startsWith("/")) {
+                        // Relative path — strip any #hash dedup key (e.g. #class=abc:t=0)
+                        directPath = n.link.split("#")[0];
+                      } else if (n.link.startsWith("http")) {
+                        // Full URL (legacy rows) — extract path+search only
+                        try {
+                          const u = new URL(n.link);
+                          directPath = u.pathname + u.search;
+                        } catch { /* ignore */ }
+                      }
+                    }
+
+                    return (
+                    <div key={n.id}
+                      onClick={() => {
+                        if (!n.is_read) markRead(n.id);
+                        if (isClassType && subjectIdFromLink) {
+                          // Class reminder/ring with a known subject — go straight to the
+                          // live class, no intermediate detail screen.
+                          setShowNotifPanel(false);
+                          navigate(`/student/live-classes?subject=${subjectIdFromLink}&autoJoin=true`);
+                        } else if (isClassType && directPath) {
+                          // Direct path link (e.g. from schedule-class-reminders or ring-live-class)
+                          setShowNotifPanel(false);
+                          // Ensure autoJoin=true is present
+                          const sep = directPath.includes("?") ? "&" : "?";
+                          const path = directPath.includes("autoJoin") ? directPath : `${directPath}${sep}autoJoin=true`;
+                          navigate(path);
+                        } else {
+                          setSelectedNotif(n);
+                        }
+                      }}
+                      style={{ background: bgColor, borderBottom:"1px solid #f0f0f0", padding:"14px 18px", cursor:"pointer", display:"flex", alignItems:"flex-start", gap:12 }}>
+
+                      {/* Icon bubble */}
+                      <div style={{ width:40, height:40, borderRadius:12, background: n.is_read ? "#f4f4f4" : `${accentColor}18`, border:`1.5px solid ${n.is_read ? "#e8e8e8" : accentColor + "30"}`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, fontSize:18 }}>
+                        {icon}
+                      </div>
+
+                      <div style={{ flex:1, minWidth:0 }}>
+                        {/* Title row */}
+                        <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:2 }}>
+                          <p style={{ margin:0, fontSize:13, fontWeight: n.is_read ? 600 : 800, color:"#1a1a1a", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", letterSpacing:"-0.2px" }}>
+                            {langs.en ? langs.en.title : langs.ar?.title}
+                          </p>
+                          {!n.is_read && <div style={{ width:7, height:7, borderRadius:"50%", background:"#c0392b", flexShrink:0 }}/>}
+                        </div>
+
+                        {/* EN message preview */}
+                        {langs.en?.message && (
+                          <p style={{ margin:0, fontSize:11.5, color:"#666", lineHeight:1.45, display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical", overflow:"hidden" }}>
+                            {langs.en.message}
+                          </p>
+                        )}
+
+                        {/* AR subtitle */}
+                        {langs.ar?.title && (
+                          <p style={{ margin:"2px 0 0", fontSize:11, color:"#999", fontFamily:"serif", textAlign:"right", direction:"rtl", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                            {langs.en ? langs.ar.title : langs.ar.message}
+                          </p>
+                        )}
+
+                        {/* Bottom row: time + action chip */}
+                        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:5 }}>
+                          <p style={{ margin:0, fontSize:10, color:"#bbb", fontVariantNumeric:"tabular-nums" }}>
+                            {new Date(n.created_at).toLocaleDateString("en-US", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}
+                          </p>
+                          {isClassType && subjectIdFromLink && (
+                            <span style={{ fontSize:10, fontWeight:800, color:"#0f2d1f", background:"#0f2d1f18", padding:"2px 8px", borderRadius:20, border:"1px solid #0f2d1f30" }}>
+                              Join class →
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    );
+                  })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Notification Detail Modal ───────────────────────────────────── */}
+        {selectedNotif && (() => {
+          const langs = resolveLangs(selectedNotif);
+          const isClassType = selectedNotif.type === "class_reminder" || selectedNotif.type === "class_ring";
+          const isPayment = selectedNotif.type === "payment";
+          const icon = isClassType ? "📚" : selectedNotif.type === "warning" ? "⚠️" : selectedNotif.type === "exam_assigned" ? "📋" : isPayment ? "💳" : selectedNotif.type === "result_released" ? "🎯" : "🔔";
+
+          // Parse "reminder:sessionId:minsAhead" → look up subject_id to navigate
+          // reminder:{sessionId}:{minsAhead}:{subjectId}
+          const detailLinkParts = selectedNotif.link?.startsWith("reminder:") ? selectedNotif.link.split(":") : null;
+          const sessionIdFromLink = detailLinkParts ? detailLinkParts[1] : null;
+          const subjectIdFromLink = detailLinkParts && detailLinkParts[3] ? detailLinkParts[3] : null;
+
+          const handleJoinFromNotif = () => {
+            setSelectedNotif(null);
+            setShowNotifPanel(false);
+            if (subjectIdFromLink) {
+              // subject_id is embedded in the link — no DB query needed
+              navigate(`/student/live-classes?subject=${subjectIdFromLink}&autoJoin=true`);
+            } else if (selectedNotif.link?.startsWith("/")) {
+              navigate(selectedNotif.link);
+            } else {
+              navigate("/student/live-classes");
+            }
+          };
+
+          return (
+          <div style={{ position:"fixed", inset:0, zIndex:60, background:"rgba(0,0,0,0.55)", backdropFilter:"blur(6px)", display:"flex", alignItems:"flex-end", justifyContent:"center" }}
+            onClick={() => setSelectedNotif(null)}>
+            <div style={{ width:"100%", maxWidth:480, background:"#fff", borderTopLeftRadius:28, borderTopRightRadius:28, boxShadow:"0 -20px 60px rgba(0,0,0,0.2)", display:"flex", flexDirection:"column", overflow:"hidden", maxHeight:"88vh" }}
+              onClick={e => e.stopPropagation()}>
+
+              {/* Drag handle */}
+              <div style={{ display:"flex", justifyContent:"center", paddingTop:12, paddingBottom:4, flexShrink:0 }}>
+                <div style={{ width:36, height:4, borderRadius:2, background:"#e0e0e0" }}/>
+              </div>
+
+              {/* Header */}
+              <div style={{ padding:"12px 20px 16px", borderBottom:"1px solid #f0f0f0", display:"flex", alignItems:"center", gap:12, flexShrink:0 }}>
+                <div style={{ width:44, height:44, borderRadius:14, background: isClassType ? "#0f2d1f18" : "#f4f4f4", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0 }}>
+                  {icon}
+                </div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <p style={{ margin:0, fontSize:11, fontWeight:700, color:"#aaa", textTransform:"uppercase", letterSpacing:"0.6px" }}>
+                    {selectedNotif.type?.replace(/_/g," ") || "Notification"}
+                  </p>
+                  <p style={{ margin:"1px 0 0", fontSize:12, color:"#bbb", fontVariantNumeric:"tabular-nums" }}>
+                    {new Date(selectedNotif.created_at).toLocaleDateString("en-US", { weekday:"short", month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}
+                  </p>
+                </div>
+                <button onClick={() => setSelectedNotif(null)}
+                  style={{ width:32, height:32, borderRadius:10, background:"#f4f4f4", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"#888", fontSize:16, flexShrink:0 }}>
+                  ✕
+                </button>
+              </div>
+
+              {/* Body */}
+              <div style={{ flex:1, overflowY:"auto", padding:"20px" }}>
+
+                {/* English block */}
+                {langs.en && (
+                  <div style={{ marginBottom: langs.ar ? 12 : 0 }}>
+                    <p style={{ margin:"0 0 8px", fontSize:10, fontWeight:800, color:"#aaa", textTransform:"uppercase", letterSpacing:"0.8px" }}>English</p>
+                    <p style={{ margin:"0 0 6px", fontSize:17, fontWeight:800, color:"#111", lineHeight:1.3, letterSpacing:"-0.4px" }}>
+                      {langs.en.title}
+                    </p>
+                    <p style={{ margin:0, fontSize:13.5, color:"#555", lineHeight:1.65, whiteSpace:"pre-wrap" }}>
+                      {langs.en.message}
+                    </p>
+                  </div>
+                )}
+
+                {/* Divider between languages */}
+                {langs.en && langs.ar && (
+                  <div style={{ height:1, background:"#f0f0f0", margin:"16px 0" }}/>
+                )}
+
+                {/* Arabic block */}
+                {langs.ar && (
+                  <div dir="rtl">
+                    <p style={{ margin:"0 0 8px", fontSize:10, fontWeight:800, color:"#c9a84c", textTransform:"uppercase", letterSpacing:"0.8px", direction:"ltr" }}>عربي</p>
+                    <p style={{ margin:"0 0 6px", fontSize:17, fontWeight:800, color:"#111", lineHeight:1.4, fontFamily:"serif", letterSpacing:"0px" }}>
+                      {langs.ar.title}
+                    </p>
+                    <p style={{ margin:0, fontSize:13.5, color:"#555", lineHeight:1.9, fontFamily:"serif", whiteSpace:"pre-wrap" }}>
+                      {langs.ar.message}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div style={{ padding:"14px 20px 28px", borderTop:"1px solid #f4f4f4", background:"#fff", flexShrink:0, display:"flex", flexDirection:"column", gap:8 }}>
+                {(isClassType || subjectIdFromLink) && (
+                  <button onClick={handleJoinFromNotif}
+                    style={{ width:"100%", padding:"14px", borderRadius:16, border:"none", background:"linear-gradient(135deg,#0f2d1f,#1a4a2e)", color:"#fff", fontSize:14, fontWeight:800, cursor:"pointer", letterSpacing:"-0.2px" }}>
+                    📚 Join Class Now
+                  </button>
+                )}
+                {isPayment && selectedNotif.link?.startsWith("/") && (
+                  <button onClick={() => { setSelectedNotif(null); setShowNotifPanel(false); navigate(selectedNotif.link); }}
+                    style={{ width:"100%", padding:"14px", borderRadius:16, border:"none", background:"linear-gradient(135deg,#c0392b,#e74c3c)", color:"#fff", fontSize:14, fontWeight:800, cursor:"pointer" }}>
+                    💳 Pay Now
+                  </button>
+                )}
+                {!isClassType && !isPayment && !subjectIdFromLink && selectedNotif.link?.startsWith("/") && (
+                  <button onClick={() => { setSelectedNotif(null); setShowNotifPanel(false); navigate(selectedNotif.link.split("#")[0]); }}
+                    style={{ width:"100%", padding:"14px", borderRadius:16, border:"none", background:"linear-gradient(135deg,#0f2d1f,#1a4a2e)", color:"#fff", fontSize:14, fontWeight:800, cursor:"pointer", letterSpacing:"-0.2px" }}>
+                    Go to update →
+                  </button>
+                )}
+                <button onClick={() => setSelectedNotif(null)}
+                  style={{ width:"100%", padding:"13px", borderRadius:16, border:"1.5px solid #e8e8e8", background:"#fafafa", color:"#888", fontSize:13, fontWeight:600, cursor:"pointer" }}>
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+          );
+        })()}
+
+        <main className="flex-1 overflow-auto">
+          {/* ── Payment lock screen for gated routes ── */}
+          {isPaymentLocked && PAYMENT_GATED_ROUTES.has(location.pathname) ? (
+            <PaymentLockScreen />
+          ) : (
+            <Suspense fallback={<PageFallback />}><Outlet /></Suspense>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+};
+
+export default DashboardLayout;

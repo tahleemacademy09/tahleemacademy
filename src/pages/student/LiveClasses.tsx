@@ -1,0 +1,263 @@
+/*
+  src/pages/student/LiveClasses.tsx — Tahleem Academy
+  ─────────────────────────────────────────────────────
+  • ?subject=<id>&autoJoin=true → skips subject list, goes straight to ClassroomView
+  • Minimize/PiP overlay (Google Meet-style) — class stays live while browsing
+  • Students no longer blocked waiting for teacher (ClassLobby handles early join)
+*/
+
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  BookOpen, Video, FileText, ClipboardList, Megaphone,
+  Calendar, ArrowLeft, Users, Clock, X,
+} from "lucide-react";
+import { useLiveClass } from "@/contexts/LiveClassContext";
+import { usePrivateStudent } from "@/hooks/usePrivateStudent";
+import SubjectRecordings from "@/components/classroom/SubjectRecordings";
+import SubjectMaterials from "@/components/classroom/SubjectMaterials";
+import SubjectSyllabus from "@/components/classroom/SubjectSyllabus";
+import SubjectAssignments from "@/components/classroom/SubjectAssignments";
+import SubjectAnnouncements from "@/components/classroom/SubjectAnnouncements";
+
+const G    = "#0f2d1f";
+const GOLD = "#c9a84c";
+
+const LiveClasses = () => {
+  const { t } = useLanguage();
+  const { user, hasRole } = useAuth();
+  const [searchParams] = useSearchParams();
+
+  const [selectedSubject, setSelectedSubject] = useState<any>(null);
+  // Global call context — call persists across ALL navigation
+  const { joinClass, leaveClass, setMinimized, inCall, minimized } = useLiveClass();
+
+  const isPrivileged = hasRole("admin") || hasRole("teacher");
+  const inClass = inCall; // alias for backward compat
+  const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
+
+  // For private students: fetch their assigned subject IDs
+  const { data: privateSubjectIds } = useQuery({
+    queryKey: ["private-subject-ids", user?.id],
+    enabled: isPrivateStudent && !!user?.id,
+    queryFn: async () => {
+      const { data } = await supabase.from("private_student_subjects" as any).select("subject_id").eq("student_id", user!.id);
+      return new Set((data || []).map((r: any) => r.subject_id));
+    },
+  });
+
+  // ── Subjects ────────────────────────────────────────
+  // FIX ("takes a while to show info"): this list rarely changes minute-to-minute,
+  // but with no cache config react-query refetched it (and blanked the screen back
+  // to the loading skeleton) on every single visit to this tab. staleTime keeps the
+  // previously-fetched data on screen instantly while a background refresh happens,
+  // so returning users see their subjects immediately instead of waiting on a
+  // network round trip every time.
+  const { data: allSubjects, isLoading } = useQuery({
+    queryKey: ["active-subjects"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("subjects").select("*").eq("is_active", true).order("title");
+      if (error) throw error;
+      return data;
+    },
+    staleTime: 5 * 60_000,       // treat as fresh for 5 min — no refetch-blank on tab revisit
+    gcTime: 30 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+
+  // Filter: private students (without general access) only see assigned subjects
+  const subjects = isPrivileged || !isPrivateStudent || allowGeneralAccess
+    ? allSubjects
+    : (allSubjects || []).filter((s: any) => (privateSubjectIds ?? new Set()).has(s.id));
+
+  const { data: liveSessions } = useQuery({
+    queryKey: ["live-sessions"],
+    queryFn: async () => {
+      const { data } = await supabase.from("live_sessions").select("*").eq("status", "live");
+      return data || [];
+    },
+    refetchInterval: 5000,
+  });
+
+  // ── Auto-select from ?subject= param ────────────────
+  useEffect(() => {
+    const subjectId = searchParams.get("subject");
+    const autoJoin  = searchParams.get("autoJoin") === "true";
+    if (!subjectId || !subjects?.length) return;
+    const found = subjects.find((s: any) => s.id === subjectId);
+    if (found && !inClass) {
+      setSelectedSubject(found);
+      if (autoJoin) joinClass(found, { autoJoin: true });  // FIX: was setInClass(true) — not defined
+    }
+  }, [subjects, searchParams]);
+
+  // ── Helpers ──────────────────────────────────────────
+  const isSubjectLive = (subjectId: string) =>
+    liveSessions?.some((s: any) => s.subject_id === subjectId);
+
+  const handleJoinClass  = () => { if (selectedSubject) joinClass(selectedSubject, { autoJoin: true }); };
+  const handleLeaveClass = () => { leaveClass(); setSelectedSubject(null); };
+  const handleBack       = () => { setSelectedSubject(null); };
+
+  // ── CLASSROOM is now handled globally by GlobalClassroomOverlay in App.tsx ───
+  // It persists across ALL navigation until the user ends the call.
+
+  // ── SUBJECT VIEW (tabs) ──────────────────────────────
+  if (selectedSubject && !inCall) {
+    return (
+      <div className="p-4 md:p-6 space-y-6 bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-950 dark:to-teal-950 min-h-screen">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button variant="ghost" size="sm" onClick={handleBack}
+            className="text-emerald-700 dark:text-emerald-300">
+            <ArrowLeft className="h-4 w-4 me-2" />
+            {t("Back", "رجوع")}
+          </Button>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-xl font-bold text-emerald-950 dark:text-emerald-50 truncate">
+              {selectedSubject.title}
+            </h2>
+            {selectedSubject.title_ar && (
+              <p className="text-sm text-emerald-700 dark:text-emerald-300 font-arabic" dir="rtl">
+                {selectedSubject.title_ar}
+              </p>
+            )}
+          </div>
+          {isSubjectLive(selectedSubject.id) && (
+            <Badge className="bg-red-500 text-white animate-pulse">
+              <span className="w-1.5 h-1.5 bg-white rounded-full me-1 animate-pulse" />
+              LIVE
+            </Badge>
+          )}
+        </div>
+
+        {/* Join button — always shown */}
+        <Button size="lg" onClick={handleJoinClass}
+          className="w-full gap-2 bg-emerald-700 hover:bg-emerald-800 text-white h-14 text-base font-bold">
+          <Video className="h-5 w-5" />
+          {isSubjectLive(selectedSubject.id)
+            ? t("Join Live Class", "انضم للحصة المباشرة")
+            : t("Enter Classroom", "ادخل الفصل")}
+        </Button>
+
+        <Tabs defaultValue="recordings" className="w-full">
+          <TabsList className="grid w-full grid-cols-5 bg-white/80 dark:bg-emerald-900/30">
+            {[
+              { val: "recordings",    Icon: Video,         en: "Recordings",    ar: "التسجيلات" },
+              { val: "syllabus",      Icon: Calendar,      en: "Syllabus",      ar: "المنهج" },
+              { val: "materials",     Icon: FileText,      en: "Materials",     ar: "المواد" },
+              { val: "assignments",   Icon: ClipboardList, en: "Assignments",   ar: "الواجبات" },
+              { val: "announcements", Icon: Megaphone,     en: "Announcements", ar: "الإعلانات" },
+            ].map(({ val, Icon, en, ar }) => (
+              <TabsTrigger key={val} value={val}
+                className="gap-2 data-[state=active]:bg-white dark:data-[state=active]:bg-emerald-800">
+                <Icon className="h-4 w-4" />
+                <span className="hidden sm:inline">{t(en, ar)}</span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          <TabsContent value="recordings"    className="mt-4"><SubjectRecordings    subjectId={selectedSubject.id} /></TabsContent>
+          <TabsContent value="syllabus"      className="mt-4"><SubjectSyllabus      subjectId={selectedSubject.id} /></TabsContent>
+          <TabsContent value="materials"     className="mt-4"><SubjectMaterials     subjectId={selectedSubject.id} /></TabsContent>
+          <TabsContent value="assignments"   className="mt-4"><SubjectAssignments   subjectId={selectedSubject.id} /></TabsContent>
+          <TabsContent value="announcements" className="mt-4"><SubjectAnnouncements subjectId={selectedSubject.id} /></TabsContent>
+        </Tabs>
+      </div>
+    );
+  }
+
+  // ── SUBJECTS LIST ────────────────────────────────────
+  return (
+    <div className="p-4 md:p-6 space-y-6 bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-950 dark:to-teal-950 min-h-screen">
+      <div className="flex items-center gap-3">
+        <div className="h-12 w-12 rounded-xl bg-emerald-600 flex items-center justify-center">
+          <BookOpen className="h-6 w-6 text-white" />
+        </div>
+        <div>
+          <h1 className="text-3xl font-bold text-emerald-950 dark:text-emerald-50">
+            {t("Live Classes", "الفصول الحية")}
+          </h1>
+          <p className="text-emerald-700 dark:text-emerald-300">
+            {t("Join live sessions and access course materials", "انضم للجلسات الحية واستعرض مواد الدورة")}
+          </p>
+        </div>
+      </div>
+
+      {/* Subjects Grid */}
+      {isLoading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[1, 2, 3].map(i => <Card key={i} className="h-48 animate-pulse bg-emerald-100 dark:bg-emerald-900/30" />)}
+        </div>
+      ) : !subjects?.length ? (
+        <Card className="bg-white/80 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-800">
+          <CardContent className="py-12 text-center">
+            <BookOpen className="h-12 w-12 text-emerald-400 mx-auto mb-3" />
+            <p className="text-emerald-700 dark:text-emerald-300">
+              {t("No subjects available yet", "لا توجد مواد متاحة بعد")}
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {subjects.map((subject: any) => (
+            <Card key={subject.id}
+              className="group cursor-pointer transition-all duration-300 hover:shadow-xl hover:-translate-y-1 bg-white dark:bg-emerald-900/40 border-emerald-200 dark:border-emerald-800 hover:border-emerald-400 dark:hover:border-emerald-600"
+              onClick={() => setSelectedSubject(subject)}>
+              <CardContent className="p-6 space-y-4">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <BookOpen className="h-6 w-6 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-lg text-emerald-950 dark:text-emerald-50">{subject.title}</h3>
+                      {subject.title_ar && (
+                        <p className="text-sm text-emerald-700 dark:text-emerald-300 font-arabic" dir="rtl">
+                          {subject.title_ar}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  {isSubjectLive(subject.id) && (
+                    <Badge className="bg-red-500 text-white animate-pulse">
+                      <span className="w-1.5 h-1.5 bg-white rounded-full me-1 animate-pulse" />
+                      LIVE
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-sm text-emerald-700 dark:text-emerald-300 line-clamp-2">
+                  {subject.description || t("No description", "لا يوجد وصف")}
+                </p>
+                <div className="flex items-center gap-4 text-xs text-emerald-600 dark:text-emerald-400">
+                  <div className="flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    <span>{subject.duration || t("TBD", "يحدد لاحقاً")}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Users className="h-3 w-3" />
+                    <span>{subject.students_count || 0} {t("students", "طلاب")}</span>
+                  </div>
+                </div>
+                <Button variant="outline" size="sm"
+                  className="w-full gap-2 border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-800">
+                  <Video className="h-4 w-4" />
+                  {isSubjectLive(subject.id) ? t("Join Live", "انضم الآن") : t("View Subject", "عرض المادة")}
+                </Button>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default LiveClasses;

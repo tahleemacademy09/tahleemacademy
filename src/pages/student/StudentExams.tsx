@@ -1,0 +1,778 @@
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { usePrivateStudent } from "@/hooks/usePrivateStudent";
+import { useSubjectRegistrationSettings } from "@/hooks/useSubjectRegistrationSettings";
+import { useAcademySettings } from "@/hooks/useAcademySettings";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
+import {
+  Clock, CheckCircle, XCircle, PlayCircle,
+  BookOpen, History, Star,
+  Shield, Zap, Trophy, RotateCcw, Eye, ChevronRight, ClipboardList,
+  Mic, Hourglass, CalendarClock, Users,
+} from "lucide-react";
+
+/* ── Brand tokens ────────────────────────────────────── */
+const G      = "#0f2d1f";
+const GM     = "#1a4731";
+const GOLD   = "#c9a84c";
+const CREAM  = "#faf6ee";
+const BORDER = "rgba(15,45,31,0.1)";
+const TL     = "#7a9e88";
+
+type Tab        = "available" | "completed" | "history";
+type TermFilter = "all" | "first" | "second" | "third";
+type TypeFilter = "all" | "exam" | "test";
+
+/* ── Stable sub-components — defined outside to prevent keyboard dismiss on re-render ── */
+const Chip = ({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) => (
+  <button onClick={onClick} style={{
+    padding:"7px 15px", borderRadius:20, fontSize:12, fontWeight:700,
+    cursor:"pointer", transition:"all .2s",
+    background: active ? G : "#fff",
+    color: active ? "#fff" : G,
+    border: `1.5px solid ${active ? G : BORDER}`,
+    boxShadow: active ? "0 2px 8px rgba(15,45,31,.2)" : "none",
+  }}>{label}</button>
+);
+
+const Empty = ({ msg }: { msg: string }) => (
+  <div style={{ textAlign:"center", padding:"48px 20px", background:"#fff", borderRadius:18, border:`1px dashed ${BORDER}` }}>
+    <div style={{ fontSize:40, marginBottom:12, opacity:.4 }}>📋</div>
+    <p style={{ fontSize:14, color:TL, margin:0 }}>{msg}</p>
+  </div>
+);
+
+interface ExamCardProps {
+  exam: any;
+  attemptCounts: Record<string, number>;
+  pastAttempts: any[];
+  language: string;
+  t: (en: string, ar: string) => string;
+  navigate: (path: string) => void;
+  handleStart: (exam: any) => void;
+  getStatus: (exam: any) => string;
+}
+const ExamCard = ({ exam, attemptCounts, pastAttempts, language, t, navigate, handleStart, getStatus }: ExamCardProps) => {
+
+    const status  = getStatus(exam);
+    const done    = attemptCounts[exam.id] || 0;
+    const max     = exam.max_attempts || 1;
+    const isTest  = (exam.type || "exam") === "test";
+    const isOral  = exam.exam_mode === "oral";
+    const oralSlot  = exam._oralSlot || null;
+    const oralPhase = oralSlot?.status || "bookable"; // bookable | booked | waiting | admitted | in_progress | completed
+    const latest  = pastAttempts.find(a => a.exam_id === exam.id && a.status !== "in_progress");
+    const title   = language === "ar" ? exam.title_ar || exam.title : exam.title;
+
+    /* Live countdown for locked/upcoming exams, and for a booked oral slot —
+       ticks every second while the card is on screen so "Opens in..." /
+       "Starts in..." counts down in real time instead of a static date. */
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+      const wantsTicking =
+        (status === "not_started" && !!exam.start_date) ||
+        (status === "oral_pending" && oralPhase === "booked" && !!oralSlot?.start_at);
+      if (!wantsTicking) return;
+      const iv = setInterval(() => setNow(Date.now()), 1000);
+      return () => clearInterval(iv);
+    }, [status, exam.start_date, oralPhase, oralSlot?.start_at]);
+
+    const formatCountdown = (ms: number): string => {
+      if (ms <= 0) return t("Starting…","يبدأ الآن…");
+      const totalSec = Math.floor(ms / 1000);
+      const days = Math.floor(totalSec / 86400);
+      const hrs  = Math.floor((totalSec % 86400) / 3600);
+      const mins = Math.floor((totalSec % 3600) / 60);
+      const secs = totalSec % 60;
+      const pad  = (n: number) => String(n).padStart(2, "0");
+      if (days > 0) return `${days}${t("d","ي")} ${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
+      return `${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
+    };
+    const msUntilStart     = exam.start_date ? new Date(exam.start_date).getTime() - now : 0;
+    const msUntilOralStart = oralSlot?.start_at ? new Date(oralSlot.start_at).getTime() - now : 0;
+    const canJoinOralWaitingRoom = oralSlot?.start_at ? msUntilOralStart <= 15 * 60 * 1000 : false;
+
+    const SM: Record<string,{icon:string;color:string;bg:string;label:string}> = {
+      available:   { icon:"▶",  color:"#22c55e", bg:"#f0fff4", label:t("Available","متاح") },
+      in_progress: { icon:"⚡", color:"#f59e0b", bg:"#fffbeb", label:t("In Progress","جارٍ") },
+      exhausted:   { icon:"✓",  color:"#6366f1", bg:"#eef2ff", label:t("Completed","مكتمل") },
+      not_started: { icon:"🔒", color:"#9ca3af", bg:"#f9fafb", label:t("Upcoming","قادم") },
+      expired:     { icon:"✗",  color:"#ef4444", bg:"#fff5f5", label:t("Expired","منتهي") },
+    };
+    // Oral exams don't have a written open/close window before completion —
+    // their pre-completion state comes from the student's oral_exam_slots
+    // row instead (booking → scheduled → waiting/admitted → live).
+    const ORAL_SM: Record<string,{icon:string;color:string;bg:string;label:string}> = {
+      bookable:    { icon:"🎙", color:"#c9a84c", bg:"#fffbea", label:t("Book a Session","احجز موعدًا") },
+      booked:      { icon:"📅", color:"#3b82f6", bg:"#eff6ff", label:t("Scheduled","مجدول") },
+      waiting:     { icon:"⏳", color:"#f59e0b", bg:"#fffbeb", label:t("Waiting","بالانتظار") },
+      admitted:    { icon:"👤", color:"#8b5cf6", bg:"#f5f3ff", label:t("Admitted","تم القبول") },
+      in_progress: { icon:"🔴", color:"#dc2626", bg:"#fef2f2", label:t("Live Now","مباشر الآن") },
+    };
+    const sm = (isOral && status === "oral_pending") ? (ORAL_SM[oralPhase] || ORAL_SM.bookable) : (SM[status] || SM.available);
+
+    return (
+      <div style={{
+        background:"#fff", borderRadius:18, overflow:"hidden",
+        border:`1.5px solid ${BORDER}`, boxShadow:"0 2px 12px rgba(15,45,31,.07)",
+        marginBottom:12,
+      }}>
+        <div style={{ height:4, background: isTest ? "linear-gradient(90deg,#f59e0b,#fbbf24)" : `linear-gradient(90deg,${G},${GM})` }}/>
+        <div style={{ padding:"16px 16px 14px" }}>
+
+          {/* Header */}
+          <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:10, marginBottom:10 }}>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:5, flexWrap:"wrap" as const }}>
+                <span style={{
+                  fontSize:10, fontWeight:800, letterSpacing:.8, padding:"3px 9px", borderRadius:10,
+                  background: isTest ? "#fffbeb" : "#f0fff4",
+                  color: isTest ? "#92400e" : "#065f46",
+                  border:`1px solid ${isTest ? "#fde68a" : "#86efac"}`,
+                }}>
+                  {isTest ? t("TEST","تمرين") : t("EXAM","امتحان")}
+                </span>
+                {isOral && (
+                  <span style={{
+                    fontSize:10, fontWeight:800, letterSpacing:.8, padding:"3px 9px", borderRadius:10,
+                    background:"#fdf6e3", color:"#92400e", border:"1px solid #f5d78e",
+                    display:"flex", alignItems:"center", gap:3,
+                  }}>
+                    <Mic style={{width:9,height:9}}/> {t("ORAL","شفوي")}
+                  </span>
+                )}
+                {exam.term && (
+                  <span style={{ fontSize:10, color:TL, fontWeight:600 }}>
+                    {exam.term === "first" ? t("Term 1","ف١") : exam.term === "second" ? t("Term 2","ف٢") : t("Term 3","ف٣")}
+                  </span>
+                )}
+              </div>
+              <h3 style={{ fontSize:15, fontWeight:800, color:G, lineHeight:1.4, margin:0 }}>{title}</h3>
+            </div>
+            <div style={{
+              display:"flex", alignItems:"center", gap:5, padding:"5px 10px", borderRadius:12, flexShrink:0,
+              background:sm.bg, border:`1px solid ${sm.color}33`,
+            }}>
+              <span style={{ fontSize:11 }}>{sm.icon}</span>
+              <span style={{ fontSize:11, fontWeight:700, color:sm.color }}>{sm.label}</span>
+            </div>
+          </div>
+
+          {/* Meta — oral exams are scored live per session rather than by a
+              fixed time limit / attempt count, so their meta row only shows
+              what's actually meaningful (pass mark, plus the live format). */}
+          <div style={{ display:"flex", gap:14, flexWrap:"wrap" as const, marginBottom:12 }}>
+            {(isOral ? [
+              [<Shield style={{width:11,height:11}}/>, `${t("Pass","نجاح")} ${exam.passing_score}%`],
+              [<Users style={{width:11,height:11}}/>, t("Live viva session","جلسة شفوية مباشرة")],
+            ] : [
+              [<Clock style={{width:11,height:11}}/>,  `${exam.time_limit_minutes} ${t("min","دق")}`],
+              [<Shield style={{width:11,height:11}}/>, `${t("Pass","نجاح")} ${exam.passing_score}%`],
+              [<RotateCcw style={{width:11,height:11}}/>, `${done}/${max} ${t("attempts","محاولات")}`],
+              ...(exam.question_count ? [[<BookOpen style={{width:11,height:11}}/>, `${exam.question_count} ${t("Qs","سؤال")}`]] : []),
+            ]).map(([icon, text], i) => (
+              <div key={i} style={{ display:"flex", alignItems:"center", gap:4, fontSize:12, color:TL }}>
+                {icon as React.ReactNode}<span>{text as string}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Dates */}
+          {(exam.start_date || exam.end_date) && (
+            <div style={{ display:"flex", gap:12, marginBottom:12, padding:"8px 10px", background:"#f8fafb", borderRadius:10 }}>
+              {exam.start_date && (
+                <div style={{ fontSize:11, color:TL }}>
+                  <span style={{ fontWeight:700, color:G }}>{t("Opens","يفتح")}: </span>
+                  {new Date(exam.start_date).toLocaleDateString(language==="ar"?"ar-SA":"en-US",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}
+                </div>
+              )}
+              {(exam._extendedUntil || exam.end_date) && (
+                <div style={{ fontSize:11, color:TL }}>
+                  <span style={{ fontWeight:700, color:"#ef4444" }}>{t("Due","آخر")}: </span>
+                  {new Date(exam._extendedUntil || exam.end_date).toLocaleDateString(language==="ar"?"ar-SA":"en-US",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}
+                  {exam._extendedUntil && <span style={{ color:"#16A34A", fontWeight:700 }}> ({t("extended","تمديد")})</span>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Score — hidden until officially released */}
+          {status === "exhausted" && latest?.status === "released" && (
+            <div style={{
+              display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:12, marginBottom:12,
+              background: latest.passed ? "#f0fff4" : "#fff5f5",
+              border:`1px solid ${latest.passed ? "#86efac" : "#fca5a5"}`,
+            }}>
+              {latest.passed
+                ? <CheckCircle style={{width:17,height:17,color:"#22c55e",flexShrink:0}}/>
+                : <XCircle    style={{width:17,height:17,color:"#ef4444",flexShrink:0}}/>}
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:13, fontWeight:800, color:latest.passed ? "#065f46" : "#991b1b" }}>
+                  {Math.round(latest.percentage||0)}% — {latest.passed ? t("Passed","ناجح") : t("Failed","راسب")}
+                </div>
+                <div style={{ fontSize:11, color:TL }}>{latest.score}/{latest.total_points} {t("points","نقطة")}</div>
+              </div>
+            </div>
+          )}
+          {status === "exhausted" && latest?.status === "submitted" && (
+            <div style={{ padding:"9px 12px", borderRadius:10, background:"#fffbeb", border:"1px solid #fde68a", marginBottom:12, fontSize:12, color:"#92400e", fontWeight:600 }}>
+              ⏳ {t("Awaiting grading","بانتظار التصحيح")}
+            </div>
+          )}
+          {status === "exhausted" && latest?.status === "graded" && (
+            <div style={{ padding:"9px 12px", borderRadius:10, background:"#fffbeb", border:"1px solid #fde68a", marginBottom:12, fontSize:12, color:"#92400e", fontWeight:600 }}>
+              🔒 {t("Graded — awaiting release","تم التصحيح — بانتظار الإصدار")}
+            </div>
+          )}
+
+          {/* CTA */}
+          {status === "oral_pending" && oralPhase === "bookable" && (
+            <button onClick={() => navigate("/student/oral-exams")} style={{
+              width:"100%", padding:"13px", borderRadius:13, border:"none", color:"#fff", fontSize:14, fontWeight:800,
+              cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+              background:`linear-gradient(135deg,${GOLD}, #b8923f)`, boxShadow:"0 4px 14px rgba(201,168,76,.35)",
+            }}>
+              <Mic style={{width:16,height:16}}/> {t("Book a Session","احجز موعدًا")}
+            </button>
+          )}
+          {status === "oral_pending" && oralPhase === "booked" && (
+            canJoinOralWaitingRoom ? (
+              <button onClick={() => navigate("/student/oral-exams")} style={{
+                width:"100%", padding:"13px", borderRadius:13, border:"none", color:"#fff", fontSize:14, fontWeight:800,
+                cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+                background:"linear-gradient(135deg,#f59e0b,#d97706)",
+              }}>
+                <Hourglass style={{width:16,height:16}}/> {t("Join Waiting Room","انضم لغرفة الانتظار")}
+              </button>
+            ) : (
+              <div style={{ padding:"11px 14px", borderRadius:12, background:"#eff6ff", border:"1px solid #bfdbfe", textAlign:"center" }}>
+                <div style={{ fontSize:12, color:"#3b82f6", fontWeight:700, marginBottom: oralSlot?.start_at ? 4 : 0 }}>
+                  <CalendarClock style={{width:12,height:12,verticalAlign:-2,marginRight:4}}/>{t("Scheduled — starts in","مجدول — يبدأ خلال")}
+                </div>
+                {oralSlot?.start_at && (
+                  <>
+                    <div style={{ fontSize:18, fontWeight:900, color:G, fontVariantNumeric:"tabular-nums", letterSpacing:.5 }}>
+                      {formatCountdown(msUntilOralStart)}
+                    </div>
+                    <div style={{ fontSize:10, color:TL, marginTop:2 }}>
+                      {new Date(oralSlot.start_at).toLocaleDateString(language==="ar"?"ar-SA":"en-US",{weekday:"short",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}
+                    </div>
+                  </>
+                )}
+              </div>
+            )
+          )}
+          {status === "oral_pending" && (oralPhase === "waiting" || oralPhase === "admitted") && (
+            <button onClick={() => navigate("/student/oral-exams")} style={{
+              width:"100%", padding:"13px", borderRadius:13, border:"none", color:"#fff", fontSize:14, fontWeight:800,
+              cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+              background:"linear-gradient(135deg,#f59e0b,#d97706)",
+            }}>
+              <Hourglass style={{width:16,height:16}}/> {oralPhase === "admitted" ? t(`You're #${oralSlot?.queue_number ?? "—"} — waiting to be called`,"بانتظار دورك") : t("Join Waiting Room","انضم لغرفة الانتظار")}
+            </button>
+          )}
+          {status === "oral_pending" && oralPhase === "in_progress" && (
+            <button onClick={() => navigate("/student/oral-exams")} style={{
+              width:"100%", padding:"13px", borderRadius:13, border:"none", color:"#fff", fontSize:14, fontWeight:800,
+              cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+              background:"linear-gradient(135deg,#dc2626,#b91c1c)",
+            }}>
+              <Mic style={{width:16,height:16}}/> {t("It's your turn — Join Live Room","حان دورك — انضم الآن")}
+            </button>
+          )}
+          {status === "available" && (
+            <button onClick={() => handleStart(exam)} style={{
+              width:"100%", padding:"13px", borderRadius:13, border:"none", color:"#fff", fontSize:14, fontWeight:800,
+              cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+              background:`linear-gradient(135deg,${G},${GM})`, boxShadow:"0 4px 14px rgba(15,45,31,.3)",
+            }}>
+              <PlayCircle style={{width:16,height:16}}/> {isTest ? t("Start Test","بدء التمرين") : t("Start Exam","بدء الامتحان")}
+            </button>
+          )}
+          {status === "in_progress" && (
+            <button onClick={() => handleStart(exam)} style={{
+              width:"100%", padding:"13px", borderRadius:13, border:"none", color:"#fff", fontSize:14, fontWeight:800,
+              cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+              background:"linear-gradient(135deg,#f59e0b,#d97706)",
+            }}>
+              <Zap style={{width:16,height:16}}/> {t("Continue","متابعة")}
+            </button>
+          )}
+          {status === "exhausted" && latest && (
+            <button onClick={() => navigate(`/student/results/${latest.id}`)} style={{
+              width:"100%", padding:"12px", borderRadius:13, cursor:"pointer",
+              background:"#fff", border:`2px solid ${G}`, color:G,
+              fontSize:14, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+            }}>
+              <Eye style={{width:15,height:15}}/> {t("View Results","عرض النتائج")}
+            </button>
+          )}
+          {status === "not_started" && (
+            <div style={{ padding:"11px 14px", borderRadius:12, background:"#f9fafb", border:"1px solid #e5e7eb", textAlign:"center" }}>
+              <div style={{ fontSize:12, color:TL, fontWeight:600, marginBottom: exam.start_date ? 4 : 0 }}>
+                🔒 {t("Opens in","يفتح خلال")}
+              </div>
+              {exam.start_date && (
+                <>
+                  <div style={{ fontSize:18, fontWeight:900, color:G, fontVariantNumeric:"tabular-nums", letterSpacing:.5 }}>
+                    {formatCountdown(msUntilStart)}
+                  </div>
+                  <div style={{ fontSize:10, color:TL, marginTop:2 }}>
+                    {new Date(exam.start_date).toLocaleDateString(language==="ar"?"ar-SA":"en-US",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+          {status === "expired" && (
+            <div style={{ padding:"11px 14px", borderRadius:12, background:"#fff5f5", border:"1px solid #fca5a5", textAlign:"center", fontSize:12, color:"#ef4444", fontWeight:600 }}>
+              ✗ {t("This exam has expired","انتهت صلاحية هذا الامتحان")}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+};
+
+interface HistoryRowProps {
+  attempt: any;
+  language: string;
+  t: (en: string, ar: string) => string;
+  navigate: (path: string) => void;
+}
+const HistoryRow = ({ attempt, language, t, navigate }: HistoryRowProps) => {
+
+    const title  = language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title;
+    const isTest = (attempt.exams?.type || "exam") === "test";
+    // Score is only revealed to the student once results are officially released.
+    const graded = attempt.status === "released";
+    const inProg = attempt.status === "in_progress";
+    return (
+      <div onClick={() => !inProg && navigate(`/student/results/${attempt.id}`)} style={{
+        background:"#fff", borderRadius:14, border:`1px solid ${BORDER}`,
+        padding:"13px 14px", marginBottom:8, cursor: inProg ? "default" : "pointer",
+        display:"flex", alignItems:"center", gap:12,
+        boxShadow:"0 1px 6px rgba(15,45,31,.06)",
+      }}>
+        <div style={{
+          width:38, height:38, borderRadius:10, flexShrink:0,
+          background: graded ? (attempt.passed ? "#f0fff4" : "#fff5f5") : "#f8fafb",
+          display:"flex", alignItems:"center", justifyContent:"center",
+          border:`1.5px solid ${graded ? (attempt.passed ? "#86efac" : "#fca5a5") : BORDER}`,
+        }}>
+          {graded
+            ? (attempt.passed ? <CheckCircle style={{width:16,height:16,color:"#22c55e"}}/> : <XCircle style={{width:16,height:16,color:"#ef4444"}}/>)
+            : attempt.status === "submitted"
+            ? <Clock style={{width:16,height:16,color:"#f59e0b"}}/>
+            : <PlayCircle style={{width:16,height:16,color:"#6366f1"}}/>}
+        </div>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:13, fontWeight:700, color:G, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>
+            {title || t("Unknown exam","امتحان غير معروف")}
+          </div>
+          <div style={{ fontSize:11, color:TL, marginTop:2 }}>
+            {new Date(attempt.created_at).toLocaleDateString(language==="ar"?"ar-SA":"en-US",{month:"short",day:"numeric",year:"numeric"})}
+            <span style={{ marginLeft:8, padding:"1px 7px", borderRadius:8, fontSize:10, fontWeight:700, background: isTest ? "#fffbeb" : "#f0fff4", color: isTest ? "#92400e" : "#065f46" }}>
+              {isTest ? t("Test","تمرين") : t("Exam","امتحان")}
+            </span>
+          </div>
+        </div>
+        <div style={{ textAlign:"right", flexShrink:0 }}>
+          {graded && (
+            <>
+              <div style={{ fontSize:16, fontWeight:900, color: attempt.passed ? "#22c55e" : "#ef4444" }}>{Math.round(attempt.percentage||0)}%</div>
+              <div style={{ fontSize:10, color:TL }}>{attempt.score}/{attempt.total_points}</div>
+            </>
+          )}
+          {attempt.status === "submitted" && <div style={{ fontSize:11, fontWeight:600, color:"#f59e0b" }}>⏳ {t("Pending","قيد التصحيح")}</div>}
+          {attempt.status === "graded" && <div style={{ fontSize:11, fontWeight:600, color:"#f59e0b" }}>🔒 {t("Awaiting release","بانتظار الإصدار")}</div>}
+          {inProg && <div style={{ fontSize:11, fontWeight:600, color:"#6366f1" }}>▶ {t("In Progress","جارٍ")}</div>}
+          {graded && <ChevronRight style={{width:14,height:14,color:TL,marginTop:2}}/>}
+        </div>
+      </div>
+    );
+};
+
+
+const StudentExams = () => {
+  const { t, language } = useLanguage();
+  const { user, hasRole } = useAuth();
+  const { toast }       = useToast();
+  const navigate        = useNavigate();
+  const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
+  const { isEffectivelyOpen: subjectRegistrationOpen } = useSubjectRegistrationSettings();
+  // Admin/teacher-controlled on/off switch, meant for outside actual
+  // test/exam periods. Admins and teachers bypass it — they're the ones
+  // who need in here to manage/grade exams regardless of the toggle.
+  const { isExamsModuleEnabled, settings } = useAcademySettings();
+  const isPrivileged = hasRole("admin") || hasRole("teacher");
+
+  const [assignedExams, setAssignedExams] = useState<any[]>([]);
+  const [pastAttempts,  setPastAttempts]  = useState<any[]>([]);
+  const [attemptCounts, setAttemptCounts] = useState<Record<string, number>>({});
+  const [loading,       setLoading]       = useState(true);
+  const [tab,           setTab]           = useState<Tab>("available");
+  const [termFilter,    setTermFilter]    = useState<TermFilter>("all");
+  // Follow the academy's Current Term setting.
+  useEffect(() => {
+    if (settings.current_term) setTermFilter(settings.current_term as TermFilter);
+  }, [settings.current_term]);
+  const [typeFilter,    setTypeFilter]    = useState<TypeFilter>("all");
+  // Student's own level — used to filter exams by level
+  const [studentLevel,  setStudentLevel]  = useState<string>("");
+
+  useEffect(() => {
+    if (!user) return;
+    load();
+    const iv = setInterval(load, 30000);
+    return () => clearInterval(iv);
+  }, [user]);
+
+  const load = async () => {
+    try {
+      // Fetch student's profile level first
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("level")
+        .eq("user_id", user!.id)
+        .maybeSingle();
+      const myLevel = profile?.level || "";
+      setStudentLevel(myLevel);
+
+      const { data: asn } = await supabase
+        .from("exam_assignments").select("exam_id, extended_until, exams(*)")
+        .eq("user_id", user!.id);
+
+      // Current academic-year session label (e.g. "2026/2027") — pulled from
+      // academic_years.is_current rather than academy_settings.current_academic_year,
+      // which can go stale when the year advances. Used below to keep exams
+      // from a past session (e.g. last session's Term 3) out of the current
+      // exam list even if they're still assigned/published.
+      const { data: currentYearRow } = await supabase
+        .from("academic_years" as any).select("label").eq("is_current", true).maybeSingle();
+      const currentSessionLabel = (currentYearRow as any)?.label as string | undefined;
+
+      // Subject registration gate: only applies to subjects marked "private"
+      // (invite/registration-only). Subjects with visibility "all" are open
+      // to every student, so an exam tied to one should show up whether or
+      // not the student ever explicitly registered for that subject —
+      // matches how the subject itself is gated elsewhere in the app.
+      const subjectIds = Array.from(new Set(
+        (asn || []).map((a: any) => a.exams?.subject_id).filter(Boolean)
+      ));
+      let privateSubjectIds = new Set<string>();
+      if (subjectIds.length > 0) {
+        const { data: subjectRows } = await supabase
+          .from("subjects").select("id, visibility").in("id", subjectIds);
+        privateSubjectIds = new Set(
+          (subjectRows || []).filter((s: any) => s.visibility === "private").map((s: any) => s.id)
+        );
+      }
+      const { data: myRegistrations } = await supabase
+        .from("subject_registrations").select("subject_id").eq("user_id", user!.id);
+      const registeredSubjectIds = new Set((myRegistrations || []).map((r: any) => r.subject_id));
+
+      // Filter: show exam if exam has no level set (all levels) OR matches student's level,
+      // AND (subject isn't private, OR student is registered for that private subject)
+      const seenExamIds = new Set<string>();
+      const list = (asn || [])
+        .map((a: any) => a.exams ? { ...a.exams, _extendedUntil: a.extended_until } : a.exams)
+        .filter((e: any) => {
+          if (!e?.id || seenExamIds.has(e.id)) return false; // de-dupe repeated assignment rows
+          if (!e?.is_published) return false;
+          if (e.is_entrance) return false; // entrance exam is only taken during registration, never a regular exam card
+          if (currentSessionLabel && e.session && e.session !== currentSessionLabel) return false; // exam belongs to a past session (e.g. last session's Term 3) — don't mix with the current session's exams
+          if (e.subject_id && privateSubjectIds.has(e.subject_id) && !registeredSubjectIds.has(e.subject_id)) return false; // private subject, not registered
+          const examLevels = (e.level || "").split(",").map((l: string) => l.trim()).filter(Boolean);
+          if (examLevels.length === 0) { seenExamIds.add(e.id); return true; }          // exam is for all levels
+          if (!myLevel) { seenExamIds.add(e.id); return true; }                         // student has no level, show all
+          if (examLevels.includes(myLevel)) { seenExamIds.add(e.id); return true; }     // match (exam may target multiple levels)
+          return false;
+        });
+      setAssignedExams(list);
+
+      // Attach live question-pool counts (respects section pull tags,
+      // not just a raw row count) since exams has no stored question_count column.
+      const countEntries = await Promise.all(
+        list.map(async (e: any) => {
+          const { data: c } = await supabase.rpc("get_exam_question_pool_count", { _exam_id: e.id });
+          return [e.id, c ?? 0] as const;
+        })
+      );
+      const countMap = Object.fromEntries(countEntries);
+
+      // Oral exams are a separate assignment path from exam_assignments —
+      // they live in their own table with their own audience rule
+      // (oral_assignment_mode): "individual" only ever shows once a slot is
+      // actually allocated to this student, "level" matches the student's
+      // level, "all" is open to everyone. Once an exam clears that check it
+      // shows up right alongside written exams/tests, carrying whichever of
+      // the student's own oral_exam_slots rows is most relevant (in
+      // progress/waiting/admitted first, then a scheduled booking, then a
+      // completed one) so the card can render its live booking/countdown/
+      // join state.
+      const { data: oralExamRows } = await supabase
+        .from("exams").select("*")
+        .eq("exam_mode" as any, "oral").eq("is_published", true);
+      const { data: myOralSlots } = await supabase
+        .from("oral_exam_slots" as any).select("*")
+        .eq("student_id", user!.id).neq("status", "cancelled");
+
+      const slotsByExam: Record<string, any[]> = {};
+      (myOralSlots || []).forEach((s: any) => { (slotsByExam[s.exam_id] ||= []).push(s); });
+      const oralSlotPriority: Record<string, number> = { in_progress: 0, waiting: 1, admitted: 2, booked: 3, completed: 4 };
+
+      const oralList = (oralExamRows || [])
+        .filter((e: any) => {
+          if (e.is_entrance) return false; // entrance exam is only taken during registration, never a regular exam card
+          if (currentSessionLabel && e.session && e.session !== currentSessionLabel) return false; // exam belongs to a past session — don't mix with the current session's exams
+          const mySlots = slotsByExam[e.id] || [];
+          if (mySlots.length > 0) return true; // a slot already exists for me — always show, regardless of mode
+          if (e.oral_assignment_mode === "individual") return false; // no slot has been allocated to me
+          if (e.oral_assignment_mode === "level") return !e.level || !myLevel || e.level === myLevel;
+          return true; // "all" — open to every student to pick an open slot
+        })
+        .map((e: any) => {
+          const mySlots = [...(slotsByExam[e.id] || [])].sort(
+            (a, b) => (oralSlotPriority[a.status] ?? 9) - (oralSlotPriority[b.status] ?? 9)
+          );
+          return { ...e, exam_mode: "oral", _oralSlot: mySlots[0] || null };
+        });
+
+      setAssignedExams([
+        ...list.map((e: any) => ({ ...e, question_count: countMap[e.id] ?? 0 })),
+        ...oralList,
+      ]);
+
+      const { data: att } = await supabase
+        .from("exam_attempts").select("*, exams(title,title_ar,max_attempts,type)")
+        .eq("user_id", user!.id).order("created_at", { ascending: false });
+      setPastAttempts(att || []);
+
+      const counts: Record<string, number> = {};
+      (att || []).forEach((a: any) => { if (a.status !== "in_progress") counts[a.exam_id] = (counts[a.exam_id] || 0) + 1; });
+      setAttemptCounts(counts);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getStatus = (exam: any) => {
+    const max  = exam.max_attempts || 1;
+    const done = attemptCounts[exam.id] || 0;
+    if (pastAttempts.some(a => a.exam_id === exam.id && a.status === "in_progress")) return "in_progress";
+    if (done >= max) return "exhausted";
+    // Oral exams are scored via submit_oral_score() straight into
+    // exam_attempts once the session is graded — so until that attempt row
+    // shows up above, an oral exam's pre-completion state (booking →
+    // scheduled → waiting/admitted → live) is driven entirely by the
+    // student's oral_exam_slots row, not by a written open/close window.
+    if (exam.exam_mode === "oral") return "oral_pending";
+    const now = Date.now();
+    if (exam.start_date && new Date(exam.start_date).getTime() > now) return "not_started";
+    // An admin-set per-student extension (exam_assignments.extended_until)
+    // overrides the exam's own end_date for this student only — lets one
+    // student who missed the general deadline still take it, without
+    // reopening the window for everyone else.
+    const effectiveEnd = exam._extendedUntil || exam.end_date;
+    if (effectiveEnd && new Date(effectiveEnd).getTime() < now) return "expired";
+    return "available";
+  };
+
+  const handleStart = async (exam: any) => {
+    const max  = exam.max_attempts || 1;
+    const done = attemptCounts[exam.id] || 0;
+    if (done >= max) { toast({ title: t("No attempts left","لا محاولات متبقية"), variant:"destructive" }); return; }
+    const now = new Date();
+    const effectiveEnd = exam._extendedUntil || exam.end_date;
+    if (exam.start_date && new Date(exam.start_date) > now) { toast({ title: t("Not started yet","لم يبدأ بعد"), variant:"destructive" }); return; }
+    if (effectiveEnd     && new Date(effectiveEnd)   < now) { toast({ title: t("Expired","منتهي"), variant:"destructive" }); return; }
+    const { data: existing } = await supabase.from("exam_attempts").select("id")
+      .eq("exam_id", exam.id).eq("user_id", user!.id).eq("status","in_progress").maybeSingle();
+    if (existing) { navigate(`/student/exam/${existing.id}`); return; }
+    navigate(`/student/exam-verify/${exam.id}`);
+  };
+
+  const applyFilters = (list: any[]) => list.filter(e => {
+    if (typeFilter !== "all" && (e.type || "exam") !== typeFilter) return false;
+    if (termFilter !== "all" && (e.term || "first") !== termFilter) return false;
+    return true;
+  });
+
+  const available = applyFilters(assignedExams.filter(e => !["exhausted","expired"].includes(getStatus(e))));
+  const completed = applyFilters(assignedExams.filter(e => getStatus(e) === "exhausted"));
+  const counts    = { available: available.length, completed: completed.length, history: pastAttempts.length };
+
+  const totalDone      = assignedExams.filter(e => getStatus(e) === "exhausted").length;
+  // Only released attempts count toward the student's visible average/pass stats.
+  const gradedAttempts = pastAttempts.filter(a => a.status === "released");
+  const avgPct         = gradedAttempts.length ? Math.round(gradedAttempts.reduce((s,a) => s + (a.percentage||0), 0) / gradedAttempts.length) : 0;
+  const passedCount    = gradedAttempts.filter(a => a.passed).length;
+
+
+  if (loading) return (
+    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:CREAM }}>
+      <div style={{ textAlign:"center" }}>
+        <div style={{ width:44,height:44,border:`4px solid ${G}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin .8s linear infinite",margin:"0 auto 14px" }}/>
+        <p style={{ color:TL, fontSize:14 }}>{t("Loading…","جارٍ التحميل…")}</p>
+      </div>
+      <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
+    </div>
+  );
+
+  if (!isPrivileged && !isExamsModuleEnabled) return (
+    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:CREAM, padding:24 }}>
+      <div style={{ textAlign:"center", maxWidth:360 }}>
+        <ClipboardList style={{ width:40, height:40, color:"#9ca3af", margin:"0 auto 14px" }} />
+        <h2 style={{ fontSize:17, fontWeight:800, color:G, margin:"0 0 8px" }}>{t("Exams Not Available","الاختبارات غير متاحة")}</h2>
+        <p style={{ fontSize:13, color:TL, lineHeight:1.6 }}>
+          {language === "ar"
+            ? (settings.exams_module_message_ar || "الاختبارات غير متاحة حالياً.")
+            : (settings.exams_module_message || "Exams aren't available right now.")}
+        </p>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ background:CREAM, minHeight:"100vh", fontFamily:"'Cairo',sans-serif" }}>
+      <style>{"@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=Playfair+Display:wght@700&display=swap');"}</style>
+      <div style={{ maxWidth:680, margin:"0 auto", padding:"20px 16px 48px" }}>
+
+        {/* Self-registration entry point — private students only get teacher-assigned exams */}
+        {!isPrivateStudent && subjectRegistrationOpen && (
+          <button onClick={() => navigate("/student/exams/register")} style={{
+            width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            padding: "12px", borderRadius: 14, border: `1.5px dashed ${BORDER}`, background: "#fff",
+            color: G, fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 16,
+          }}>
+            <PlayCircle style={{ width: 15, height: 15 }} /> {t("Register for more tests & exams","سجّل لمزيد من الاختبارات والامتحانات")}
+          </button>
+        )}
+
+        {/* Private student notice */}
+        {isPrivateStudent && (
+          <div style={{ background: "#FDF4FF", border: "1.5px solid #D8B4FE", borderRadius: 16, padding: "14px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 22, flexShrink: 0 }}>🔒</span>
+            <div>
+              <p style={{ fontSize: 13, fontWeight: 800, color: "#7C3AED", margin: "0 0 2px" }}>Private Student — Assigned Exams Only</p>
+              <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Only exams and tests your teacher has assigned directly to you are shown below.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Hero */}
+        <div style={{
+          background:`linear-gradient(135deg,${G} 0%,${GM} 100%)`,
+          borderRadius:22, padding:"24px 22px 20px", marginBottom:20,
+          boxShadow:"0 8px 32px rgba(15,45,31,.25)", position:"relative", overflow:"hidden",
+        }}>
+          <div style={{ position:"absolute",top:-40,right:-40,width:140,height:140,borderRadius:"50%",background:"rgba(255,255,255,.03)",pointerEvents:"none"}}/>
+          <div style={{ position:"relative", zIndex:1 }}>
+            <p style={{ fontSize:11,color:"rgba(255,255,255,.6)",fontWeight:700,letterSpacing:1,textTransform:"uppercase" as const,margin:"0 0 6px" }}>
+              {t("My Learning","تعلمي")}
+            </p>
+            <h1 style={{ fontFamily:"'Playfair Display',serif",fontSize:26,fontWeight:700,color:"#fff",margin:"0 0 10px",lineHeight:1.3 }}>
+              {t("Exams & Tests","الامتحانات والتمرينات")}
+            </h1>
+            {/* Only shown once the student actually has an oral exam assigned/
+                available to them below — no point linking to an empty oral
+                exams page. */}
+            {assignedExams.some(e => e.exam_mode === "oral") && (
+              <button onClick={() => navigate("/student/oral-exams")} style={{
+                background:"rgba(255,255,255,.12)", border:"1px solid rgba(255,255,255,.3)", color:"#fff",
+                borderRadius:20, padding:"6px 14px", fontSize:12, fontWeight:700, cursor:"pointer", marginBottom:14,
+              }}>
+                {t("Live Oral Exams →","الامتحانات الشفوية المباشرة ←")}
+              </button>
+            )}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
+              {[
+                [<BookOpen style={{width:13,height:13}}/>, String(assignedExams.length), t("Total","إجمالي")],
+                [<CheckCircle style={{width:13,height:13}}/>, String(totalDone), t("Done","منجز")],
+                [<Trophy style={{width:13,height:13}}/>, String(passedCount), t("Passed","ناجح")],
+                [<Star style={{width:13,height:13}}/>, gradedAttempts.length ? `${avgPct}%` : "—", t("Avg","معدل")],
+              ].map(([icon, val, lbl], i) => (
+                <div key={i} style={{ textAlign:"center",background:"rgba(255,255,255,.1)",borderRadius:12,padding:"10px 4px" }}>
+                  <div style={{ display:"flex",justifyContent:"center",color:"rgba(255,255,255,.6)",marginBottom:3 }}>{icon as React.ReactNode}</div>
+                  <div style={{ fontSize:18,fontWeight:900,color:"#fff",lineHeight:1 }}>{val as string}</div>
+                  <div style={{ fontSize:9,color:"rgba(255,255,255,.5)",fontWeight:600,marginTop:2 }}>{lbl as string}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div style={{ marginBottom:16 }}>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" as const, marginBottom:9 }}>
+            {([["all",t("All","الكل")],["exam",t("Exams","امتحانات")],["test",t("Tests","تمرينات")]] as [TypeFilter,string][]).map(([v,l]) => (
+              <Chip key={v} active={typeFilter===v} onClick={()=>setTypeFilter(v)} label={l}/>
+            ))}
+          </div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" as const }}>
+            {([["all",t("All Terms","كل الفصول")],["first",t("Term 1","الفصل 1")],["second",t("Term 2","الفصل 2")],["third",t("Term 3","الفصل 3")]] as [TermFilter,string][]).map(([v,l]) => (
+              <Chip key={v} active={termFilter===v} onClick={()=>setTermFilter(v)} label={l}/>
+            ))}
+          </div>
+        </div>
+
+        {/* Tab bar */}
+        <div style={{
+          display:"grid", gridTemplateColumns:"1fr 1fr 1fr",
+          background:"#fff", borderRadius:16, padding:4, gap:4,
+          border:`1px solid ${BORDER}`, marginBottom:18,
+          boxShadow:"0 2px 8px rgba(15,45,31,.06)",
+        }}>
+          {([
+            ["available", <PlayCircle style={{width:14,height:14}}/>, t("Available","المتاحة"), counts.available],
+            ["completed", <CheckCircle style={{width:14,height:14}}/>, t("Completed","المكتملة"), counts.completed],
+            ["history",   <History style={{width:14,height:14}}/>, t("History","السجل"), counts.history],
+          ] as [Tab,React.ReactNode,string,number][]).map(([key,icon,label,cnt]) => (
+            <button key={key} onClick={() => setTab(key)} style={{
+              display:"flex", flexDirection:"column" as const, alignItems:"center",
+              padding:"10px 6px", borderRadius:12, border:"none", cursor:"pointer", transition:"all .2s",
+              background: tab===key ? G : "transparent",
+              color: tab===key ? "#fff" : TL,
+            }}>
+              <div style={{ display:"flex",alignItems:"center",gap:5,marginBottom:2 }}>
+                {icon}
+                {cnt > 0 && (
+                  <span style={{
+                    fontSize:10, fontWeight:900, padding:"1px 6px", borderRadius:8,
+                    background: tab===key ? "rgba(255,255,255,.25)" : `${G}18`,
+                    color: tab===key ? "#fff" : G,
+                  }}>{cnt}</span>
+                )}
+              </div>
+              <span style={{ fontSize:11, fontWeight:700 }}>{label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Content */}
+        {tab === "available" && (
+          available.length === 0
+            ? <Empty msg={t("No available exams at the moment.","لا توجد امتحانات متاحة الآن.")}/>
+            : available.map(e => <ExamCard key={e.id} exam={e} attemptCounts={attemptCounts} pastAttempts={pastAttempts} language={language} t={t} navigate={navigate} handleStart={handleStart} getStatus={getStatus}/>)
+        )}
+        {tab === "completed" && (
+          completed.length === 0
+            ? <Empty msg={t("No completed exams yet.","لا توجد امتحانات مكتملة بعد.")}/>
+            : completed.map(e => <ExamCard key={e.id} exam={e} attemptCounts={attemptCounts} pastAttempts={pastAttempts} language={language} t={t} navigate={navigate} handleStart={handleStart} getStatus={getStatus}/>)
+        )}
+        {tab === "history" && (
+          pastAttempts.length === 0
+            ? <Empty msg={t("No exam history yet.","لا يوجد سجل امتحانات بعد.")}/>
+            : pastAttempts.map(a => <HistoryRow key={a.id} attempt={a} language={language} t={t} navigate={navigate}/>)
+        )}
+
+      </div>
+    </div>
+  );
+};
+
+export default StudentExams;

@@ -1,0 +1,1153 @@
+/* src/pages/admin/ExamLiveMonitor.tsx
+   Live, per-exam monitoring dashboard for admins/teachers:
+   - Real-time roster of everyone assigned to this exam, with live status
+     (not started / online / idle / submitted / graded), progress, and timer.
+   - Violations + proctoring session detail per student (webcam/mic/fullscreen,
+     integrity score, snapshot thumbnails).
+   - Actions: grant extra time, force-submit (auto-graded via RPC), reset an
+     in-progress attempt so the student can restart, save an admin note.
+   - Realtime via Supabase channels on exam_attempts / violations, with a
+     30s poll as a fallback if the socket drops.
+*/
+import { useEffect, useState, useRef, useCallback, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
+import { useParams, useNavigate } from "react-router-dom";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
+import { useToast } from "@/hooks/use-toast";
+import {
+  ArrowLeft, RefreshCw, Clock, Plus, Send, ShieldAlert,
+  Camera, Mic, Maximize, X, StickyNote, RotateCcw, CheckCircle2,
+  AlertTriangle, Wifi, WifiOff, Users, Circle, Video, VideoOff,
+  Volume2, VolumeX, ChevronLeft, ChevronRight,
+} from "lucide-react";
+
+/* ── Live video tile — subscribes to one participant's video AND
+     microphone tracks. Audio always plays muted-by-default (a grid of
+     several students' mics all at once would be an unusable mess); an
+     admin explicitly picks who to listen to via the speaker toggle
+     (or fullscreen), and only that one participant's track is unmuted
+     at a time — driven by the `listening` prop from the parent. ──── */
+const LiveTile = ({ participant, name, Track, onExpand, expanded, style, listening, onToggleListen }: {
+  participant: any; name: string; Track: any; onExpand?: () => void; expanded?: boolean; style?: CSSProperties;
+  listening?: boolean; onToggleListen?: () => void;
+}) => {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [hasVideo, setHasVideo] = useState(false);
+  const [hasAudio, setHasAudio] = useState(false);
+
+  useEffect(() => {
+    const attach = () => {
+      const pub = participant.getTrackPublication?.(Track.Source.Camera) || [...participant.videoTrackPublications.values()]?.[0];
+      const track = pub?.track;
+      if (track && videoRef.current) {
+        track.attach(videoRef.current);
+        setHasVideo(true);
+      } else {
+        setHasVideo(false);
+      }
+
+      const audioPub = participant.getTrackPublication?.(Track.Source.Microphone) || [...participant.audioTrackPublications.values()]?.[0];
+      const audioTrack = audioPub?.track;
+      if (audioTrack && audioRef.current) {
+        audioTrack.attach(audioRef.current);
+        audioRef.current.muted = !listening;
+        audioRef.current.play?.().catch(() => {}); // muted autoplay is always allowed; unmuting happens on a real click below
+        setHasAudio(true);
+      } else {
+        setHasAudio(false);
+      }
+    };
+    attach();
+    participant.on("trackSubscribed", attach);
+    participant.on("trackUnsubscribed", attach);
+    return () => {
+      participant.off("trackSubscribed", attach);
+      participant.off("trackUnsubscribed", attach);
+      try {
+        const pub = participant.getTrackPublication?.(Track.Source.Camera);
+        pub?.track?.detach();
+      } catch (_) {}
+      try {
+        const audioPub = participant.getTrackPublication?.(Track.Source.Microphone);
+        audioPub?.track?.detach();
+      } catch (_) {}
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [participant, Track]);
+
+  // Flip mute on the already-attached element when the admin picks a
+  // different participant to listen to — no need to re-attach the track.
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.muted = !listening;
+  }, [listening]);
+
+  // Resume playback when the tab/app comes back from being backgrounded.
+  // Mobile browsers (especially iOS Safari, and Android Chrome to a lesser
+  // extent) pause <video>/<audio> elements — even muted ones — the moment
+  // the app is minimized, and do NOT automatically resume them when it's
+  // foregrounded again. The WebRTC track is still fine; the DOM element
+  // just needs an explicit .play() nudge, which is exactly what was
+  // missing before (tiles stayed frozen/black after minimizing and
+  // returning even though the underlying connection never dropped).
+  useEffect(() => {
+    const resume = () => {
+      if (document.visibilityState !== "visible") return;
+      videoRef.current?.play?.().catch(() => {});
+      audioRef.current?.play?.().catch(() => {});
+    };
+    document.addEventListener("visibilitychange", resume);
+    window.addEventListener("pageshow", resume);
+    window.addEventListener("focus", resume);
+    return () => {
+      document.removeEventListener("visibilitychange", resume);
+      window.removeEventListener("pageshow", resume);
+      window.removeEventListener("focus", resume);
+    };
+  }, []);
+
+  return (
+    <div
+      onClick={onExpand}
+      style={{
+        position: "relative", borderRadius: 10, overflow: "hidden", background: "#0b1a12",
+        aspectRatio: expanded ? undefined : "4/3", width: expanded ? "100%" : undefined, height: expanded ? "100%" : undefined,
+        cursor: onExpand ? "pointer" : "default",
+        ...style,
+      }}
+    >
+      {/* object-fit: contain (not cover) — a phone's front camera is often
+          portrait/taller than this tile's 4:3 box; "cover" was cropping the
+          top/bottom off (forehead only, chin cut off). "contain" always
+          shows the whole frame, with small letterbox bars if needed, so we
+          never lose part of the student's face. */}
+      <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "contain", display: hasVideo ? "block" : "none" }} />
+      <audio ref={audioRef} autoPlay playsInline muted={!listening} style={{ display: "none" }} />
+      {!hasVideo && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6, color: "rgba(255,255,255,.4)" }}>
+          <VideoOff size={expanded ? 18 : 13} />
+        </div>
+      )}
+      {onToggleListen && hasAudio && (
+        <button
+          onClick={e => { e.stopPropagation(); onToggleListen(); }}
+          title={listening ? "Listening — tap to mute" : "Tap to listen"}
+          style={{
+            position: "absolute", top: expanded ? 14 : 6, right: expanded ? 14 : 6, zIndex: 2,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: listening ? "#22c55e" : "rgba(0,0,0,.55)", border: "none", borderRadius: 8,
+            padding: expanded ? 9 : 5, cursor: "pointer",
+          }}
+        >
+          {listening ? <Volume2 size={expanded ? 16 : 11} color="#fff" /> : <VolumeX size={expanded ? 16 : 11} color="#fff" />}
+        </button>
+      )}
+      {!expanded && style?.width && Number(style.width) < 100 ? null : (
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "linear-gradient(transparent,rgba(0,0,0,.75))", color: "#fff", fontSize: expanded ? 14 : 10, fontWeight: 700, padding: expanded ? "20px 14px 10px" : "12px 8px 5px" }}>
+          {name}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ── LiveKit viewer hook — connects once when the monitor page is open,
+     announces itself via Presence so students' cameras start publishing,
+     and exposes the live participant list + Track class so any row can
+     render its own inline thumbnail (no separate full-page grid). ──── */
+const useLiveKitViewer = (examId: string | undefined) => {
+  const [participants, setParticipants] = useState<any[]>([]);
+  const [Track, setTrack] = useState<any>(null);
+  const [status, setStatus] = useState<"connecting" | "connected" | "error">("connecting");
+  const roomRef = useRef<any>(null);
+  const channelRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!examId) return;
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const connect = async () => {
+      if (cancelled) return;
+      setStatus("connecting");
+      try {
+        const lk = await import("livekit-client");
+        if (cancelled) return;
+        const { Room, RoomEvent, Track: T } = lk;
+        setTrack(() => T);
+
+        // Announce presence FIRST — students are listening for this and
+        // only start publishing once they see an admin actually watching.
+        // A fresh channel + random key is created on every (re)connect —
+        // e.g. a browser refresh — which is fine as long as the room
+        // connect below also succeeds; previously if it didn't, this whole
+        // effect just gave up with no retry, leaving every tile black.
+        const channel = supabase.channel(`exam-proctor-presence-${examId}`, {
+          config: { presence: { key: `admin-${Math.random().toString(36).slice(2, 9)}` } },
+        });
+        await channel.subscribe(async (s: string) => {
+          if (s === "SUBSCRIBED") await channel.track({ role: "admin_watching" });
+        });
+        channelRef.current = channel;
+
+        const { data } = await supabase.functions.invoke("livekit-token", { body: { room_name: `exam-proctor-${examId}` } });
+        if (cancelled) return;
+        if (!data?.token || !data?.url) {
+          setStatus("error");
+          retryTimer = setTimeout(connect, 4000);
+          return;
+        }
+
+        // adaptiveStream pauses a track's actual data delivery based on the
+        // <video> element's on-screen visibility (via IntersectionObserver) —
+        // this saves bandwidth normally, but that visibility signal is
+        // unreliable across app backgrounding on mobile: the element can
+        // come back "visible" and even resume playback locally while the
+        // SFU is still paused sending it data, leaving the tile stuck on a
+        // frozen/black last frame that none of the reconnect logic below
+        // catches (the room itself never disconnects — this is silent).
+        // The admin is always actively watching when this page is open, so
+        // there's no bandwidth case where pausing invisible tracks helps;
+        // disabling it removes this whole failure class.
+        const room = new Room({ adaptiveStream: false, dynacast: true });
+        room.on(RoomEvent.ParticipantConnected, () => setParticipants([...room.remoteParticipants.values()]));
+        room.on(RoomEvent.ParticipantDisconnected, () => setParticipants([...room.remoteParticipants.values()]));
+        room.on(RoomEvent.TrackSubscribed, () => setParticipants([...room.remoteParticipants.values()]));
+        room.on(RoomEvent.TrackUnsubscribed, () => setParticipants([...room.remoteParticipants.values()]));
+        // LiveKit tries its own ICE-restart reconnect first for brief drops
+        // (e.g. the phone's network stalling while the app is backgrounded)
+        // without ever firing Disconnected. Refresh the tile list once it
+        // succeeds so tracks that were re-subscribed under the hood actually
+        // get re-attached to their <video>/<audio> elements.
+        room.on(RoomEvent.Reconnecting, () => setStatus("connecting"));
+        room.on(RoomEvent.Reconnected, () => {
+          setStatus("connected");
+          setParticipants([...room.remoteParticipants.values()]);
+        });
+        // Server-side kicks / network blips used to leave the grid stuck on
+        // its last frame (black) with no way to recover short of a manual
+        // page refresh. Reconnect automatically instead.
+        room.on(RoomEvent.Disconnected, () => {
+          roomRef.current = null;
+          setParticipants([]);
+          if (!cancelled) {
+            setStatus("connecting");
+            retryTimer = setTimeout(connect, 3000);
+          }
+        });
+
+        await room.connect(data.url, data.token);
+        if (cancelled) { room.disconnect(); return; }
+        roomRef.current = room;
+        setParticipants([...room.remoteParticipants.values()]);
+        setStatus("connected");
+      } catch (err) {
+        // Previously silent-failed to "error" with no retry — any transient
+        // issue (slow token round trip, brief network drop) meant the
+        // monitor stayed black until a manual refresh, which then had the
+        // same chance of failing again.
+        console.warn("[live-monitor] connect failed, retrying", err);
+        if (!cancelled) {
+          setStatus("error");
+          retryTimer = setTimeout(connect, 4000);
+        }
+      }
+    };
+
+    connect();
+
+    // Backgrounding the tab throttles the setTimeout retry above (some
+    // mobile browsers delay it for minutes, or indefinitely if the OS
+    // suspends the page). Coming back to the tab is the one moment we know
+    // for sure the admin actually needs the feed working — so if the room
+    // isn't connected at that point, reconnect immediately instead of
+    // waiting on whatever's left of the throttled timer.
+    const kickIfStale = () => {
+      if (document.visibilityState !== "visible") return;
+      const room = roomRef.current;
+      if (!room || room.state === "disconnected") {
+        if (retryTimer) clearTimeout(retryTimer);
+        connect();
+      } else {
+        // Connection is fine — just refresh so tiles re-render against
+        // current track references in case a media element quietly paused.
+        setParticipants([...room.remoteParticipants.values()]);
+      }
+    };
+    document.addEventListener("visibilitychange", kickIfStale);
+    window.addEventListener("focus", kickIfStale);
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      document.removeEventListener("visibilitychange", kickIfStale);
+      window.removeEventListener("focus", kickIfStale);
+      try { roomRef.current?.disconnect(); } catch (_) {}
+      try { channelRef.current?.untrack(); channelRef.current?.unsubscribe(); } catch (_) {}
+    };
+  }, [examId]);
+
+  return { participants, Track, status };
+};
+
+/* ── Full-screen single-student viewer — opened by tapping a student's
+     inline live thumbnail. ───────────────────────────────────────── */
+const LiveFullscreen = ({ participant, name, Track, onClose, listening, onToggleListen }: {
+  participant: any; name: string; Track: any; onClose: () => void; listening?: boolean; onToggleListen?: () => void;
+}) => (
+  <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 110, display: "flex", flexDirection: "column" }}>
+    <button
+      onClick={onClose}
+      style={{
+        position: "absolute", top: 14, left: 14, zIndex: 1, background: "rgba(255,255,255,.12)",
+        border: "none", borderRadius: 10, padding: 8, cursor: "pointer",
+      }}
+    >
+      <X size={18} color="#fff" />
+    </button>
+    <div style={{ flex: 1 }}>
+      <LiveTile participant={participant} name={name} Track={Track} expanded listening={listening} onToggleListen={onToggleListen} />
+    </div>
+  </div>
+);
+
+/* ── Live grid — every currently-publishing student at once, tap a tile
+     to open it fullscreen (via the parent's expandedId state). ────────── */
+const LiveGridModal = ({
+  participants, nameFor, Track, status, onExpand, onClose, listeningId, onToggleListen,
+}: {
+  participants: any[]; nameFor: (id: string) => string; Track: any;
+  status: "connecting" | "connected" | "error"; onExpand: (id: string) => void; onClose: () => void;
+  listeningId?: string | null; onToggleListen?: (id: string) => void;
+}) => (
+  <div style={{ position: "fixed", inset: 0, background: "#0b1a12", zIndex: 100, display: "flex", flexDirection: "column" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,.08)" }}>
+      <button onClick={onClose} style={{ background: "rgba(255,255,255,.12)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer" }}>
+        <X size={16} color="#fff" />
+      </button>
+      <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ef4444", animation: "livePulse 1.4s ease-in-out infinite" }} />
+      <span style={{ fontSize: 13, fontWeight: 900, color: "#fff" }}>Live — {participants.length} {participants.length === 1 ? "student" : "students"}</span>
+      {status !== "connected" && (
+        <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,.5)" }}>
+          {status === "connecting" ? "Connecting…" : "Reconnecting…"}
+        </span>
+      )}
+    </div>
+    <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+      {participants.length === 0 ? (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "rgba(255,255,255,.4)", fontSize: 13, fontWeight: 700, textAlign: "center", padding: 24 }}>
+          {status === "connected"
+            ? "No one is currently publishing video or audio — students only stream while they have an in-progress attempt with this monitor open."
+            : "Connecting to live grid…"}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10 }}>
+          {participants.map((p: any) => (
+            <LiveTile
+              key={p.identity} participant={p} name={nameFor(p.identity)} Track={Track}
+              onExpand={() => onExpand(p.identity)}
+              listening={listeningId === p.identity}
+              onToggleListen={onToggleListen ? () => onToggleListen(p.identity) : undefined}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  </div>
+);
+
+const G = "#0f2d1f", GM = "#1a4731", GOLD = "#c9a84c";
+const CREAM = "#faf6ee", BORDER = "rgba(15,45,31,0.1)", TL = "#7a9e88";
+
+const ONLINE_WINDOW_MS = 45_000; // heartbeat every 15s — 45s = missed 2-3 beats = idle
+
+const sCol = (lvl: string) => ({
+  low:      { bg: "#f0fff4", text: "#065f46", border: "#86efac" },
+  medium:   { bg: "#fffbeb", text: "#92400e", border: "#fde68a" },
+  high:     { bg: "#fff5f5", text: "#991b1b", border: "#fca5a5" },
+  critical: { bg: "#1a0000", text: "#fff",    border: "#dc2626" },
+}[lvl] || { bg: "#f8fafb", text: TL, border: "#e5e7eb" });
+
+const iCol = (score: number) => score >= 80 ? "#22c55e" : score >= 50 ? "#f59e0b" : "#ef4444";
+
+const fmtClock = (sec: number) => {
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(ss)}` : `${pad(m)}:${pad(ss)}`;
+};
+
+const fmtAgo = (iso: string | null, t: (en: string, ar: string) => string) => {
+  if (!iso) return t("never", "أبدًا");
+  const sec = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (sec < 10) return t("just now", "الآن");
+  if (sec < 60) return `${sec}s ${t("ago", "مضت")}`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${t("ago", "مضت")}`;
+  return `${Math.floor(sec / 3600)}h ${t("ago", "مضت")}`;
+};
+
+/* ── Snapshot thumbnail (signed URL, lazy) ─────────────────────── */
+const Thumb = ({ media, onClick }: { media: any; onClick: () => void }) => {
+  const [url, setUrl] = useState<string | null>(null);
+  const [err, setErr] = useState(false);
+  useEffect(() => {
+    storageSupabase.storage.from("proctoring-media").createSignedUrl(media.file_url, 3600)
+      .then(({ data }) => data?.signedUrl ? setUrl(data.signedUrl) : setErr(true))
+      .catch(() => setErr(true));
+  }, [media.file_url]);
+  return (
+    <div onClick={onClick} style={{ position: "relative", borderRadius: 8, overflow: "hidden", aspectRatio: "1", background: "#111", cursor: "pointer", border: `1.5px solid ${BORDER}`, flexShrink: 0, width: 64 }}>
+      {url && !err
+        ? <img src={url} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={() => setErr(true)} />
+        : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#666" }}>
+            {err ? <Camera size={16} /> : <div style={{ width: 14, height: 14, borderRadius: "50%", border: `2px solid ${GOLD}`, borderTopColor: "transparent", animation: "spin .8s linear infinite" }} />}
+          </div>}
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,.65)", color: "#fff", fontSize: 8, padding: "1px 4px", textAlign: "center" }}>
+        {new Date(media.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+      </div>
+    </div>
+  );
+};
+
+type Row = {
+  attempt: any | null;      // exam_attempts row, or null if student never started
+  profile: any;
+  status: "not_started" | "online" | "idle" | "submitted" | "graded";
+  violationCount: number;
+  answeredCount: number;
+};
+
+export default function ExamLiveMonitor() {
+  const { examId } = useParams();
+  const { t, language } = useLanguage();
+  const { toast } = useToast();
+  const navigate = useNavigate();
+
+  const [exam, setExam]           = useState<any>(null);
+  const [rows, setRows]           = useState<Row[]>([]);
+  const [questionCount, setQC]    = useState(0);
+  const [loading, setLoading]     = useState(true);
+  const [connected, setConnected] = useState(false);
+  const [filter, setFilter]       = useState<"all" | "online" | "not_started" | "submitted" | "flagged">("all");
+  const [search, setSearch]       = useState("");
+
+  const [detail, setDetail]         = useState<Row | null>(null);
+  const [detailViolations, setDV]   = useState<any[]>([]);
+  const [detailSession, setDS]      = useState<any>(null);
+  const [detailMedia, setDM]        = useState<any[]>([]);
+  const [detailLoading, setDL]      = useState(false);
+  const [noteDraft, setNoteDraft]   = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+  const [busyId, setBusyId]         = useState<string | null>(null);
+  const [preview, setPreview]       = useState<any>(null);
+  const [previewList, setPreviewList] = useState<any[]>([]);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [expandedId, setExpandedId]   = useState<string | null>(null);
+  const [showLiveGrid, setShowLiveGrid] = useState(false);
+  // Which student's mic (if any) the admin is currently listening to — only
+  // ever one at a time, so a room full of students isn't all talking over
+  // each other in the admin's ears.
+  const [listeningId, setListeningId] = useState<string | null>(null);
+  const toggleListen = (id: string) => setListeningId(cur => cur === id ? null : id);
+  // Expanding a tile fullscreen focuses audio on that student too; closing
+  // drops back to silence rather than leaving an off-screen mic playing.
+  const openFullscreen = (id: string) => { setExpandedId(id); setListeningId(id); };
+  const closeFullscreen = () => { setListeningId(cur => cur === expandedId ? null : cur); setExpandedId(null); };
+
+  const [, forceTick] = useState(0); // re-render every second for live timers
+
+  // Live camera feeds — connects once for the whole page; each row picks its
+  // own thumbnail out of `participants` by matching LiveKit identity (user_id).
+  const { participants: liveParticipants, Track: LKTrack, status: liveStatus } = useLiveKitViewer(examId);
+  const liveParticipantFor = (userId: string) => liveParticipants.find((p: any) => p.identity === userId) || null;
+  const expandedParticipant = expandedId ? liveParticipants.find((p: any) => p.identity === expandedId) : null;
+  const nameForIdentity = (userId: string) => {
+    const r = rowsRef.current.find(rr => rr.profile.user_id === userId);
+    return r ? (language === "ar" ? r.profile.full_name_ar || r.profile.full_name : r.profile.full_name) : userId;
+  };
+  // If the expanded student's camera disconnects, fall back automatically
+  // instead of showing a dead tile.
+  useEffect(() => {
+    if (expandedId && !liveParticipants.some((p: any) => p.identity === expandedId)) {
+      setExpandedId(null);
+      setListeningId(cur => cur === expandedId ? null : cur);
+    }
+  }, [liveParticipants, expandedId]);
+  // Same cleanup for a grid-only listen selection (no fullscreen involved).
+  useEffect(() => {
+    if (listeningId && !liveParticipants.some((p: any) => p.identity === listeningId)) setListeningId(null);
+  }, [liveParticipants, listeningId]);
+
+  const rowsRef = useRef<Row[]>([]);
+  useEffect(() => { rowsRef.current = rows; }, [rows]);
+
+  /* ── Load everything ─────────────────────────────────────────── */
+  const load = useCallback(async () => {
+    if (!examId) return;
+    const { data: e } = await supabase.from("exams").select("*").eq("id", examId).single();
+    setExam(e);
+
+    const { count: qc } = await supabase.from("exam_questions").select("id", { count: "exact", head: true }).eq("exam_id", examId);
+    setQC(qc || 0);
+
+    const { data: assigns } = await supabase.from("exam_assignments").select("user_id").eq("exam_id", examId);
+    const userIds = Array.from(new Set((assigns || []).map((a: any) => a.user_id)));
+    if (userIds.length === 0) { setRows([]); setLoading(false); return; }
+
+    const { data: profiles } = await supabase.from("profiles")
+      .select("user_id, full_name, full_name_ar, level").in("user_id", userIds);
+    const profMap = new Map((profiles || []).map((p: any) => [p.user_id, p]));
+
+    const { data: attempts } = await supabase.from("exam_attempts")
+      .select("*").eq("exam_id", examId).in("user_id", userIds)
+      .order("started_at", { ascending: false });
+    // Latest attempt per student
+    const attemptMap = new Map<string, any>();
+    (attempts || []).forEach((a: any) => { if (!attemptMap.has(a.user_id)) attemptMap.set(a.user_id, a); });
+
+    const attemptIds = Array.from(attemptMap.values()).map((a: any) => a.id);
+    let violCounts = new Map<string, number>();
+    let answerCounts = new Map<string, number>();
+    if (attemptIds.length > 0) {
+      const { data: viols } = await supabase.from("violations").select("attempt_id").in("attempt_id", attemptIds);
+      (viols || []).forEach((v: any) => violCounts.set(v.attempt_id, (violCounts.get(v.attempt_id) || 0) + 1));
+      const { data: answers } = await supabase.from("exam_answers").select("attempt_id, answer_text, answer_data").in("attempt_id", attemptIds);
+      (answers || []).forEach((a: any) => {
+        const hasAnswer = (a.answer_text && a.answer_text.trim()) || (a.answer_data && Object.keys(a.answer_data).length > 0);
+        if (hasAnswer) answerCounts.set(a.attempt_id, (answerCounts.get(a.attempt_id) || 0) + 1);
+      });
+    }
+
+    const newRows: Row[] = userIds.map(uid => {
+      const attempt = attemptMap.get(uid) || null;
+      const profile = profMap.get(uid) || { full_name: "Unknown", full_name_ar: "", level: null };
+      let status: Row["status"] = "not_started";
+      if (attempt) {
+        if (attempt.status === "graded") status = "graded";
+        else if (attempt.status === "submitted") status = "submitted";
+        else if (attempt.status === "in_progress") {
+          const lastAct = attempt.last_activity_at ? new Date(attempt.last_activity_at).getTime() : 0;
+          status = (Date.now() - lastAct) < ONLINE_WINDOW_MS ? "online" : "idle";
+        }
+      }
+      return {
+        attempt, profile, status,
+        violationCount: attempt ? (violCounts.get(attempt.id) || 0) : 0,
+        answeredCount: attempt ? (answerCounts.get(attempt.id) || 0) : 0,
+      };
+    });
+    // Sort: online first, then idle, then not started, then submitted/graded — most actionable on top
+    const order: Record<Row["status"], number> = { online: 0, idle: 1, not_started: 2, submitted: 3, graded: 4 };
+    newRows.sort((a, b) => order[a.status] - order[b.status] || (a.profile.full_name || "").localeCompare(b.profile.full_name || ""));
+    setRows(newRows);
+    setLoading(false);
+  }, [examId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  /* ── Realtime — attempts + violations for this exam ────────────── */
+  useEffect(() => {
+    if (!examId) return;
+    const channel = supabase
+      .channel(`exam-live-monitor-${examId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "exam_attempts", filter: `exam_id=eq.${examId}` }, () => load())
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "violations" }, () => load())
+      .subscribe((status: string) => setConnected(status === "SUBSCRIBED"));
+    // Fallback poll — in case the socket drops silently
+    const iv = setInterval(load, 30000);
+    return () => { supabase.removeChannel(channel); clearInterval(iv); };
+  }, [examId, load]);
+
+  // Tick every second so on-screen timers (elapsed/remaining) count live
+  // without needing a full data reload.
+  useEffect(() => { const iv = setInterval(() => forceTick(x => x + 1), 1000); return () => clearInterval(iv); }, []);
+
+  // Re-derive online/idle status every few seconds from last_activity_at
+  // without a full reload (catches students who went idle mid-view).
+  useEffect(() => {
+    const iv = setInterval(() => {
+      setRows(prev => prev.map(r => {
+        if (!r.attempt || r.attempt.status !== "in_progress") return r;
+        const lastAct = r.attempt.last_activity_at ? new Date(r.attempt.last_activity_at).getTime() : 0;
+        const status: Row["status"] = (Date.now() - lastAct) < ONLINE_WINDOW_MS ? "online" : "idle";
+        return status === r.status ? r : { ...r, status };
+      }));
+    }, 5000);
+    return () => clearInterval(iv);
+  }, []);
+
+  /* ── Detail drawer ──────────────────────────────────────────── */
+  const openDetail = async (row: Row) => {
+    setDetail(row);
+    setNoteDraft(row.attempt?.admin_note || "");
+    if (!row.attempt) { setDV([]); setDS(null); setDM([]); return; }
+    setDL(true);
+    // Face snapshots and screen captures are fetched separately, each with
+    // their own limit — previously one combined query ordered by recency
+    // meant whichever type fires more often (usually screen_capture, on a
+    // shorter interval) crowded the other out of the most-recent-24 window,
+    // so a student with a real camera issue could show a "Snapshots" grid
+    // that was almost entirely screen captures (or vice versa).
+    const [{ data: viols }, { data: sess }, { data: faceMedia }, { data: screenMedia }] = await Promise.all([
+      supabase.from("violations").select("*").eq("attempt_id", row.attempt.id).order("timestamp", { ascending: false }),
+      supabase.from("proctoring_sessions").select("*").eq("attempt_id", row.attempt.id).order("started_at", { ascending: false }).limit(1).maybeSingle(),
+      supabase.from("proctoring_media").select("*").eq("attempt_id", row.attempt.id).in("file_type", ["face_snapshot", "verification_snapshot"]).order("created_at", { ascending: false }).limit(24),
+      supabase.from("proctoring_media").select("*").eq("attempt_id", row.attempt.id).eq("file_type", "screen_capture").order("created_at", { ascending: false }).limit(24),
+    ]);
+    setDV(viols || []); setDS(sess || null);
+    setDM([...(faceMedia || []), ...(screenMedia || [])]);
+    setDL(false);
+  };
+
+  useEffect(() => {
+    if (!preview) { setPreviewUrl(null); return; }
+    storageSupabase.storage.from("proctoring-media").createSignedUrl(preview.file_url, 3600)
+      .then(({ data }) => setPreviewUrl(data?.signedUrl || null));
+  }, [preview]);
+
+  /* ── Actions ────────────────────────────────────────────────── */
+  const grantExtraTime = async (attemptId: string, minutes: number) => {
+    setBusyId(attemptId);
+    const { error } = await supabase.rpc("admin_grant_exam_extra_time", { _attempt_id: attemptId, _minutes: minutes });
+    setBusyId(null);
+    if (error) { toast({ title: "Failed to add time", description: error.message, variant: "destructive" }); return; }
+    toast({ title: `⏱️ +${minutes} min added`, description: t("The student's timer updates live.", "سيتحدث مؤقت الطالب مباشرة.") });
+    load();
+    if (detail?.attempt?.id === attemptId) setDetail(d => d ? { ...d, attempt: { ...d.attempt, extra_time_minutes: (d.attempt.extra_time_minutes || 0) + minutes } } : d);
+  };
+
+  const forceSubmit = async (attemptId: string) => {
+    if (!confirm(t("Force-submit this attempt now? It will be graded with whatever answers are saved so far.", "إنهاء هذه المحاولة الآن؟ سيتم تصحيحها بالإجابات المحفوظة حتى الآن."))) return;
+    setBusyId(attemptId);
+    const { error } = await supabase.rpc("admin_force_submit_exam_attempt", { _attempt_id: attemptId });
+    setBusyId(null);
+    if (error) { toast({ title: "Failed to submit", description: error.message, variant: "destructive" }); return; }
+    toast({ title: "✅ Submitted & graded" });
+    setDetail(null);
+    load();
+  };
+
+  const resetAttempt = async (attemptId: string) => {
+    if (!confirm(t("Delete this in-progress attempt so the student can restart from scratch? Their saved answers will be lost.", "حذف هذه المحاولة الجارية ليبدأ الطالب من جديد؟ ستُفقد إجاباته المحفوظة."))) return;
+    setBusyId(attemptId);
+    await supabase.from("exam_attempts").delete().eq("id", attemptId);
+    setBusyId(null);
+    toast({ title: t("Attempt reset", "تمت إعادة تعيين المحاولة") });
+    setDetail(null);
+    load();
+  };
+
+  const saveNote = async () => {
+    if (!detail?.attempt) return;
+    setSavingNote(true);
+    await supabase.from("exam_attempts").update({ admin_note: noteDraft }).eq("id", detail.attempt.id);
+    setSavingNote(false);
+    toast({ title: t("Note saved", "تم حفظ الملاحظة") });
+    load();
+  };
+
+  /* ── Derived stats ──────────────────────────────────────────── */
+  const stats = {
+    total: rows.length,
+    notStarted: rows.filter(r => r.status === "not_started").length,
+    online: rows.filter(r => r.status === "online").length,
+    idle: rows.filter(r => r.status === "idle").length,
+    submitted: rows.filter(r => r.status === "submitted" || r.status === "graded").length,
+    flagged: rows.filter(r => r.attempt && ["high", "critical"].includes(r.attempt.suspicion_level || "low")).length,
+  };
+
+  const filtered = rows.filter(r => {
+    if (filter === "online" && r.status !== "online" && r.status !== "idle") return false;
+    if (filter === "not_started" && r.status !== "not_started") return false;
+    if (filter === "submitted" && !(r.status === "submitted" || r.status === "graded")) return false;
+    if (filter === "flagged" && !(r.attempt && ["high", "critical"].includes(r.attempt.suspicion_level || "low"))) return false;
+    if (search) {
+      const name = (language === "ar" ? r.profile.full_name_ar || r.profile.full_name : r.profile.full_name || "").toLowerCase();
+      if (!name.includes(search.toLowerCase())) return false;
+    }
+    return true;
+  });
+
+  const statusBadge = (status: Row["status"]) => {
+    const map: Record<Row["status"], { bg: string; text: string; label: string; labelAr: string; dot?: string }> = {
+      not_started: { bg: "#f8fafb", text: TL, label: "Not started", labelAr: "لم يبدأ" },
+      online:      { bg: "#f0fff4", text: "#065f46", label: "Online", labelAr: "متصل", dot: "#22c55e" },
+      idle:        { bg: "#fffbeb", text: "#92400e", label: "Idle", labelAr: "خامل", dot: "#f59e0b" },
+      submitted:   { bg: "#eff6ff", text: "#1d4ed8", label: "Submitted", labelAr: "مُسلّم" },
+      graded:      { bg: "#f0fdf4", text: "#166534", label: "Graded", labelAr: "مُصحّح" },
+    };
+    const m = map[status];
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, fontWeight: 800, padding: "3px 9px", borderRadius: 10, background: m.bg, color: m.text }}>
+        {m.dot && <span style={{ width: 6, height: 6, borderRadius: "50%", background: m.dot, animation: status === "online" ? "livePulse2 1.4s ease-in-out infinite" : "none" }} />}
+        {language === "ar" ? m.labelAr : m.label}
+      </span>
+    );
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: CREAM, fontFamily: "'Cairo',sans-serif", paddingBottom: 40 }}>
+      <style>{`
+        @keyframes spin{to{transform:rotate(360deg)}}
+        @keyframes livePulse{0%,100%{opacity:1}50%{opacity:.3}}
+        @keyframes livePulse2{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.3);opacity:.5}}
+      `}</style>
+
+      {/* Header */}
+      <div style={{ background: `linear-gradient(135deg,${G},${GM})`, padding: "18px 16px 22px", position: "sticky", top: 0, zIndex: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <button onClick={() => navigate(window.location.pathname.startsWith("/teacher") ? "/teacher/exams" : "/admin/exams")} style={{ background: "rgba(255,255,255,.12)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer" }}>
+            <ArrowLeft size={16} color="#fff" />
+          </button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#ef4444", animation: "livePulse 1.4s ease-in-out infinite" }} />
+              <span style={{ fontSize: 10, fontWeight: 900, color: "#ef4444", letterSpacing: 1 }}>LIVE MONITOR</span>
+              {connected
+                ? <Wifi size={12} color="rgba(255,255,255,.6)" />
+                : <WifiOff size={12} color="rgba(255,255,255,.4)" />}
+            </div>
+            <h1 style={{ fontSize: 18, fontWeight: 900, color: "#fff", margin: "2px 0 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {exam ? (language === "ar" ? exam.title_ar || exam.title : exam.title) : "…"}
+            </h1>
+          </div>
+          <button onClick={() => setShowLiveGrid(true)} style={{ display: "flex", alignItems: "center", gap: 5, background: "rgba(255,255,255,.12)", border: "none", borderRadius: 10, padding: "8px 10px", cursor: "pointer" }}>
+            <Video size={14} color="#fff" />
+            <span style={{ fontSize: 11, fontWeight: 800, color: "#fff" }}>Live</span>
+            {liveParticipants.length > 0 && (
+              <span style={{ background: "#ef4444", color: "#fff", fontSize: 9, fontWeight: 900, borderRadius: 8, padding: "1px 5px", minWidth: 14, textAlign: "center" }}>
+                {liveParticipants.length}
+              </span>
+            )}
+          </button>
+          <button onClick={load} style={{ background: "rgba(255,255,255,.12)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer" }}>
+            <RefreshCw size={14} color="#fff" />
+          </button>
+        </div>
+
+        {/* Stats */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 6 }}>
+          {[
+            { icon: <Users size={12} />, val: stats.total, lbl: t("Assigned", "معيّن"), key: "all" as const },
+            { icon: <Circle size={12} />, val: stats.online, lbl: t("Online", "متصل"), key: "online" as const },
+            { icon: <Clock size={12} />, val: stats.notStarted, lbl: t("Not started", "لم يبدأ"), key: "not_started" as const },
+            { icon: <CheckCircle2 size={12} />, val: stats.submitted, lbl: t("Done", "انتهى"), key: "submitted" as const },
+            { icon: <ShieldAlert size={12} />, val: stats.flagged, lbl: t("Flagged", "مُعلّم"), key: "flagged" as const },
+          ].map((s, i) => (
+            <button key={i} onClick={() => setFilter(s.key)} style={{
+              textAlign: "center", borderRadius: 12, padding: "8px 2px", cursor: "pointer", border: "none",
+              background: filter === s.key ? "rgba(255,255,255,.22)" : "rgba(255,255,255,.08)",
+            }}>
+              <div style={{ display: "flex", justifyContent: "center", color: "rgba(255,255,255,.65)", marginBottom: 2 }}>{s.icon}</div>
+              <div style={{ fontSize: 15, fontWeight: 900, color: "#fff", lineHeight: 1 }}>{s.val}</div>
+              <div style={{ fontSize: 8, color: "rgba(255,255,255,.55)", fontWeight: 700, marginTop: 2 }}>{s.lbl}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ padding: "14px 16px" }}>
+        {/* Search */}
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t("Search student…", "ابحث عن طالب…")}
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 12, border: `1.5px solid ${BORDER}`, fontSize: 13, color: G, outline: "none", marginBottom: 12, boxSizing: "border-box" as const, background: "#fff" }} />
+
+        {loading ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+            <div style={{ width: 40, height: 40, border: `4px solid ${G}`, borderTopColor: "transparent", borderRadius: "50%", animation: "spin .8s linear infinite" }} />
+          </div>
+        ) : filtered.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "48px 20px", background: "#fff", borderRadius: 18, border: `1px dashed ${BORDER}` }}>
+            <div style={{ fontSize: 36, marginBottom: 10, opacity: .4 }}>👀</div>
+            <p style={{ fontSize: 13, color: TL, margin: 0 }}>{t("No students match this filter", "لا يوجد طلاب مطابقون")}</p>
+          </div>
+        ) : filtered.map(row => {
+          const a = row.attempt;
+          const name = language === "ar" ? row.profile.full_name_ar || row.profile.full_name : row.profile.full_name;
+          const integ = a ? Math.round(Number(a.integrity_score) || 100) : 100;
+          const sc = sCol(a?.suspicion_level || "low");
+          const timeLimit = ((exam?.time_limit_minutes || 0) + (a?.extra_time_minutes || 0)) * 60;
+          const elapsed = a?.started_at ? Math.floor((Date.now() - new Date(a.started_at).getTime()) / 1000) : 0;
+          const remaining = a && a.status === "in_progress" ? Math.max(0, timeLimit - elapsed) : null;
+          const answered = row.answeredCount, total = questionCount || 1;
+          const liveParticipant = liveParticipantFor(row.profile.user_id);
+
+          return (
+            <div key={a?.id || row.profile.user_id} onClick={() => openDetail(row)}
+              style={{ background: "#fff", borderRadius: 16, marginBottom: 10, border: `1.5px solid ${row.status === "online" ? "#86efac" : BORDER}`, boxShadow: "0 2px 10px rgba(15,45,31,.06)", cursor: "pointer", overflow: "hidden" }}>
+              <div style={{ padding: "12px 14px" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                  <div style={{ width: 38, height: 38, borderRadius: "50%", background: `linear-gradient(135deg,${G},${GM})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 900, color: GOLD, flexShrink: 0 }}>
+                    {(name || "?").charAt(0).toUpperCase()}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" as const, marginBottom: 3 }}>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: G }}>{name}</span>
+                      {statusBadge(row.status)}
+                    </div>
+
+                    {/* Progress bar */}
+                    {a && (a.status === "in_progress") && (
+                      <div style={{ margin: "6px 0" }}>
+                        <div style={{ height: 5, borderRadius: 3, background: "#f0f0f0", overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: `${Math.min(100, (answered / total) * 100)}%`, background: GOLD, transition: "width .3s" }} />
+                        </div>
+                        <div style={{ fontSize: 10, color: TL, marginTop: 3 }}>
+                          {answered}/{questionCount} {t("answered", "مُجاب")} · {t("Q", "س")}{(a.current_question_index || 0) + 1}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Metrics row */}
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" as const, alignItems: "center", marginTop: 4 }}>
+                      {remaining !== null && (
+                        <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, fontWeight: 800, color: remaining < 120 ? "#dc2626" : G, fontVariantNumeric: "tabular-nums" as const }}>
+                          <Clock size={11} /> {fmtClock(remaining)}
+                        </span>
+                      )}
+                      {a && (
+                        <span style={{ fontSize: 10, color: TL }}>
+                          {row.status === "online" || row.status === "idle" ? `${t("seen", "شوهد")} ${fmtAgo(a.last_activity_at, t)}` : null}
+                        </span>
+                      )}
+                      {a && (
+                        <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10 }}>
+                          <span style={{ color: TL }}>Integrity:</span>
+                          <span style={{ fontWeight: 900, color: iCol(integ) }}>{integ}%</span>
+                        </span>
+                      )}
+                      {row.violationCount > 0 && (
+                        <span style={{ padding: "2px 7px", borderRadius: 8, fontSize: 10, fontWeight: 800, background: sc.bg, color: sc.text, border: `1px solid ${sc.border}` }}>
+                          ⚠ {row.violationCount}
+                        </span>
+                      )}
+                      {a?.extra_time_minutes > 0 && (
+                        <span style={{ padding: "2px 7px", borderRadius: 8, fontSize: 10, fontWeight: 700, background: "#fef3c7", color: "#92400e" }}>
+                          +{a.extra_time_minutes}m
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Live camera thumbnail — only rendered for students whose
+                      camera is currently publishing. Tap to go full-screen. */}
+                  {liveParticipant && (
+                    <div onClick={e => e.stopPropagation()} style={{ flexShrink: 0 }}>
+                      <LiveTile
+                        participant={liveParticipant}
+                        name={name}
+                        Track={LKTrack}
+                        onExpand={() => openFullscreen(row.profile.user_id)}
+                        style={{ width: 52, height: 68, borderRadius: 10 }}
+                        listening={listeningId === row.profile.user_id}
+                        onToggleListen={() => toggleListen(row.profile.user_id)}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Quick actions — only when in progress */}
+                {a && a.status === "in_progress" && (
+                  <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" as const }} onClick={e => e.stopPropagation()}>
+                    <button onClick={() => grantExtraTime(a.id, 5)} disabled={busyId === a.id}
+                      style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${BORDER}`, background: "#fff", fontSize: 11, fontWeight: 700, color: G, cursor: "pointer" }}>
+                      <Plus size={11} /> 5{t("m", "د")}
+                    </button>
+                    <button onClick={() => grantExtraTime(a.id, 10)} disabled={busyId === a.id}
+                      style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${BORDER}`, background: "#fff", fontSize: 11, fontWeight: 700, color: G, cursor: "pointer" }}>
+                      <Plus size={11} /> 10{t("m", "د")}
+                    </button>
+                    <button onClick={() => forceSubmit(a.id)} disabled={busyId === a.id}
+                      style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 8, border: "none", background: "#eff6ff", fontSize: 11, fontWeight: 700, color: "#1d4ed8", cursor: "pointer" }}>
+                      <Send size={11} /> {t("Force submit", "إنهاء الآن")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Detail drawer — full-screen mobile sheet, not a floating centered modal */}
+      <Dialog open={!!detail} onOpenChange={o => !o && setDetail(null)}>
+        <DialogContent
+          className="left-0 top-0 translate-x-0 translate-y-0 rounded-none border-0 sm:rounded-none max-w-none w-screen h-[100dvh] max-h-[100dvh] data-[state=open]:slide-in-from-bottom data-[state=closed]:slide-out-to-bottom data-[state=open]:zoom-in-100 data-[state=closed]:zoom-out-100"
+          style={{ overflowY: "auto", fontFamily: "'Cairo',sans-serif", padding: 0 }}
+        >
+          {detail && (() => {
+            const a = detail.attempt;
+            const name = language === "ar" ? detail.profile.full_name_ar || detail.profile.full_name : detail.profile.full_name;
+            return (
+              <div>
+                <DialogHeader style={{ padding: "18px 20px 12px", borderBottom: `1px solid ${BORDER}` }}>
+                  <DialogTitle style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 15, color: G }}>
+                    <div style={{ width: 34, height: 34, borderRadius: "50%", background: `linear-gradient(135deg,${G},${GM})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 900, color: GOLD }}>
+                      {(name || "?").charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <div>{name}</div>
+                      <div style={{ fontSize: 11, fontWeight: 500, color: TL }}>{detail.profile.level || ""}</div>
+                    </div>
+                  </DialogTitle>
+                </DialogHeader>
+
+                <div style={{ padding: "16px 20px" }}>
+                  {!a ? (
+                    <p style={{ fontSize: 13, color: TL, textAlign: "center", padding: "24px 0" }}>{t("This student hasn't started the exam yet.", "لم يبدأ هذا الطالب الامتحان بعد.")}</p>
+                  ) : (
+                    <>
+                      {/* Status + core stats */}
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, marginBottom: 14 }}>
+                        {statusBadge(detail.status)}
+                        <span style={{ fontSize: 11, padding: "3px 9px", borderRadius: 10, background: sCol(a.suspicion_level).bg, color: sCol(a.suspicion_level).text, fontWeight: 700 }}>
+                          {a.suspicion_level || "low"} risk
+                        </span>
+                        <span style={{ fontSize: 11, padding: "3px 9px", borderRadius: 10, background: "#f8fafb", color: TL, fontWeight: 700 }}>
+                          Integrity {Math.round(Number(a.integrity_score) || 100)}%
+                        </span>
+                      </div>
+
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14, fontSize: 12 }}>
+                        <div style={{ background: "#f8fafb", borderRadius: 10, padding: "8px 10px" }}>
+                          <div style={{ color: TL, fontSize: 10 }}>{t("Started", "بدأ")}</div>
+                          <div style={{ fontWeight: 700, color: G }}>{new Date(a.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+                        </div>
+                        <div style={{ background: "#f8fafb", borderRadius: 10, padding: "8px 10px" }}>
+                          <div style={{ color: TL, fontSize: 10 }}>{t("Tab switches", "تبديل التبويب")}</div>
+                          <div style={{ fontWeight: 700, color: (a.tab_switches || 0) > 0 ? "#dc2626" : G }}>{a.tab_switches || 0}</div>
+                        </div>
+                        <div style={{ background: "#f8fafb", borderRadius: 10, padding: "8px 10px" }}>
+                          <div style={{ color: TL, fontSize: 10 }}>{t("Answered", "أُجيب")}</div>
+                          <div style={{ fontWeight: 700, color: G }}>{detail.answeredCount}/{questionCount}</div>
+                        </div>
+                        <div style={{ background: "#f8fafb", borderRadius: 10, padding: "8px 10px" }}>
+                          <div style={{ color: TL, fontSize: 10 }}>{t("Extra time granted", "وقت إضافي")}</div>
+                          <div style={{ fontWeight: 700, color: G }}>{a.extra_time_minutes || 0} min</div>
+                        </div>
+                      </div>
+
+                      {/* No proctoring evidence at all — don't let a "0 violations,
+                          100% integrity" reading pass as clean when there's
+                          literally no camera evidence to back it up. This can
+                          happen if the camera failed silently, or the device
+                          never produced a usable frame the whole session. */}
+                      {exam?.proctoring_enabled && (a.status === "submitted" || a.status === "graded") && detailMedia.length === 0 && (
+                        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "#fff5f5", border: "1.5px solid #fca5a5", borderRadius: 12, padding: "10px 12px", marginBottom: 14 }}>
+                          <AlertTriangle size={14} color="#dc2626" style={{ flexShrink: 0, marginTop: 1 }} />
+                          <div style={{ fontSize: 11.5, color: "#991b1b", fontWeight: 700, lineHeight: 1.5 }}>
+                            {t("No camera images were captured for this attempt", "لم يتم التقاط أي صور كاميرا لهذه المحاولة")} — {t("integrity score above is not verified by any visual evidence.", "درجة النزاهة أعلاه غير مؤكدة بأي دليل مرئي.")}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Proctoring session flags */}
+                      {detailSession && (
+                        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                          {[
+                            { icon: <Camera size={13} />, on: detailSession.webcam_enabled, label: t("Webcam", "الكاميرا") },
+                            { icon: <Mic size={13} />, on: detailSession.microphone_enabled, label: t("Mic", "الميكروفون") },
+                            { icon: <Maximize size={13} />, on: detailSession.fullscreen_active, label: t("Fullscreen", "ملء الشاشة") },
+                          ].map((f, i) => (
+                            <div key={i} style={{ flex: 1, textAlign: "center", background: f.on ? "#f0fff4" : "#fff5f5", borderRadius: 10, padding: "8px 4px" }}>
+                              <div style={{ display: "flex", justifyContent: "center", color: f.on ? "#065f46" : "#991b1b", marginBottom: 2 }}>{f.icon}</div>
+                              <div style={{ fontSize: 9, fontWeight: 700, color: f.on ? "#065f46" : "#991b1b" }}>{f.label}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Actions */}
+                      {a.status === "in_progress" && (
+                        <div style={{ marginBottom: 16 }}>
+                          <div style={{ fontSize: 11, fontWeight: 800, color: TL, marginBottom: 6 }}>{t("Actions", "إجراءات")}</div>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const }}>
+                            <button onClick={() => grantExtraTime(a.id, 5)} disabled={busyId === a.id}
+                              style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 12px", borderRadius: 9, border: `1.5px solid ${BORDER}`, background: "#fff", fontSize: 12, fontWeight: 700, color: G, cursor: "pointer" }}>
+                              <Plus size={12} /> 5 min
+                            </button>
+                            <button onClick={() => grantExtraTime(a.id, 10)} disabled={busyId === a.id}
+                              style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 12px", borderRadius: 9, border: `1.5px solid ${BORDER}`, background: "#fff", fontSize: 12, fontWeight: 700, color: G, cursor: "pointer" }}>
+                              <Plus size={12} /> 10 min
+                            </button>
+                            <button onClick={() => {
+                              const v = prompt(t("Custom minutes to add:", "عدد الدقائق المضافة:"), "15");
+                              const n = v ? parseInt(v, 10) : 0;
+                              if (n) grantExtraTime(a.id, n);
+                            }} disabled={busyId === a.id}
+                              style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 12px", borderRadius: 9, border: `1.5px solid ${BORDER}`, background: "#fff", fontSize: 12, fontWeight: 700, color: G, cursor: "pointer" }}>
+                              <Plus size={12} /> {t("Custom", "مخصص")}
+                            </button>
+                            <button onClick={() => forceSubmit(a.id)} disabled={busyId === a.id}
+                              style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 12px", borderRadius: 9, border: "none", background: "#eff6ff", fontSize: 12, fontWeight: 700, color: "#1d4ed8", cursor: "pointer" }}>
+                              <Send size={12} /> {t("Force submit", "إنهاء الآن")}
+                            </button>
+                            <button onClick={() => resetAttempt(a.id)} disabled={busyId === a.id}
+                              style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 12px", borderRadius: 9, border: "none", background: "#fef2f2", fontSize: 12, fontWeight: 700, color: "#dc2626", cursor: "pointer" }}>
+                              <RotateCcw size={12} /> {t("Reset attempt", "إعادة تعيين")}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Admin note */}
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: TL, marginBottom: 6, display: "flex", alignItems: "center", gap: 4 }}>
+                          <StickyNote size={12} /> {t("Admin note", "ملاحظة إدارية")}
+                        </div>
+                        <textarea value={noteDraft} onChange={e => setNoteDraft(e.target.value)}
+                          placeholder={t("Internal note — not visible to the student…", "ملاحظة داخلية — غير مرئية للطالب…")}
+                          style={{ width: "100%", minHeight: 60, padding: 10, borderRadius: 10, border: `1.5px solid ${BORDER}`, fontSize: 12, fontFamily: "'Cairo',sans-serif", resize: "vertical" as const, boxSizing: "border-box" as const }} />
+                        <button onClick={saveNote} disabled={savingNote}
+                          style={{ marginTop: 6, padding: "6px 14px", borderRadius: 8, border: "none", background: G, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                          {savingNote ? t("Saving…", "جارٍ الحفظ…") : t("Save note", "حفظ")}
+                        </button>
+                      </div>
+
+                      {/* Violations timeline */}
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: TL, marginBottom: 6 }}>
+                          {t("Violations", "المخالفات")} ({detailViolations.length})
+                        </div>
+                        {detailLoading ? (
+                          <div style={{ textAlign: "center", padding: 12 }}><div style={{ width: 20, height: 20, border: `3px solid ${G}`, borderTopColor: "transparent", borderRadius: "50%", animation: "spin .8s linear infinite", display: "inline-block" }} /></div>
+                        ) : detailViolations.length === 0 ? (
+                          <p style={{ fontSize: 12, color: TL, margin: 0 }}>{t("None recorded.", "لا يوجد شيء مسجل.")}</p>
+                        ) : (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 200, overflowY: "auto" }}>
+                            {detailViolations.map((v: any) => (
+                              <div key={v.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, background: "#fff5f5", borderRadius: 8, padding: "6px 10px" }}>
+                                <AlertTriangle size={12} color="#dc2626" style={{ marginTop: 2, flexShrink: 0 }} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 11, fontWeight: 700, color: "#991b1b" }}>{v.violation_type.replace(/_/g, " ")}</div>
+                                  {v.details && <div style={{ fontSize: 10, color: "#7f1d1d" }}>{v.details}</div>}
+                                  <div style={{ fontSize: 9, color: TL }}>{new Date(v.timestamp).toLocaleTimeString()}</div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Media snapshots — face and screen shown as separate
+                          sections so one type never gets buried by the other. */}
+                      {detailMedia.length > 0 && (() => {
+                        const faceItems   = detailMedia.filter((m: any) => m.file_type === "face_snapshot" || m.file_type === "verification_snapshot");
+                        const screenItems = detailMedia.filter((m: any) => m.file_type === "screen_capture");
+                        return (
+                          <>
+                            {faceItems.length > 0 && (
+                              <div style={{ marginBottom: 16 }}>
+                                <div style={{ fontSize: 11, fontWeight: 800, color: TL, marginBottom: 6 }}>
+                                  {t("Face captures", "لقطات الوجه")} ({faceItems.length})
+                                </div>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                  {faceItems.map((m: any) => <Thumb key={m.id} media={m} onClick={() => { setPreviewList(faceItems); setPreview(m); }} />)}
+                                </div>
+                              </div>
+                            )}
+                            {screenItems.length > 0 && (
+                              <div>
+                                <div style={{ fontSize: 11, fontWeight: 800, color: TL, marginBottom: 6 }}>
+                                  {t("Screen captures", "لقطات الشاشة")} ({screenItems.length})
+                                </div>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                  {screenItems.map((m: any) => <Thumb key={m.id} media={m} onClick={() => { setPreviewList(screenItems); setPreview(m); }} />)}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {showLiveGrid && (
+        <LiveGridModal
+          participants={liveParticipants}
+          nameFor={nameForIdentity}
+          Track={LKTrack}
+          status={liveStatus}
+          onExpand={(id) => openFullscreen(id)}
+          onClose={() => setShowLiveGrid(false)}
+          listeningId={listeningId}
+          onToggleListen={toggleListen}
+        />
+      )}
+
+      {expandedParticipant && (
+        <LiveFullscreen
+          participant={expandedParticipant}
+          name={(() => {
+            const r = rows.find(rr => rr.profile.user_id === expandedParticipant.identity);
+            return r ? (language === "ar" ? r.profile.full_name_ar || r.profile.full_name : r.profile.full_name) : expandedParticipant.identity;
+          })()}
+          Track={LKTrack}
+          onClose={closeFullscreen}
+          listening={listeningId === expandedParticipant.identity}
+          onToggleListen={() => toggleListen(expandedParticipant.identity)}
+        />
+      )}
+
+      {/* Snapshot lightbox — rendered via a portal straight into document.body.
+          This page's Dialog (and other overlays) can end up as descendants
+          of an ancestor with a CSS transform, which silently turns any
+          `position: fixed` INSIDE it into "fixed relative to that ancestor"
+          instead of the true viewport — the close button then renders
+          somewhere off in the constrained box instead of the screen's
+          actual top-right corner, and the backdrop doesn't cover the full
+          screen either (exactly what was reported: the dialog's own header
+          content and the thumbnail grid below both stayed visible around
+          the "fixed" overlay). A portal to document.body sidesteps that
+          entirely — nothing above body can be applying a transform.
+          Also added: left/right navigation between images in the same
+          section (face captures or screen captures) the student clicked
+          into, with arrow-key support. */}
+      {preview && createPortal(
+        (() => {
+          const idx = previewList.findIndex((m: any) => m.id === preview.id);
+          const goPrev = () => { if (idx > 0) setPreview(previewList[idx - 1]); };
+          const goNext = () => { if (idx >= 0 && idx < previewList.length - 1) setPreview(previewList[idx + 1]); };
+          return (
+            <div
+              onClick={() => setPreview(null)}
+              onKeyDown={(e) => { if (e.key === "ArrowLeft") goPrev(); if (e.key === "ArrowRight") goNext(); if (e.key === "Escape") setPreview(null); }}
+              tabIndex={-1}
+              ref={(el) => el?.focus()}
+              style={{ position: "fixed", inset: 0, width: "100vw", height: "100dvh", background: "rgba(0,0,0,.9)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, pointerEvents: "auto" }}
+            >
+              <button onClick={(e) => { e.stopPropagation(); setPreview(null); }} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.15)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer", zIndex: 1 }}>
+                <X size={18} color="#fff" />
+              </button>
+              {idx > 0 && (
+                <button onClick={(e) => { e.stopPropagation(); goPrev(); }} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,.15)", border: "none", borderRadius: 10, padding: 10, cursor: "pointer", zIndex: 1 }}>
+                  <ChevronLeft size={22} color="#fff" />
+                </button>
+              )}
+              {idx >= 0 && idx < previewList.length - 1 && (
+                <button onClick={(e) => { e.stopPropagation(); goNext(); }} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,.15)", border: "none", borderRadius: 10, padding: 10, cursor: "pointer", zIndex: 1 }}>
+                  <ChevronRight size={22} color="#fff" />
+                </button>
+              )}
+              {previewUrl ? <img src={previewUrl} style={{ maxWidth: "100%", maxHeight: "85vh", borderRadius: 8 }} /> : <div style={{ width: 40, height: 40, border: "4px solid #fff", borderTopColor: "transparent", borderRadius: "50%", animation: "spin .8s linear infinite" }} />}
+              {previewList.length > 1 && (
+                <div style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", color: "rgba(255,255,255,.7)", fontSize: 12, fontWeight: 600 }}>
+                  {idx + 1} / {previewList.length}
+                </div>
+              )}
+            </div>
+          );
+        })(),
+        document.body
+      )}
+    </div>
+  );
+}

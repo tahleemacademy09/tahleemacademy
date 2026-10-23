@@ -1,0 +1,504 @@
+/*  src/components/classroom/HtmlMaterialEditor.tsx
+    Full-screen editor for HTML ("Interactive") materials — admins & teachers.
+
+    Three modes:
+      • Visual   – WYSIWYG editing (iframe + designMode) with a full toolbar
+      • Code     – raw HTML source
+      • Preview  – runs the page exactly like students will see it (scripts on)
+
+    Visual mode loads the page in a sandbox WITHOUT scripts so teacher edits
+    never execute the page's own JS; every <script>/<style> is preserved in
+    the saved file. Saving uploads a fresh file and repoints the
+    subject_materials row (no storage UPDATE policy needed), then removes the
+    old file best-effort.
+*/
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "@/hooks/use-toast";
+import {
+  X, Save, Loader2, Undo2, Redo2, Bold, Italic, Underline, Strikethrough,
+  AlignLeft, AlignCenter, AlignRight, AlignJustify, List, ListOrdered,
+  Indent, Outdent, Link2, Unlink, Image as ImageIcon, Table2, Minus,
+  Eraser, Subscript, Superscript, Quote, Pilcrow, Eye, Code2, PenLine,
+  Smartphone, Monitor, Trash2, Languages, Palette, Highlighter,
+} from "lucide-react";
+
+const G = "#0f2d1f";
+const GOLD = "#c9a84c";
+const BORDER = "rgba(15,45,31,0.12)";
+const BUCKET = "subject-materials";
+
+const BLANK = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New page</title>
+<style>
+  body { font-family: 'Cairo', system-ui, sans-serif; line-height: 1.8; color: #1f2937; max-width: 820px; margin: 0 auto; padding: 20px; }
+  h1, h2, h3 { color: #0f2d1f; }
+  .ar { font-family: 'Amiri', serif; font-size: 1.3em; direction: rtl; }
+</style>
+</head>
+<body>
+<h1>Title</h1>
+<p>Start writing here…</p>
+</body>
+</html>`;
+
+const FONTS = [
+  ["Default", ""], ["Cairo", "Cairo, sans-serif"], ["Amiri (Arabic)", "Amiri, serif"],
+  ["Noto Naskh Arabic", "'Noto Naskh Arabic', serif"], ["Arial", "Arial, sans-serif"],
+  ["Georgia", "Georgia, serif"], ["Times New Roman", "'Times New Roman', serif"],
+  ["Courier New", "'Courier New', monospace"], ["Verdana", "Verdana, sans-serif"],
+];
+const SIZES = [12, 14, 16, 18, 20, 24, 28, 32, 40, 48];
+const BLOCKS: [string, string][] = [
+  ["Paragraph", "p"], ["Heading 1", "h1"], ["Heading 2", "h2"], ["Heading 3", "h3"],
+  ["Heading 4", "h4"], ["Quote", "blockquote"], ["Code block", "pre"],
+];
+const PALETTE = ["#000000", "#374151", "#DC2626", "#EA580C", "#CA8A04", "#16A34A", "#0f2d1f", "#2563EB", "#9333EA", "#DB2777", "#FFFFFF"];
+const HILITES = ["#FEF08A", "#BBF7D0", "#BFDBFE", "#FBCFE8", "#FED7AA", "#E9D5FF", "transparent"];
+
+const EDIT_STYLE_ID = "__tahleem_edit_style";
+const EDIT_CSS = `
+  table, td, th { outline: 1px dashed rgba(100,116,139,.45); outline-offset: -1px; }
+  img { cursor: pointer; }
+  img.__sel { outline: 3px solid #c9a84c !important; }
+  body { min-height: 80vh; }
+`;
+
+async function resolveMaterialUrl(fileUrl: string): Promise<string> {
+  if (fileUrl.startsWith("http")) return fileUrl;
+  const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrl(fileUrl, 3600);
+  if (signed?.signedUrl) return signed.signedUrl;
+  return supabase.storage.from(BUCKET).getPublicUrl(fileUrl).data.publicUrl;
+}
+
+interface Props {
+  material?: any | null;      // existing row to edit; omit to create a new page
+  subjectId: string;
+  termId?: string | null;
+  onClose: () => void;
+  onSaved: () => void;
+}
+
+type Mode = "visual" | "code" | "preview";
+
+export default function HtmlMaterialEditor({ material, subjectId, termId, onClose, onSaved }: Props) {
+  const { user } = useAuth();
+  const [title, setTitle] = useState<string>(material?.title || "New page");
+  const [html, setHtml] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(!!material);
+  const [loadErr, setLoadErr] = useState("");
+  const [mode, setMode] = useState<Mode>("visual");
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [narrow, setNarrow] = useState(false);
+  const [openPanel, setOpenPanel] = useState<"" | "color" | "hilite" | "table">("");
+  const [tblRows, setTblRows] = useState(3);
+  const [tblCols, setTblCols] = useState(3);
+  const [selImg, setSelImg] = useState<HTMLImageElement | null>(null);
+  const [, force] = useState(0);
+
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const lastRange = useRef<Range | null>(null);
+  const imgInput = useRef<HTMLInputElement>(null);
+  // html captured when entering visual mode — iframe srcDoc must stay stable
+  const [visualSeed, setVisualSeed] = useState("");
+
+  /* ── load existing file ─────────────────────────────────────── */
+  useEffect(() => {
+    if (!material) { setHtml(BLANK); setVisualSeed(BLANK); return; }
+    let off = false;
+    (async () => {
+      try {
+        const url = await resolveMaterialUrl(material.file_url || "");
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const txt = await r.text();
+        if (off) return;
+        setHtml(txt); setVisualSeed(txt); setLoading(false);
+      } catch (e: any) {
+        if (!off) { setLoadErr(e?.message || "Could not load file"); setLoading(false); }
+      }
+    })();
+    return () => { off = true; };
+  }, [material]);
+
+  /* ── iframe helpers ─────────────────────────────────────────── */
+  const getDoc = () => frameRef.current?.contentDocument || null;
+
+  const serialize = useCallback((): string => {
+    const d = getDoc();
+    if (!d) return html;
+    d.getElementById(EDIT_STYLE_ID)?.remove();
+    d.querySelectorAll("img.__sel").forEach(i => i.classList.remove("__sel"));
+    const out = "<!DOCTYPE html>\n" + d.documentElement.outerHTML;
+    // restore helper style so editing continues to look the same
+    const st = d.createElement("style"); st.id = EDIT_STYLE_ID; st.textContent = EDIT_CSS; d.head.appendChild(st);
+    return out;
+  }, [html]);
+
+  const onFrameLoad = () => {
+    const d = getDoc();
+    if (!d) return;
+    d.designMode = "on";
+    try { d.execCommand("styleWithCSS", false, "true"); } catch { /* ignore */ }
+    const st = d.createElement("style"); st.id = EDIT_STYLE_ID; st.textContent = EDIT_CSS; d.head.appendChild(st);
+    d.addEventListener("selectionchange", () => {
+      const s = d.getSelection();
+      if (s && s.rangeCount) lastRange.current = s.getRangeAt(0).cloneRange();
+    });
+    d.addEventListener("input", () => setDirty(true));
+    d.addEventListener("keyup", () => force(n => n + 1));
+    d.addEventListener("click", e => {
+      const t = e.target as HTMLElement;
+      d.querySelectorAll("img.__sel").forEach(i => i.classList.remove("__sel"));
+      if (t?.tagName === "IMG") { t.classList.add("__sel"); setSelImg(t as HTMLImageElement); }
+      else setSelImg(null);
+      // links shouldn't navigate while editing
+      const a = t?.closest?.("a");
+      if (a) e.preventDefault();
+    });
+  };
+
+  const run = (cmd: string, val?: string) => {
+    const d = getDoc(); const w = frameRef.current?.contentWindow;
+    if (!d || !w) return;
+    w.focus();
+    if (lastRange.current) {
+      const s = d.getSelection(); s?.removeAllRanges(); s?.addRange(lastRange.current);
+    }
+    try { d.execCommand(cmd, false, val); } catch { /* ignore */ }
+    setDirty(true);
+    force(n => n + 1);
+  };
+
+  const q = (cmd: string) => { try { return !!getDoc()?.queryCommandState(cmd); } catch { return false; } };
+
+  const insertHtml = (h: string) => run("insertHTML", h);
+
+  const applyFontSize = (px: number) => {
+    const d = getDoc(); if (!d) return;
+    run("fontSize", "7");
+    d.querySelectorAll('font[size="7"]').forEach(f => {
+      const span = d.createElement("span");
+      span.style.fontSize = `${px}px`;
+      span.innerHTML = (f as HTMLElement).innerHTML;
+      f.replaceWith(span);
+    });
+    d.querySelectorAll<HTMLElement>('span[style*="xxx-large"]').forEach(s => { s.style.fontSize = `${px}px`; });
+  };
+
+  const toggleDir = () => {
+    const d = getDoc(); if (!d) return;
+    const r = lastRange.current; if (!r) return;
+    let n: Node | null = r.startContainer;
+    const BLOCK = /^(P|DIV|H[1-6]|LI|BLOCKQUOTE|TD|TH|PRE|BODY|UL|OL)$/;
+    while (n && !(n.nodeType === 1 && BLOCK.test((n as HTMLElement).tagName))) n = n.parentNode;
+    const el = (n as HTMLElement) || d.body;
+    const cur = el.getAttribute("dir") || getComputedStyle(el).direction;
+    el.setAttribute("dir", cur === "rtl" ? "ltr" : "rtl");
+    if (el.getAttribute("dir") === "rtl") el.style.textAlign = "right"; else el.style.textAlign = "left";
+    setDirty(true);
+  };
+
+  const addLink = () => {
+    const url = window.prompt("Link address (https://…)");
+    if (!url) return;
+    run("createLink", url.trim());
+    // open in new tab
+    getDoc()?.querySelectorAll(`a[href="${url.trim()}"]`).forEach(a => a.setAttribute("target", "_blank"));
+  };
+
+  const addImageUrl = () => {
+    const url = window.prompt("Image address (https://…)");
+    if (url) insertHtml(`<img src="${url.trim()}" alt="" style="max-width:100%;height:auto">`);
+  };
+
+  const uploadImage = async (file: File) => {
+    try {
+      const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const path = `materials/${subjectId}/img_${Date.now()}_${safe}`;
+      const { error } = await supabase.storage.from(BUCKET).upload(path, file, { contentType: file.type || "image/png" });
+      if (error) throw error;
+      const url = supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+      insertHtml(`<img src="${url}" alt="" style="max-width:100%;height:auto">`);
+    } catch {
+      // fallback — embed directly in the page
+      const reader = new FileReader();
+      reader.onload = () => insertHtml(`<img src="${reader.result}" alt="" style="max-width:100%;height:auto">`);
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const insertTable = () => {
+    const row = `<tr>${"<td style=\"padding:8px;border:1px solid #cbd5e1\">&nbsp;</td>".repeat(tblCols)}</tr>`;
+    insertHtml(`<table style="border-collapse:collapse;width:100%;margin:10px 0"><tbody>${row.repeat(tblRows)}</tbody></table><p><br></p>`);
+    setOpenPanel("");
+  };
+
+  /* ── mode switching keeps the three views in sync ───────────── */
+  const switchMode = (next: Mode) => {
+    if (next === mode) return;
+    let current = html;
+    if (mode === "visual") current = serialize();
+    setHtml(current);
+    if (next === "visual") setVisualSeed(current);
+    setSelImg(null); setOpenPanel("");
+    setMode(next);
+  };
+
+  /* ── save ───────────────────────────────────────────────────── */
+  const save = async () => {
+    if (!user) return;
+    const finalHtml = mode === "visual" ? serialize() : html;
+    if (!title.trim()) { toast({ title: "Please add a title", variant: "destructive" }); return; }
+    setSaving(true);
+    try {
+      const blob = new Blob([finalHtml], { type: "text/html;charset=utf-8" });
+      const safe = (title.trim().replace(/[^a-zA-Z0-9]+/g, "_").slice(0, 40) || "page");
+      const path = `materials/${subjectId}/${Date.now()}_${safe}.html`;
+      const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, blob, {
+        contentType: "text/html;charset=utf-8", cacheControl: "60", upsert: false,
+      });
+      if (upErr) throw upErr;
+
+      if (material) {
+        const { error } = await supabase.from("subject_materials")
+          .update({ title: title.trim(), file_url: path, file_size: blob.size })
+          .eq("id", material.id);
+        if (error) { await supabase.storage.from(BUCKET).remove([path]); throw error; }
+        if (material.file_url && !material.file_url.startsWith("http")) {
+          await supabase.storage.from(BUCKET).remove([material.file_url]);
+        }
+      } else {
+        const { error } = await supabase.from("subject_materials").insert([{
+          subject_id: subjectId, title: title.trim(), title_ar: null, description: null,
+          material_type: "Document", file_url: path, file_size: blob.size,
+          is_downloadable: false, uploaded_by: user.id, sort_order: 999, term_id: termId ?? null,
+        }]);
+        if (error) { await supabase.storage.from(BUCKET).remove([path]); throw error; }
+      }
+      setHtml(finalHtml); setDirty(false);
+      toast({ title: "✅ Saved" });
+      onSaved();
+    } catch (e: any) {
+      toast({ title: "Save failed", description: e?.message || String(e), variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const close = () => {
+    if (dirty && !window.confirm("You have unsaved changes. Close without saving?")) return;
+    onClose();
+  };
+
+  // warn on tab close while dirty
+  useEffect(() => {
+    const h = (e: BeforeUnloadEvent) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } };
+    window.addEventListener("beforeunload", h);
+    return () => window.removeEventListener("beforeunload", h);
+  }, [dirty]);
+
+  const previewDoc = useMemo(() => (mode === "preview" ? html : ""), [mode, html]);
+
+  /* ── ui bits ────────────────────────────────────────────────── */
+  const Btn = ({ onClick, title: tt, active, children, danger }: any) => (
+    <button type="button" title={tt} aria-label={tt}
+      onMouseDown={e => e.preventDefault()} onClick={onClick}
+      style={{
+        minWidth: 34, height: 34, padding: "0 7px", borderRadius: 8, flexShrink: 0,
+        border: `1px solid ${active ? G : "transparent"}`,
+        background: active ? "rgba(15,45,31,.1)" : "transparent",
+        color: danger ? "#DC2626" : G, cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 12, fontWeight: 700,
+      }}>{children}</button>
+  );
+  const Sep = () => <span style={{ width: 1, height: 22, background: BORDER, flexShrink: 0, margin: "0 3px" }} />;
+  const sel: React.CSSProperties = { height: 34, borderRadius: 8, border: `1px solid ${BORDER}`, background: "#fff", fontSize: 12, padding: "0 6px", flexShrink: 0, color: G };
+  const modeBtn = (m: Mode, label: string, Icon: any) => (
+    <button type="button" onClick={() => switchMode(m)}
+      style={{
+        display: "flex", alignItems: "center", gap: 5, padding: "7px 12px", borderRadius: 9, border: "none",
+        cursor: "pointer", fontSize: 12.5, fontWeight: 700,
+        background: mode === m ? G : "transparent", color: mode === m ? "#fff" : G,
+      }}><Icon size={14} />{label}</button>
+  );
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 90, background: "#f3f4f6", display: "flex", flexDirection: "column", fontFamily: "'Cairo',system-ui,sans-serif" }}>
+      {/* Header */}
+      <div style={{ background: "#fff", borderBottom: `1px solid ${BORDER}`, padding: "8px 10px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <button type="button" onClick={close} aria-label="Close"
+          style={{ width: 34, height: 34, borderRadius: 9, border: "none", background: "#F3F4F6", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <X size={16} />
+        </button>
+        <input value={title} onChange={e => { setTitle(e.target.value); setDirty(true); }} placeholder="Title"
+          style={{ flex: "1 1 140px", minWidth: 0, height: 34, borderRadius: 9, border: `1px solid ${BORDER}`, padding: "0 10px", fontSize: 14, fontWeight: 700, color: G }} />
+        <div style={{ display: "flex", gap: 2, background: "#F3F4F6", borderRadius: 11, padding: 3 }}>
+          {modeBtn("visual", "Edit", PenLine)}
+          {modeBtn("code", "Code", Code2)}
+          {modeBtn("preview", "Preview", Eye)}
+        </div>
+        <button type="button" onClick={save} disabled={saving || loading}
+          style={{ height: 34, padding: "0 16px", borderRadius: 10, border: "none", background: GOLD, color: G, fontWeight: 800, fontSize: 13, cursor: saving ? "default" : "pointer", display: "flex", alignItems: "center", gap: 6, opacity: saving ? .7 : 1 }}>
+          {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save
+        </button>
+      </div>
+
+      {/* Toolbar (visual only) */}
+      {mode === "visual" && !loading && !loadErr && (
+        <div style={{ background: "#fff", borderBottom: `1px solid ${BORDER}`, position: "relative" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 3, padding: "6px 8px", overflowX: "auto" }}>
+            <Btn title="Undo" onClick={() => run("undo")}><Undo2 size={15} /></Btn>
+            <Btn title="Redo" onClick={() => run("redo")}><Redo2 size={15} /></Btn>
+            <Sep />
+            <select style={sel} defaultValue="p" onChange={e => { run("formatBlock", e.target.value); e.target.value = "p"; }} aria-label="Block style">
+              {BLOCKS.map(([l, v]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+            <select style={sel} defaultValue="" onChange={e => { if (e.target.value) run("fontName", e.target.value); e.target.value = ""; }} aria-label="Font">
+              <option value="">Font</option>
+              {FONTS.filter(f => f[1]).map(([l, v]) => <option key={l} value={v}>{l}</option>)}
+            </select>
+            <select style={{ ...sel, width: 62 }} defaultValue="" onChange={e => { if (e.target.value) applyFontSize(+e.target.value); e.target.value = ""; }} aria-label="Size">
+              <option value="">Size</option>
+              {SIZES.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <Sep />
+            <Btn title="Bold" active={q("bold")} onClick={() => run("bold")}><Bold size={15} /></Btn>
+            <Btn title="Italic" active={q("italic")} onClick={() => run("italic")}><Italic size={15} /></Btn>
+            <Btn title="Underline" active={q("underline")} onClick={() => run("underline")}><Underline size={15} /></Btn>
+            <Btn title="Strikethrough" active={q("strikeThrough")} onClick={() => run("strikeThrough")}><Strikethrough size={15} /></Btn>
+            <Btn title="Subscript" onClick={() => run("subscript")}><Subscript size={15} /></Btn>
+            <Btn title="Superscript" onClick={() => run("superscript")}><Superscript size={15} /></Btn>
+            <Sep />
+            <Btn title="Text colour" active={openPanel === "color"} onClick={() => setOpenPanel(openPanel === "color" ? "" : "color")}><Palette size={15} /></Btn>
+            <Btn title="Highlight" active={openPanel === "hilite"} onClick={() => setOpenPanel(openPanel === "hilite" ? "" : "hilite")}><Highlighter size={15} /></Btn>
+            <Sep />
+            <Btn title="Align left" active={q("justifyLeft")} onClick={() => run("justifyLeft")}><AlignLeft size={15} /></Btn>
+            <Btn title="Centre" active={q("justifyCenter")} onClick={() => run("justifyCenter")}><AlignCenter size={15} /></Btn>
+            <Btn title="Align right" active={q("justifyRight")} onClick={() => run("justifyRight")}><AlignRight size={15} /></Btn>
+            <Btn title="Justify" active={q("justifyFull")} onClick={() => run("justifyFull")}><AlignJustify size={15} /></Btn>
+            <Btn title="Right-to-left / Left-to-right (Arabic)" onClick={toggleDir}><Languages size={15} /> RTL</Btn>
+            <Sep />
+            <Btn title="Bullet list" active={q("insertUnorderedList")} onClick={() => run("insertUnorderedList")}><List size={15} /></Btn>
+            <Btn title="Numbered list" active={q("insertOrderedList")} onClick={() => run("insertOrderedList")}><ListOrdered size={15} /></Btn>
+            <Btn title="Indent" onClick={() => run("indent")}><Indent size={15} /></Btn>
+            <Btn title="Outdent" onClick={() => run("outdent")}><Outdent size={15} /></Btn>
+            <Btn title="Quote" onClick={() => run("formatBlock", "blockquote")}><Quote size={15} /></Btn>
+            <Sep />
+            <Btn title="Insert link" onClick={addLink}><Link2 size={15} /></Btn>
+            <Btn title="Remove link" onClick={() => run("unlink")}><Unlink size={15} /></Btn>
+            <Btn title="Image from device" onClick={() => imgInput.current?.click()}><ImageIcon size={15} /></Btn>
+            <Btn title="Image from web address" onClick={addImageUrl}><ImageIcon size={15} /> URL</Btn>
+            <Btn title="Insert table" active={openPanel === "table"} onClick={() => setOpenPanel(openPanel === "table" ? "" : "table")}><Table2 size={15} /></Btn>
+            <Btn title="Horizontal line" onClick={() => run("insertHorizontalRule")}><Minus size={15} /></Btn>
+            <Btn title="New paragraph" onClick={() => run("insertParagraph")}><Pilcrow size={15} /></Btn>
+            <Sep />
+            <Btn title="Clear formatting" onClick={() => { run("removeFormat"); run("formatBlock", "p"); }}><Eraser size={15} /></Btn>
+            <input ref={imgInput} type="file" accept="image/*" style={{ display: "none" }}
+              onChange={e => { const f = e.target.files?.[0]; if (f) uploadImage(f); e.target.value = ""; }} />
+          </div>
+
+          {/* Popover panels */}
+          {openPanel === "color" && (
+            <div style={{ display: "flex", gap: 6, padding: "8px 10px", alignItems: "center", flexWrap: "wrap", borderTop: `1px solid ${BORDER}` }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: G }}>Text colour</span>
+              {PALETTE.map(c => (
+                <button key={c} type="button" aria-label={c} onMouseDown={e => e.preventDefault()}
+                  onClick={() => { run("foreColor", c); setOpenPanel(""); }}
+                  style={{ width: 26, height: 26, borderRadius: 7, background: c, border: "1px solid #cbd5e1", cursor: "pointer" }} />
+              ))}
+              <input type="color" aria-label="Custom colour" onChange={e => run("foreColor", e.target.value)} style={{ width: 34, height: 28, border: "none", background: "none" }} />
+            </div>
+          )}
+          {openPanel === "hilite" && (
+            <div style={{ display: "flex", gap: 6, padding: "8px 10px", alignItems: "center", flexWrap: "wrap", borderTop: `1px solid ${BORDER}` }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: G }}>Highlight</span>
+              {HILITES.map(c => (
+                <button key={c} type="button" aria-label={c} onMouseDown={e => e.preventDefault()}
+                  onClick={() => { run("hiliteColor", c); setOpenPanel(""); }}
+                  style={{ width: 26, height: 26, borderRadius: 7, background: c === "transparent" ? "#fff" : c, border: "1px solid #cbd5e1", cursor: "pointer", fontSize: 11 }}>{c === "transparent" ? "✕" : ""}</button>
+              ))}
+              <input type="color" aria-label="Custom highlight" onChange={e => run("hiliteColor", e.target.value)} style={{ width: 34, height: 28, border: "none", background: "none" }} />
+            </div>
+          )}
+          {openPanel === "table" && (
+            <div style={{ display: "flex", gap: 8, padding: "8px 10px", alignItems: "center", flexWrap: "wrap", borderTop: `1px solid ${BORDER}`, fontSize: 12, color: G }}>
+              Rows <input type="number" min={1} max={30} value={tblRows} onChange={e => setTblRows(Math.max(1, +e.target.value || 1))} style={{ ...sel, width: 56 }} />
+              Columns <input type="number" min={1} max={12} value={tblCols} onChange={e => setTblCols(Math.max(1, +e.target.value || 1))} style={{ ...sel, width: 56 }} />
+              <button type="button" onMouseDown={e => e.preventDefault()} onClick={insertTable}
+                style={{ height: 32, padding: "0 14px", borderRadius: 8, border: "none", background: G, color: "#fff", fontWeight: 700, cursor: "pointer" }}>Insert</button>
+            </div>
+          )}
+          {/* Selected image controls */}
+          {selImg && (
+            <div style={{ display: "flex", gap: 6, padding: "8px 10px", alignItems: "center", flexWrap: "wrap", borderTop: `1px solid ${BORDER}`, background: "#FFFBEB", fontSize: 12, color: G }}>
+              <b>Image</b>
+              {[25, 50, 75, 100].map(w => (
+                <button key={w} type="button" onClick={() => { selImg.style.width = `${w}%`; selImg.style.height = "auto"; setDirty(true); }}
+                  style={{ height: 30, padding: "0 10px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "#fff", cursor: "pointer", fontWeight: 700 }}>{w}%</button>
+              ))}
+              <button type="button" onClick={() => { selImg.style.display = "block"; selImg.style.margin = "8px auto"; setDirty(true); }}
+                style={{ height: 30, padding: "0 10px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "#fff", cursor: "pointer", fontWeight: 700 }}>Centre</button>
+              <button type="button" onClick={() => { const a = window.prompt("Image description (alt text)", selImg.alt || ""); if (a !== null) { selImg.alt = a; setDirty(true); } }}
+                style={{ height: 30, padding: "0 10px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "#fff", cursor: "pointer", fontWeight: 700 }}>Alt text</button>
+              <button type="button" onClick={() => { selImg.remove(); setSelImg(null); setDirty(true); }}
+                style={{ height: 30, padding: "0 10px", borderRadius: 8, border: "1px solid #FEE2E2", background: "#FEF2F2", color: "#DC2626", cursor: "pointer", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><Trash2 size={13} /> Delete</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Body */}
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", padding: mode === "code" ? 0 : 8 }}>
+        {loading && <div style={{ margin: "auto" }}><Loader2 size={28} className="animate-spin" color={GOLD} /></div>}
+        {!loading && loadErr && (
+          <div style={{ margin: "auto", textAlign: "center", color: "#DC2626", fontSize: 14 }}>
+            Could not load this file ({loadErr}).
+            <div><button onClick={onClose} style={{ marginTop: 10, padding: "8px 16px", borderRadius: 9, border: "none", background: G, color: "#fff", cursor: "pointer" }}>Close</button></div>
+          </div>
+        )}
+
+        {!loading && !loadErr && mode === "visual" && (
+          <>
+            <div style={{ alignSelf: "flex-end", marginBottom: 6, display: "flex", gap: 4 }}>
+              <button type="button" onClick={() => setNarrow(false)} title="Desktop width" style={{ ...viewBtn, background: !narrow ? G : "#fff", color: !narrow ? "#fff" : G }}><Monitor size={14} /></button>
+              <button type="button" onClick={() => setNarrow(true)} title="Phone width" style={{ ...viewBtn, background: narrow ? G : "#fff", color: narrow ? "#fff" : G }}><Smartphone size={14} /></button>
+            </div>
+            <iframe
+              ref={frameRef}
+              key={visualSeed.length + ":" + (visualSeed.slice(0, 40))}
+              title="Visual editor"
+              srcDoc={visualSeed}
+              sandbox="allow-same-origin"
+              onLoad={onFrameLoad}
+              style={{ width: narrow ? 390 : "100%", maxWidth: "100%", flex: 1, border: `1px solid ${BORDER}`, borderRadius: 10, background: "#fff" }}
+            />
+          </>
+        )}
+
+        {!loading && !loadErr && mode === "code" && (
+          <textarea
+            value={html} spellCheck={false}
+            onChange={e => { setHtml(e.target.value); setDirty(true); }}
+            style={{ flex: 1, width: "100%", border: "none", outline: "none", resize: "none", padding: 14, fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 13, lineHeight: 1.6, background: "#0b1f16", color: "#d1fae5", direction: "ltr", textAlign: "left", tabSize: 2 }}
+          />
+        )}
+
+        {!loading && !loadErr && mode === "preview" && (
+          <iframe title="Preview" srcDoc={previewDoc}
+            sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+            style={{ width: "100%", flex: 1, border: `1px solid ${BORDER}`, borderRadius: 10, background: "#fff" }} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+const viewBtn: React.CSSProperties = { width: 32, height: 28, borderRadius: 8, border: `1px solid ${BORDER}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" };
