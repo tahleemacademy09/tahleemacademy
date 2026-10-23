@@ -1810,7 +1810,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         const ayahs = pageAyahsRef.current;
         setPhase("page_result");
         setScore(null);
-        ctcResRef.current = null; setCtcRes(null); setCtcErr("");
+        ctcResRef.current = null; setCtcRes(null); setCtcErr(""); setNoApiWarning(false);   // a new recording must not inherit the "couldn't score" banner from an earlier failed one
 
         // Upload audio to storage — defined inline so it can close over blob/userId/today.
         // Returns a signed URL (time-limited, auth-independent) so admin playback works
