@@ -26,28 +26,38 @@ const BASMALAH = ["بِسْمِ", "ٱللَّهِ", "ٱلرَّحْمَٰنِ", 
 
 async function fetchModel(url: string): Promise<Uint8Array> {
   const cacheName = "ctc-model-v1";
+  // Ask the browser not to evict the saved model when the phone runs low on space (Chrome decides; harmless if refused).
+  try { void (ctx.navigator as any).storage?.persist?.(); } catch { /* noop */ }
+  let cache: Cache | null = null;
   try {
-    const c = await caches.open(cacheName);
-    const hit = await c.match(url);
+    cache = await caches.open(cacheName);
+    const hit = await cache.match(url);
     if (hit) return new Uint8Array(await hit.arrayBuffer());
   } catch { /* no Cache API — just download */ }
   const res = await fetch(url);
   if (!res.ok || !res.body) throw new Error(`model download failed (${res.status})`);
   const total = Number(res.headers.get("content-length") || 0);
-  const reader = res.body.getReader();
-  const parts: Uint8Array[] = [];
+  // Save to the cache straight from the network stream (no extra 126 MB copy in JS memory — phones ran out of memory
+  // before the old version finished saving, so the model was downloaded again every visit).
+  let saved: Promise<unknown> = Promise.resolve();
+  let body = res.body;
+  if (cache) {
+    const [toCache, toUs] = res.body.tee();
+    body = toUs;
+    saved = cache.put(url, new Response(toCache, { headers: { "content-type": "application/octet-stream", ...(total ? { "content-length": String(total) } : {}) } })).catch(() => { /* quota — fine */ });
+  }
+  const reader = body.getReader();
+  let all = total ? new Uint8Array(total) : new Uint8Array(140 * 1024 * 1024);
   let loaded = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    parts.push(value); loaded += value.length;
+    if (loaded + value.length > all.length) { const g = new Uint8Array(Math.max(all.length * 2, loaded + value.length)); g.set(all.subarray(0, loaded)); all = g; }
+    all.set(value, loaded); loaded += value.length;
     ctx.postMessage({ type: "progress", loaded, total: total || loaded });
   }
-  const all = new Uint8Array(loaded);
-  let o = 0;
-  for (const p of parts) { all.set(p, o); o += p.length; }
-  try { const c = await caches.open(cacheName); await c.put(url, new Response(all.slice(0))); } catch { /* quota — fine */ }
-  return all;
+  await saved;
+  return loaded === all.length ? all : all.subarray(0, loaded);
 }
 
 async function load(m: { vocabUrl: string; modelUrl: string; ortBase: string }) {
