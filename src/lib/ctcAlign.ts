@@ -312,26 +312,72 @@ export function ctcStatus(mean: number | null, ok = -1, bad = -3): CtcStatus {
 }
 
 /**
- * Score every reference word. Words with a dagger alef (الرحمن …) are also tried without the alef
- * (one extra pass with all of them dropped) and the better spelling is kept per word.
+ * Uthmani → the spelling the model actually WRITES, for the cases where the plain modelForm() differs:
+ *   • final / shadda ى that is really a yaa (يَأْتِى بَعْدِى إِنِّى يَدَىَّ) → ي
+ *   • ىٰ at the end of a word (ٱفْتَرَىٰ يُدْعَىٰٓ) → ى ; in the middle (ٱلتَّوْرَىٰةِ) → ا
+ *   • ءِ (إِسْرَٰٓءِيلَ) → ئِ
+ * Returns the text to feed to modelForm().
+ */
+export function uthmaniToModelSpelling(w: string): string {
+  return w
+    .replace(/\u0649\u0670\u0653?(?=$)/, "\u0649")
+    .replace(/\u0649\u0670\u0653?/g, "\u0627")
+    .replace(/([\u064B-\u0652]*\u0650[\u064B-\u0652]*)\u0649/g, "$1\u064A")   // kasra on the letter before → yaa
+    .replace(/\u0649(?=[\u064B-\u0652]*\u0651)/g, "\u064A")                   // ى carrying a shadda → yaa
+    .replace(/\u0621(?=\u0650)/g, "\u0626");
+}
+
+/** Vocative يَـٰ… (يَـٰبَنِىٓ يَـٰقَوْمِ) is heard as two words: "يَا" + the rest. */
+const VOCATIVE = /^\u064A\u064E\u0640?\u0670\u0653?/;
+
+/**
+ * Every spelling we try for each word. The model was trained on one spelling convention and the page is printed in
+ * another, so a correctly recited word can look "not heard" just because its letters differ. We score the word under
+ * each variant and keep the best, so a variant can only rescue a word, never penalise it.
+ *   0 plain (dagger alef → ا)   1 dagger dropped   2 model spelling   3 model spelling + remaining daggers dropped
+ */
+export function variantWordTokens(words: string[], enc: SpEncoder, vocab: SpVocab): number[][][] {
+  const keep = vocab.hasDiacritics;
+  if (!keep) return [words.map((w) => enc.encode(stripMarks(w)))];
+  const sf = vocab.shaddaFirst;
+  const one = (w: string, mode: 0 | 1 | 2 | 3): number[] => {
+    if (mode >= 2) {
+      const m = VOCATIVE.exec(w);
+      if (m) {
+        const rest = w.slice(m[0].length);
+        return [...enc.encode(modelForm("يَا", true, sf)), ...(rest ? one(rest, mode) : [])];
+      }
+      return enc.encode(modelForm(uthmaniToModelSpelling(w), mode === 2, sf));
+    }
+    return enc.encode(modelForm(w, mode === 0, sf));
+  };
+  return ([0, 1, 2, 3] as const).map((mode) => words.map((w) => one(w, mode)));
+}
+
+const sameTokens = (a: number[], b: number[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+/**
+ * Score every reference word, trying each spelling variant and keeping the best per word
+ * (see variantWordTokens). Passes whose spellings are identical to the plain one are skipped.
  */
 export function alignWords(
   logp: Float32Array, T: number, V: number, words: string[], enc: SpEncoder, vocab: SpVocab, frameDur: number,
 ): CtcWordScore[] | null {
-  const keep = vocab.hasDiacritics;
-  const tokenise = (dropDagger: boolean) => words.map((w) =>
-    enc.encode(keep ? modelForm(w, !(dropDagger && w.includes("\u0670")), vocab.shaddaFirst) : stripMarks(w)));
+  const variants = variantWordTokens(words, enc, vocab);
   const run = (wt: number[][]) => {
     const flat = wt.flat();
     const path = ctcForcedAlign(logp, T, V, flat, vocab.blank);
     return path ? scoreWords(logp, V, path, wt, frameDur) : null;
   };
-  const base = run(tokenise(false));
+  const base = run(variants[0]);
   if (!base) return null;
-  if (keep && words.some((w) => w.includes("\u0670"))) {
-    const alt = run(tokenise(true));
-    if (alt) words.forEach((w, i) => {
-      if (w.includes("\u0670") && alt[i].mean !== null && base[i].mean !== null && alt[i].mean! > base[i].mean!) base[i] = { ...alt[i], alt: true };
+  for (let k = 1; k < variants.length; k++) {
+    if (!variants[k].some((t, i) => !sameTokens(t, variants[0][i]))) continue;
+    const alt = run(variants[k]);
+    if (!alt) continue;
+    words.forEach((_, i) => {
+      if (sameTokens(variants[k][i], variants[0][i])) return;
+      if (alt[i].mean !== null && (base[i].mean === null || alt[i].mean! > base[i].mean!)) base[i] = { ...alt[i], alt: true };
     });
   }
   return base;
@@ -441,28 +487,41 @@ export interface PartialAlign {
  * Grade a recitation that covers only the START of the text (student recited part of the assignment).
  * Forced alignment needs frames >= tokens, so for short audio we (1) keep only as many words as could possibly
  * fit in T frames, (2) align them with the open-ended prefix aligner, (3) mark every word after that as "not heard".
+ * `variants[k][i]` = tokens of word i under spelling variant k (variant 0 = plain); best score per word wins.
  */
 export function scoreWordsPartial(
-  logp: Float32Array, T: number, V: number, wordTokens: number[][], blank: number, frameDur: number,
+  logp: Float32Array, T: number, V: number, variants: number[][][], blank: number, frameDur: number,
 ): PartialAlign | null {
+  const plain = variants[0];
   let used = 0, keep = 0;
-  while (keep < wordTokens.length && used + wordTokens[keep].length <= T) { used += wordTokens[keep].length; keep++; }
+  while (keep < plain.length && used + plain[keep].length <= T) { used += plain[keep].length; keep++; }
   if (keep === 0) return null;
-  const head = wordTokens.slice(0, keep);
-  const r = ctcPrefixAlign(logp, T, V, head.flat(), blank);
-  if (!r) return null;
-  const scores = scoreWords(logp, V, r.path, head, frameDur);
-  const endTok = r.endState % 2 === 1 ? (r.endState - 1) / 2 : r.endState / 2 - 1;
-  let seen = 0, covered = 0;
-  for (let j = 0; j < head.length; j++) { seen += head[j].length; if (seen - 1 > endTok) break; covered = j + 1; }
-  for (let j = keep; j < wordTokens.length; j++) scores.push({ mean: -20, min: -20, start: null, end: null });
-  return { scores, covered };
+  let out: CtcWordScore[] | null = null, covered = 0;
+  for (let k = 0; k < variants.length; k++) {
+    const head = variants[k].slice(0, keep);
+    if (k > 0 && !head.some((t, i) => !sameTokens(t, plain[i]))) continue;
+    const r = ctcPrefixAlign(logp, T, V, head.flat(), blank);
+    if (!r) { if (k === 0) return null; continue; }
+    const scores = scoreWords(logp, V, r.path, head, frameDur);
+    if (k === 0) {
+      out = scores;
+      const endTok = r.endState % 2 === 1 ? (r.endState - 1) / 2 : r.endState / 2 - 1;
+      let seen = 0;
+      for (let j = 0; j < head.length; j++) { seen += head[j].length; if (seen - 1 > endTok) break; covered = j + 1; }
+    } else if (out) {
+      for (let i = 0; i < keep; i++) {
+        if (sameTokens(head[i], plain[i])) continue;
+        if (scores[i].mean !== null && (out[i].mean === null || scores[i].mean! > out[i].mean!)) out[i] = { ...scores[i], alt: true };
+      }
+    }
+  }
+  if (!out) return null;
+  for (let j = keep; j < plain.length; j++) out.push({ mean: -20, min: -20, start: null, end: null });
+  return { scores: out, covered };
 }
 
 export function alignWordsPartial(
   logp: Float32Array, T: number, V: number, words: string[], enc: SpEncoder, vocab: SpVocab, frameDur: number,
 ): PartialAlign | null {
-  const keep = vocab.hasDiacritics;
-  const wt = words.map((w) => enc.encode(keep ? modelForm(w, true, vocab.shaddaFirst) : stripMarks(w)));
-  return scoreWordsPartial(logp, T, V, wt, vocab.blank, frameDur);
+  return scoreWordsPartial(logp, T, V, variantWordTokens(words, enc, vocab), vocab.blank, frameDur);
 }
