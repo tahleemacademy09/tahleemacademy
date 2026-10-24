@@ -3249,6 +3249,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                   extras={analysis.extras}
                   heardText={lastTranscript}
                   checkSecs={checkSecs}
+                  heardWords={ctcOn && ctcRes?.heard && ctcRes.heard.length === wordRes.length ? ctcRes.heard : undefined}
                 />
               )}
 
