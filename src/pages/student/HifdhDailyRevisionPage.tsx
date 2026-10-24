@@ -1489,6 +1489,15 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   useEffect(() => ctcEngine.subscribeProgress(setCtcProg), []);
   const [ctcErr, setCtcErr] = useState("");
   const ctcResRef = useRef<CtcCheckResult | null>(null);
+  // After a page reload the grades come back from the saved session, but the per-word "what the model heard" text and the
+  // test panel live in the check result — put that back too (it was saved with the grading, keyed by the same marker).
+  useEffect(() => {
+    if (!ctcOn || ctcRes || phase !== "page_result" || score === null || !lastTranscript.includes("\u200B")) return;
+    try {
+      const sv = JSON.parse(localStorage.getItem("ctc_res_last") || "null");
+      if (sv && sv.tx === lastTranscript && sv.res) { ctcResRef.current = sv.res; setCtcRes(sv.res); }
+    } catch { /* noop */ }
+  }, [ctcOn, ctcRes, phase, score, lastTranscript]);
   // LIVE reveal (?ctc=1): the printed page is covered while reciting and uncovers word by word as the CTC model hears them.
   const [liveShown, setLiveShown] = useState(0);
   const liveMicRef = useRef<LiveMic | null>(null);
@@ -1939,7 +1948,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       const res = await ctcEngine.check(blob, refWords, { basmalah: "auto" });
       ctcResRef.current = res; setCtcRes(res);
       transcribeMsRef.current = res.ms;
-      return registerCtcGrading(res.greedy, gradeFromCtc(refWords, res.words, res.heard));
+      const tx = registerCtcGrading(res.greedy, gradeFromCtc(refWords, res.words, res.heard));
+      try {   // keep the heard text + timing so a reload shows the same detailed result
+        const r2 = (n: number | null) => (n == null ? null : Math.round(n * 100) / 100);
+        const slim = { ...res, words: res.words.map((w) => ({ mean: r2(w.mean), min: r2(w.min), start: null, end: null })) };
+        localStorage.setItem("ctc_res_last", JSON.stringify({ tx, res: slim }));
+      } catch { /* storage full — the result just shows without the detail after a reload */ }
+      return tx;
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       console.error("[HifdhDaily] CTC check failed:", msg);
