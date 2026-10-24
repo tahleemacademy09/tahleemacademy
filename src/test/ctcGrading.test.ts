@@ -14,6 +14,19 @@ describe("CTC-only grading", () => {
     const w = gradeFromCtc(["إِلَيْكُمْ", "بَعْدِى"], [sc(-2), sc(-2)], ["إِلَيْكُم", "بَعْد"]);
     expect(w.map((x) => x.grade)).toEqual(["ok", "close"]);
   });
+  it("final yaa dropped before hamzat al-wasl is accepted (بَعْدِى ٱسْمُهُ)", () => {
+    const w = gradeFromCtc(["بَعْدِى", "ٱسْمُهُۥٓ"], [sc(-2), sc(0)], ["بَعْدِ", "اسمه"]);
+    expect(w[0].grade).toBe("ok");
+    expect(gradeFromCtc(["بَعْدِى", "أَحْمَدُ"], [sc(-2), sc(0)], ["بَعْد", "احمد"])[0].grade).toBe("close");
+  });
+  it("final ا / و / ى before ٱ or ال is accepted as dropped (إِذَا ٱلسَّمَآءُ, ذُو ٱلْ, عَلَى ٱلْ, أَيُّهَا ٱلنَّاسُ)", () => {
+    const g = (a: string, b: string, h: string) => gradeFromCtc([a, b], [sc(-2), sc(0)], [h, "x"])[0].grade;
+    expect(g("إِذَا", "ٱلسَّمَآءُ", "إِذَ")).toBe("ok");
+    expect(g("ذُو", "ٱلْعَرْشِ", "ذُ")).toBe("ok");
+    expect(g("عَلَىٰ", "ٱلْأَرْضِ", "عَلَ")).toBe("ok");
+    expect(g("أَيُّهَا", "ٱلنَّاسُ", "أَيُّهَ")).toBe("ok");
+    expect(g("إِذَا", "جَآءَ", "إِذَ")).toBe("close");          // no wasl after it → the alef must be heard
+  });
   it("hands the verdicts out by key, sliced per ayah, with the right score", () => {
     const words = gradeFromCtc(refWords, [sc(0), sc(0), sc(-8), sc(0), sc(0), sc(0)]);   // word 3 skipped
     const tx = registerCtcGrading("قل هو احد", words);
