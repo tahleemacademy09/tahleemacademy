@@ -7,7 +7,7 @@
   so every existing place that passes `transcript` around keeps working unchanged.
 */
 import { refTokens, scoreOf, encodeGrades, decodeGrades, type WordResult, type AyahScoring } from "./recitationCompare";
-import { ctcStatus, modelForm, stripMarks, uthmaniToModelSpelling, type CtcWordScore } from "./ctcAlign";
+import { ctcStatus, dropMaddBeforeWasl, modelForm, stripMarks, uthmaniToModelSpelling, waslFollows, type CtcWordScore } from "./ctcAlign";
 
 const LS_KEY = "ctc_grading_last";
 let cur: { tx: string; words: WordResult[] } | null = null;
@@ -17,7 +17,7 @@ let counter = 0;
 const skeleton = (x: string) => stripMarks(x).replace(/\u0649/g, "\u064A").replace(/\s+/g, "");
 
 /** Is what the model wrote for this word the same letters as the page word (under any spelling the model may use)? */
-function heardMatches(word: string, heard: string | undefined): boolean {
+function heardMatches(word: string, heard: string | undefined, nextWord?: string): boolean {
   if (!heard || !heard.trim()) return false;
   const h = skeleton(heard);
   if (!h) return false;
@@ -25,6 +25,8 @@ function heardMatches(word: string, heard: string | undefined): boolean {
   const variants = [
     modelForm(word), modelForm(word, false),
     modelForm(uthmaniToModelSpelling(word)), modelForm(uthmaniToModelSpelling(word), false),
+    // final ي / ا / و / ى is not pronounced before a hamzat al-wasl (بَعْدِى ٱسْمُهُ → بعدِ, عَلَى ٱلْ → عَلَ)
+    ...(waslFollows(nextWord) ? [modelForm(dropMaddBeforeWasl(modelForm(uthmaniToModelSpelling(word))))] : []),
     ...(voc ? [modelForm("يَا") + modelForm(uthmaniToModelSpelling(word.slice(voc[0].length)))] : []),
   ];
   return variants.some((v) => skeleton(v) === h);
@@ -38,7 +40,7 @@ function heardMatches(word: string, heard: string | undefined): boolean {
 export function gradeFromCtc(refWords: string[], scores: CtcWordScore[], heard?: string[]): WordResult[] {
   return refWords.map((word, i) => {
     const st = ctcStatus(scores[i]?.mean ?? null);
-    if (st === "unsure" && !heardMatches(word, heard?.[i])) return { word, status: "missing" as const, grade: "close" as const, credit: 0.5 };
+    if (st === "unsure" && !heardMatches(word, heard?.[i], refWords[i + 1])) return { word, status: "missing" as const, grade: "close" as const, credit: 0.5 };
     if (st === "bad") return { word, status: "missing" as const, grade: "missed" as const, credit: 0 };
     return { word, status: "correct" as const, grade: "ok" as const, credit: 1 };   // heard (or nothing to judge)
   });

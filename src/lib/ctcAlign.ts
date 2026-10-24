@@ -345,19 +345,35 @@ export function variantWordTokens(words: string[], enc: SpEncoder, vocab: SpVoca
   const keep = vocab.hasDiacritics;
   if (!keep) return [words.map((w) => enc.encode(stripMarks(w)))];
   const sf = vocab.shaddaFirst;
-  const one = (w: string, mode: 0 | 1 | 2 | 3): number[] => {
+  const one = (w: string, mode: 0 | 1 | 2 | 3 | 4 | 5, elide: boolean): number[] => {
     if (mode >= 2) {
       const m = VOCATIVE.exec(w);
       if (m) {
         const rest = w.slice(m[0].length);
-        return [...enc.encode(modelForm("يَا", true, sf)), ...(rest ? one(rest, mode) : [])];
+        return [...enc.encode(modelForm("يَا", true, sf)), ...(rest ? one(rest, mode, elide) : [])];
       }
-      return enc.encode(modelForm(uthmaniToModelSpelling(w), mode === 2, sf));
+      let t = modelForm(uthmaniToModelSpelling(w), mode === 2 || mode === 4, sf);
+      if (mode >= 4) t = dropMaddBeforeWasl(t);
+      return enc.encode(t);
     }
     return enc.encode(modelForm(w, mode === 0, sf));
   };
-  return ([0, 1, 2, 3] as const).map((mode) => words.map((w) => one(w, mode)));
+  // modes 4/5 = modes 2/3 with the final long-vowel letter dropped; only built for words followed by a hamzat al-wasl
+  const elides = words.map((_, i) => startsWithWasl(words[i + 1]));
+  return ([0, 1, 2, 3, 4, 5] as const).map((mode) => words.map((w, i) => (mode >= 4 && !elides[i] ? one(w, (mode - 2) as 2 | 3, false) : one(w, mode, elides[i]))));
 }
+
+/** next word starts with ٱ (hamzat al-wasl) — or a plain ال written without the wasl sign */
+const startsWithWasl = (w: string | undefined) => !!w && /^[\u064B-\u0652\u0640]*(\u0671|\u0627\u0644)/.test(w.replace(/^\uFEFF/, ""));
+/**
+ * Before a word that starts with hamzat al-wasl the LAST long-vowel letter of the previous word is not pronounced
+ * (two sākin letters meet, only the short vowel stays):
+ *   بَعْدِى ٱسْمُهُ → بَعْدِ ·  فِى ٱلْأَرْضِ → فِ ·  عَلَى ٱلْ → عَلَ ·  إِذَا ٱلسَّمَآءُ → إِذَ ·  أَيُّهَا ٱلنَّاسُ → أَيُّهَ ·  ذُو ٱلْ → ذُ
+ * Works on the model spelling (see uthmaniToModelSpelling). Fathatan + ا (جَمِيعًا) and the silent ا of وا۟ are left alone.
+ */
+export const dropMaddBeforeWasl = (modelSpelled: string) =>
+  modelSpelled.replace(/(\u064E)[\u0627\u0649]\u0652?$|(\u0650)\u064A\u0652?$|(\u064F)\u0648\u0652?$/, (_m, f, k, d) => f || k || d);
+export const waslFollows = startsWithWasl;
 
 const sameTokens = (a: number[], b: number[]) => a.length === b.length && a.every((x, i) => x === b[i]);
 
