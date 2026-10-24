@@ -44,7 +44,7 @@ import MushafPageView from "@/components/hifdh/MushafPageView";
 import RecitationResultGrid from "@/components/hifdh/RecitationResultGrid";
 // CTC-ONLY TEST MODE (?ctc=1): the FastConformer-Quran CTC check replaces Tarteel on this page.
 import CtcTestPanel from "@/components/hifdh/CtcTestPanel";
-import { ctcEngine, ctcEnabled, type CtcCheckResult, type CtcStatusState } from "@/lib/ctcEngine";
+import { ctcEngine, ctcEnabled, type CtcCheckResult, type CtcStatusState, type CtcCheckProgress } from "@/lib/ctcEngine";
 import { LiveMic, revealFor } from "@/lib/ctcLive";
 import { gradeFromCtc, registerCtcGrading, ctcScoringFor, ctcAnalysisFor } from "@/lib/ctcGrading";
 import { refTokens } from "@/lib/recitationCompare";
@@ -1485,6 +1485,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [ctcEng, setCtcEng] = useState<CtcStatusState>(ctcEngine.state);
   useEffect(() => ctcEngine.subscribe(setCtcEng), []);
   const [ctcRes, setCtcRes] = useState<CtcCheckResult | null>(null);
+  const [ctcProg, setCtcProg] = useState<CtcCheckProgress | null>(null);
+  useEffect(() => ctcEngine.subscribeProgress(setCtcProg), []);
   const [ctcErr, setCtcErr] = useState("");
   const ctcResRef = useRef<CtcCheckResult | null>(null);
   // LIVE reveal (?ctc=1): the printed page is covered while reciting and uncovers word by word as the CTC model hears them.
@@ -3162,7 +3164,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           <p style={{margin:0,color:"#9CA3AF",fontSize:12,textAlign:"center",lineHeight:1.7,maxWidth:280}}>
             {checkerState.status==="loading"
               ? `Getting the Quran checker ready${checkerState.totalMB?` — ${Math.round(checkerState.loadedMB??0)} of ${Math.round(checkerState.totalMB)} MB`:"…"} (first time only)`
-              : "Finishing the last part of your recitation on your device — almost done."}
+              : ctcOn && ctcProg
+                ? (ctcProg.stage === "listening" && ctcProg.total > 0
+                    ? `Listening to your recitation — ${Math.round(ctcProg.done)} of ${Math.round(ctcProg.total)} s done`
+                    : ctcProg.stage === "aligning" ? "Matching your recitation to the page…" : "Finishing the part you just recited…")
+                : "Finishing the last part of your recitation on your device — almost done."}
           </p>
         </div>
       )}
