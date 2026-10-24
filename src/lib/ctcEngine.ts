@@ -71,10 +71,21 @@ class CtcEngine {
   private worker: Worker | null = null;
   private loadPromise: Promise<void> | null = null;
   private nextId = 1;
-  private pending = new Map<number, (r: any) => void>();
+  private pending = new Map<number, { ok: (r: any) => void; fail: (e: Error) => void }>();
+  private activeCheckId = 0;
   private listeners = new Set<(s: CtcStatusState) => void>();
   state: CtcStatusState = { status: "idle" };
   progress: CtcCheckProgress | null = null;
+  private setProgress(p: CtcCheckProgress | null) { this.progress = p; this.progListeners.forEach((l) => { try { l(p); } catch { /* noop */ } }); }
+  private resetWorker(reason: string) {
+    const waiting = [...this.pending.values()];
+    this.pending.clear();
+    try { this.worker?.terminate(); } catch { /* noop */ }
+    this.worker = null; this.loadPromise = null; this.live = null;
+    this.emit({ status: "idle" });
+    waiting.forEach((w) => w.fail(new Error(reason)));
+  }
+  private lastSignal = 0;
   private progListeners = new Set<(p: CtcCheckProgress | null) => void>();
   subscribeProgress(fn: (p: CtcCheckProgress | null) => void) { this.progListeners.add(fn); fn(this.progress); return () => { this.progListeners.delete(fn); }; }
 
@@ -96,14 +107,19 @@ class CtcEngine {
       catch (e: any) { fail(String(e?.message ?? e)); return; }
       this.worker.onmessage = (ev) => {
         const m = ev.data;
+        this.lastSignal = Date.now();
         if (m.type === "progress") this.emit({ status: "loading", loadedMB: m.loaded / 1048576, totalMB: m.total / 1048576 });
         else if (m.type === "ready") { this.emit({ status: "ready" }); resolve(); }
         else if (m.type === "load_error") fail(m.error);
         else if (m.type === "live_progress") { if (m.error) console.warn("[ctc] live step failed:", m.error); else this.live?.cb(m.shown, m.ms); }
-        else if (m.type === "check_progress") { this.progress = { stage: m.stage, done: m.done, total: m.total }; this.progListeners.forEach((l) => { try { l(this.progress); } catch { /* noop */ } }); }
-        else if (m.type === "result" || m.type === "selftest_result") { const cb = this.pending.get(m.id); if (cb) { this.pending.delete(m.id); cb(m); } }
+        else if (m.type === "check_progress") { if (m.id === this.activeCheckId) this.setProgress({ stage: m.stage, done: m.done, total: m.total }); }
+        else if (m.type === "result" || m.type === "selftest_result") { const w = this.pending.get(m.id); if (w) { this.pending.delete(m.id); w.ok(m); } }
       };
-      this.worker.onerror = (ev) => { if (this.state.status !== "ready") fail((ev as ErrorEvent).message || "worker_error"); };
+      this.worker.onerror = (ev) => {
+        const msg = (ev as ErrorEvent).message || "worker_error";
+        if (this.state.status !== "ready") fail(msg); else this.resetWorker("worker_crashed: " + msg);
+      };
+      this.worker.onmessageerror = () => { if (this.state.status === "ready") this.resetWorker("worker_messageerror"); };
       this.worker.postMessage({
         type: "load", ortBase: ORT_BASE, modelUrl: MODEL_URL,
         vocabUrl: new URL("/ctc/vocab.json", window.location.origin).href,
@@ -112,26 +128,58 @@ class CtcEngine {
     return this.loadPromise;
   }
 
-  private call<T>(msg: any, transfer: Transferable[] = []): Promise<T> {
-    const id = this.nextId++;
+  private call<T>(msg: any, transfer: Transferable[] = [], id: number = this.nextId++): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, (m) => (m.error ? reject(new Error(m.error)) : resolve(m as T)));
-      this.worker!.postMessage({ ...msg, id }, transfer);
+      if (!this.worker) { reject(new Error("worker_gone")); return; }
+      this.pending.set(id, { ok: (m) => (m.error ? reject(new Error(m.error)) : resolve(m as T)), fail: reject });
+      this.worker.postMessage({ ...msg, id }, transfer);
+    });
+  }
+
+  /** call() + watchdog: nothing from the worker for STALL_MS → it is hung/dead → reset it and fail (never wait forever). */
+  private callWatched<T>(msg: any, transfer: Transferable[], id: number): Promise<T> {
+    const STALL_MS = 90_000;
+    this.lastSignal = Date.now();
+    const p = this.call<T>(msg, transfer, id);
+    return new Promise<T>((resolve, reject) => {
+      const t = setInterval(() => {
+        if (Date.now() - this.lastSignal > STALL_MS) { clearInterval(t); this.resetWorker("worker_stalled"); }
+      }, 3000);
+      p.then((v) => { clearInterval(t); resolve(v); }, (e) => { clearInterval(t); reject(e); });
     });
   }
 
   /** Is each reference word really in the recording?  refWords must be the same words (same order) the grid uses. */
   async check(blob: Blob, refWords: string[], opts: { basmalah?: boolean | "auto" } = {}): Promise<CtcCheckResult> {
-    await this.load();
-    const td = Date.now();
-    this.progress = { stage: "decoding", done: 0, total: 0 }; this.progListeners.forEach((l) => { try { l(this.progress); } catch { /* noop */ } });
-    const audio = await decodeBlobTo16k(blob);
-    const decodeMs = Date.now() - td;
-    this.progress = { stage: "finishing", done: 0, total: 0 }; this.progListeners.forEach((l) => { try { l(this.progress); } catch { /* noop */ } });
-    const res = await this.call<CtcCheckResult>({ type: "check", audio, words: refWords, basmalah: opts.basmalah ?? "auto", useLive: true }, [audio.buffer]);
-    if (res.timing) res.timing.decodeMs = decodeMs;
-    this.progress = null; this.progListeners.forEach((l) => { try { l(null); } catch { /* noop */ } });
-    return res;
+    const id = this.nextId++;
+    this.activeCheckId = id;
+    this.setProgress({ stage: "decoding", done: 0, total: 0 });
+    try {
+      await this.load();
+      const td = Date.now();
+      const audio = await decodeBlobTo16k(blob);
+      const decodeMs = Date.now() - td;
+      this.setProgress({ stage: "finishing", done: 0, total: 0 });
+      const run = (useLive: boolean, a: Float32Array, runId: number) =>
+        this.callWatched<CtcCheckResult>({ type: "check", audio: a, words: refWords, basmalah: opts.basmalah ?? "auto", useLive }, [a.buffer], runId);
+      let res: CtcCheckResult;
+      try {
+        res = await run(true, audio.slice(), id);
+      } catch (e: any) {
+        const msg = String(e?.message ?? e);
+        if (!/worker_(stalled|crashed|messageerror|gone)/.test(msg)) throw e;
+        console.warn("[ctc] worker failed during check — retrying once on a fresh worker without the background step:", msg);
+        await this.load();
+        const id2 = this.nextId++; this.activeCheckId = id2;
+        this.setProgress({ stage: "finishing", done: 0, total: 0 });
+        res = await run(false, audio, id2);
+      }
+      if (res.timing) res.timing.decodeMs = decodeMs;
+      return res;
+    } finally {
+      this.activeCheckId = 0;
+      this.setProgress(null);
+    }
   }
 
   /* ── LIVE reveal: stream mic audio in while the student recites; cb(shownWords) fires as words are heard ── */
