@@ -27,3 +27,22 @@ describe("partial recitation (audio shorter than the text)", () => {
     expect(r.scores).toHaveLength(5);
   });
 });
+
+import { greedySpan, quietCutPoint, SR } from "@/lib/ctcAlign";
+
+describe("heard text per word + quiet chunk cut", () => {
+  it("reads only the frames of one word", () => {
+    const V2 = 5, vocab: any = { pieces: ["▁ab", "c", "▁de", "f"], blank: 4 };
+    const seq = [4, 0, 0, 1, 4, 2, 3, 4];
+    const lp = new Float32Array(seq.length * V2).fill(-9); seq.forEach((k, t) => { lp[t * V2 + k] = -0.01; });
+    expect(greedySpan(lp, seq.length, V2, vocab, 0, 5)).toBe("abc");
+    expect(greedySpan(lp, seq.length, V2, vocab, 5, 8)).toBe("def");
+    expect(greedySpan(lp, seq.length, V2, vocab, 7, 8)).toBe("");
+  });
+  it("cuts a chunk at the pause", () => {
+    const a = new Float32Array(SR * 30); for (let i = 0; i < a.length; i++) a[i] = Math.sin(i * 0.05) * 0.3;
+    for (let i = Math.round(21.3 * SR); i < Math.round(21.6 * SR); i++) a[i] = 0;
+    const cut = quietCutPoint(a, a.length, 20, 4) / SR;
+    expect(cut).toBeGreaterThan(21.2); expect(cut).toBeLessThan(21.6);
+  });
+});
