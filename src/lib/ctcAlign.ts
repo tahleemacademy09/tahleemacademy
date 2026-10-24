@@ -35,7 +35,7 @@ export function canonMarks(s: string, shaddaFirst = true): string {
 
 /** Uthmani text → the spelling the model's vocabulary uses. */
 export function modelForm(s: string, dagger = true, shaddaFirst = true): string {
-  let t = s.replace(/\u0671/g, "\u0627").replace(/\u06E1/g, "\u0652").replace(/\u0670/g, dagger ? "\u0627" : "");
+  let t = s.replace(/\uFEFF/g, "").replace(/\u0671/g, "\u0627").replace(/\u06E1/g, "\u0652").replace(/\u0670/g, dagger ? "\u0627" : "");
   t = t.replace(/[\u0653\u0640\u06D6-\u06ED]/g, "");
   return canonMarks(t, shaddaFirst).replace(/\s+/g, " ").trim();
 }
@@ -320,11 +320,16 @@ export function ctcStatus(mean: number | null, ok = -1, bad = -3): CtcStatus {
  */
 export function uthmaniToModelSpelling(w: string): string {
   return w
+    .replace(/\u0648\u0670(?=\u0627)/g, "")                    // ٱلرِّبَوٰا۟ → الرِّبَا (the real alef stays)
+    .replace(/\u0648\u0670/g, "\u0627")                         // ٱلصَّلَوٰةَ ٱلزَّكَوٰةَ ٱلْحَيَوٰةِ → ...لَاةَ (dagger after waw = long ā)
+    .replace(/(\u064A[\u064B-\u0652]*)?\u0640\u064E\u0654\u0627/g, (_m, y) => (y ? y + "\u0626\u064E\u0627" : "\u0622"))   // بِـَٔايَـٰتِ → بِآيَاتِ ; سَيِّـَٔاتِ → سَيِّئَاتِ
+    .replace(/\u0640([\u064B-\u0652])\u0654/g, "\u0626$1")     // لِيُطْفِـُٔوا۟ → لِيُطْفِئُوا (hamza on a yaa seat)
+    .replace(/\u0654/g, "")                                      // any other loose hamza-above mark
     .replace(/\u0649\u0670\u0653?(?=$)/, "\u0649")
     .replace(/\u0649\u0670\u0653?/g, "\u0627")
     .replace(/([\u064B-\u0652]*\u0650[\u064B-\u0652]*)\u0649/g, "$1\u064A")   // kasra on the letter before → yaa
     .replace(/\u0649(?=[\u064B-\u0652]*\u0651)/g, "\u064A")                   // ى carrying a shadda → yaa
-    .replace(/\u0621(?=\u0650)/g, "\u0626");
+    .replace(/\u0621(?=\u0650\u064A)/g, "\u0626");           // إِسْرَٰٓءِيلَ → إِسْرَائِيلَ (ءِ before ي sits on a yaa seat; ٱلسَّمَآءِ stays)
 }
 
 /** Vocative يَـٰ… (يَـٰبَنِىٓ يَـٰقَوْمِ) is heard as two words: "يَا" + the rest. */
