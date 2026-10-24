@@ -1939,7 +1939,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       const res = await ctcEngine.check(blob, refWords, { basmalah: "auto" });
       ctcResRef.current = res; setCtcRes(res);
       transcribeMsRef.current = res.ms;
-      return registerCtcGrading(res.greedy, gradeFromCtc(refWords, res.words));
+      return registerCtcGrading(res.greedy, gradeFromCtc(refWords, res.words, res.heard));
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       console.error("[HifdhDaily] CTC check failed:", msg);
@@ -2870,6 +2870,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         @keyframes micPulse { 0%{transform:scale(.85);opacity:.9} 100%{transform:scale(1.6);opacity:0} }
         @keyframes slideUp { from{transform:translateY(12px);opacity:0} to{transform:translateY(0);opacity:1} }
         @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
+        @keyframes barPulse { from{opacity:.55} to{opacity:1} }
         @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&family=Cairo:wght@400;600;700;800;900&display=swap');
         .ar-word { unicode-bidi: isolate; display: inline; }
       `}</style>
@@ -3161,11 +3162,31 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           <p style={{margin:0,color:"#e5c76b",fontWeight:700,fontSize:15,textAlign:"center"}}>
             Checking your recitation…
           </p>
+          {(checkerState.status==="loading" ? !!checkerState.totalMB : ctcOn) && (()=>{
+            const pg = ctcProg;
+            const pct = checkerState.status==="loading" ? Math.min(100,((checkerState.loadedMB??0)/(checkerState.totalMB||1))*100)
+              : !pg ? 3
+              : pg.stage==="decoding" ? 5
+              : pg.stage==="listening" && pg.total>0 ? 8 + Math.min(1,pg.done/pg.total)*84
+              : pg.stage==="aligning" ? 96
+              : 8;
+            const indeterminate = checkerState.status!=="loading" && (!pg || pg.stage==="decoding" || pg.stage==="finishing");
+            return (
+              <div style={{width:"100%",maxWidth:280}}>
+                <div style={{height:8,borderRadius:99,background:"#ffffff1f",overflow:"hidden",position:"relative"}}>
+                  <div style={{height:"100%",width:`${pct}%`,borderRadius:99,background:GOLD,transition:"width .4s ease",
+                    ...(indeterminate?{animation:"barPulse .8s ease-in-out infinite alternate"}:{})}}/>
+                </div>
+                <p style={{margin:"6px 0 0",color:"#9CA3AF",fontSize:11,textAlign:"center"}}>{Math.round(pct)}%</p>
+              </div>
+            );
+          })()}
           <p style={{margin:0,color:"#9CA3AF",fontSize:12,textAlign:"center",lineHeight:1.7,maxWidth:280}}>
             {checkerState.status==="loading"
               ? `Getting the Quran checker ready${checkerState.totalMB?` — ${Math.round(checkerState.loadedMB??0)} of ${Math.round(checkerState.totalMB)} MB`:"…"} (first time only)`
               : ctcOn && ctcProg
-                ? (ctcProg.stage === "listening" && ctcProg.total > 0
+                ? (ctcProg.stage === "decoding" ? "Preparing your recording…"
+                  : ctcProg.stage === "listening" && ctcProg.total > 0
                     ? `Listening to your recitation — ${Math.round(ctcProg.done)} of ${Math.round(ctcProg.total)} s done`
                     : ctcProg.stage === "aligning" ? "Matching your recitation to the page…" : "Finishing the part you just recited…")
                 : "Finishing the last part of your recitation on your device — almost done."}
@@ -3280,19 +3301,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                       Please try recording again in a moment.
                     </p>
                   </div>
-                </div>
-              )}
-
-              {/* 6 ── Encouragement / retry hint when below threshold */}
-              {score<PASS_THRESHOLD&&(
-                <div style={{padding:"12px 14px",borderRadius:12,
-                  background:`${GOLD}0e`,border:`1.5px solid ${GOLD}44`,
-                  display:"flex",gap:10,alignItems:"center"}}>
-                  <Heart size={18} color={GOLD} style={{flexShrink:0}}/>
-                  <p style={{margin:0,fontSize:12,color:"#92400E",fontWeight:600,lineHeight:1.6}}>
-                    Study the <span style={{color:FAIL,fontWeight:800}}>red words</span> above,
-                    then record again — every attempt builds your hifdh! 🌟
-                  </p>
                 </div>
               )}
             </div>
