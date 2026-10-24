@@ -25,11 +25,6 @@ const CtcTestPanel: React.FC<Props> = ({ ctc, words, error }) => {
           <div style={{ fontSize: 12, color: "#9bb0a6" }}>
             Audio {ctc.secs.toFixed(1)} s · checked in {(ctc.ms / 1000).toFixed(1)} s ({(ctc.ms / 1000 / Math.max(ctc.secs, 0.1)).toFixed(2)}× real time){ctc.basmalah ? " · Basmalah ignored" : ""}
           </div>
-          {ctc.partial && (
-            <div style={{ fontSize: 12, color: "#e6c97a", lineHeight: 1.5 }}>
-              Partial recitation: the recording covers about {ctc.covered ?? 0} of {words.length} words. Those were graded; the rest count as not recited.
-            </div>
-          )}
           <div style={{ fontSize: 11, color: "#9bb0a6", lineHeight: 1.5 }}>Green = heard · yellow = unsure · red struck-through = not heard (skipped). No Tarteel transcript is used.</div>
           <button onClick={copy} style={{ alignSelf: "flex-start", fontSize: 11, fontWeight: 700, padding: "6px 10px", borderRadius: 8, border: "1px solid #2a3a33", background: "#0f1a15", color: "#e6c97a", cursor: "pointer" }}>
             {copied ? "Copied ✓" : "Copy results (to send to Claude)"}
