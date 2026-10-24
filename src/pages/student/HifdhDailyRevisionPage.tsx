@@ -43,7 +43,6 @@ import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
 import MushafPageView from "@/components/hifdh/MushafPageView";
 import RecitationResultGrid from "@/components/hifdh/RecitationResultGrid";
 // CTC-ONLY TEST MODE (?ctc=1): the FastConformer-Quran CTC check replaces Tarteel on this page.
-import CtcTestPanel from "@/components/hifdh/CtcTestPanel";
 import { ctcEngine, ctcEnabled, type CtcCheckResult, type CtcStatusState, type CtcCheckProgress } from "@/lib/ctcEngine";
 import { LiveMic, revealFor } from "@/lib/ctcLive";
 import { gradeFromCtc, registerCtcGrading, ctcScoringFor, ctcAnalysisFor } from "@/lib/ctcGrading";
@@ -3294,9 +3293,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                   heardWords={ctcOn && ctcRes?.heard && ctcRes.heard.length === wordRes.length ? ctcRes.heard : undefined}
                 />
               )}
-
-              {/* 3b ── CTC-only test mode info (timing, copy results) — only with ?ctc=1 */}
-              {ctcOn && <CtcTestPanel ctc={ctcRes} words={wordRes} error={ctcErr}/>}
 
               {/* 5 ── Transcription unavailable — student-friendly message only.
                      Technical detail (which API/key) is for admins/teachers, not
