@@ -7,17 +7,38 @@
   so every existing place that passes `transcript` around keeps working unchanged.
 */
 import { refTokens, scoreOf, encodeGrades, decodeGrades, type WordResult, type AyahScoring } from "./recitationCompare";
-import { ctcStatus, type CtcWordScore } from "./ctcAlign";
+import { ctcStatus, modelForm, stripMarks, uthmaniToModelSpelling, type CtcWordScore } from "./ctcAlign";
 
 const LS_KEY = "ctc_grading_last";
 let cur: { tx: string; words: WordResult[] } | null = null;
 let counter = 0;
 
-/** heard (≥ -1.0) green · unsure (-3 … -1) yellow, half credit · not heard (< -3) red "missed" */
-export function gradeFromCtc(refWords: string[], scores: CtcWordScore[]): WordResult[] {
+/** letters only: no marks, alef/yaa variants folded, no spaces */
+const skeleton = (x: string) => stripMarks(x).replace(/\u0649/g, "\u064A").replace(/\s+/g, "");
+
+/** Is what the model wrote for this word the same letters as the page word (under any spelling the model may use)? */
+function heardMatches(word: string, heard: string | undefined): boolean {
+  if (!heard || !heard.trim()) return false;
+  const h = skeleton(heard);
+  if (!h) return false;
+  const voc = /^\u064A\u064E\u0640?\u0670\u0653?/.exec(word);
+  const variants = [
+    modelForm(word), modelForm(word, false),
+    modelForm(uthmaniToModelSpelling(word)), modelForm(uthmaniToModelSpelling(word), false),
+    ...(voc ? [modelForm("يَا") + modelForm(uthmaniToModelSpelling(word.slice(voc[0].length)))] : []),
+  ];
+  return variants.some((v) => skeleton(v) === h);
+}
+
+/**
+ * heard (≥ -1.0) green · unsure (-3 … -1) yellow, half credit · not heard (< -3) red "missed".
+ * An "unsure" word whose written letters are exactly what the model heard is green: low confidence alone
+ * (fast or soft recitation) is not a mistake. Yellow stays for words where the model wrote something different.
+ */
+export function gradeFromCtc(refWords: string[], scores: CtcWordScore[], heard?: string[]): WordResult[] {
   return refWords.map((word, i) => {
     const st = ctcStatus(scores[i]?.mean ?? null);
-    if (st === "unsure") return { word, status: "missing" as const, grade: "close" as const, credit: 0.5 };
+    if (st === "unsure" && !heardMatches(word, heard?.[i])) return { word, status: "missing" as const, grade: "close" as const, credit: 0.5 };
     if (st === "bad") return { word, status: "missing" as const, grade: "missed" as const, credit: 0 };
     return { word, status: "correct" as const, grade: "ok" as const, credit: 1 };   // heard (or nothing to judge)
   });

@@ -28,7 +28,7 @@ export interface CtcCheckResult {
   /** where the time went (ms): decode on the main thread, waiting for the background run, model, alignment */
   timing?: { usedLive: boolean; liveChunks: number; liveWaitMs: number; tailSecs: number; inferMs: number; alignMs: number; wasmThreads: number; decodeMs?: number };
 }
-export interface CtcCheckProgress { stage: "finishing" | "listening" | "aligning"; done: number; total: number }
+export interface CtcCheckProgress { stage: "decoding" | "finishing" | "listening" | "aligning"; done: number; total: number }
 export type CtcStatusState = { status: "idle" | "loading" | "ready" | "error"; loadedMB?: number; totalMB?: number; error?: string };
 
 export function ctcEnabled(): boolean {
@@ -124,9 +124,10 @@ class CtcEngine {
   async check(blob: Blob, refWords: string[], opts: { basmalah?: boolean | "auto" } = {}): Promise<CtcCheckResult> {
     await this.load();
     const td = Date.now();
+    this.progress = { stage: "decoding", done: 0, total: 0 }; this.progListeners.forEach((l) => { try { l(this.progress); } catch { /* noop */ } });
     const audio = await decodeBlobTo16k(blob);
     const decodeMs = Date.now() - td;
-    this.progress = null;
+    this.progress = { stage: "finishing", done: 0, total: 0 }; this.progListeners.forEach((l) => { try { l(this.progress); } catch { /* noop */ } });
     const res = await this.call<CtcCheckResult>({ type: "check", audio, words: refWords, basmalah: opts.basmalah ?? "auto", useLive: true }, [audio.buffer]);
     if (res.timing) res.timing.decodeMs = decodeMs;
     this.progress = null; this.progListeners.forEach((l) => { try { l(null); } catch { /* noop */ } });
