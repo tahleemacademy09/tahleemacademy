@@ -116,27 +116,37 @@ async function check(m: { id: number; audio: Float32Array; words: string[]; basm
   const parts: { lp: Float32Array; T: number; V: number }[] = [];
   let V = 0, T = 0;
   let secs = m.audio.length / SR;
+  const timing = { usedLive: false, liveChunks: 0, liveWaitMs: 0, tailSecs: 0, inferMs: 0, alignMs: 0, wasmThreads: ort?.env?.wasm?.numThreads ?? 1 };
+  const progress = (stage: string, done: number, total: number) => ctx.postMessage({ type: "check_progress", id: m.id, stage, done, total });
   // The recording was already run through the model WHILE the student recited (see "background inference" below):
   // only the last few seconds are left to process. Used only if it covers the whole recording; otherwise the
   // normal path below processes the finished recording as before.
   const P = pipeDone; pipeDone = null;
+  let todo: Float32Array[] = [];
   if (P && m.useLive) {
+    const tw = Date.now();
+    progress("finishing", 0, 0);
     try { await P.run; } catch { /* handled by P.failed */ }
+    timing.liveWaitMs = Date.now() - tw;
     if (!P.failed && P.parts.length && Math.abs(P.total / SR - secs) <= 2.5) {
       for (const p of P.parts) parts.push(p);
-      for (const c of chunkAtQuiet(P.pend.subarray(0, P.len))) {
-        if (c.length < SR * 0.3) continue;
-        parts.push(await runChunk(c));
-      }
+      todo = chunkAtQuiet(P.pend.subarray(0, P.len)).filter((c) => c.length >= SR * 0.3);
       secs = P.total / SR;
+      timing.usedLive = true; timing.liveChunks = P.parts.length;
     }
   }
-  if (!parts.length) {
-    for (const c of chunkAtQuiet(m.audio)) {
-      if (c.length < SR * 0.3) continue;
-      parts.push(await runChunk(c));
-    }
+  if (!timing.usedLive) todo = chunkAtQuiet(m.audio).filter((c) => c.length >= SR * 0.3);
+  const totalSecs = todo.reduce((a, c) => a + c.length, 0) / SR;
+  timing.tailSecs = totalSecs;
+  const ti = Date.now();
+  let doneSecs = 0;
+  progress("listening", 0, totalSecs);
+  for (const c of todo) {
+    parts.push(await runChunk(c));
+    doneSecs += c.length / SR;
+    progress("listening", doneSecs, totalSecs);
   }
+  timing.inferMs = Date.now() - ti;
   if (!parts.length) throw new Error("audio_too_short");
   for (const r of parts) { V = r.V; T += r.T; }
   if (V !== vocab.pieces.length + 1) throw new Error(`vocab mismatch: model ${V} vs vocab ${vocab.pieces.length + 1}`);
@@ -144,6 +154,8 @@ async function check(m: { id: number; audio: Float32Array; words: string[]; basm
   let o = 0;
   for (const p of parts) { lp.set(p.lp, o); o += p.lp.length; }
   const frameDur = secs / T;
+  progress("aligning", totalSecs, totalSecs);
+  const ta = Date.now();
   const greedy = greedyText(lp, T, V, vocab);
   // "auto": the student recited the Basmalah first but the page text does not start with it → align it too, then drop it.
   let useBasmalah = m.basmalah === true;
@@ -165,7 +177,8 @@ async function check(m: { id: number; audio: Float32Array; words: string[]; basm
   const heardAll = scored.map((w) => (w.start == null || w.end == null ? "" : greedySpan(lp, T, V, vocab!, Math.round(w.start / frameDur), Math.round(w.end / frameDur))));
   const words: CtcWordScore[] = useBasmalah ? scored.slice(BASMALAH.length) : scored;
   const heard = useBasmalah ? heardAll.slice(BASMALAH.length) : heardAll;
-  ctx.postMessage({ type: "result", id: m.id, words, heard, greedy, secs, frames: T, ms: Date.now() - t0, basmalah: useBasmalah, partial, covered });
+  timing.alignMs = Date.now() - ta;
+  ctx.postMessage({ type: "result", id: m.id, words, heard, greedy, secs, frames: T, ms: Date.now() - t0, basmalah: useBasmalah, partial, covered, timing });
 }
 
 async function selftest(m: { id: number; testsUrl: string }) {

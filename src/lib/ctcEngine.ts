@@ -25,7 +25,10 @@ export interface CtcCheckResult {
   /** audio was shorter than the text: only the first `covered` words were graded, the rest count as not recited */
   partial?: boolean;
   covered?: number;
+  /** where the time went (ms): decode on the main thread, waiting for the background run, model, alignment */
+  timing?: { usedLive: boolean; liveChunks: number; liveWaitMs: number; tailSecs: number; inferMs: number; alignMs: number; wasmThreads: number; decodeMs?: number };
 }
+export interface CtcCheckProgress { stage: "finishing" | "listening" | "aligning"; done: number; total: number }
 export type CtcStatusState = { status: "idle" | "loading" | "ready" | "error"; loadedMB?: number; totalMB?: number; error?: string };
 
 export function ctcEnabled(): boolean {
@@ -71,6 +74,9 @@ class CtcEngine {
   private pending = new Map<number, (r: any) => void>();
   private listeners = new Set<(s: CtcStatusState) => void>();
   state: CtcStatusState = { status: "idle" };
+  progress: CtcCheckProgress | null = null;
+  private progListeners = new Set<(p: CtcCheckProgress | null) => void>();
+  subscribeProgress(fn: (p: CtcCheckProgress | null) => void) { this.progListeners.add(fn); fn(this.progress); return () => { this.progListeners.delete(fn); }; }
 
   subscribe(fn: (s: CtcStatusState) => void) { this.listeners.add(fn); fn(this.state); return () => { this.listeners.delete(fn); }; }
   private emit(s: CtcStatusState) { this.state = s; this.listeners.forEach((l) => { try { l(s); } catch { /* noop */ } }); }
@@ -94,6 +100,7 @@ class CtcEngine {
         else if (m.type === "ready") { this.emit({ status: "ready" }); resolve(); }
         else if (m.type === "load_error") fail(m.error);
         else if (m.type === "live_progress") { if (m.error) console.warn("[ctc] live step failed:", m.error); else this.live?.cb(m.shown, m.ms); }
+        else if (m.type === "check_progress") { this.progress = { stage: m.stage, done: m.done, total: m.total }; this.progListeners.forEach((l) => { try { l(this.progress); } catch { /* noop */ } }); }
         else if (m.type === "result" || m.type === "selftest_result") { const cb = this.pending.get(m.id); if (cb) { this.pending.delete(m.id); cb(m); } }
       };
       this.worker.onerror = (ev) => { if (this.state.status !== "ready") fail((ev as ErrorEvent).message || "worker_error"); };
@@ -116,8 +123,14 @@ class CtcEngine {
   /** Is each reference word really in the recording?  refWords must be the same words (same order) the grid uses. */
   async check(blob: Blob, refWords: string[], opts: { basmalah?: boolean | "auto" } = {}): Promise<CtcCheckResult> {
     await this.load();
+    const td = Date.now();
     const audio = await decodeBlobTo16k(blob);
-    return this.call<CtcCheckResult>({ type: "check", audio, words: refWords, basmalah: opts.basmalah ?? "auto", useLive: true }, [audio.buffer]);
+    const decodeMs = Date.now() - td;
+    this.progress = null;
+    const res = await this.call<CtcCheckResult>({ type: "check", audio, words: refWords, basmalah: opts.basmalah ?? "auto", useLive: true }, [audio.buffer]);
+    if (res.timing) res.timing.decodeMs = decodeMs;
+    this.progress = null; this.progListeners.forEach((l) => { try { l(null); } catch { /* noop */ } });
+    return res;
   }
 
   /* ── LIVE reveal: stream mic audio in while the student recites; cb(shownWords) fires as words are heard ── */
