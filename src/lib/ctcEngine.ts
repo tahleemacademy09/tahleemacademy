@@ -26,7 +26,7 @@ export interface CtcCheckResult {
   partial?: boolean;
   covered?: number;
   /** where the time went (ms): decode on the main thread, waiting for the background run, model, alignment */
-  timing?: { usedLive: boolean; liveChunks: number; liveWaitMs: number; tailSecs: number; inferMs: number; alignMs: number; wasmThreads: number; decodeMs?: number };
+  timing?: { usedLive: boolean; liveChunks: number; liveWaitMs: number; tailSecs: number; inferMs: number; alignMs: number; wasmThreads: number; decodeMs?: number; liveNote?: string };
 }
 export interface CtcCheckProgress { stage: "decoding" | "finishing" | "listening" | "aligning"; done: number; total: number }
 export type CtcStatusState = { status: "idle" | "loading" | "ready" | "error"; loadedMB?: number; totalMB?: number; error?: string };

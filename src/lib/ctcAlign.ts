@@ -320,6 +320,8 @@ export function ctcStatus(mean: number | null, ok = -1, bad = -3): CtcStatus {
  */
 export function uthmaniToModelSpelling(w: string): string {
   return w
+    .replace(/\u0621\u064E\u0627/g, "\u0622")                  // ءَامَنُوا ٱلْقُرْءَانَ ءَاخَرَ → آمَنُوا القُرْآنَ آخَرَ (the model writes آ, not ءَا)
+    .replace(/\u0640\u06E7/g, "\u064A")                         // ٱلْحَوَارِيِّـۧنَ ٱلنَّبِيِّـۧنَ → ...يِّيَن (small yaa = a real long yaa)
     .replace(/\u0648\u0670(?=\u0627)/g, "")                    // ٱلرِّبَوٰا۟ → الرِّبَا (the real alef stays)
     .replace(/\u0648\u0670/g, "\u0627")                         // ٱلصَّلَوٰةَ ٱلزَّكَوٰةَ ٱلْحَيَوٰةِ → ...لَاةَ (dagger after waw = long ā)
     .replace(/(\u064A[\u064B-\u0652]*)?\u0640\u064E\u0654\u0627/g, (_m, y) => (y ? y + "\u0626\u064E\u0627" : "\u0622"))   // بِـَٔايَـٰتِ → بِآيَاتِ ; سَيِّـَٔاتِ → سَيِّئَاتِ
@@ -345,23 +347,32 @@ export function variantWordTokens(words: string[], enc: SpEncoder, vocab: SpVoca
   const keep = vocab.hasDiacritics;
   if (!keep) return [words.map((w) => enc.encode(stripMarks(w)))];
   const sf = vocab.shaddaFirst;
-  const one = (w: string, mode: 0 | 1 | 2 | 3 | 4 | 5, elide: boolean): number[] => {
+  const spelled = (w: string, daggerAlef: boolean) => modelForm(uthmaniToModelSpelling(w), daggerAlef, sf);
+  const one = (w: string, mode: number): number[] => {
     if (mode >= 2) {
       const m = VOCATIVE.exec(w);
       if (m) {
         const rest = w.slice(m[0].length);
-        return [...enc.encode(modelForm("يَا", true, sf)), ...(rest ? one(rest, mode, elide) : [])];
+        return [...enc.encode(modelForm("يَا", true, sf)), ...(rest ? one(rest, mode) : [])];
       }
-      let t = modelForm(uthmaniToModelSpelling(w), mode === 2 || mode === 4, sf);
-      if (mode >= 4) t = dropMaddBeforeWasl(t);
+      let t = spelled(w, mode === 2 || mode === 4 || mode >= 6);
+      if (mode === 4 || mode === 5) t = dropMaddBeforeWasl(t);
+      if (mode === 6) t = dropInitialShadda(t);
+      if (mode === 7) t = sukunOnBareEnd(t);
+      if (mode === 8) t = sukunOnBareEnd(dropInitialShadda(t));
       return enc.encode(t);
     }
     return enc.encode(modelForm(w, mode === 0, sf));
   };
-  // modes 4/5 = modes 2/3 with the final long-vowel letter dropped; only built for words followed by a hamzat al-wasl
+  // modes 4/5 only for words followed by a hamzat al-wasl; 6/7 only where they change something (else identical to mode 2 → skipped)
   const elides = words.map((_, i) => startsWithWasl(words[i + 1]));
-  return ([0, 1, 2, 3, 4, 5] as const).map((mode) => words.map((w, i) => (mode >= 4 && !elides[i] ? one(w, (mode - 2) as 2 | 3, false) : one(w, mode, elides[i]))));
+  return [0, 1, 2, 3, 4, 5, 6, 7, 8].map((mode) => words.map((w, i) => ((mode === 4 || mode === 5) && !elides[i] ? one(w, mode - 2) : one(w, mode))));
 }
+
+/** Idgham: a word-initial shadda (وَكَفَرَت طَّآئِفَةٌ) is not written by the model: طَائِفَةٌ */
+export const dropInitialShadda = (t: string) => t.replace(/^([\u0621-\u064A\u0671])([\u064B-\u0652]*)/, (_m, c, marks) => c + marks.replace(/\u0651/g, ""));
+/** A last letter with no mark at all (the page leaves the sukun off before an idgham: فَـَٔامَنَت طَّآئِفَةٌ) is written with a sukun by the model */
+export const sukunOnBareEnd = (t: string) => (/[\u0621-\u0648\u064A]$/.test(t) && !/[\u0627\u0648\u0649\u064A]$/.test(t) ? t + "\u0652" : t);
 
 /** next word starts with ٱ (hamzat al-wasl) — or a plain ال written without the wasl sign */
 const startsWithWasl = (w: string | undefined) => !!w && /^[\u064B-\u0652\u0640]*(\u0671|\u0627\u0644)/.test(w.replace(/^\uFEFF/, ""));
@@ -393,11 +404,13 @@ export function alignWords(
   const base = run(variants[0]);
   if (!base) return null;
   for (let k = 1; k < variants.length; k++) {
-    if (!variants[k].some((t, i) => !sameTokens(t, variants[0][i]))) continue;
+    // only words whose spelling is new (not identical to any earlier variant) are worth another pass
+    const isNew = words.map((_, i) => !variants.slice(0, k).some((v) => sameTokens(v[i], variants[k][i])));
+    if (!isNew.some(Boolean)) continue;
     const alt = run(variants[k]);
     if (!alt) continue;
     words.forEach((_, i) => {
-      if (sameTokens(variants[k][i], variants[0][i])) return;
+      if (!isNew[i]) return;
       if (alt[i].mean !== null && (base[i].mean === null || alt[i].mean! > base[i].mean!)) base[i] = { ...alt[i], alt: true };
     });
   }
@@ -549,7 +562,8 @@ export function scoreWordsPartial(
   let out: CtcWordScore[] | null = null, covered = 0;
   for (let k = 0; k < variants.length; k++) {
     const head = variants[k].slice(0, keep);
-    if (k > 0 && !head.some((t, i) => !sameTokens(t, plain[i]))) continue;
+    const isNew = head.map((t, i) => k === 0 || !variants.slice(0, k).some((v) => sameTokens(v[i], t)));
+    if (k > 0 && !isNew.some(Boolean)) continue;
     const r = ctcPrefixAlign(logp, T, V, head.flat(), blank);
     if (!r) { if (k === 0) return null; continue; }
     const scores = scoreWords(logp, V, r.path, head, frameDur);
@@ -560,7 +574,7 @@ export function scoreWordsPartial(
       for (let j = 0; j < head.length; j++) { seen += head[j].length; if (seen - 1 > endTok) break; covered = j + 1; }
     } else if (out) {
       for (let i = 0; i < keep; i++) {
-        if (sameTokens(head[i], plain[i])) continue;
+        if (!isNew[i]) continue;
         if (scores[i].mean !== null && (out[i].mean === null || scores[i].mean! > out[i].mean!)) out[i] = { ...scores[i], alt: true };
       }
     }

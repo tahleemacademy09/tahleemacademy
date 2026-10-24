@@ -116,24 +116,37 @@ async function check(m: { id: number; audio: Float32Array; words: string[]; basm
   const parts: { lp: Float32Array; T: number; V: number }[] = [];
   let V = 0, T = 0;
   let secs = m.audio.length / SR;
-  const timing = { usedLive: false, liveChunks: 0, liveWaitMs: 0, tailSecs: 0, inferMs: 0, alignMs: 0, wasmThreads: ort?.env?.wasm?.numThreads ?? 1 };
+  const timing = { usedLive: false, liveChunks: 0, liveWaitMs: 0, tailSecs: 0, inferMs: 0, alignMs: 0, wasmThreads: ort?.env?.wasm?.numThreads ?? 1, liveNote: "" };
   const progress = (stage: string, done: number, total: number) => ctx.postMessage({ type: "check_progress", id: m.id, stage, done, total });
   // The recording was already run through the model WHILE the student recited (see "background inference" below):
   // only the last few seconds are left to process. Used only if it covers the whole recording; otherwise the
   // normal path below processes the finished recording as before.
   const P = pipeDone; pipeDone = null;
   let todo: Float32Array[] = [];
+  if (!m.useLive) timing.liveNote = "background step off";
+  else if (!P) timing.liveNote = "background step never started (no live audio reached the worker)";
   if (P && m.useLive) {
     const tw = Date.now();
     progress("finishing", 0, 0);
     try { await P.run; } catch { /* handled by P.failed */ }
     timing.liveWaitMs = Date.now() - tw;
-    if (!P.failed && P.parts.length && Math.abs(P.total / SR - secs) <= 2.5) {
+    const gap = Math.abs(P.total / SR - secs);
+    if (!P.failed && P.parts.length && gap <= 2.5) {
       for (const p of P.parts) parts.push(p);
       todo = chunkAtQuiet(P.pend.subarray(0, P.len)).filter((c) => c.length >= SR * 0.3);
       secs = P.total / SR;
       timing.usedLive = true; timing.liveChunks = P.parts.length;
-    }
+    } else if (P.parts.length) {
+      // Live audio and the saved recording differ in length (or the background step stopped part-way): keep every part that
+      // WAS finished (they are exact, the unprocessed rest is whatever follows them) and run only the remainder of the recording.
+      const consumed = P.total - P.len;
+      if (consumed > 0 && consumed < m.audio.length) {
+        for (const p of P.parts) parts.push(p);
+        todo = chunkAtQuiet(m.audio.subarray(consumed)).filter((c) => c.length >= SR * 0.3);
+        timing.usedLive = true; timing.liveChunks = P.parts.length;
+        timing.liveNote = `reused ${P.parts.length} finished parts (${(consumed / SR).toFixed(0)} s); ${P.failed ? "background step failed: " + P.failMsg : "length gap " + gap.toFixed(1) + " s"}`;
+      } else timing.liveNote = `not usable (consumed ${(consumed / SR).toFixed(0)} s, recording ${(m.audio.length / SR).toFixed(0)} s)`;
+    } else timing.liveNote = P.failed ? "background step failed before finishing any part: " + P.failMsg : `no part finished in time (${(P.total / SR).toFixed(0)} s of live audio, gap ${gap.toFixed(1)} s)`;
   }
   if (!timing.usedLive) todo = chunkAtQuiet(m.audio).filter((c) => c.length >= SR * 0.3);
   const totalSecs = todo.reduce((a, c) => a + c.length, 0) / SR;
@@ -200,14 +213,14 @@ async function selftest(m: { id: number; testsUrl: string }) {
 interface Pipe {
   pend: Float32Array; len: number; total: number;
   parts: { lp: Float32Array; T: number; V: number }[];
-  failed: boolean; open: boolean; run: Promise<void> | null;
+  failed: boolean; failMsg: string; open: boolean; run: Promise<void> | null;
 }
 let pipe: Pipe | null = null;        // being filled while the student recites
 let pipeDone: Pipe | null = null;    // closed at Stop, waiting for the final check
-const PIPE_TARGET = 20, PIPE_SEARCH = 4;
+const PIPE_TARGET = 12, PIPE_SEARCH = 3;   // small pieces: at Stop at most ~15 s of audio is left to process
 
 function pipeBegin() {
-  pipe = { pend: new Float32Array(SR * 40), len: 0, total: 0, parts: [], failed: false, open: true, run: null };
+  pipe = { pend: new Float32Array(SR * 40), len: 0, total: 0, parts: [], failed: false, failMsg: "", open: true, run: null };
   pipeDone = null;
 }
 function pipeAppend(samples: Float32Array) {
@@ -230,7 +243,7 @@ async function pipeLoop(P: Pipe) {
       P.parts.push(r);
       P.pend.copyWithin(0, cut, P.len); P.len -= cut;
     }
-  } catch { P.failed = true; }
+  } catch (e: any) { P.failed = true; P.failMsg = String(e?.message ?? e); }
 }
 
 /* ───────────────────────── LIVE reveal ─────────────────────────
@@ -291,7 +304,11 @@ async function liveRun() {
   if (!L || L.busy) return;
   L.busy = true;
   try {
-    while (live === L && L.total - L.lastRunEnd >= SR * 0.4) await liveStep(L);
+    while (live === L && L.total - L.lastRunEnd >= SR * 0.4) {
+      // the saved-for-grading work comes first: while it is behind, the on-screen reveal waits
+      if (pipe && pipe.len > (PIPE_TARGET + PIPE_SEARCH + 12) * SR) { await new Promise((r) => setTimeout(r, 300)); continue; }
+      await liveStep(L);
+    }
   } catch (e: any) {
     // a failed live step must never break recording — the final check on Stop is what counts
     ctx.postMessage({ type: "live_progress", shown: L.shown, error: String(e?.message ?? e) });

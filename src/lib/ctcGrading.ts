@@ -34,14 +34,17 @@ function heardMatches(word: string, heard: string | undefined, nextWord?: string
 
 /**
  * heard (≥ -1.0) green · unsure (-3 … -1) yellow, half credit · not heard (< -3) red "missed".
- * An "unsure" word whose written letters are exactly what the model heard is green: low confidence alone
- * (fast or soft recitation) is not a mistake. Yellow stays for words where the model wrote something different.
+ * An "unsure" or "not heard" word whose written letters are exactly what the model wrote in its time span is green:
+ * a low confidence number alone (fast or soft recitation, a different spelling) is not a mistake.
+ * Yellow stays for words where the model wrote something different.
  */
 export function gradeFromCtc(refWords: string[], scores: CtcWordScore[], heard?: string[]): WordResult[] {
   return refWords.map((word, i) => {
     const st = ctcStatus(scores[i]?.mean ?? null);
-    if (st === "unsure" && !heardMatches(word, heard?.[i], refWords[i + 1])) return { word, status: "missing" as const, grade: "close" as const, credit: 0.5 };
-    if (st === "bad") return { word, status: "missing" as const, grade: "missed" as const, credit: 0 };
+    // the model wrote exactly this word's letters in this word's time span → it was said, whatever the confidence number says
+    const said = (st === "unsure" || st === "bad") && heardMatches(word, heard?.[i], refWords[i + 1]);
+    if (!said && st === "unsure") return { word, status: "missing" as const, grade: "close" as const, credit: 0.5 };
+    if (!said && st === "bad") return { word, status: "missing" as const, grade: "missed" as const, credit: 0 };
     return { word, status: "correct" as const, grade: "ok" as const, credit: 1 };   // heard (or nothing to judge)
   });
 }
