@@ -395,6 +395,35 @@ export function greedyText(logp: Float32Array, T: number, V: number, vocab: SpVo
   return out.split(WORD_START).join(" ").replace(/\s+/g, " ").trim();
 }
 
+/** What the model hears in frames [f0, f1) only (used to show the heard text under each page word). */
+export function greedySpan(logp: Float32Array, T: number, V: number, vocab: SpVocab, f0: number, f1: number): string {
+  let prev = -1, out = "";
+  const a = Math.max(0, f0), b = Math.min(T, f1);
+  for (let t = a; t < b; t++) {
+    let bi = 0, bv = -Infinity;
+    for (let v = 0; v < V; v++) { const x = logp[t * V + v]; if (x > bv) { bv = x; bi = v; } }
+    if (bi !== prev && bi !== vocab.blank) out += vocab.pieces[bi] ?? "";
+    prev = bi;
+  }
+  return out.split(WORD_START).join(" ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Where to cut `audio[0..len)` into a chunk: the quietest 50 ms between `target - search` and `target + search`
+ * seconds (a breath / pause, never mid-word if the reciter pauses). Needs len >= (target + search) * SR.
+ */
+export function quietCutPoint(audio: Float32Array, len: number, target: number, search: number): number {
+  const fr = Math.round(SR * 0.05);
+  const lo = Math.round((target - search) * SR), hi = Math.min(len - fr, Math.round((target + search) * SR));
+  let bestAt = lo, bestV = Infinity;
+  for (let a = lo; a < hi; a += fr) {
+    let sum = 0;
+    for (let i = a, e = Math.min(len, a + fr); i < e; i++) sum += audio[i] * audio[i];
+    if (sum < bestV) { bestV = sum; bestAt = a; }
+  }
+  return bestAt;
+}
+
 /* ───────────────────────── LIVE (open-ended) alignment ───────────────────────── */
 
 /**

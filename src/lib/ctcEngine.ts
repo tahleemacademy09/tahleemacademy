@@ -15,6 +15,8 @@ const MODEL_URL = MODEL_BASE.replace(/\/?$/, "/") + "model_with_encoder.q8.onnx"
 
 export interface CtcCheckResult {
   words: CtcWordScore[];
+  /** what the model heard for each page word (same order as `words`; "" = nothing heard there) */
+  heard?: string[];
   greedy: string;
   secs: number;
   frames: number;
@@ -115,7 +117,7 @@ class CtcEngine {
   async check(blob: Blob, refWords: string[], opts: { basmalah?: boolean | "auto" } = {}): Promise<CtcCheckResult> {
     await this.load();
     const audio = await decodeBlobTo16k(blob);
-    return this.call<CtcCheckResult>({ type: "check", audio, words: refWords, basmalah: opts.basmalah ?? "auto" }, [audio.buffer]);
+    return this.call<CtcCheckResult>({ type: "check", audio, words: refWords, basmalah: opts.basmalah ?? "auto", useLive: true }, [audio.buffer]);
   }
 
   /* ── LIVE reveal: stream mic audio in while the student recites; cb(shownWords) fires as words are heard ── */

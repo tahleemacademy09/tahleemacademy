@@ -9,7 +9,7 @@
   Messages out: {type:"progress"|"ready"|"load_error"|"result"|"selftest_result"|"live_progress"}
 */
 import {
-  alignWords, alignWordsPartial, chunkAtQuiet, greedyText, logMel, modelForm, scorePrefix, SpEncoder, SR, stripMarks,
+  alignWords, alignWordsPartial, chunkAtQuiet, greedySpan, greedyText, quietCutPoint, logMel, modelForm, scorePrefix, SpEncoder, SR, stripMarks,
   type CtcWordScore, type SpVocab,
 } from "./ctcAlign";
 
@@ -110,23 +110,39 @@ async function runChunk(audio: Float32Array): Promise<{ lp: Float32Array; T: num
   return { lp, T, V };
 }
 
-async function check(m: { id: number; audio: Float32Array; words: string[]; basmalah: boolean | "auto" }) {
+async function check(m: { id: number; audio: Float32Array; words: string[]; basmalah: boolean | "auto"; useLive?: boolean }) {
   if (!session || !vocab || !enc) throw new Error("not_loaded");
   const t0 = Date.now();
-  const chunks = chunkAtQuiet(m.audio);
-  const parts: { lp: Float32Array; T: number }[] = [];
+  const parts: { lp: Float32Array; T: number; V: number }[] = [];
   let V = 0, T = 0;
-  for (const c of chunks) {
-    if (c.length < SR * 0.3) continue;
-    const r = await runChunk(c);
-    V = r.V; T += r.T; parts.push(r);
+  let secs = m.audio.length / SR;
+  // The recording was already run through the model WHILE the student recited (see "background inference" below):
+  // only the last few seconds are left to process. Used only if it covers the whole recording; otherwise the
+  // normal path below processes the finished recording as before.
+  const P = pipeDone; pipeDone = null;
+  if (P && m.useLive) {
+    try { await P.run; } catch { /* handled by P.failed */ }
+    if (!P.failed && P.parts.length && Math.abs(P.total / SR - secs) <= 2.5) {
+      for (const p of P.parts) parts.push(p);
+      for (const c of chunkAtQuiet(P.pend.subarray(0, P.len))) {
+        if (c.length < SR * 0.3) continue;
+        parts.push(await runChunk(c));
+      }
+      secs = P.total / SR;
+    }
+  }
+  if (!parts.length) {
+    for (const c of chunkAtQuiet(m.audio)) {
+      if (c.length < SR * 0.3) continue;
+      parts.push(await runChunk(c));
+    }
   }
   if (!parts.length) throw new Error("audio_too_short");
+  for (const r of parts) { V = r.V; T += r.T; }
   if (V !== vocab.pieces.length + 1) throw new Error(`vocab mismatch: model ${V} vs vocab ${vocab.pieces.length + 1}`);
   const lp = new Float32Array(T * V);
   let o = 0;
   for (const p of parts) { lp.set(p.lp, o); o += p.lp.length; }
-  const secs = m.audio.length / SR;
   const frameDur = secs / T;
   const greedy = greedyText(lp, T, V, vocab);
   // "auto": the student recited the Basmalah first but the page text does not start with it → align it too, then drop it.
@@ -145,8 +161,11 @@ async function check(m: { id: number; audio: Float32Array; words: string[]; basm
     if (!p) throw new Error("audio_too_short_for_text");
     scored = p.scores; partial = true; covered = Math.max(0, p.covered - (useBasmalah ? BASMALAH.length : 0));
   }
+  // What the model heard for each page word: the greedy text inside that word's own aligned time span.
+  const heardAll = scored.map((w) => (w.start == null || w.end == null ? "" : greedySpan(lp, T, V, vocab!, Math.round(w.start / frameDur), Math.round(w.end / frameDur))));
   const words: CtcWordScore[] = useBasmalah ? scored.slice(BASMALAH.length) : scored;
-  ctx.postMessage({ type: "result", id: m.id, words, greedy, secs, frames: T, ms: Date.now() - t0, basmalah: useBasmalah, partial, covered });
+  const heard = useBasmalah ? heardAll.slice(BASMALAH.length) : heardAll;
+  ctx.postMessage({ type: "result", id: m.id, words, heard, greedy, secs, frames: T, ms: Date.now() - t0, basmalah: useBasmalah, partial, covered });
 }
 
 async function selftest(m: { id: number; testsUrl: string }) {
@@ -158,6 +177,47 @@ async function selftest(m: { id: number; testsUrl: string }) {
     if (got.length !== want.length || got.some((x, i) => x !== want[i])) bad.push({ word: w, want, got });
   }
   ctx.postMessage({ type: "selftest_result", id: m.id, total: tests.length, bad: bad.slice(0, 20), badCount: bad.length });
+}
+
+/* ───────────────────────── background inference while recording ─────────────────────────
+   The model is slow on a phone (~0.3x real time, one thread), so waiting for it after Stop takes minutes for a long
+   recording. While the student recites, the audio that streams in for the live reveal is ALSO cut at quiet moments
+   (every ~16-24 s) and run through the model in the gaps; the finished chunks' log-probs are kept. At Stop only
+   the last few seconds are left. Same cutting rule as chunkAtQuiet, so grading is unchanged. */
+interface Pipe {
+  pend: Float32Array; len: number; total: number;
+  parts: { lp: Float32Array; T: number; V: number }[];
+  failed: boolean; open: boolean; run: Promise<void> | null;
+}
+let pipe: Pipe | null = null;        // being filled while the student recites
+let pipeDone: Pipe | null = null;    // closed at Stop, waiting for the final check
+const PIPE_TARGET = 20, PIPE_SEARCH = 4;
+
+function pipeBegin() {
+  pipe = { pend: new Float32Array(SR * 40), len: 0, total: 0, parts: [], failed: false, open: true, run: null };
+  pipeDone = null;
+}
+function pipeAppend(samples: Float32Array) {
+  const P = pipe;
+  if (!P || P.failed) return;
+  if (P.len + samples.length > P.pend.length) {
+    const nb = new Float32Array(Math.max(P.pend.length * 2, P.len + samples.length));
+    nb.set(P.pend.subarray(0, P.len));
+    P.pend = nb;
+  }
+  P.pend.set(samples, P.len);
+  P.len += samples.length; P.total += samples.length;
+  if (!P.run && P.len >= (PIPE_TARGET + PIPE_SEARCH) * SR) P.run = pipeLoop(P).finally(() => { P.run = null; });
+}
+async function pipeLoop(P: Pipe) {
+  try {
+    while (P.open && !P.failed && P.len >= (PIPE_TARGET + PIPE_SEARCH) * SR) {
+      const cut = quietCutPoint(P.pend, P.len, PIPE_TARGET, PIPE_SEARCH);
+      const r = await runChunk(P.pend.slice(0, cut));
+      P.parts.push(r);
+      P.pend.copyWithin(0, cut, P.len); P.len -= cut;
+    }
+  } catch { P.failed = true; }
 }
 
 /* ───────────────────────── LIVE reveal ─────────────────────────
@@ -191,6 +251,7 @@ function wordTokens(L: LiveState, i: number): number[] {
 
 function liveBegin(m: { words: string[] }) {
   if (!session || !vocab || !enc) return;
+  pipeBegin();
   live = {
     words: m.words, tok: [], pageHasBas: stripMarks(m.words[0] || "") === "بسم",
     buf: new Float32Array(SR * 60), bufBase: 0, len: 0, total: 0, lastRunEnd: 0,
@@ -199,6 +260,7 @@ function liveBegin(m: { words: string[] }) {
 }
 
 function liveAppend(samples: Float32Array) {
+  pipeAppend(samples);
   const L = live;
   if (!L) return;
   if (L.len + samples.length > L.buf.length) {
@@ -277,7 +339,7 @@ ctx.onmessage = (ev: MessageEvent) => {
   // live messages bypass the queue: audio must be stored the moment it arrives, never wait behind a running step
   if (m.type === "live_audio") { liveAppend(m.samples); return; }
   if (m.type === "live_start") { liveBegin(m); return; }
-  if (m.type === "live_stop") { live = null; return; }
+  if (m.type === "live_stop") { live = null; if (pipe) { pipe.open = false; pipeDone = pipe; pipe = null; } return; }
   chain = chain.then(() => handle(m)).catch(() => {});
 };
 async function handle(m: any) {
