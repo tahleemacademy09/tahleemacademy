@@ -30,6 +30,7 @@ const CtcTestPanel: React.FC<Props> = ({ ctc, words, error }) => {
               {ctc.timing.usedLive ? `Ran while you recited (${ctc.timing.liveChunks} parts) · ` : "Whole recording processed after Stop · "}
               waited {(ctc.timing.liveWaitMs / 1000).toFixed(1)} s · model {(ctc.timing.inferMs / 1000).toFixed(1)} s for {ctc.timing.tailSecs.toFixed(0)} s of audio ·
               matching {(ctc.timing.alignMs / 1000).toFixed(1)} s · decode {((ctc.timing.decodeMs ?? 0) / 1000).toFixed(1)} s · {ctc.timing.wasmThreads} thread
+              {ctc.timing.liveNote ? <><br />Background step: {ctc.timing.liveNote}</> : null}
             </div>
           )}
           <div style={{ fontSize: 11, color: "#9bb0a6", lineHeight: 1.5 }}>Green = heard · yellow = unsure · red struck-through = not heard (skipped). No Tarteel transcript is used.</div>
