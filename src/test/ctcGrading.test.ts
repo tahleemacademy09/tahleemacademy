@@ -10,6 +10,10 @@ describe("CTC-only grading", () => {
     const w = gradeFromCtc(["a", "b", "c", "d"], [sc(0), sc(-2), sc(-6), sc(null)]);
     expect(w.map((x) => x.grade)).toEqual(["ok", "close", "missed", "ok"]);
   });
+  it("an unsure word is green when the model wrote the same letters, yellow when it wrote something else", () => {
+    const w = gradeFromCtc(["إِلَيْكُمْ", "بَعْدِى"], [sc(-2), sc(-2)], ["إِلَيْكُم", "بَعْد"]);
+    expect(w.map((x) => x.grade)).toEqual(["ok", "close"]);
+  });
   it("hands the verdicts out by key, sliced per ayah, with the right score", () => {
     const words = gradeFromCtc(refWords, [sc(0), sc(0), sc(-8), sc(0), sc(0), sc(0)]);   // word 3 skipped
     const tx = registerCtcGrading("قل هو احد", words);
