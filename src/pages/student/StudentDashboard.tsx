@@ -313,7 +313,7 @@ const DashboardTimetable = ({ slots, sessions, loading, term, isCurrentTerm, blo
                     {isSoon && <span style={{ fontSize:9, fontWeight:700, color:"#b7791f" }}>{t(`in ${mins}m`, `بعد ${mins} د`)}</span>}
                     {isPast && <span style={{ fontSize:9, color:TEXT_LIGHT }}>{t("Ended","انتهى")}</span>}
                   </div>
-                  <div onClick={() => slot.subject_id && navigate(`/student/subjects/${slot.subject_id}`)} style={{ flex:1, minWidth:0, cursor: slot.subject_id ? "pointer" : "default" }}>
+                  <div onClick={() => slot.subject_id && navigate(`/student/courses?subject=${slot.subject_id}`)} style={{ flex:1, minWidth:0, cursor: slot.subject_id ? "pointer" : "default" }}>
                     <p style={{ fontSize:13, fontWeight:700, color:TEXT_DARK, margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{name}</p>
                     <p style={{ fontSize:11, color:TEXT_LIGHT, margin:"2px 0 0", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                       {to12hr(slot.start_time)} – {to12hr(slot.end_time)}
