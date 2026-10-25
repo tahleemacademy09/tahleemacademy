@@ -10,6 +10,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRevisionAssignedCount } from "@/hooks/useRevisionAssignedCount";
+import { notifBelongsToRoute, SIDEBAR_ALIASES } from "@/lib/sidebarNotifications";
 import { useSupportUnreadCount } from "@/hooks/useSupportUnreadCount";
 import { useAppRelease } from "@/hooks/useAppRelease";
 import { useImpersonation } from "@/hooks/useImpersonation";
@@ -446,23 +447,16 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   // Many notification links (live-classes, learning-hub, assignments, results…)
   // are not nav routes themselves, so without this only the Dashboard lit up.
   const NOTIF_ROOTS = ["/student", "/admin", "/teacher"];
-  const NOTIF_ALIASES: Record<string, { prefixes: string[]; types?: string[] }> = {
-    "/student":               { prefixes: ["/student/dashboard", "/dashboard"], types: ["announcement", "general"] },
-    "/student/courses":       { prefixes: ["/student/learning-hub", "/student/assignments"] },
-    "/student/live-now":      { prefixes: ["/student/live-classes"] },
-    "/student/hifdh-program": { prefixes: ["/student/hifdh"] },
-    "/student/exams":         { prefixes: ["/student/results", "/exams"], types: ["exam"] },
-    "/student/musabaqah":     { prefixes: ["/musabaqah"] },
-    "/admin":                 { prefixes: ["/admin/dashboard"], types: ["announcement", "general"] },
-  };
   const notifLinkPath = (l: any) => String(l || "").split(/[?#]/)[0];
-  const notifMatchesRoute = (n: any, route: string): boolean => {
-    const al = NOTIF_ALIASES[route];
-    const p = notifLinkPath(n.link);
-    const prefixes = NOTIF_ROOTS.includes(route) ? (al?.prefixes ?? []) : [route, ...(al?.prefixes ?? [])];
-    if (p) return (NOTIF_ROOTS.includes(route) && p === route) || prefixes.some(x => p === x || p.startsWith(x + "/"));
-    return !!al?.types?.includes(n.type);
+  // All sidebar routes for this role — lets the matcher know when a link already belongs to another entry.
+  const allNavRoutes = (): string[] => {
+    const out: string[] = [];
+    ((role === "student" ? studentNav : adminNav) as any[]).forEach((it: any) =>
+      it.type === "group" ? it.children.forEach((c: any) => out.push(c.to)) : out.push(it.to));
+    return out;
   };
+  const notifMatchesRoute = (n: any, route: string): boolean =>
+    notifBelongsToRoute(n, route, role, allNavRoutes());
 
   // Student: a light list of ALL unread notifications (id/type/link only) — the
   // bell list above is capped at 50 and daily content would crowd out the rest.
@@ -489,12 +483,13 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   // Student: opening a section clears that section's notifications (the star goes away).
   const clearingRef = useRef(false);
   useEffect(() => {
-    if (role !== "student" || !user || clearingRef.current || unreadIdx.length === 0) return;
+    if ((role !== "student" && role !== "admin") || !user || clearingRef.current || unreadIdx.length === 0) return;
     const entries: { to: string; match?: string[] }[] = [];
-    (studentNav as any[]).forEach(it => it.type === "group" ? entries.push(...it.children) : entries.push(it));
+    ((role === "student" ? studentNav : adminNav) as any[]).forEach(it => it.type === "group" ? entries.push(...it.children) : entries.push(it));
+    entries.push(...(role === "student" ? [{ to: "/student/app" }, { to: "/student/enrollment-payment" }] : [{ to: "/admin/app-releases" }]));
     const here = location.pathname;
     const isHere = (e: { to: string; match?: string[] }) => {
-      const al = NOTIF_ALIASES[e.to]?.prefixes ?? [];
+      const al = SIDEBAR_ALIASES[role]?.[e.to]?.prefixes ?? [];
       const prefixes = NOTIF_ROOTS.includes(e.to) ? al : [e.to, ...(e.match ?? []), ...al];
       if (NOTIF_ROOTS.includes(e.to) && here === e.to) return true;
       return prefixes.some(x => here === x || here.startsWith(x + "/"));
@@ -701,7 +696,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                 )}>
                 <Smartphone className="h-4 w-4 shrink-0 text-yellow-400"/>
                 <span>{role === "admin" ? t("App Releases","إصدارات التطبيق") : t("Get the App","حمّل التطبيق")}</span>
-                <NotifMark count={appHasUpdate ? 1 : 0} />
+                <NotifMark count={Math.max(appHasUpdate ? 1 : 0, unreadCountFor(appTo))} />
               </Link>
             );
           })()}
@@ -715,6 +710,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
               )}>
               <Wallet className="h-4 w-4 shrink-0 text-yellow-400"/>
               <span>{t("Payment","الدفع")}</span>
+              <NotifMark count={unreadCountFor("/student/enrollment-payment")} />
             </Link>
           )}
           <button

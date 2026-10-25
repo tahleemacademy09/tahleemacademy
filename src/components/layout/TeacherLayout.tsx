@@ -4,6 +4,7 @@
 // (rounded-2xl cards, shadow-premium, consistent spacing) instead of inline styles.
 
 import { useState, useEffect, useRef, Suspense } from "react";
+import { notifBelongsToRoute, SIDEBAR_ALIASES } from "@/lib/sidebarNotifications";
 import PageFallback from "@/components/layout/PageFallback";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useStaffTermId, useStaffTermRow, useIsViewingPastTerm } from "@/hooks/useCurrentTermId";
@@ -266,21 +267,54 @@ const TeacherLayout = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, unreadNotifs, location.pathname]);
 
-  // Unread notifications that belong to a sidebar route (by link prefix; link-less ones fall to the Dashboard).
-  const TEACHER_ALIASES: Record<string, string[]> = {
-    "/teacher/hifdh": ["/teacher/hifdh-program", "/teacher/recitation"],
-    "/teacher/classes": ["/teacher/live-classes", "/teacher/live"],
+  // Unread notifications that belong to a sidebar route — shared matcher (link prefix + notification type),
+  // so EVERY teacher sidebar entry can light up, not only the few whose link equals their route.
+  const teacherRoutes = (): string[] => {
+    const out: string[] = [];
+    buildNav(t, {}).forEach((it: any) => it.type === "group" ? it.group.children.forEach((c: any) => out.push(c.to)) : out.push(it.link.to));
+    return out;
   };
   const unreadFor = (route: string): number => {
+    const routes = teacherRoutes();
     return unreadIdx.reduce((c, n) => {
-      const path = String(n.link || "").split(/[?#]/)[0];
       if (route === "/teacher") {
-        return (!path || path.startsWith("reminder:") || path === "/teacher" || path === "/teacher/dashboard" || path === "/" || path === "/dashboard") ? c + 1 : c;
+        const path = String(n.link || "").split(/[?#]/)[0];
+        const bare = (!path || path.startsWith("reminder:") || path === "/teacher" || path === "/teacher/dashboard" || path === "/" || path === "/dashboard");
+        return (bare && !routes.some(r => r !== "/teacher" && notifBelongsToRoute(n, r, "teacher", routes))) || notifBelongsToRoute(n, route, "teacher", routes) ? c + 1 : c;
       }
-      const prefixes = [route, ...(TEACHER_ALIASES[route] ?? [])];
-      return prefixes.some(x => path === x || path.startsWith(x + "/")) ? c + 1 : c;
+      return notifBelongsToRoute(n, route, "teacher", routes) ? c + 1 : c;
     }, 0);
   };
+
+  // Opening a section marks that section's notifications read, so its red badge clears (same as student/admin).
+  const teacherClearingRef = useRef(false);
+  useEffect(() => {
+    if (!user || teacherClearingRef.current || unreadIdx.length === 0) return;
+    const routes = teacherRoutes();
+    const here = location.pathname;
+    const isHere = (r: string) => {
+      const al = SIDEBAR_ALIASES.teacher[r]?.prefixes ?? [];
+      if (r === "/teacher") return here === "/teacher";
+      return [r, ...al].some(x => here === x || here.startsWith(x + "/"));
+    };
+    const ids = new Set<string>();
+    [...routes, "/teacher/app"].filter(isHere).forEach(r => unreadIdx.forEach(n => { if (notifBelongsToRoute(n, r, "teacher", routes)) ids.add(n.id); }));
+    if (ids.size === 0) return;
+    teacherClearingRef.current = true;
+    const list = Array.from(ids);
+    (async () => {
+      try {
+        for (let i = 0; i < list.length; i += 200) {
+          await supabase.from("notifications").update({ is_read: true }).eq("user_id", user.id).in("id", list.slice(i, i + 200));
+        }
+        setUnreadIdx(p => p.filter(n => !ids.has(n.id)));
+        setNotifList(p => p.map(n => ids.has(n.id) ? { ...n, is_read: true } : n));
+        setUnreadNotifs(p => Math.max(0, p - list.length));
+      } finally { teacherClearingRef.current = false; }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, unreadIdx, user?.id]);
+
   const RedBadge = ({ n }: { n: number }) => n > 0 ? (
     <span aria-label={`${n} unread`} className="inline-flex flex-shrink-0 items-center justify-center rounded-full"
       style={{ background: "#dc2626", color: "#fff", fontWeight: 800, fontSize: 10, lineHeight: 1, minWidth: 18, height: 18, padding: "0 5px" }}>
