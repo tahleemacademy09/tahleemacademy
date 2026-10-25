@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { toast } from "@/hooks/use-toast";
 import { Plus, Target, Edit, Trash2, Save, ChevronDown, ChevronUp, BookOpen } from "lucide-react";
-import { useViewingTermId } from "@/hooks/useCurrentTermId";
+import { useViewingTermId, useStaffTermId } from "@/hooks/useCurrentTermId";
 
 const SubjectSyllabus = ({ subjectId }: { subjectId: string }) => {
   const { t } = useLanguage();
@@ -21,7 +21,10 @@ const SubjectSyllabus = ({ subjectId }: { subjectId: string }) => {
   const isPrivileged = hasRole("admin") || hasRole("teacher");
   // Staff manage/see the live term; students see their own viewing term
   // (TermSwitcher choice, or whatever's live).
-  const viewingTermId = useViewingTermId(profile);
+  // Admins always work in the live term; teachers follow their own switcher. Students use their viewing term.
+  const studentTermId = useViewingTermId(profile);
+  const staffTermId = useStaffTermId();
+  const viewingTermId = isPrivileged ? staffTermId : studentTermId;
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [form, setForm] = useState({ week_number: 1, title: "", description: "", objectives: "" });
