@@ -29,6 +29,7 @@ import { StatusBar } from "@capacitor/status-bar";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { getSignedUrl } from "../../integrations/supabase/storageClient";
 import { playJoinSound, playLeaveSound, playRecordingStartSound, playRecordingStopSound } from "@/lib/soundUtils";
+import NetworkGuard from "@/components/classroom/NetworkGuard";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useLiveClass } from "@/contexts/LiveClassContext";
@@ -193,7 +194,7 @@ const USE_H264_ON_MOBILE=true;
 
 const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewProps)=>{
   const{user,hasRole}=useAuth();const{t}=useLanguage();const isMobile=useIsMobile();const isPrivileged=hasRole("admin")||hasRole("teacher");const isAdmin=hasRole("admin");
-  const{setHasConnected,leaveSessionFnRef}=useLiveClass();
+  const{setHasConnected,leaveSessionFnRef,minimized,setMinimized}=useLiveClass();
   const[phase,setPhase]=useState<"lobby"|"live"|"ended"|"waiting">("lobby");
   const[waitingMessage,setWaitingMessage]=useState<string|null>(null);
   const[waitingDenied,setWaitingDenied]=useState(false);
@@ -684,6 +685,45 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[sessionId,isPrivileged,phase]);
   useEffect(()=>{if(phase!=="live")return;const ti=setInterval(()=>{durationRef.current+=1;},1000);return()=>clearInterval(ti);},[phase]);
+
+  /* ── Student safety net: poll the session row so a missed data packet / realtime event
+     (backgrounded tab, flaky network) can never leave a student stuck in a class the admin ended. ── */
+  useEffect(()=>{
+    if(!sessionId||isPrivileged||phase!=="live")return;
+    const poll=async()=>{
+      try{
+        const{data}=await supabase.from("live_sessions").select("status").eq("id",sessionId).maybeSingle();
+        if(data?.status==="ended"&&!intentionalLeaveRef.current)setPhase("ended");
+      }catch{}
+    };
+    const iv=setInterval(poll,5000);
+    return()=>clearInterval(iv);
+  },[sessionId,isPrivileged,phase]);
+
+  /* ── Class ended (by the admin/teacher "End for all") → fully close the live state ──
+     Before, phase flipped to "ended" but hasConnected stayed true in LiveClassContext, so the
+     foreground service, keep-alive audio and the round "live" bubble all kept running and the
+     class still looked live. Clearing it here removes all of that; un-minimizing makes sure the
+     person lands on the end screen instead of a stale bubble. */
+  useEffect(()=>{
+    if(phase!=="ended")return;
+    setHasConnected(false);
+    setMinimized(false);
+    setShowEnd(false);setShowLeaveConfirm(false);
+    try{playLeaveSound();}catch{}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[phase]);
+
+  /* ── Minimizing must not leave dialogs/panels floating over the app ──
+     These render through createPortal(document.body), which is OUTSIDE the translated overlay,
+     so they stayed on screen after minimize and tapping the round icon appeared to show the
+     "End class for everyone?" dialog instead of the class. Close them when minimizing. */
+  useEffect(()=>{
+    if(!minimized)return;
+    setShowEnd(false);setShowLeaveConfirm(false);setMatPicker(false);
+    setPartPanelOpen(false);setAttendanceOpen(false);setTimerOpen(false);
+    setLiveFilesOpen(false);setHandQueueOpen(false);setSummaryOpen(false);
+  },[minimized]);
   // NOTE: mediaSession metadata/playbackState/action-handlers are now owned
   // exclusively by GlobalClassroomOverlay + useBackgroundAudio.ts (driven off
   // hasConnected). This component used to ALSO write directly to the same
@@ -811,6 +851,11 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             if(!alreadyLive){liveUpdate.status="live";liveUpdate.actual_start_time=sessions[0].actual_start_time||new Date().toISOString();}
             if(Object.keys(liveUpdate).length){await supabase.from("live_sessions").update(liveUpdate).eq("id",freshSessionId);}
             setSessionId(freshSessionId);setSessionInfo(alreadyLive?sessions[0]:{...sessions[0],...liveUpdate});
+            // Students can't UPDATE live_sessions / INSERT notifications under RLS, so the old client-side
+            // "mark live" silently failed for them. This RPC (SECURITY DEFINER) flips the class live for
+            // ANY joiner and notifies: student joined -> admins + class teacher; teacher/admin joined -> students.
+            // Deduped per (session,user) server-side, so rejoining after a drop never re-notifies.
+            try{(supabase as any).rpc("announce_class_join",{_subject_id:subject.id,_session_id:freshSessionId}).then((r:any)=>{if(r?.error)console.warn("[announce_class_join]",r.error.message);},()=>{});}catch{}
             // FIX: check for an attendance_logs row this student already has for
             // this exact session (from an earlier stint that disconnected/logged
             // out) before inserting a new one. Reusing it means a rejoin shows up
@@ -954,51 +999,55 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   },[attendanceId,joinedAt,sessionId,user]);
 
   const endSession=async()=>{
+    // FAST PATH ("takes time before it can close"): the old version awaited the recording
+    // upload (up to ~21s) BEFORE telling anyone the class was over, so the class stayed
+    // "live" for everybody and the button looked frozen. Now: tell the room + DB first,
+    // show the end screen immediately, and let the recording finish saving in the background
+    // (DirectRecorder keeps the file on-device and retries, so nothing is lost).
     intentionalLeaveRef.current=true; // prevent auto-reconnect on disconnect
     setShowEnd(false);
-    // Auto-save any active recording before tearing down the session
-    await recStopRef.current?.();
-    try{
+    const nowIso=new Date().toISOString();
+    const endPatch={status:"ended",ended_at:nowIso,actual_end_time:nowIso};
+    // Start stopping the recorder now (MediaRecorder stops synchronously inside), don't wait for the upload.
+    let recDone:Promise<any>=Promise.resolve();
+    try{recDone=Promise.resolve(recStopRef.current?.()).catch(()=>{});}catch{}
+    // 1) Broadcast over LiveKit so connected students leave instantly (works even if sessionId is still unresolved).
+    const room=roomRef.current;
+    try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"class_ended"})),{reliable:true});}catch(err){console.warn("[endSession] LiveKit broadcast failed:",err);}
+    // 2) End EVERY live/active session of this subject, not only the one we think we're in — a stale or
+    //    unresolved sessionId (or a duplicate live row) is what left classes showing "live" after ending.
+    const dbDone=(async()=>{
+      try{
+        await supabase.from("live_sessions").update(endPatch as any).eq("subject_id",subject.id).in("status",["live","active"]);
+        if(sessionId)await supabase.from("live_sessions").update(endPatch as any).eq("id",sessionId).neq("status","ended");
+      }catch(e:any){console.error("[endSession] DB error (continuing anyway):",e?.message);}
+    })();
+    if(isPrivileged)setShowAttendanceReview(true); // pop up immediately instead of waiting on the notification
+    // Give the data packet a beat to leave the socket, then close the room and show the end screen.
+    await new Promise(r=>setTimeout(r,250));
+    try{room?.disconnect();}catch{}
+    setPhase("ended");
+    // 3) Everything else is bookkeeping — run it after the screen has already switched.
+    (async()=>{
+      await dbDone;
       if(sessionId){
-        // 1. Update DB so students' Supabase subscription detects the end
-        await supabase.from("live_sessions").update({status:"ended",ended_at:new Date().toISOString(),actual_end_time:new Date().toISOString()}).eq("id",sessionId);
-        // FIX: pre-fill manual_attendance from who actually joined, instead of
-        // leaving it for the teacher to mark every student by hand afterwards.
         if(user)syncManualAttendanceFromSession(sessionId,subject,user.id).catch(()=>{});
-        if(isPrivileged)setShowAttendanceReview(true); // pop up immediately instead of waiting on the notification
-        if(user)await supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:t("Class has ended","انتهت الحصة"),type:"system"});
-        // 2. Broadcast class_ended via LiveKit data channel so students disconnect immediately
-        // (faster than waiting for DB subscription)
-        try{
-          // FIX BUG 10: Use roomRef instead of window.__lkRoom__ global
-          const room=roomRef.current;
-          if(room?.localParticipant){
-            room.localParticipant.publishData(
-              new TextEncoder().encode(JSON.stringify({type:"class_ended"})),
-              {reliable:true}
-            );
-            // Give data message a moment to propagate before disconnecting
-            await new Promise(r=>setTimeout(r,400));
-            room.disconnect();
-          }
-        }catch(err){console.warn("[endSession] LiveKit broadcast failed:",err);}
-        // Clear chat after short delay
+        if(user){try{await supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:t("Class has ended","انتهت الحصة"),type:"system"});}catch{}}
         setTimeout(async()=>{
-          try{ await supabase.from("class_chat_messages").delete().eq("session_id",sessionId); }
+          try{await supabase.from("class_chat_messages").delete().eq("session_id",sessionId);}
           catch(e){console.warn("[endSession] chat clear failed:",e);}
-        }, 4000);
+        },4000);
       }
-    }catch(e:any){
-      console.error("[endSession] DB error (continuing anyway):",e?.message);
-    }finally{
-      setPhase("ended");
-    }
+      await recDone;
+    })();
   };
 
   const leaveSession=async()=>{
     intentionalLeaveRef.current=true; // prevent auto-reconnect on disconnect
-    // Auto-save any active recording before leaving
-    await recStopRef.current?.();
+    // Stop the recorder now but DON'T wait for the upload (up to ~21s) before closing —
+    // that wait is why Leave/End felt frozen. DirectRecorder keeps the file on-device and
+    // finishes uploading in the background, so nothing is lost.
+    try{void Promise.resolve(recStopRef.current?.()).catch(()=>{});}catch{}
     try{playLeaveSound();}catch{}
     if(attendanceId){const d=attPriorDurationRef.current+Math.floor((Date.now()-joinedAt)/1000);supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId);}
     if(sessionId&&user)supabase.from("class_participants").update({left_at:new Date().toISOString(),duration_minutes:Math.floor((Date.now()-joinedAt)/60000)}).eq("session_id",sessionId).eq("student_id",user.id);
@@ -1530,6 +1579,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           {reconnecting&&<ReconnectingOverlay attempt={autoReconnectCountRef.current}/>}
           {/* ══ FEATURE 4: CONNECTION STATE BANNER — shown during LiveKit's own reconnect ══ */}
           <ConnectionStateBanner/>
+          <NetworkGuard isPrivileged={isPrivileged} audioOnlyActive={audioOnlyActive} forcedAudioOnly={forcedAudioOnly} onAutoAudioOnly={(on:boolean)=>setAudioOnlyActive(on)}/>
           {/* ══ GOOGLE MEET STYLE TOP BAR ══ */}
           <div data-class-header="1" style={{
             position:"fixed",top:0,left:0,right:0,zIndex:60,
@@ -1936,7 +1986,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         }catch{}
         try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_open",material:broadcastMat})),{reliable:true});}catch{}
       }} onClose={()=>setMatPicker(false)}/>}
-      {showEnd&&createPortal(
+      {showEnd&&!minimized&&createPortal(
         <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}} onClick={()=>setShowEnd(false)}>
           <div style={{background:"#2D2E30",borderRadius:20,padding:"32px 28px 24px",width:"100%",maxWidth:380,margin:"0 16px",boxShadow:"0 24px 64px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.08)",animation:"fade-in .18s ease"}} onClick={e=>e.stopPropagation()}>
             <div style={{width:56,height:56,borderRadius:"50%",background:"rgba(234,67,53,.12)",border:"1px solid rgba(234,67,53,.2)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 18px"}}>
@@ -1953,7 +2003,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         </div>,
         document.body
       )}
-      {showLeaveConfirm&&createPortal(
+      {showLeaveConfirm&&!minimized&&createPortal(
         <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}} onClick={()=>setShowLeaveConfirm(false)}>
           <div style={{background:"#2D2E30",borderRadius:20,padding:"32px 28px 24px",width:"100%",maxWidth:380,margin:"0 16px",boxShadow:"0 24px 64px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.08)",animation:"fade-in .18s ease"}} onClick={e=>e.stopPropagation()}>
             <div style={{width:56,height:56,borderRadius:"50%",background:"rgba(234,67,53,.12)",border:"1px solid rgba(234,67,53,.2)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 18px"}}>

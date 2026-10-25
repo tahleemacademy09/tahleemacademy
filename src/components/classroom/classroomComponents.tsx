@@ -811,12 +811,20 @@ export const AudioOnlyBridge = ({ active }: { active: boolean }) => {
       try {
         if (active) {
           await queueMediaOp(room, () => lp.setCameraEnabled(false));
-          // Drop audio bitrate to 16kbps
+          // Lean voice stream: 24kbps Opus is still clear for speech (16kbps was thin enough to
+          // blur tajweed detail) but a fraction of the default 64kbps+RED, so on a weak
+          // connection the voice goes through instead of being starved. Marked high network
+          // priority so the browser sends it ahead of any other traffic.
           const micPub = lp.getTrackPublication(Track.Source.Microphone);
           const sender = (micPub?.track as any)?.sender as RTCRtpSender | undefined;
           if (sender) {
             const p = sender.getParameters();
-            if (p.encodings?.[0]) { p.encodings[0].maxBitrate = 16000; await sender.setParameters(p); }
+            if (p.encodings?.[0]) {
+              p.encodings[0].maxBitrate = 24000;
+              (p.encodings[0] as any).networkPriority = "high";
+              (p.encodings[0] as any).priority = "high";
+              await sender.setParameters(p);
+            }
           }
         } else {
           await queueMediaOp(room, () => lp.setCameraEnabled(true));
@@ -824,7 +832,7 @@ export const AudioOnlyBridge = ({ active }: { active: boolean }) => {
           const sender = (micPub?.track as any)?.sender as RTCRtpSender | undefined;
           if (sender) {
             const p = sender.getParameters();
-            if (p.encodings?.[0]) { p.encodings[0].maxBitrate = 32000; await sender.setParameters(p); }
+            if (p.encodings?.[0]) { p.encodings[0].maxBitrate = 64000; await sender.setParameters(p); } // back to the publish default (was 32000, which left voice quieter/thinner after recovering)
           }
         }
       } catch {}
