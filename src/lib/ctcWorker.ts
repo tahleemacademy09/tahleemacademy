@@ -287,17 +287,9 @@ function liveBegin(m: { words: string[] }) {
 }
 
 function liveAppend(samples: Float32Array) {
+  // Reveal-while-reciting is OFF: only the background grading pipeline (pipeAppend) works on the incoming audio,
+  // so the whole CPU goes to getting the result ready by the time the student presses Stop.
   pipeAppend(samples);
-  const L = live;
-  if (!L) return;
-  if (L.len + samples.length > L.buf.length) {
-    const nb = new Float32Array(Math.max(L.buf.length * 2, L.len + samples.length));
-    nb.set(L.buf.subarray(0, L.len));
-    L.buf = nb;
-  }
-  L.buf.set(samples, L.len);
-  L.len += samples.length; L.total += samples.length;
-  void liveRun();
 }
 
 async function liveRun() {

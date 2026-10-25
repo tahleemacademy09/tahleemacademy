@@ -161,7 +161,7 @@ class CtcEngine {
         vocabUrl: new URL("/ctc/vocab.json", window.location.origin).href,
       });
       };
-      void nativeModelUrl((l, t) => this.emit({ status: "loading", loadedMB: l / 1048576, totalMB: t / 1048576 }))
+      void nativeModelUrl((l, t) => { this.lastSignal = Date.now(); this.emit({ status: "loading", loadedMB: l / 1048576, totalMB: t / 1048576 }); })
         .then((local) => startWorker(local ?? MODEL_URL, !!local));
     });
     return this.loadPromise;
@@ -188,37 +188,59 @@ class CtcEngine {
     });
   }
 
-  /** Is each reference word really in the recording?  refWords must be the same words (same order) the grid uses. */
+  /** load() with a watchdog: no sign of life (download progress / worker message) for 60 s → reset and fail, never wait forever. */
+  private loadWatched(): Promise<void> {
+    if (this.state.status === "ready") return Promise.resolve();
+    this.lastSignal = Date.now();
+    const p = this.load();
+    return new Promise<void>((resolve, reject) => {
+      const t = setInterval(() => {
+        if (Date.now() - this.lastSignal > 60_000) { clearInterval(t); this.resetWorker("load_stalled"); reject(new Error("load_stalled")); }
+      }, 3000);
+      p.then(() => { clearInterval(t); resolve(); }, (e) => { clearInterval(t); reject(e); });
+    });
+  }
+
+  /** Is each reference word really in the recording?  refWords must be the same words (same order) the grid uses.
+   *  The recording is processed silently in the background WHILE the student recites (so only the last few seconds are left at Stop); if that background result is missing or stalls, one full pass on a fresh worker. Every step has a timeout and the whole
+   *  thing is retried once on a fresh worker, so it can fail with a clear error but can never hang. */
   async check(blob: Blob, refWords: string[], opts: { basmalah?: boolean | "auto" } = {}): Promise<CtcCheckResult> {
-    const id = this.nextId++;
-    this.activeCheckId = id;
-    this.setProgress({ stage: "decoding", done: 0, total: 0 });
-    try {
-      await this.load();
-      const td = Date.now();
-      const audio = await decodeBlobTo16k(blob);
-      const decodeMs = Date.now() - td;
-      this.setProgress({ stage: "finishing", done: 0, total: 0 });
-      const run = (useLive: boolean, a: Float32Array, runId: number) =>
-        this.callWatched<CtcCheckResult>({ type: "check", audio: a, words: refWords, basmalah: opts.basmalah ?? "auto", useLive }, [a.buffer], runId);
-      let res: CtcCheckResult;
+    const withTimeout = <T,>(p: Promise<T>, ms: number, label: string) =>
+      new Promise<T>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error(label + "_timeout")), ms);
+        p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+      });
+    const retryable = /(worker_(stalled|crashed|messageerror|gone)|load_stalled|decode_timeout)/;
+    let lastErr: any = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const id = this.nextId++;
+      this.activeCheckId = id;
+      this.setProgress({ stage: "decoding", done: 0, total: 0 });
       try {
-        res = await run(true, audio.slice(), id);
-      } catch (e: any) {
-        const msg = String(e?.message ?? e);
-        if (!/worker_(stalled|crashed|messageerror|gone)/.test(msg)) throw e;
-        console.warn("[ctc] worker failed during check — retrying once on a fresh worker without the background step:", msg);
-        await this.load();
-        const id2 = this.nextId++; this.activeCheckId = id2;
+        await this.loadWatched();
+        const td = Date.now();
+        const audio = await withTimeout(decodeBlobTo16k(blob), 60_000, "decode");
+        const decodeMs = Date.now() - td;
         this.setProgress({ stage: "finishing", done: 0, total: 0 });
-        res = await run(false, audio, id2);
+        const res = await this.callWatched<CtcCheckResult>(
+          { type: "check", audio, words: refWords, basmalah: opts.basmalah ?? "auto", useLive: attempt === 0 }, [audio.buffer], id);
+        if (res.timing) res.timing.decodeMs = decodeMs;
+        return res;
+      } catch (e: any) {
+        lastErr = e;
+        const msg = String(e?.message ?? e);
+        if (attempt === 0 && retryable.test(msg)) {
+          console.warn("[ctc] check stalled — retrying once on a fresh worker:", msg);
+          if (!/load_stalled/.test(msg)) this.resetWorker("retry");
+          continue;
+        }
+        throw e;
+      } finally {
+        this.activeCheckId = 0;
+        this.setProgress(null);
       }
-      if (res.timing) res.timing.decodeMs = decodeMs;
-      return res;
-    } finally {
-      this.activeCheckId = 0;
-      this.setProgress(null);
     }
+    throw lastErr ?? new Error("check_failed");
   }
 
   /* ── LIVE reveal: stream mic audio in while the student recites; cb(shownWords) fires as words are heard ── */
@@ -256,3 +278,11 @@ class CtcEngine {
 
 export const ctcEngine = new CtcEngine();
 if (typeof window !== "undefined") (window as any).__ctcSelfTest = () => ctcEngine.selfTest().then((r) => { console.log("[ctc] tokenizer self-test", r); return r; });
+
+// Android freezes the page while the app is in the background. When the student comes back, give any running
+// check a fresh 90 s instead of treating the time spent away as a stall.
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") (ctcEngine as any).lastSignal = Date.now();
+  });
+}
