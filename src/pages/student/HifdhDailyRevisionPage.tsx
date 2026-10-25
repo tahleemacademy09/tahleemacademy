@@ -1959,16 +1959,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       // the last few seconds are left to process at Stop.
       try { bgRef.current?.cancel(); } catch { /* noop */ }
       if (!ctcEnabled()) try { const bg = new ChunkTranscriber(stream, mime, 8000, 4000, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(!!info); bgRef.current = bg; } catch { bgRef.current = null; }
-      // LIVE reveal: tap the same mic stream, feed 16 kHz audio to the CTC worker, and uncover words as they are heard.
-      // Never blocks or breaks recording — if anything here fails the recitation is still recorded and graded on Stop.
+      // Silent background processing: tap the same mic stream and let the worker check the audio WHILE the student
+      // recites, so the result is ready within seconds of Stop. Nothing is shown on screen. Never blocks or breaks
+      // recording — if anything here fails, the full check on Stop still runs.
       if (ctcEnabled()) {
         try {
-          setLiveShown(0);
-          const liveWords = refTokens(pageAyahsRef.current.map((a: any) => a.text).join(" "));
-          ctcEngine.liveBegin(liveWords, (n) => setLiveShown((p) => (n > p ? n : p)));
+          const bgWords = refTokens(pageAyahsRef.current.map((a: any) => a.text).join(" "));
+          ctcEngine.liveBegin(bgWords, () => { /* reveal is off */ });
           const lm = new LiveMic(); liveMicRef.current = lm;
-          lm.start(stream, (x) => { if (!isPausedRef.current) ctcEngine.liveFeed(x); }).catch((e) => console.warn("[HifdhDaily] live mic failed:", e));
-        } catch (e) { console.warn("[HifdhDaily] live reveal unavailable:", e); }
+          lm.start(stream, (x) => { if (!isPausedRef.current) ctcEngine.liveFeed(x); }).catch((e) => console.warn("[HifdhDaily] background mic tap failed:", e));
+        } catch (e) { console.warn("[HifdhDaily] background check unavailable:", e); }
       }
       setIsRecording(true);
       setRecSecs(carry);                   // resume from previous session's elapsed time
@@ -3226,21 +3226,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 is intentionally hidden during recitation: the student should be
                 reciting from memory, not reading along with a blurred page, and
                 the previous blurred-word layout was confusing/distracting. */}
-            {isRecording && ctcOn && (todayPages[isGroup?0:pageIdx]) && (
-              <div style={{flex:1,minHeight:0,position:"relative"}}>
-                <SwipePages key={"live-"+(isGroup?"group":String(todayPages[pageIdx]))}
-                  pages={isGroup?todayPages:[todayPages[pageIdx]]}
-                  viewIdx={isGroup?viewIdx:0} onView={isGroup?setViewIdx:()=>{}}
-                  onBg={setPrintedBg} clipFor={clipFor}
-                  coverUnrevealed revealProgress={liveProg}/>
-                <span style={{position:"absolute",top:8,left:"50%",transform:"translateX(-50%)",padding:"3px 12px",borderRadius:20,
-                  background:`${PASS}22`,border:`1px solid ${PASS}66`,fontSize:12,fontWeight:900,color:PASS,
-                  fontVariantNumeric:"tabular-nums",pointerEvents:"none"}}>
-                  {isPaused?"⏸ Paused · ":"🔴 "}{Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
-                </span>
-              </div>
-            )}
-            {isRecording && !ctcOn && (
+            {isRecording && (
               <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
                 gap:22,padding:"48px 20px",minHeight:"50vh"}}>
                 <div style={{position:"relative",width:128,height:128,display:"flex",alignItems:"center",justifyContent:"center"}}>
