@@ -88,7 +88,7 @@ export async function resolveStaffAudioUrl(
  * on the device and retries later).
  */
 export async function saveHifdhRecording(userId: string, day: string, blob: Blob): Promise<string | null> {
-  const ext = blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : "webm";
+  const ext = blob.type.includes("wav") ? "wav" : blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : "webm";
   const path = `${HIFDH_R2_PREFIX}${userId}/${day}_${Date.now()}.${ext}`;
   for (let attempt = 1; attempt <= 6; attempt++) {
     try { return await uploadHifdhAudio(path, blob); }

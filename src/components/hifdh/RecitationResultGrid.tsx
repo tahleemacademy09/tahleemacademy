@@ -23,6 +23,8 @@ interface Props {
   ayahEnds?: { index: number; label: number }[];
   /** Show the on-device engine's "why nothing was heard" diagnostics (student screen only). */
   engineDiagnostics?: boolean;
+  /** What the model heard for each word (same order as `words`). When given, it is written under each word. */
+  heardWords?: string[];
 }
 
 const FONT = "'Amiri Quran','Amiri','Scheherazade New',serif";
@@ -39,7 +41,7 @@ const STYLE: Record<Grade, { bg: string; fg: string; strike?: boolean }> = {
   missed: { bg: "#44201f", fg: "#fca5a5", strike: true },
 };
 
-const RecitationResultGrid: React.FC<Props> = ({ words, extras = [], heardText, checkSecs, ayahEnds, engineDiagnostics = true }) => {
+const RecitationResultGrid: React.FC<Props> = ({ words, extras = [], heardText, checkSecs, ayahEnds, engineDiagnostics = true, heardWords }) => {
   const total = words.length;
   const count = (g: Grade) => words.filter((w) => w.grade === g).length;
   const ok = count("ok"), close = count("close"), wrong = count("wrong"), missed = count("missed");
@@ -92,10 +94,16 @@ const RecitationResultGrid: React.FC<Props> = ({ words, extras = [], heardText, 
               <span
                 title={w.grade === "wrong" && w.heard ? `heard: ${w.heard}` : w.tag ? "Same sound — written differently in the Uthmani text" : undefined}
                 style={{
-                  position: "relative", padding: "6px 12px", borderRadius: 10, fontFamily: FONT, fontSize: 24, lineHeight: 1.7, fontWeight: 600,
-                  background: s.bg, color: s.fg, textDecoration: s.strike ? "line-through" : "none",
+                  position: "relative", padding: "6px 12px", borderRadius: 10, fontFamily: FONT, fontWeight: 600,
+                  background: s.bg, color: s.fg,
+                  display: heardWords ? "inline-flex" : "inline-block", flexDirection: "column", alignItems: "center",
                 }}>
-                {w.word}
+                <span style={{ fontSize: 24, lineHeight: 1.7, textDecoration: s.strike ? "line-through" : "none" }}>{w.word}</span>
+                {heardWords && (
+                  <span style={{ fontSize: 15, lineHeight: 1.5, direction: "rtl", opacity: 0.8, whiteSpace: "nowrap", marginTop: -2 }}>
+                    {heardWords[i] || "—"}
+                  </span>
+                )}
                 {w.tag && <span style={{ position: "absolute", top: 5, right: 5, width: 6, height: 6, borderRadius: 6, background: "#e8c97a" }} />}
               </span>
               {endAt.has(i) && (

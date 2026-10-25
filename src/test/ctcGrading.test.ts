@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { modelForm, uthmaniToModelSpelling, dropInitialShadda, sukunOnBareEnd } from "@/lib/ctcAlign";
 import { gradeFromCtc, registerCtcGrading, ctcScoringFor, ctcAnalysisFor } from "@/lib/ctcGrading";
 
 const ayahs = ["قُلْ هُوَ ٱللَّهُ أَحَدٌ", "ٱللَّهُ ٱلصَّمَدُ"];
@@ -9,6 +10,37 @@ describe("CTC-only grading", () => {
   it("maps heard / unsure / not heard to green / yellow / red", () => {
     const w = gradeFromCtc(["a", "b", "c", "d"], [sc(0), sc(-2), sc(-6), sc(null)]);
     expect(w.map((x) => x.grade)).toEqual(["ok", "close", "missed", "ok"]);
+  });
+  it("an unsure word is green when the model wrote the same letters, yellow when it wrote something else", () => {
+    const w = gradeFromCtc(["إِلَيْكُمْ", "بَعْدِى"], [sc(-2), sc(-2)], ["إِلَيْكُم", "بَعْد"]);
+    expect(w.map((x) => x.grade)).toEqual(["ok", "close"]);
+  });
+  it("final yaa dropped before hamzat al-wasl is accepted (بَعْدِى ٱسْمُهُ)", () => {
+    const w = gradeFromCtc(["بَعْدِى", "ٱسْمُهُۥٓ"], [sc(-2), sc(0)], ["بَعْدِ", "اسمه"]);
+    expect(w[0].grade).toBe("ok");
+    expect(gradeFromCtc(["بَعْدِى", "أَحْمَدُ"], [sc(-2), sc(0)], ["بَعْد", "احمد"])[0].grade).toBe("close");
+  });
+  it("final ا / و / ى before ٱ or ال is accepted as dropped (إِذَا ٱلسَّمَآءُ, ذُو ٱلْ, عَلَى ٱلْ, أَيُّهَا ٱلنَّاسُ)", () => {
+    const g = (a: string, b: string, h: string) => gradeFromCtc([a, b], [sc(-2), sc(0)], [h, "x"])[0].grade;
+    expect(g("إِذَا", "ٱلسَّمَآءُ", "إِذَ")).toBe("ok");
+    expect(g("ذُو", "ٱلْعَرْشِ", "ذُ")).toBe("ok");
+    expect(g("عَلَىٰ", "ٱلْأَرْضِ", "عَلَ")).toBe("ok");
+    expect(g("أَيُّهَا", "ٱلنَّاسُ", "أَيُّهَ")).toBe("ok");
+    expect(g("إِذَا", "جَآءَ", "إِذَ")).toBe("close");          // no wasl after it → the alef must be heard
+  });
+  it("a word the model wrote with exactly the page letters is green even when its confidence was low (آمنوا, للحواريين)", () => {
+    const g = (a: string, b: string, h: string, m = -5) => gradeFromCtc([a, b], [sc(m), sc(0)], [h, "x"])[0].grade;
+    expect(g("ءَامَنُوا۟", "ٱلَّذِينَ", "آمَنُوا")).toBe("ok");
+    expect(g("لِلْحَوَارِيِّـۧنَ", "قَالَ", "لِلْحَوَارِيِّينَ", -2)).toBe("ok");
+    expect(g("ءَامَنُوا۟", "ٱلَّذِينَ", "")).toBe("missed");           // nothing heard there → stays red
+  });
+  it("model spellings: ءَا → آ, small yaa → ي, idgham shadda / sukun variants", () => {
+    expect(modelForm(uthmaniToModelSpelling("ءَامَنُوا۟"))).toBe("آمَنُوا");
+    expect(modelForm(uthmaniToModelSpelling("ٱلْقُرْءَانَ"))).toContain("آن");
+    expect(modelForm(uthmaniToModelSpelling("لِلْحَوَارِيِّـۧنَ"))).toBe(modelForm("لِلْحَوَارِيِّينَ"));
+    expect(dropInitialShadda(modelForm("طَّا\u0653ئِفَةٌ"))).toBe("طَائِفَةٌ");
+    expect(sukunOnBareEnd("فَآمَنَت")).toBe("فَآمَنَتْ");
+    expect(sukunOnBareEnd("آمَنُوا")).toBe("آمَنُوا");
   });
   it("hands the verdicts out by key, sliced per ayah, with the right score", () => {
     const words = gradeFromCtc(refWords, [sc(0), sc(0), sc(-8), sc(0), sc(0), sc(0)]);   // word 3 skipped

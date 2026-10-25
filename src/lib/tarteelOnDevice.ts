@@ -839,6 +839,8 @@ export class ChunkTranscriber {
   private active: ChunkEntry[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
+  private completed = false;
+  private paused = false;
   private failed = false;
   private seq = 0;
   private inflight = 0;
@@ -867,23 +869,25 @@ export class ChunkTranscriber {
   ) { this.nextInterval = intervalMs; }
 
   /** Transcript saved by a previous page load (complete = the recording had been fully processed). */
-  static saved(key: string): { text: string; complete: boolean } | null {
+  static saved(key: string): { text: string; complete: boolean; idle: boolean } | null {
     try {
       const d = JSON.parse(localStorage.getItem(key) || "null");
       if (!d || !d.r) return null;
       let text = "";
       Object.keys(d.r).map(Number).sort((a, b) => a - b).forEach((k) => { text = mergeHeard(text, d.r[k]); });
-      return { text, complete: !!d.complete };
+      // idle = nothing was still being recorded / transcribed when this was written (so the text is the whole story)
+      return { text, complete: !!d.complete, idle: !!d.idle };
     } catch { return null; }
   }
   static clearSaved(key: string) { try { localStorage.removeItem(key); } catch { /* noop */ } }
 
-  private save(complete = false) {
+  private save(complete = this.completed) {
     if (!this.persistKey) return;
     try {
       const r: Record<number, string> = {};
       this.results.forEach((v, k) => { r[k] = v; });
-      localStorage.setItem(this.persistKey, JSON.stringify({ r, complete }));
+      const idle = this.active.length === 0 && this.inflight === 0;
+      localStorage.setItem(this.persistKey, JSON.stringify({ r, complete, idle }));
     } catch { /* storage full — non-critical */ }
   }
 
@@ -909,7 +913,7 @@ export class ChunkTranscriber {
     }
     tarteelEngine.load(true).catch(() => { this.failed = true; });
     this.mode = this.startMeter() ? "pause" : "timer";
-    this.spawn(this.overlapMs, true);
+    this.spawn(this.overlapMs, !resume);   // a continued recording starts a brand-new chunk: it does not overlap the old text
     if (this.mode === "timer") this.schedule();
   }
 
@@ -940,7 +944,7 @@ export class ChunkTranscriber {
   }
 
   private tickLevel() {
-    if (this.stopped || !this.analyser || !this.levelBuf) return;
+    if (this.stopped || this.paused || !this.analyser || !this.levelBuf) return;
     this.analyser.getFloatTimeDomainData(this.levelBuf as any);
     let e = 0;
     for (let i = 0; i < this.levelBuf.length; i++) e += this.levelBuf[i] * this.levelBuf[i];
@@ -995,12 +999,12 @@ export class ChunkTranscriber {
       this.active = this.active.filter((a) => a.mr !== mr);
       const blob = new Blob(chunks, { type: this.mime || "audio/webm" });
       chunks.length = 0;
-      if (blob.size < 3000) { this.check(); return; }          // empty / near-silent
+      if (blob.size < 3000) { this.save(); this.check(); return; }          // empty / near-silent
       this.inflight++;
       tarteelEngine.transcribeBlob(blob)
         .then((r) => { if (r.error) { this.failed = true; console.warn(`[Tarteel] chunk ${mySeq} failed:`, r.error); } else if (r.text) { this.results.set(mySeq, r.text); this.save(); console.info(`[Tarteel] chunk ${mySeq} (${r.audioSecs?.toFixed(1)}s, ${this.seamOverlap.get(mySeq) ? "overlapped" : "pause cut"}):`, r.text); } })
         .catch(() => { this.failed = true; })
-        .finally(() => { this.inflight--; this.check(); });
+        .finally(() => { this.inflight--; this.save(); this.check(); });
     };
     try { mr.start(1000); } catch { this.failed = true; return; }
 
@@ -1008,11 +1012,33 @@ export class ChunkTranscriber {
     const prev = this.active[this.active.length - 1];
     this.active.push(entry);
     this.lastSpawnAt = entry.startedAt;
+    this.save();   // a chunk is now being recorded → the saved text is not the whole story any more
     if (prev) setTimeout(() => { if (prev.mr.state !== "inactive") { try { prev.mr.stop(); } catch { /* noop */ } } }, tailMs);
     // Safety net: whatever happens, a chunk is closed before Whisper's 30 s window could be exceeded.
     // (timer mode closes it by its own length + overlap; pause mode by the next cut or this limit)
     const life = this.mode === "timer" ? this.nextInterval + this.overlapMs : HARD_MAX_MS + this.overlapMs + 2000;
     setTimeout(() => { if (mr.state !== "inactive") { try { mr.stop(); } catch { /* noop */ } } }, life);
+  }
+
+  /**
+   * Student pressed Pause: close every running chunk now (they are transcribed straight away, so the pause is
+   * not wasted time) and stop cutting. Nothing is recorded or cut while paused.
+   */
+  pause() {
+    if (this.stopped || this.paused) return;
+    this.paused = true;
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    [...this.active].forEach((a) => { if (a.mr.state !== "inactive") { try { a.mr.stop(); } catch { /* noop */ } } });
+    this.save();
+  }
+
+  /** Student pressed Resume: a fresh chunk starts (it does not overlap the one closed at Pause). */
+  resume() {
+    if (this.stopped || !this.paused) return;
+    this.paused = false;
+    this.silentMs = 0;
+    this.spawn(this.overlapMs, false);
+    if (this.mode === "timer") this.schedule();
   }
 
   private check() {
@@ -1027,7 +1053,8 @@ export class ChunkTranscriber {
     return new Promise((resolve) => {
       const done = () => {
         const text = this.mergedText();
-        this.save(!this.failed);
+        this.completed = !this.failed;
+        this.save(this.completed);
         resolve({ text, ok: !this.failed });
       };
       if (this.active.length === 0 && this.inflight === 0) { done(); return; }

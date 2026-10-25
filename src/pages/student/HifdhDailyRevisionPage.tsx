@@ -23,12 +23,13 @@ import { tarteelEngine, ChunkTranscriber, type TarteelProgress } from "@/lib/tar
 import { logRecitationMisses } from "@/lib/recitationMissLog";
 import { stripWaqf, normalizeArabic, wordsMatch, compareWords, analyzeRecitation, scoreOf, encodeGrades, scoreAgainstAyahs, type WordResult, type AyahScoring } from "@/lib/recitationCompare";
 import { saveHifdhRecording, resolveHifdhSessionAudio } from "@/lib/hifdhAudio";
+import { mergeAudioSegments } from "@/lib/mergeAudioSegments";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
 import HifdhLiveClass from "@/components/hifdh/HifdhLiveClass";
 import {
   ArrowLeft, Mic, MicOff, BookOpen, CalendarDays, Clock, Trophy,
   Star, CheckCircle, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
-  Flame, Target, TrendingUp, Play, RefreshCcw, Heart, Loader2,
+  Flame, Target, TrendingUp, Play, Pause, RefreshCcw, Heart, Loader2,
   BookMarked, BarChart2, Lock, ShieldCheck, Bell, Eye,
   SkipBack, SkipForward, Timer as TimerIcon, Camera,
 } from "lucide-react";
@@ -43,8 +44,7 @@ import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
 import MushafPageView from "@/components/hifdh/MushafPageView";
 import RecitationResultGrid from "@/components/hifdh/RecitationResultGrid";
 // CTC-ONLY TEST MODE (?ctc=1): the FastConformer-Quran CTC check replaces Tarteel on this page.
-import CtcTestPanel from "@/components/hifdh/CtcTestPanel";
-import { ctcEngine, ctcEnabled, type CtcCheckResult, type CtcStatusState } from "@/lib/ctcEngine";
+import { ctcEngine, ctcEnabled, type CtcCheckResult, type CtcStatusState, type CtcCheckProgress } from "@/lib/ctcEngine";
 import { LiveMic, revealFor } from "@/lib/ctcLive";
 import { gradeFromCtc, registerCtcGrading, ctcScoringFor, ctcAnalysisFor } from "@/lib/ctcGrading";
 import { refTokens } from "@/lib/recitationCompare";
@@ -129,6 +129,22 @@ async function idbDeleteBlob(key: string): Promise<void> {
       tx.onerror    = () => { db.close(); res(); };
     });
   } catch { /* non-critical */ }
+}
+
+// ── A recording that is paused / interrupted is kept on the device so the student can carry on later ──
+// meta (localStorage): { secs, segs, paused, page, savedAt }.  Audio (IndexedDB): earlier pieces `_seg_<i>` + the
+// piece being recorded `_partial`.  Each piece is a complete MediaRecorder file; they are joined when the student finishes.
+const recMetaKey = (u: string, d: string) => `hifdh_rec_${u}_${d}`;
+const recSegKey  = (u: string, d: string, i: number) => `${u}_${d}_seg_${i}`;
+async function clearSavedRecording(u: string, d: string): Promise<void> {
+  let n = 0;
+  try {
+    const m = JSON.parse(localStorage.getItem(recMetaKey(u, d)) || "null");
+    n = Number(m?.segs) || 0;
+    localStorage.removeItem(recMetaKey(u, d));
+  } catch { /* noop */ }
+  for (let i = 0; i < n + 2; i++) await idbDeleteBlob(recSegKey(u, d, i));
+  await idbDeleteBlob(`${u}_${d}_partial`);
 }
 
 const PASS_THRESHOLD = 60; // minimum recitation pass mark (%)
@@ -1436,6 +1452,19 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // Ref to the currently-playing CDN audio so we can stop it when question changes
   const listenAudioRef = useRef<HTMLAudioElement | null>(null);
   const [isRecording,  setIsRecording] = useState(false);
+  // Pause / resume while reciting. The recorder is paused (not stopped), so the saved audio is one continuous
+  // file with the paused time cut out, and the timer stops counting.
+  const [isPaused,     setIsPaused]    = useState(false);
+  const isPausedRef = useRef(false);
+  const t0Ref = useRef(0);               // wall-clock start of the recording timer (shifted forward by every pause)
+  const pausedElapsedRef = useRef(0);    // ms recorded when Pause was pressed
+  // A recording left unfinished (paused, app closed, refreshed) that the student can continue.
+  const [savedRec, setSavedRec] = useState<{ secs: number; page: number | null } | null>(null);
+  const resumeInfoRef = useRef<{ secs: number; segs: Blob[]; persisted: number } | null>(null);
+  const prevSegsRef   = useRef<Blob[]>([]);          // earlier pieces of the recording in progress
+  const recPageRef    = useRef<number | null>(null); // page the recording belongs to (updated every render)
+  const flushRecRef   = useRef<(() => Promise<void>) | null>(null);
+  const forceWholeRef = useRef(false);               // earlier text may be incomplete → score the whole joined recording
   const [recSecs,      setRecSecs]     = useState(0);
   // Seconds from a previous partial recording — timer starts here on "Continue Recording"
   const [carryOverSecs, setCarryOverSecs] = useState(0);
@@ -1485,8 +1514,19 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [ctcEng, setCtcEng] = useState<CtcStatusState>(ctcEngine.state);
   useEffect(() => ctcEngine.subscribe(setCtcEng), []);
   const [ctcRes, setCtcRes] = useState<CtcCheckResult | null>(null);
+  const [ctcProg, setCtcProg] = useState<CtcCheckProgress | null>(null);
+  useEffect(() => ctcEngine.subscribeProgress(setCtcProg), []);
   const [ctcErr, setCtcErr] = useState("");
   const ctcResRef = useRef<CtcCheckResult | null>(null);
+  // After a page reload the grades come back from the saved session, but the per-word "what the model heard" text and the
+  // test panel live in the check result — put that back too (it was saved with the grading, keyed by the same marker).
+  useEffect(() => {
+    if (!ctcOn || ctcRes || phase !== "page_result" || score === null || !lastTranscript.includes("\u200B")) return;
+    try {
+      const sv = JSON.parse(localStorage.getItem("ctc_res_last") || "null");
+      if (sv && sv.tx === lastTranscript && sv.res) { ctcResRef.current = sv.res; setCtcRes(sv.res); }
+    } catch { /* noop */ }
+  }, [ctcOn, ctcRes, phase, score, lastTranscript]);
   // LIVE reveal (?ctc=1): the printed page is covered while reciting and uncovers word by word as the CTC model hears them.
   const [liveShown, setLiveShown] = useState(0);
   const liveMicRef = useRef<LiveMic | null>(null);
@@ -1753,8 +1793,24 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
   const micRef = useRef<MediaStream | null>(null);
   useEffect(() => () => { try { micRef.current?.getTracks().forEach(t => t.stop()); } catch { /* noop */ } }, []);   // leaving the page releases the mic
-  const startRecording = useCallback(async () => {
+  const startRecording = useCallback(async (resume: boolean = false) => {
     try {
+      isPausedRef.current = false; setIsPaused(false);
+      // Continuing a saved recording: its earlier audio becomes finished pieces and this run adds a new one.
+      const info = resume ? resumeInfoRef.current : null;
+      const carry = info ? info.secs : 0;
+      forceWholeRef.current = false;
+      if (info) {
+        prevSegsRef.current = info.segs.slice();
+        for (let i = info.persisted; i < info.segs.length; i++) await idbSaveBlob(recSegKey(userId, todayISO(), i), info.segs[i]);
+        await idbDeleteBlob(`${userId}_${todayISO()}_partial`);
+        const sc = ChunkTranscriber.saved(`hifdh_chunks_${userId}_${todayISO()}`);
+        forceWholeRef.current = !sc || !sc.idle;   // the app was closed mid-chunk → the saved text may be missing the last words
+        resumeInfoRef.current = null; setSavedRec(null);
+      } else {
+        prevSegsRef.current = []; resumeInfoRef.current = null; setSavedRec(null);
+        await clearSavedRecording(userId, todayISO());
+      }
       setAudioUrl(null); setSavedAudioUrl(null); audioChunks.current = []; audioBlobRef.current = null; audioStorageUrlRef.current = null;
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -1776,10 +1832,20 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       } : { audioBitsPerSecond: 128000 });
       const blobKey = `${userId}_${todayISO()}_partial`;
       let lastPartialSave = 0;
-      const savePartial = () => {
-        lastPartialSave = Date.now();
-        idbSaveBlob(blobKey, new Blob(audioChunks.current, { type: mime || "audio/webm" }));
+      const writeMeta = () => {
+        try {
+          const secs = isPausedRef.current ? Math.floor(pausedElapsedRef.current / 1000) : Math.floor((Date.now() - t0Ref.current) / 1000);
+          localStorage.setItem(recMetaKey(userId, todayISO()), JSON.stringify({
+            secs, segs: prevSegsRef.current.length, paused: isPausedRef.current, page: recPageRef.current, savedAt: Date.now(),
+          }));
+        } catch { /* storage full — the recording is still on screen */ }
       };
+      const savePartial = (): Promise<void> => {
+        lastPartialSave = Date.now();
+        writeMeta();
+        return idbSaveBlob(blobKey, new Blob(audioChunks.current, { type: mime || "audio/webm" }));
+      };
+      flushRecRef.current = savePartial;
       mr.ondataavailable = (e) => {
         if (e.data?.size > 0) {
           audioChunks.current.push(e.data);
@@ -1800,9 +1866,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         clearInterval(timerRef.current);
 
         // Audio routing is handled inside FullAudioPlayer/AudioPlayerWidget via AudioContext.decodeAudioData().
-        const blob = new Blob(audioChunks.current, { type: mime || "audio/webm" });
+        const curBlob = new Blob(audioChunks.current, { type: mime || "audio/webm" });
+        const prevSegs = prevSegsRef.current;
+        const proceed = (blob: Blob) => {
+        prevSegsRef.current = []; resumeInfoRef.current = null;
         audioBlobRef.current = blob;
-        idbSaveBlob(`${userId}_${todayISO()}_final`, blob);   // survives a refresh (result page rebuilds from it)
+        // survives a refresh (result page rebuilds from it); only then is the saved-for-later copy dropped
+        idbSaveBlob(`${userId}_${todayISO()}_final`, blob).then(() => clearSavedRecording(userId, todayISO()));
         const localUrl = URL.createObjectURL(blob);
         setAudioUrl(localUrl);
         setSavedAudioUrl(localUrl);
@@ -1810,7 +1880,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         const ayahs = pageAyahsRef.current;
         setPhase("page_result");
         setScore(null);
-        ctcResRef.current = null; setCtcRes(null); setCtcErr("");
+        ctcResRef.current = null; setCtcRes(null); setCtcErr(""); setNoApiWarning(false);   // a new recording must not inherit the "couldn't score" banner from an earlier failed one
 
         // Upload audio to storage — defined inline so it can close over blob/userId/today.
         // Returns a signed URL (time-limited, auth-independent) so admin playback works
@@ -1870,6 +1940,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           idbDeleteBlob(`${userId}_${todayISO()}_partial`);
           setCarryOverSecs(0);
         });
+        };   // end proceed
+        if (!prevSegs.length) proceed(curBlob);
+        else {
+          // the recitation was recorded in several pieces (paused / reopened) → join them into one file first
+          setPhase("page_result"); setScore(null);
+          mergeAudioSegments([...prevSegs, curBlob]).then(proceed, (e) => { console.warn("[HifdhDaily] joining pieces failed:", e); proceed(curBlob); });
+        }
       };
       attemptRef.current++;
       // No live transcription: the audio is only recorded now and transcribed once, on Stop.
@@ -1881,7 +1958,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       // Transcribe in the background AS the student recites (nothing is shown until Finished), so only
       // the last few seconds are left to process at Stop.
       try { bgRef.current?.cancel(); } catch { /* noop */ }
-      if (!ctcEnabled()) try { const bg = new ChunkTranscriber(stream, mime, 8000, 4000, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(carryOverSecs > 0); bgRef.current = bg; } catch { bgRef.current = null; }
+      if (!ctcEnabled()) try { const bg = new ChunkTranscriber(stream, mime, 8000, 4000, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(!!info); bgRef.current = bg; } catch { bgRef.current = null; }
       // LIVE reveal: tap the same mic stream, feed 16 kHz audio to the CTC worker, and uncover words as they are heard.
       // Never blocks or breaks recording — if anything here fails the recitation is still recorded and graded on Stop.
       if (ctcEnabled()) {
@@ -1890,16 +1967,17 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           const liveWords = refTokens(pageAyahsRef.current.map((a: any) => a.text).join(" "));
           ctcEngine.liveBegin(liveWords, (n) => setLiveShown((p) => (n > p ? n : p)));
           const lm = new LiveMic(); liveMicRef.current = lm;
-          lm.start(stream, (x) => ctcEngine.liveFeed(x)).catch((e) => console.warn("[HifdhDaily] live mic failed:", e));
+          lm.start(stream, (x) => { if (!isPausedRef.current) ctcEngine.liveFeed(x); }).catch((e) => console.warn("[HifdhDaily] live mic failed:", e));
         } catch (e) { console.warn("[HifdhDaily] live reveal unavailable:", e); }
       }
       setIsRecording(true);
-      setRecSecs(carryOverSecs);           // resume from previous session's elapsed time
-      recSecsRef.current = carryOverSecs;
+      setRecSecs(carry);                   // resume from previous session's elapsed time
+      recSecsRef.current = carry;
       // Wall-clock timer: browsers slow setInterval down while the tab is in the background.
-      const t0 = Date.now() - carryOverSecs * 1000;
+      t0Ref.current = Date.now() - carry * 1000;
+      clearInterval(timerRef.current);
       timerRef.current = setInterval(() => {
-        setRecSecs(Math.floor((Date.now() - t0) / 1000));
+        setRecSecs(Math.floor((Date.now() - t0Ref.current) / 1000));
       }, 500);
 
     } catch {
@@ -1937,7 +2015,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       const res = await ctcEngine.check(blob, refWords, { basmalah: "auto" });
       ctcResRef.current = res; setCtcRes(res);
       transcribeMsRef.current = res.ms;
-      return registerCtcGrading(res.greedy, gradeFromCtc(refWords, res.words));
+      const tx = registerCtcGrading(res.greedy, gradeFromCtc(refWords, res.words, res.heard));
+      try {   // keep the heard text + timing so a reload shows the same detailed result
+        const r2 = (n: number | null) => (n == null ? null : Math.round(n * 100) / 100);
+        const slim = { ...res, words: res.words.map((w) => ({ mean: r2(w.mean), min: r2(w.min), start: null, end: null })) };
+        localStorage.setItem("ctc_res_last", JSON.stringify({ tx, res: slim }));
+      } catch { /* storage full — the result just shows without the detail after a reload */ }
+      return tx;
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       console.error("[HifdhDaily] CTC check failed:", msg);
@@ -1951,6 +2035,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     if (ctcEnabled()) return ctcGrade(fullBlob);
     const bg = bgRef.current;
     bgRef.current = null;
+    // Continued after the app was closed mid-chunk: the saved text may lack the last words of the earlier part, so
+    // score the whole joined recording instead (unless it is too long to decode in one piece on a phone).
+    if (bg && forceWholeRef.current && fullBlob.size <= 30 * 1048576) {
+      try { bg.cancel(); } catch { /* noop */ }
+      return transcribeAudio(fullBlob);
+    }
     if (bg) {
       try {
         const r = await bg.finish();
@@ -1979,6 +2069,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // is saved as it changes and put back exactly on reload. Small data → localStorage; the recording
   // → IndexedDB. A result that was still being analysed when the page reloaded is re-analysed from the
   // saved recording, and an upload that had not finished is retried.
+  recPageRef.current = todayPages[isGroup ? 0 : pageIdx] ?? null;
   const SESSION_KEY = `hifdh_session_v2_${userId}_${todayISO()}`;
   const FINAL_BLOB_KEY = `${userId}_${todayISO()}_final`;
   const [hydrated, setHydrated] = useState(false);
@@ -2131,9 +2222,80 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   }, []);
 
 
+  // Look for a recording left unfinished on this device today (paused, app closed or refreshed).
+  const loadSavedRec = async () => {
+    if (!userId) return;
+    try {
+      const day = todayISO();
+      const m = JSON.parse(localStorage.getItem(recMetaKey(userId, day)) || "null");
+      if (!m || !(Number(m.secs) >= 0)) return;
+      const segs: Blob[] = [];
+      for (let i = 0; i < (Number(m.segs) || 0); i++) { const b = await idbLoadBlob(recSegKey(userId, day, i)); if (b) segs.push(b); }
+      const part = await idbLoadBlob(`${userId}_${day}_partial`);
+      if (part) segs.push(part);
+      if (!segs.length) { clearSavedRecording(userId, day); return; }
+      resumeInfoRef.current = { secs: Number(m.secs) || 0, segs, persisted: Number(m.segs) || 0 };
+      setSavedRec({ secs: Number(m.secs) || 0, page: m.page ?? null });
+    } catch { /* nothing to continue */ }
+  };
+  useEffect(() => { loadSavedRec(); }, [userId]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pauseRecording = () => {
+    const mr = mediaRecRef.current;
+    if (!mr || mr.state !== "recording") return;
+    try { mr.requestData(); } catch { /* noop */ }      // flush what has been recorded so far
+    try { mr.pause(); } catch { return; }               // browser can't pause → leave the recording running
+    isPausedRef.current = true; setIsPaused(true);
+    clearInterval(timerRef.current);
+    pausedElapsedRef.current = Date.now() - t0Ref.current;
+    setRecSecs(Math.floor(pausedElapsedRef.current / 1000));
+    try { bgRef.current?.pause(); } catch { /* noop */ }
+    // keep it on the device so closing / refreshing while paused loses nothing
+    setTimeout(() => { try { void flushRecRef.current?.(); } catch { /* noop */ } }, 350);
+  };
+
+  // Back while paused: keep the recording for later instead of scoring half of it.
+  const leaveWhilePaused = async () => {
+    const mr = mediaRecRef.current;
+    try { await flushRecRef.current?.(); } catch { /* noop */ }
+    stopLive();
+    try { bgRef.current?.cancel(); } catch { /* noop */ }
+    bgRef.current = null;
+    if (mr) { mr.onstop = null as any; try { if (mr.state !== "inactive") mr.stop(); } catch { /* noop */ } }
+    mediaRecRef.current = null;
+    try { micRef.current?.getTracks().forEach(t => t.stop()); } catch { /* noop */ }
+    micRef.current = null;
+    clearInterval(timerRef.current);
+    isPausedRef.current = false; setIsPaused(false); setIsRecording(false);
+    await loadSavedRec();
+    setPhase("intro");
+  };
+
+  const discardSavedRec = () => {
+    if (!window.confirm("Delete your saved recording and start again from the beginning?")) return;
+    clearSavedRecording(userId, todayISO());
+    ChunkTranscriber.clearSaved(`hifdh_chunks_${userId}_${todayISO()}`);
+    resumeInfoRef.current = null; prevSegsRef.current = []; setSavedRec(null);
+  };
+
+  const resumeRecording = () => {
+    const mr = mediaRecRef.current;
+    if (!mr || mr.state !== "paused") return;
+    try { mr.resume(); } catch { return; }
+    isPausedRef.current = false; setIsPaused(false);
+    t0Ref.current = Date.now() - pausedElapsedRef.current;   // paused time does not count
+    clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => {
+      setRecSecs(Math.floor((Date.now() - t0Ref.current) / 1000));
+    }, 500);
+    try { bgRef.current?.resume(); } catch { /* noop */ }
+    try { void flushRecRef.current?.(); } catch { /* noop */ }   // meta says "recording" again
+  };
+
   const handleStop = () => {
     stopTsRef.current = performance.now();
     stopLive();
+    isPausedRef.current = false; setIsPaused(false);
     setIsRecording(false);
     clearInterval(timerRef.current);
     if (mediaRecRef.current && mediaRecRef.current.state !== "inactive") {
@@ -2868,6 +3030,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         @keyframes micPulse { 0%{transform:scale(.85);opacity:.9} 100%{transform:scale(1.6);opacity:0} }
         @keyframes slideUp { from{transform:translateY(12px);opacity:0} to{transform:translateY(0);opacity:1} }
         @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
+        @keyframes barPulse { from{opacity:.55} to{opacity:1} }
         @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&family=Cairo:wght@400;600;700;800;900&display=swap');
         .ar-word { unicode-bidi: isolate; display: inline; }
       `}</style>
@@ -3010,7 +3173,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         <>
           <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:isRecording?"14px 16px":"10px 14px",
             display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
-            <BackBtn onClick={()=>{stopLive();if(mediaRecRef.current&&mediaRecRef.current.state!=="inactive"){mediaRecRef.current.stop();mediaRecRef.current=null;}setIsRecording(false);clearInterval(timerRef.current);setPhase("intro");}}/>
+            <BackBtn onClick={()=>{if(isPausedRef.current&&mediaRecRef.current){void leaveWhilePaused();return;}stopLive();if(mediaRecRef.current&&mediaRecRef.current.state!=="inactive"){mediaRecRef.current.stop();mediaRecRef.current=null;}isPausedRef.current=false;setIsPaused(false);setIsRecording(false);clearInterval(timerRef.current);setPhase("intro");}}/>
             {!isRecording && (
               <div style={{flex:1,minWidth:0,display:"flex",alignItems:"center",gap:8}}>
                 <Target size={15} color={GOLD} style={{flexShrink:0}}/>
@@ -3073,7 +3236,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 <span style={{position:"absolute",top:8,left:"50%",transform:"translateX(-50%)",padding:"3px 12px",borderRadius:20,
                   background:`${PASS}22`,border:`1px solid ${PASS}66`,fontSize:12,fontWeight:900,color:PASS,
                   fontVariantNumeric:"tabular-nums",pointerEvents:"none"}}>
-                  🔴 {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
+                  {isPaused?"⏸ Paused · ":"🔴 "}{Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
                 </span>
               </div>
             )}
@@ -3082,25 +3245,27 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 gap:22,padding:"48px 20px",minHeight:"50vh"}}>
                 <div style={{position:"relative",width:128,height:128,display:"flex",alignItems:"center",justifyContent:"center"}}>
                   <div style={{position:"absolute",inset:0,borderRadius:"50%",
-                    background:`${PASS}22`,animation:"micPulse 1.6s ease-out infinite"}}/>
+                    background:`${PASS}22`,animation:isPaused?"none":"micPulse 1.6s ease-out infinite"}}/>
                   <div style={{position:"absolute",inset:14,borderRadius:"50%",
-                    background:`${PASS}33`,animation:"micPulse 1.6s ease-out infinite .3s"}}/>
+                    background:`${PASS}33`,animation:isPaused?"none":"micPulse 1.6s ease-out infinite .3s"}}/>
                   <div style={{width:84,height:84,borderRadius:"50%",
                     background:`linear-gradient(135deg,${G2},${G3})`,
                     display:"flex",alignItems:"center",justifyContent:"center",
                     boxShadow:`0 6px 24px ${G1}66`}}>
-                    <Mic size={36} color={GOLD}/>
+                    {isPaused?<Pause size={36} color={GOLD}/>:<Mic size={36} color={GOLD}/>}
                   </div>
                 </div>
-                <Wave/>
-                <p style={{margin:0,fontWeight:800,fontSize:15,color:G1}}>Listening…</p>
+                {!isPaused&&<Wave/>}
+                <p style={{margin:0,fontWeight:800,fontSize:15,color:G1}}>{isPaused?"Paused":"Listening…"}</p>
                 <span style={{padding:"5px 16px",borderRadius:20,
                   background:`${PASS}18`,border:`1px solid ${PASS}50`,
                   fontSize:14,fontWeight:900,color:PASS,fontVariantNumeric:"tabular-nums"}}>
-                  🔴 {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
+                  {isPaused?"⏸":"🔴"} {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
                 </span>
                 <p style={{margin:0,fontSize:11,color:"#9CA3AF",textAlign:"center",maxWidth:260,lineHeight:1.6}}>
-                  {isGroup
+                  {isPaused
+                    ? "Recording is paused — nothing is being recorded. Tap Resume to carry on from where you stopped."
+                    : isGroup
                     ? `Recite pages ${todayPages[0]} – ${todayPages[todayPages.length-1]} from memory, in order, in one go. Nothing is shown while you recite. Tap below when finished to get your score.`
                     : `Recite Page ${todayPages[pageIdx]} from memory. Tap below when finished to get your score.`}
                 </p>
@@ -3132,19 +3297,48 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             )}
             {!isRecording
               ?(
-                <button onClick={startRecording} disabled={fetchingPage||!pageAyahs.length}
+(savedRec && (savedRec.page==null || savedRec.page===todayPages[isGroup?0:pageIdx]))
+                  ? (
+                    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                      <p style={{margin:0,fontSize:12,fontWeight:700,color:G1,textAlign:"center"}}>
+                        Your recording is saved at {Math.floor(savedRec.secs/60).toString().padStart(2,"0")}:{(savedRec.secs%60).toString().padStart(2,"0")} — carry on where you stopped.
+                      </p>
+                      <button onClick={()=>startRecording(true)} disabled={fetchingPage||!pageAyahs.length}
+                        style={{width:"100%",padding:"15px",borderRadius:14,border:"none",cursor:(fetchingPage||!pageAyahs.length)?"wait":"pointer",opacity:(fetchingPage||!pageAyahs.length)?.55:1,
+                          background:`linear-gradient(135deg,${G2},${G3})`,color:W,fontWeight:900,fontSize:14,
+                          display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"inherit"}}>
+                        <Play size={17}/> {(fetchingPage||!pageAyahs.length)?"Loading page…":"Resume Recording"}
+                      </button>
+                      <button onClick={discardSavedRec}
+                        style={{width:"100%",padding:"10px",borderRadius:12,border:"none",background:"transparent",cursor:"pointer",
+                          color:"#9CA3AF",fontWeight:700,fontSize:12,fontFamily:"inherit"}}>
+                        Start over instead
+                      </button>
+                    </div>
+                  )
+                  :                 <button onClick={()=>startRecording()} disabled={fetchingPage||!pageAyahs.length}
                   style={{width:"100%",padding:"15px",borderRadius:14,border:"none",cursor:(fetchingPage||!pageAyahs.length)?"wait":"pointer",opacity:(fetchingPage||!pageAyahs.length)?.55:1,
                     background:`linear-gradient(135deg,${G2},${G3})`,color:W,fontWeight:900,fontSize:14,
                     display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"inherit"}}>
                   <Mic size={17}/> {(fetchingPage||!pageAyahs.length)?"Loading page…":"Start Reciting"}
                 </button>
               ):(
-                <button onClick={handleStop}
-                  style={{width:"100%",padding:"15px",borderRadius:14,border:"none",cursor:"pointer",
-                    background:FAIL,color:W,fontWeight:900,fontSize:14,
-                    display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"inherit"}}>
-                  <MicOff size={17}/> Finished — Evaluate My Recitation
-                </button>
+                <div style={{display:"flex",gap:10}}>
+                  <button onClick={isPaused?resumeRecording:pauseRecording}
+                    style={{flexShrink:0,minWidth:112,padding:"15px 16px",borderRadius:14,cursor:"pointer",
+                      border:`1.5px solid ${isPaused?PASS:BRD}`,
+                      background:isPaused?`linear-gradient(135deg,${G2},${G3})`:W,
+                      color:isPaused?W:G1,fontWeight:900,fontSize:14,
+                      display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"inherit"}}>
+                    {isPaused?<><Play size={17}/> Resume</>:<><Pause size={17}/> Pause</>}
+                  </button>
+                  <button onClick={handleStop}
+                    style={{flex:1,padding:"15px",borderRadius:14,border:"none",cursor:"pointer",
+                      background:FAIL,color:W,fontWeight:900,fontSize:14,
+                      display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"inherit"}}>
+                    <MicOff size={17}/> Finished — Evaluate
+                  </button>
+                </div>
               )
             }
           </div>
@@ -3159,10 +3353,34 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           <p style={{margin:0,color:"#e5c76b",fontWeight:700,fontSize:15,textAlign:"center"}}>
             Checking your recitation…
           </p>
+          {(checkerState.status==="loading" ? !!checkerState.totalMB : ctcOn) && (()=>{
+            const pg = ctcProg;
+            const pct = checkerState.status==="loading" ? Math.min(100,((checkerState.loadedMB??0)/(checkerState.totalMB||1))*100)
+              : !pg ? 3
+              : pg.stage==="decoding" ? 5
+              : pg.stage==="listening" && pg.total>0 ? 8 + Math.min(1,pg.done/pg.total)*84
+              : pg.stage==="aligning" ? 96
+              : 8;
+            const indeterminate = checkerState.status!=="loading" && (!pg || pg.stage==="decoding" || pg.stage==="finishing");
+            return (
+              <div style={{width:"100%",maxWidth:280}}>
+                <div style={{height:8,borderRadius:99,background:"#ffffff1f",overflow:"hidden",position:"relative"}}>
+                  <div style={{height:"100%",width:`${pct}%`,borderRadius:99,background:GOLD,transition:"width .4s ease",
+                    ...(indeterminate?{animation:"barPulse .8s ease-in-out infinite alternate"}:{})}}/>
+                </div>
+                <p style={{margin:"6px 0 0",color:"#9CA3AF",fontSize:11,textAlign:"center"}}>{Math.round(pct)}%</p>
+              </div>
+            );
+          })()}
           <p style={{margin:0,color:"#9CA3AF",fontSize:12,textAlign:"center",lineHeight:1.7,maxWidth:280}}>
             {checkerState.status==="loading"
               ? `Getting the Quran checker ready${checkerState.totalMB?` — ${Math.round(checkerState.loadedMB??0)} of ${Math.round(checkerState.totalMB)} MB`:"…"} (first time only)`
-              : "Finishing the last part of your recitation on your device — almost done."}
+              : ctcOn && ctcProg
+                ? (ctcProg.stage === "decoding" ? "Preparing your recording…"
+                  : ctcProg.stage === "listening" && ctcProg.total > 0
+                    ? `Listening to your recitation — ${Math.round(ctcProg.done)} of ${Math.round(ctcProg.total)} s done`
+                    : ctcProg.stage === "aligning" ? "Matching your recitation to the page…" : "Finishing the part you just recited…")
+                : "Finishing the last part of your recitation on your device — almost done."}
           </p>
         </div>
       )}
@@ -3249,11 +3467,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                   extras={analysis.extras}
                   heardText={lastTranscript}
                   checkSecs={checkSecs}
+                  heardWords={ctcOn && ctcRes?.heard && ctcRes.heard.length === wordRes.length ? ctcRes.heard : undefined}
                 />
               )}
-
-              {/* 3b ── CTC-only test mode info (timing, copy results) — only with ?ctc=1 */}
-              {ctcOn && <CtcTestPanel ctc={ctcRes} words={wordRes} error={ctcErr}/>}
 
               {/* 5 ── Transcription unavailable — student-friendly message only.
                      Technical detail (which API/key) is for admins/teachers, not
@@ -3273,19 +3489,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                       Please try recording again in a moment.
                     </p>
                   </div>
-                </div>
-              )}
-
-              {/* 6 ── Encouragement / retry hint when below threshold */}
-              {score<PASS_THRESHOLD&&(
-                <div style={{padding:"12px 14px",borderRadius:12,
-                  background:`${GOLD}0e`,border:`1.5px solid ${GOLD}44`,
-                  display:"flex",gap:10,alignItems:"center"}}>
-                  <Heart size={18} color={GOLD} style={{flexShrink:0}}/>
-                  <p style={{margin:0,fontSize:12,color:"#92400E",fontWeight:600,lineHeight:1.6}}>
-                    Study the <span style={{color:FAIL,fontWeight:800}}>red words</span> above,
-                    then record again — every attempt builds your hifdh! 🌟
-                  </p>
                 </div>
               )}
             </div>

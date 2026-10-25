@@ -9,7 +9,7 @@
   Messages out: {type:"progress"|"ready"|"load_error"|"result"|"selftest_result"|"live_progress"}
 */
 import {
-  alignWords, chunkAtQuiet, greedyText, logMel, modelForm, scorePrefix, SpEncoder, SR, stripMarks,
+  alignWords, alignWordsPartial, chunkAtQuiet, greedySpan, greedyText, quietCutPoint, logMel, modelForm, scorePrefix, SpEncoder, SR, stripMarks,
   type CtcWordScore, type SpVocab,
 } from "./ctcAlign";
 
@@ -24,12 +24,13 @@ const exclusive = <T,>(fn: () => Promise<T>): Promise<T> => { const p = runLock.
 
 const BASMALAH = ["بِسْمِ", "ٱللَّهِ", "ٱلرَّحْمَٰنِ", "ٱلرَّحِيمِ"];
 
-async function fetchModel(url: string): Promise<Uint8Array> {
+async function fetchModel(url: string, noCache = false): Promise<Uint8Array> {
   const cacheName = "ctc-model-v1";
   // Ask the browser not to evict the saved model when the phone runs low on space (Chrome decides; harmless if refused).
   try { void (ctx.navigator as any).storage?.persist?.(); } catch { /* noop */ }
   let cache: Cache | null = null;
   try {
+    if (noCache) throw new Error("local file");   // already saved in app storage — no second copy in the Cache API
     cache = await caches.open(cacheName);
     const hit = await cache.match(url);
     if (hit) return new Uint8Array(await hit.arrayBuffer());
@@ -60,7 +61,7 @@ async function fetchModel(url: string): Promise<Uint8Array> {
   return loaded === all.length ? all : all.subarray(0, loaded);
 }
 
-async function load(m: { vocabUrl: string; modelUrl: string; ortBase: string }) {
+async function load(m: { vocabUrl: string; modelUrl: string; ortBase: string; noCache?: boolean }) {
   const vr = await fetch(m.vocabUrl);
   if (!vr.ok) throw new Error("vocab_missing: run scripts/export_ctc_vocab.py and commit public/ctc/vocab.json");
   vocab = (await vr.json()) as SpVocab;
@@ -72,7 +73,7 @@ async function load(m: { vocabUrl: string; modelUrl: string; ortBase: string }) 
   if (!ort) throw new Error("onnxruntime-web failed to load: " + String((lastErr as any)?.message ?? lastErr));
   ort.env.wasm.wasmPaths = m.ortBase + "/";
   ort.env.wasm.numThreads = ctx.crossOriginIsolated ? Math.min(4, ctx.navigator.hardwareConcurrency || 2) : 1;
-  const bytes = await fetchModel(m.modelUrl);
+  const bytes = await fetchModel(m.modelUrl, !!m.noCache);
   session = await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"] });
   inNames = session.inputNames;
   ctx.postMessage({ type: "ready" });
@@ -110,24 +111,65 @@ async function runChunk(audio: Float32Array): Promise<{ lp: Float32Array; T: num
   return { lp, T, V };
 }
 
-async function check(m: { id: number; audio: Float32Array; words: string[]; basmalah: boolean | "auto" }) {
+async function check(m: { id: number; audio: Float32Array; words: string[]; basmalah: boolean | "auto"; useLive?: boolean }) {
   if (!session || !vocab || !enc) throw new Error("not_loaded");
   const t0 = Date.now();
-  const chunks = chunkAtQuiet(m.audio);
-  const parts: { lp: Float32Array; T: number }[] = [];
+  const parts: { lp: Float32Array; T: number; V: number }[] = [];
   let V = 0, T = 0;
-  for (const c of chunks) {
-    if (c.length < SR * 0.3) continue;
-    const r = await runChunk(c);
-    V = r.V; T += r.T; parts.push(r);
+  let secs = m.audio.length / SR;
+  const timing = { usedLive: false, liveChunks: 0, liveWaitMs: 0, tailSecs: 0, inferMs: 0, alignMs: 0, wasmThreads: ort?.env?.wasm?.numThreads ?? 1, liveNote: "" };
+  const progress = (stage: string, done: number, total: number) => ctx.postMessage({ type: "check_progress", id: m.id, stage, done, total });
+  // The recording was already run through the model WHILE the student recited (see "background inference" below):
+  // only the last few seconds are left to process. Used only if it covers the whole recording; otherwise the
+  // normal path below processes the finished recording as before.
+  const P = pipeDone; pipeDone = null;
+  let todo: Float32Array[] = [];
+  if (!m.useLive) timing.liveNote = "background step off";
+  else if (!P) timing.liveNote = "background step never started (no live audio reached the worker)";
+  if (P && m.useLive) {
+    const tw = Date.now();
+    progress("finishing", 0, 0);
+    try { await P.run; } catch { /* handled by P.failed */ }
+    timing.liveWaitMs = Date.now() - tw;
+    const gap = Math.abs(P.total / SR - secs);
+    if (!P.failed && P.parts.length && gap <= 2.5) {
+      for (const p of P.parts) parts.push(p);
+      todo = chunkAtQuiet(P.pend.subarray(0, P.len)).filter((c) => c.length >= SR * 0.3);
+      secs = P.total / SR;
+      timing.usedLive = true; timing.liveChunks = P.parts.length;
+    } else if (P.parts.length) {
+      // Live audio and the saved recording differ in length (or the background step stopped part-way): keep every part that
+      // WAS finished (they are exact, the unprocessed rest is whatever follows them) and run only the remainder of the recording.
+      const consumed = P.total - P.len;
+      if (consumed > 0 && consumed < m.audio.length) {
+        for (const p of P.parts) parts.push(p);
+        todo = chunkAtQuiet(m.audio.subarray(consumed)).filter((c) => c.length >= SR * 0.3);
+        timing.usedLive = true; timing.liveChunks = P.parts.length;
+        timing.liveNote = `reused ${P.parts.length} finished parts (${(consumed / SR).toFixed(0)} s); ${P.failed ? "background step failed: " + P.failMsg : "length gap " + gap.toFixed(1) + " s"}`;
+      } else timing.liveNote = `not usable (consumed ${(consumed / SR).toFixed(0)} s, recording ${(m.audio.length / SR).toFixed(0)} s)`;
+    } else timing.liveNote = P.failed ? "background step failed before finishing any part: " + P.failMsg : `no part finished in time (${(P.total / SR).toFixed(0)} s of live audio, gap ${gap.toFixed(1)} s)`;
   }
+  if (!timing.usedLive) todo = chunkAtQuiet(m.audio).filter((c) => c.length >= SR * 0.3);
+  const totalSecs = todo.reduce((a, c) => a + c.length, 0) / SR;
+  timing.tailSecs = totalSecs;
+  const ti = Date.now();
+  let doneSecs = 0;
+  progress("listening", 0, totalSecs);
+  for (const c of todo) {
+    parts.push(await runChunk(c));
+    doneSecs += c.length / SR;
+    progress("listening", doneSecs, totalSecs);
+  }
+  timing.inferMs = Date.now() - ti;
   if (!parts.length) throw new Error("audio_too_short");
+  for (const r of parts) { V = r.V; T += r.T; }
   if (V !== vocab.pieces.length + 1) throw new Error(`vocab mismatch: model ${V} vs vocab ${vocab.pieces.length + 1}`);
   const lp = new Float32Array(T * V);
   let o = 0;
   for (const p of parts) { lp.set(p.lp, o); o += p.lp.length; }
-  const secs = m.audio.length / SR;
   const frameDur = secs / T;
+  progress("aligning", totalSecs, totalSecs);
+  const ta = Date.now();
   const greedy = greedyText(lp, T, V, vocab);
   // "auto": the student recited the Basmalah first but the page text does not start with it → align it too, then drop it.
   let useBasmalah = m.basmalah === true;
@@ -136,10 +178,21 @@ async function check(m: { id: number; audio: Float32Array; words: string[]; basm
     useBasmalah = stripMarks(m.words[0] || "") !== "بسم" && heard.startsWith("بسماللهالرحمنالرحيم");
   }
   const refWords = useBasmalah ? [...BASMALAH, ...m.words] : m.words;
-  const scored = alignWords(lp, T, V, refWords, enc, vocab, frameDur);
-  if (!scored) throw new Error("audio_too_short_for_text");
+  let scored = alignWords(lp, T, V, refWords, enc, vocab, frameDur);
+  // The audio is too short to hold the WHOLE text (student recited only the first part of the assignment):
+  // grade what was recited; every word after it is reported as "not heard" instead of failing the whole check.
+  let partial = false, covered = refWords.length;
+  if (!scored) {
+    const p = alignWordsPartial(lp, T, V, refWords, enc, vocab, frameDur);
+    if (!p) throw new Error("audio_too_short_for_text");
+    scored = p.scores; partial = true; covered = Math.max(0, p.covered - (useBasmalah ? BASMALAH.length : 0));
+  }
+  // What the model heard for each page word: the greedy text inside that word's own aligned time span.
+  const heardAll = scored.map((w) => (w.start == null || w.end == null ? "" : greedySpan(lp, T, V, vocab!, Math.round(w.start / frameDur), Math.round(w.end / frameDur))));
   const words: CtcWordScore[] = useBasmalah ? scored.slice(BASMALAH.length) : scored;
-  ctx.postMessage({ type: "result", id: m.id, words, greedy, secs, frames: T, ms: Date.now() - t0, basmalah: useBasmalah });
+  const heard = useBasmalah ? heardAll.slice(BASMALAH.length) : heardAll;
+  timing.alignMs = Date.now() - ta;
+  ctx.postMessage({ type: "result", id: m.id, words, heard, greedy, secs, frames: T, ms: Date.now() - t0, basmalah: useBasmalah, partial, covered, timing });
 }
 
 async function selftest(m: { id: number; testsUrl: string }) {
@@ -151,6 +204,47 @@ async function selftest(m: { id: number; testsUrl: string }) {
     if (got.length !== want.length || got.some((x, i) => x !== want[i])) bad.push({ word: w, want, got });
   }
   ctx.postMessage({ type: "selftest_result", id: m.id, total: tests.length, bad: bad.slice(0, 20), badCount: bad.length });
+}
+
+/* ───────────────────────── background inference while recording ─────────────────────────
+   The model is slow on a phone (~0.3x real time, one thread), so waiting for it after Stop takes minutes for a long
+   recording. While the student recites, the audio that streams in for the live reveal is ALSO cut at quiet moments
+   (every ~16-24 s) and run through the model in the gaps; the finished chunks' log-probs are kept. At Stop only
+   the last few seconds are left. Same cutting rule as chunkAtQuiet, so grading is unchanged. */
+interface Pipe {
+  pend: Float32Array; len: number; total: number;
+  parts: { lp: Float32Array; T: number; V: number }[];
+  failed: boolean; failMsg: string; open: boolean; run: Promise<void> | null;
+}
+let pipe: Pipe | null = null;        // being filled while the student recites
+let pipeDone: Pipe | null = null;    // closed at Stop, waiting for the final check
+const PIPE_TARGET = 12, PIPE_SEARCH = 3;   // small pieces: at Stop at most ~15 s of audio is left to process
+
+function pipeBegin() {
+  pipe = { pend: new Float32Array(SR * 40), len: 0, total: 0, parts: [], failed: false, failMsg: "", open: true, run: null };
+  pipeDone = null;
+}
+function pipeAppend(samples: Float32Array) {
+  const P = pipe;
+  if (!P || P.failed) return;
+  if (P.len + samples.length > P.pend.length) {
+    const nb = new Float32Array(Math.max(P.pend.length * 2, P.len + samples.length));
+    nb.set(P.pend.subarray(0, P.len));
+    P.pend = nb;
+  }
+  P.pend.set(samples, P.len);
+  P.len += samples.length; P.total += samples.length;
+  if (!P.run && P.len >= (PIPE_TARGET + PIPE_SEARCH) * SR) P.run = pipeLoop(P).finally(() => { P.run = null; });
+}
+async function pipeLoop(P: Pipe) {
+  try {
+    while (P.open && !P.failed && P.len >= (PIPE_TARGET + PIPE_SEARCH) * SR) {
+      const cut = quietCutPoint(P.pend, P.len, PIPE_TARGET, PIPE_SEARCH);
+      const r = await runChunk(P.pend.slice(0, cut));
+      P.parts.push(r);
+      P.pend.copyWithin(0, cut, P.len); P.len -= cut;
+    }
+  } catch (e: any) { P.failed = true; P.failMsg = String(e?.message ?? e); }
 }
 
 /* ───────────────────────── LIVE reveal ─────────────────────────
@@ -184,6 +278,7 @@ function wordTokens(L: LiveState, i: number): number[] {
 
 function liveBegin(m: { words: string[] }) {
   if (!session || !vocab || !enc) return;
+  pipeBegin();
   live = {
     words: m.words, tok: [], pageHasBas: stripMarks(m.words[0] || "") === "بسم",
     buf: new Float32Array(SR * 60), bufBase: 0, len: 0, total: 0, lastRunEnd: 0,
@@ -192,6 +287,7 @@ function liveBegin(m: { words: string[] }) {
 }
 
 function liveAppend(samples: Float32Array) {
+  pipeAppend(samples);
   const L = live;
   if (!L) return;
   if (L.len + samples.length > L.buf.length) {
@@ -209,7 +305,11 @@ async function liveRun() {
   if (!L || L.busy) return;
   L.busy = true;
   try {
-    while (live === L && L.total - L.lastRunEnd >= SR * 0.4) await liveStep(L);
+    while (live === L && L.total - L.lastRunEnd >= SR * 0.4) {
+      // the saved-for-grading work comes first: while it is behind, the on-screen reveal waits
+      if (pipe && pipe.len > (PIPE_TARGET + PIPE_SEARCH + 12) * SR) { await new Promise((r) => setTimeout(r, 300)); continue; }
+      await liveStep(L);
+    }
   } catch (e: any) {
     // a failed live step must never break recording — the final check on Stop is what counts
     ctx.postMessage({ type: "live_progress", shown: L.shown, error: String(e?.message ?? e) });
@@ -270,7 +370,7 @@ ctx.onmessage = (ev: MessageEvent) => {
   // live messages bypass the queue: audio must be stored the moment it arrives, never wait behind a running step
   if (m.type === "live_audio") { liveAppend(m.samples); return; }
   if (m.type === "live_start") { liveBegin(m); return; }
-  if (m.type === "live_stop") { live = null; return; }
+  if (m.type === "live_stop") { live = null; if (pipe) { pipe.open = false; pipeDone = pipe; pipe = null; } return; }
   chain = chain.then(() => handle(m)).catch(() => {});
 };
 async function handle(m: any) {

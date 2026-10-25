@@ -10,7 +10,7 @@ const CtcTestPanel: React.FC<Props> = ({ ctc, words, error }) => {
   const copy = async () => {
     if (!ctc) return;
     const payload = {
-      secs: +ctc.secs.toFixed(1), ms: ctc.ms, basmalah: ctc.basmalah, greedy: ctc.greedy,
+      secs: +ctc.secs.toFixed(1), ms: ctc.ms, partial: !!ctc.partial, covered: ctc.covered, timing: ctc.timing, basmalah: ctc.basmalah, greedy: ctc.greedy,
       words: words.map((w, i) => ({ i: i + 1, word: w.word, ctc: ctcStatus(ctc.words[i]?.mean ?? null),
         mean: ctc.words[i]?.mean != null ? +ctc.words[i].mean!.toFixed(2) : null, min: ctc.words[i]?.min != null ? +ctc.words[i].min!.toFixed(2) : null })),
     };
@@ -25,6 +25,14 @@ const CtcTestPanel: React.FC<Props> = ({ ctc, words, error }) => {
           <div style={{ fontSize: 12, color: "#9bb0a6" }}>
             Audio {ctc.secs.toFixed(1)} s · checked in {(ctc.ms / 1000).toFixed(1)} s ({(ctc.ms / 1000 / Math.max(ctc.secs, 0.1)).toFixed(2)}× real time){ctc.basmalah ? " · Basmalah ignored" : ""}
           </div>
+          {ctc.timing && (
+            <div style={{ fontSize: 11, color: "#9bb0a6", lineHeight: 1.6 }}>
+              {ctc.timing.usedLive ? `Ran while you recited (${ctc.timing.liveChunks} parts) · ` : "Whole recording processed after Stop · "}
+              waited {(ctc.timing.liveWaitMs / 1000).toFixed(1)} s · model {(ctc.timing.inferMs / 1000).toFixed(1)} s for {ctc.timing.tailSecs.toFixed(0)} s of audio ·
+              matching {(ctc.timing.alignMs / 1000).toFixed(1)} s · decode {((ctc.timing.decodeMs ?? 0) / 1000).toFixed(1)} s · {ctc.timing.wasmThreads} thread
+              {ctc.timing.liveNote ? <><br />Background step: {ctc.timing.liveNote}</> : null}
+            </div>
+          )}
           <div style={{ fontSize: 11, color: "#9bb0a6", lineHeight: 1.5 }}>Green = heard · yellow = unsure · red struck-through = not heard (skipped). No Tarteel transcript is used.</div>
           <button onClick={copy} style={{ alignSelf: "flex-start", fontSize: 11, fontWeight: 700, padding: "6px 10px", borderRadius: 8, border: "1px solid #2a3a33", background: "#0f1a15", color: "#e6c97a", cursor: "pointer" }}>
             {copied ? "Copied ✓" : "Copy results (to send to Claude)"}

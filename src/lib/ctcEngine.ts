@@ -3,7 +3,6 @@
   With ?ctc=1 this REPLACES Tarteel on the daily revision page: nothing from Tarteel is loaded or run there.
   Opt-in per device:  open the page with ?ctc=1  (back to Tarteel with ?ctc=0).  First use downloads ~132 MB (then cached).
 */
-import { Capacitor } from "@capacitor/core";
 import { ctcStatus, type CtcWordScore } from "@/lib/ctcAlign";
 
 export { ctcStatus };
@@ -16,25 +15,64 @@ const MODEL_URL = MODEL_BASE.replace(/\/?$/, "/") + "model_with_encoder.q8.onnx"
 
 export interface CtcCheckResult {
   words: CtcWordScore[];
+  /** what the model heard for each page word (same order as `words`; "" = nothing heard there) */
+  heard?: string[];
   greedy: string;
   secs: number;
   frames: number;
   ms: number;
   basmalah: boolean;
+  /** audio was shorter than the text: only the first `covered` words were graded, the rest count as not recited */
+  partial?: boolean;
+  covered?: number;
+  /** where the time went (ms): decode on the main thread, waiting for the background run, model, alignment */
+  timing?: { usedLive: boolean; liveChunks: number; liveWaitMs: number; tailSecs: number; inferMs: number; alignMs: number; wasmThreads: number; decodeMs?: number; liveNote?: string };
 }
+export interface CtcCheckProgress { stage: "decoding" | "finishing" | "listening" | "aligning"; done: number; total: number }
 export type CtcStatusState = { status: "idle" | "loading" | "ready" | "error"; loadedMB?: number; totalMB?: number; error?: string };
 
 export function ctcEnabled(): boolean {
   try {
     const q = new URLSearchParams(window.location.search).get("ctc");
-    if (q === "1") localStorage.setItem("ctc_shadow", "1");
-    if (q === "0") localStorage.setItem("ctc_shadow", "off");
+    if (q === "1" || q === "0") localStorage.setItem("ctc_shadow", q);
     const v = localStorage.getItem("ctc_shadow");
-    if (v === "1") return true;
-    // Installed Android/iOS app: there is no address bar to type ?ctc=1 into, so it is on by default there.
-    // (?ctc=0 stores "off" and switches it back to Tarteel on that device.)
-    return Capacitor.isNativePlatform() && v !== "off";
+    // The Capacitor app has no URL bar, so it can never pass ?ctc=1: on native it is ON unless explicitly set to "0".
+    return v === "1" || (v !== "0" && isNative());
   } catch { return false; }
+}
+
+function isNative(): boolean {
+  try { return !!(window as any).Capacitor?.isNativePlatform?.(); } catch { return false; }
+}
+
+/* ── Native app: keep the model in the app's own storage (Capacitor Filesystem) ──
+   Plugins only exist on the main thread, so the download happens here; the worker then just fetches the saved file
+   through the WebView's local file URL. Returns null on web (or on any failure) → the worker downloads as before. */
+const NATIVE_MODEL_PATH = "ctc/model_with_encoder.q8.onnx";
+const NATIVE_MODEL_MIN_BYTES = 100 * 1024 * 1024;   // anything smaller is a broken/partial file
+
+async function nativeModelUrl(onProgress: (loaded: number, total: number) => void): Promise<string | null> {
+  if (!isNative()) return null;
+  try {
+    const { Capacitor } = await import("@capacitor/core");
+    const { Filesystem, Directory } = await import("@capacitor/filesystem");
+    const where = { path: NATIVE_MODEL_PATH, directory: Directory.Data };
+    let uri: string | null = null;
+    try { const st = await Filesystem.stat(where); if (st.size >= NATIVE_MODEL_MIN_BYTES) uri = st.uri; } catch { /* not saved yet */ }
+    if (!uri) {
+      const part = { path: NATIVE_MODEL_PATH + ".part", directory: Directory.Data };
+      try { await Filesystem.deleteFile(part); } catch { /* none */ }
+      const sub = await Filesystem.addListener("progress", (p: any) => { if (p?.url === MODEL_URL) onProgress(p.bytes, p.contentLength); });
+      try { await Filesystem.downloadFile({ url: MODEL_URL, ...part, recursive: true, progress: true }); }
+      finally { try { await sub.remove(); } catch { /* noop */ } }
+      // only a fully downloaded file gets the real name, so an interrupted download is never mistaken for the model
+      await Filesystem.rename({ from: part.path, to: NATIVE_MODEL_PATH, directory: Directory.Data, toDirectory: Directory.Data });
+      const st = await Filesystem.stat(where);
+      if (st.size < NATIVE_MODEL_MIN_BYTES) { try { await Filesystem.deleteFile(where); } catch { /* noop */ } throw new Error("model file incomplete"); }
+      uri = st.uri;
+    }
+    return Capacitor.convertFileSrc(uri);
+  } catch (e) { console.warn("[ctc] native model storage unavailable, using normal download:", e); return null; }
 }
 
 /** Decode a recorded blob (webm/opus, mp4, ogg…) to mono 16 kHz Float32 samples. */
@@ -68,9 +106,23 @@ class CtcEngine {
   private worker: Worker | null = null;
   private loadPromise: Promise<void> | null = null;
   private nextId = 1;
-  private pending = new Map<number, (r: any) => void>();
+  private pending = new Map<number, { ok: (r: any) => void; fail: (e: Error) => void }>();
+  private activeCheckId = 0;
   private listeners = new Set<(s: CtcStatusState) => void>();
   state: CtcStatusState = { status: "idle" };
+  progress: CtcCheckProgress | null = null;
+  private setProgress(p: CtcCheckProgress | null) { this.progress = p; this.progListeners.forEach((l) => { try { l(p); } catch { /* noop */ } }); }
+  private resetWorker(reason: string) {
+    const waiting = [...this.pending.values()];
+    this.pending.clear();
+    try { this.worker?.terminate(); } catch { /* noop */ }
+    this.worker = null; this.loadPromise = null; this.live = null;
+    this.emit({ status: "idle" });
+    waiting.forEach((w) => w.fail(new Error(reason)));
+  }
+  private lastSignal = 0;
+  private progListeners = new Set<(p: CtcCheckProgress | null) => void>();
+  subscribeProgress(fn: (p: CtcCheckProgress | null) => void) { this.progListeners.add(fn); fn(this.progress); return () => { this.progListeners.delete(fn); }; }
 
   subscribe(fn: (s: CtcStatusState) => void) { this.listeners.add(fn); fn(this.state); return () => { this.listeners.delete(fn); }; }
   private emit(s: CtcStatusState) { this.state = s; this.listeners.forEach((l) => { try { l(s); } catch { /* noop */ } }); }
@@ -86,38 +138,87 @@ class CtcEngine {
         this.worker?.terminate(); this.worker = null;
         reject(new Error(msg));
       };
+      const startWorker = (modelUrl: string, noCache: boolean) => {
       try { this.worker = new Worker(new URL("./ctcWorker.ts", import.meta.url), { type: "module" }); }
       catch (e: any) { fail(String(e?.message ?? e)); return; }
       this.worker.onmessage = (ev) => {
         const m = ev.data;
+        this.lastSignal = Date.now();
         if (m.type === "progress") this.emit({ status: "loading", loadedMB: m.loaded / 1048576, totalMB: m.total / 1048576 });
         else if (m.type === "ready") { this.emit({ status: "ready" }); resolve(); }
         else if (m.type === "load_error") fail(m.error);
         else if (m.type === "live_progress") { if (m.error) console.warn("[ctc] live step failed:", m.error); else this.live?.cb(m.shown, m.ms); }
-        else if (m.type === "result" || m.type === "selftest_result") { const cb = this.pending.get(m.id); if (cb) { this.pending.delete(m.id); cb(m); } }
+        else if (m.type === "check_progress") { if (m.id === this.activeCheckId) this.setProgress({ stage: m.stage, done: m.done, total: m.total }); }
+        else if (m.type === "result" || m.type === "selftest_result") { const w = this.pending.get(m.id); if (w) { this.pending.delete(m.id); w.ok(m); } }
       };
-      this.worker.onerror = (ev) => { if (this.state.status !== "ready") fail((ev as ErrorEvent).message || "worker_error"); };
+      this.worker.onerror = (ev) => {
+        const msg = (ev as ErrorEvent).message || "worker_error";
+        if (this.state.status !== "ready") fail(msg); else this.resetWorker("worker_crashed: " + msg);
+      };
+      this.worker.onmessageerror = () => { if (this.state.status === "ready") this.resetWorker("worker_messageerror"); };
       this.worker.postMessage({
-        type: "load", ortBase: ORT_BASE, modelUrl: MODEL_URL,
+        type: "load", ortBase: ORT_BASE, modelUrl, noCache,
         vocabUrl: new URL("/ctc/vocab.json", window.location.origin).href,
       });
+      };
+      void nativeModelUrl((l, t) => this.emit({ status: "loading", loadedMB: l / 1048576, totalMB: t / 1048576 }))
+        .then((local) => startWorker(local ?? MODEL_URL, !!local));
     });
     return this.loadPromise;
   }
 
-  private call<T>(msg: any, transfer: Transferable[] = []): Promise<T> {
-    const id = this.nextId++;
+  private call<T>(msg: any, transfer: Transferable[] = [], id: number = this.nextId++): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, (m) => (m.error ? reject(new Error(m.error)) : resolve(m as T)));
-      this.worker!.postMessage({ ...msg, id }, transfer);
+      if (!this.worker) { reject(new Error("worker_gone")); return; }
+      this.pending.set(id, { ok: (m) => (m.error ? reject(new Error(m.error)) : resolve(m as T)), fail: reject });
+      this.worker.postMessage({ ...msg, id }, transfer);
+    });
+  }
+
+  /** call() + watchdog: nothing from the worker for STALL_MS → it is hung/dead → reset it and fail (never wait forever). */
+  private callWatched<T>(msg: any, transfer: Transferable[], id: number): Promise<T> {
+    const STALL_MS = 90_000;
+    this.lastSignal = Date.now();
+    const p = this.call<T>(msg, transfer, id);
+    return new Promise<T>((resolve, reject) => {
+      const t = setInterval(() => {
+        if (Date.now() - this.lastSignal > STALL_MS) { clearInterval(t); this.resetWorker("worker_stalled"); }
+      }, 3000);
+      p.then((v) => { clearInterval(t); resolve(v); }, (e) => { clearInterval(t); reject(e); });
     });
   }
 
   /** Is each reference word really in the recording?  refWords must be the same words (same order) the grid uses. */
   async check(blob: Blob, refWords: string[], opts: { basmalah?: boolean | "auto" } = {}): Promise<CtcCheckResult> {
-    await this.load();
-    const audio = await decodeBlobTo16k(blob);
-    return this.call<CtcCheckResult>({ type: "check", audio, words: refWords, basmalah: opts.basmalah ?? "auto" }, [audio.buffer]);
+    const id = this.nextId++;
+    this.activeCheckId = id;
+    this.setProgress({ stage: "decoding", done: 0, total: 0 });
+    try {
+      await this.load();
+      const td = Date.now();
+      const audio = await decodeBlobTo16k(blob);
+      const decodeMs = Date.now() - td;
+      this.setProgress({ stage: "finishing", done: 0, total: 0 });
+      const run = (useLive: boolean, a: Float32Array, runId: number) =>
+        this.callWatched<CtcCheckResult>({ type: "check", audio: a, words: refWords, basmalah: opts.basmalah ?? "auto", useLive }, [a.buffer], runId);
+      let res: CtcCheckResult;
+      try {
+        res = await run(true, audio.slice(), id);
+      } catch (e: any) {
+        const msg = String(e?.message ?? e);
+        if (!/worker_(stalled|crashed|messageerror|gone)/.test(msg)) throw e;
+        console.warn("[ctc] worker failed during check — retrying once on a fresh worker without the background step:", msg);
+        await this.load();
+        const id2 = this.nextId++; this.activeCheckId = id2;
+        this.setProgress({ stage: "finishing", done: 0, total: 0 });
+        res = await run(false, audio, id2);
+      }
+      if (res.timing) res.timing.decodeMs = decodeMs;
+      return res;
+    } finally {
+      this.activeCheckId = 0;
+      this.setProgress(null);
+    }
   }
 
   /* ── LIVE reveal: stream mic audio in while the student recites; cb(shownWords) fires as words are heard ── */

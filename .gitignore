@@ -48,3 +48,4 @@ keystore.properties
 android/keystore.properties
 *.jks
 ctc_model/
+.env*

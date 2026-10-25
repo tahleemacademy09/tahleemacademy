@@ -167,6 +167,40 @@
         background: linear-gradient(90deg, rgba(201,168,76,0.4), rgba(201,168,76,0.9));
         animation: ta-bar-anim 1.6s ease forwards;
       }
+
+      /* ── Native app welcome (Capacitor only) — shown on cold start, before the home screen ── */
+      #ta-welcome {
+        position: fixed; inset: 0; z-index: 100000;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        padding: env(safe-area-inset-top,0px) 28px env(safe-area-inset-bottom,0px);
+        background: linear-gradient(160deg, #064E3B 0%, #0a3326 55%, #0a1f14 100%);
+        color: #f3e6b8; text-align: center; overflow: hidden;
+        transition: opacity 0.5s ease;
+      }
+      #ta-welcome.ta-fade { opacity: 0; pointer-events: none; }
+      #ta-welcome.ta-gone { display: none; }
+      #ta-welcome::before {
+        content: ""; position: absolute; width: 140vmax; height: 140vmax; left: 50%; top: 50%;
+        transform: translate(-50%,-50%);
+        background: repeating-conic-gradient(from 0deg, rgba(201,168,76,0.045) 0 7.5deg, transparent 7.5deg 15deg);
+        -webkit-mask-image: radial-gradient(circle, #000 0%, transparent 62%);
+                mask-image: radial-gradient(circle, #000 0%, transparent 62%);
+        animation: ta-w-spin 90s linear infinite;
+      }
+      .ta-w-item { position: relative; opacity: 0; transform: translateY(10px); animation: ta-w-in 0.8s ease forwards; }
+      .ta-w-logo { width: 132px; height: 132px; object-fit: contain; filter: drop-shadow(0 6px 28px rgba(201,168,76,0.35)); animation-delay: 0.05s; }
+      .ta-w-bism { font-family: 'Amiri','Noto Naskh Arabic','Traditional Arabic',serif; font-size: 27px; line-height: 1.7; color: #d9b95a; margin-top: 22px; animation-delay: 0.35s; }
+      .ta-w-salam { font-family: 'Amiri','Noto Naskh Arabic','Traditional Arabic',serif; font-size: 23px; line-height: 1.7; color: #f3e6b8; margin-top: 6px; animation-delay: 0.75s; }
+      .ta-w-hello { font-family: 'Georgia','Times New Roman',serif; font-size: 20px; font-weight: 700; color: #f3e6b8; margin-top: 18px; animation-delay: 1.1s; }
+      .ta-w-sub { font-family: system-ui,-apple-system,'Segoe UI',Roboto,sans-serif; font-size: 14px; line-height: 1.6; color: rgba(243,230,184,0.72); margin-top: 6px; max-width: 300px; animation-delay: 1.35s; }
+      .ta-w-dua { position: absolute; left: 24px; right: 24px; bottom: calc(env(safe-area-inset-bottom,0px) + 46px); animation-delay: 1.7s; }
+      .ta-w-dua b { display: block; font-family: 'Amiri','Noto Naskh Arabic','Traditional Arabic',serif; font-size: 20px; font-weight: 400; color: #d9b95a; }
+      .ta-w-dua i { display: block; font-family: system-ui,sans-serif; font-size: 12px; font-style: normal; color: rgba(243,230,184,0.55); margin-top: 2px; }
+      .ta-w-bar { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom,0px) + 22px); width: 48px; height: 3px; margin-left: -24px; border-radius: 999px; background: rgba(201,168,76,0.2); overflow: hidden; }
+      .ta-w-bar::after { content: ""; display: block; height: 100%; width: 0; border-radius: 999px; background: linear-gradient(90deg, rgba(201,168,76,0.4), rgba(201,168,76,0.95)); animation: ta-bar-anim 2.6s ease forwards; }
+      @keyframes ta-w-in { to { opacity: 1; transform: none; } }
+      @keyframes ta-w-spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { #ta-welcome::before { animation: none; } .ta-w-item { animation-duration: 0.01s; animation-delay: 0s; } }
       @keyframes ta-bar-anim {
         0%   { width: 0%; }
         60%  { width: 70%; }
@@ -179,6 +213,7 @@
       // before backgrounding) but document.referrer is empty (full reload, not navigation).
       (function() {
         try {
+          if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) return;
           var hasSaved = !!sessionStorage.getItem('ta_restore_path');
           var isReload = !document.referrer || document.referrer === '';
           // Also show on first-ever load if it's the PWA (standalone mode)
@@ -194,6 +229,28 @@
   </head>
 
   <body>
+    <script>
+      // Native app only: warm welcome on a cold start, painted from this HTML (no React needed), so it is on screen
+      // the moment the native splash goes away. Skipped when the OS killed the app mid-use and we are restoring the page.
+      (function() {
+        try {
+          var C = window.Capacitor;
+          if (!(C && C.isNativePlatform && C.isNativePlatform())) return;
+          if (sessionStorage.getItem('ta_restore_path') || sessionStorage.getItem('ta_welcomed')) return;
+          sessionStorage.setItem('ta_welcomed', '1');
+          document.write(
+            '<div id="ta-welcome" dir="ltr">' +
+              '<img class="ta-w-item ta-w-logo" src="/brand-logo.png" alt="">' +
+              '<div class="ta-w-item ta-w-bism" dir="rtl" lang="ar">بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ</div>' +
+              '<div class="ta-w-item ta-w-salam" dir="rtl" lang="ar">ٱلسَّلَامُ عَلَيْكُمْ وَرَحْمَةُ ٱللَّهِ وَبَرَكَاتُهُ</div>' +
+              '<div class="ta-w-item ta-w-hello">Welcome to Tahleem Academy</div>' +
+              '<div class="ta-w-item ta-w-sub">A place to learn the Qur’an and the Arabic language.</div>' +
+              '<div class="ta-w-item ta-w-dua"><b dir="rtl" lang="ar">رَبِّ زِدْنِي عِلْمًا</b><i>“My Lord, increase me in knowledge.”</i></div>' +
+              '<div class="ta-w-bar"></div>' +
+            '</div>');
+        } catch(e) {}
+      })();
+    </script>
     <div id="root"></div>
     <!-- Paystack: loaded once the browser is idle (off the critical path) so it
          never competes with the app's own code. Still present long before anyone
@@ -220,6 +277,25 @@
       OR fall back to a 2.5s timeout.
     -->
     <script>
+      (function() {
+        var shownAt = Date.now(), MIN_MS = 2600, MAX_MS = 6000, ready = false, closed = false;
+        function closeWelcome() {
+          var el = document.getElementById('ta-welcome');
+          if (!el || closed) return;
+          closed = true;
+          el.classList.add('ta-fade');
+          setTimeout(function() { el.classList.add('ta-gone'); }, 560);
+        }
+        function maybeClose() {
+          if (!ready) return;
+          var wait = MIN_MS - (Date.now() - shownAt);
+          if (wait <= 0) closeWelcome(); else setTimeout(closeWelcome, wait);
+        }
+        window.addEventListener('ta-app-ready', function() { ready = true; maybeClose(); }, { once: true });
+        setTimeout(closeWelcome, MAX_MS);                      // never trap the user, even if the app fails to start
+        var w = document.getElementById('ta-welcome');
+        if (w) w.addEventListener('click', function() { if (Date.now() - shownAt > 800) closeWelcome(); });   // tap to skip
+      })();
       (function() {
         function dismissSplash() {
           var el = document.getElementById('ta-splash');
