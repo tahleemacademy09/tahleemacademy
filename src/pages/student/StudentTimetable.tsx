@@ -382,14 +382,14 @@ function AssignedSlotCard({ slot, isSelectedToday, navigate }: { slot: any; isSe
       opacity: isPast ? .5 : 1,
       boxShadow: isNow ? `0 0 0 3px ${GM}22` : "0 1px 4px rgba(0,0,0,.04)",
     }}>
-      <div style={{ textAlign: "center", flexShrink: 0, minWidth: 64 }}>
+      <div onClick={() => slot.subject_id && navigate(`/student/subjects/${slot.subject_id}`)} style={{ textAlign: "center", flexShrink: 0, minWidth: 64, cursor: "pointer" }}>
         <div style={{ fontSize: 14, fontWeight: 900, color: isNow ? GM : G }}>{to12hr(slot.start_time)}</div>
         <div style={{ fontSize: 10, color: "#d1d5db", margin: "1px 0" }}>—</div>
         <div style={{ fontSize: 11, fontWeight: 600, color: "#9ca3af" }}>{to12hr(slot.end_time)}</div>
         {isNow  && <span style={{ fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 9, background: "#dcfce7", color: "#16a34a", display: "block", marginTop: 5 }}>LIVE</span>}
         {isSoon && <span style={{ fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 9, background: "#fffbeb", color: "#b7791f", display: "block", marginTop: 5 }}>{formatCountdown(ml)}</span>}
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div onClick={() => slot.subject_id && navigate(`/student/subjects/${slot.subject_id}`)} style={{ flex: 1, minWidth: 0, cursor: "pointer" }}>
         <span style={{ fontSize: 14, fontWeight: 800, color: G, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
           {slot.subjects?.title || "Class"}
         </span>
@@ -757,14 +757,14 @@ function GeneralTimetable({ profile, hasRole, t, language, navigate, showBanner 
             const subjectTitle = language === "ar" ? slot.subjects?.title_ar || slot.subjects?.title : slot.subjects?.title;
             return (
               <div key={slot.id} style={{ background: "#fff", borderRadius: 16, border: `1.5px solid ${isNow ? GM : isSoon ? GOLD + "80" : "#e5e7eb"}`, padding: "16px", display: "flex", gap: 14, alignItems: "flex-start", opacity: isPast ? .5 : 1, boxShadow: isNow ? `0 0 0 3px ${GM}22` : "0 1px 4px rgba(0,0,0,.04)" }}>
-                <div style={{ textAlign: "center", flexShrink: 0, minWidth: 64 }}>
+                <div onClick={() => slot.subject_id && navigate(`/student/subjects/${slot.subject_id}`)} style={{ textAlign: "center", flexShrink: 0, minWidth: 64, cursor: "pointer" }}>
                   <div style={{ fontSize: 14, fontWeight: 900, color: isNow ? GM : G }}>{to12hr(slot.start_time)}</div>
                   <div style={{ fontSize: 10, color: "#d1d5db", margin: "1px 0" }}>—</div>
                   <div style={{ fontSize: 11, fontWeight: 600, color: "#9ca3af" }}>{to12hr(slot.end_time)}</div>
                   {isNow && <span style={{ fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 9, background: "#dcfce7", color: "#16a34a", display: "block", marginTop: 5 }}>LIVE</span>}
                   {isSoon && <span style={{ fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 9, background: "#fffbeb", color: "#b7791f", display: "block", marginTop: 5 }}>{formatCountdown(ml)}</span>}
                 </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <div onClick={() => slot.subject_id && navigate(`/student/subjects/${slot.subject_id}`)} style={{ flex: 1, minWidth: 0, cursor: "pointer" }}>
                   <span style={{ fontSize: 14, fontWeight: 800, color: G, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>{subjectTitle}</span>
                   {slot.subjects?.title_ar && language !== "ar" && <p dir="rtl" style={{ fontSize: 12, color: GOLD, margin: "2px 0 0", fontFamily: "'Amiri', serif" }}>{slot.subjects.title_ar}</p>}
                   {slot.teacher?.full_name && <div style={{ display: "flex", alignItems: "center", gap: 5, color: "#6b7280", fontSize: 12, marginTop: 5 }}><Users style={{ width: 11, height: 11 }} /> {slot.teacher.full_name}</div>}
