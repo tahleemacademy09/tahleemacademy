@@ -198,6 +198,25 @@
       .ta-w-dua i { display: block; font-family: system-ui,sans-serif; font-size: 12px; font-style: normal; color: rgba(243,230,184,0.55); margin-top: 2px; }
       .ta-w-bar { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom,0px) + 22px); width: 48px; height: 3px; margin-left: -24px; border-radius: 999px; background: rgba(201,168,76,0.2); overflow: hidden; }
       .ta-w-bar::after { content: ""; display: block; height: 100%; width: 0; border-radius: 999px; background: linear-gradient(90deg, rgba(201,168,76,0.4), rgba(201,168,76,0.95)); animation: ta-bar-anim 2.6s ease forwards; }
+
+      /* ── First-launch swipe intro (3 slides) ── */
+      #ta-welcome.ta-ob { padding: 0; justify-content: flex-start; align-items: stretch; }
+      .ta-ob-skip { position: absolute; z-index: 3; top: calc(env(safe-area-inset-top,0px) + 14px); right: 18px; background: none; border: 0; padding: 10px 6px; font: 600 14px system-ui,-apple-system,sans-serif; color: rgba(243,230,184,0.75); }
+      .ta-ob-track { position: relative; z-index: 2; flex: 1; display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; overscroll-behavior-x: contain; }
+      .ta-ob-track::-webkit-scrollbar { display: none; }
+      .ta-ob-slide { flex: 0 0 100%; width: 100%; scroll-snap-align: start; scroll-snap-stop: always; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: calc(env(safe-area-inset-top,0px) + 56px) 32px 16px; box-sizing: border-box; }
+      .ta-ob-ico { width: 112px; height: 112px; border-radius: 30px; display: flex; align-items: center; justify-content: center; font-size: 54px; background: linear-gradient(135deg, rgba(201,168,76,0.18), rgba(201,168,76,0.05)); border: 1.5px solid rgba(201,168,76,0.35); }
+      .ta-ob-h { font-family: 'Georgia','Times New Roman',serif; font-size: 24px; font-weight: 700; color: #f3e6b8; margin-top: 26px; }
+      .ta-ob-p { font-family: system-ui,-apple-system,'Segoe UI',Roboto,sans-serif; font-size: 15px; line-height: 1.65; color: rgba(243,230,184,0.75); margin-top: 10px; max-width: 310px; }
+      .ta-ob-ul { list-style: none; padding: 0; margin: 14px 0 0; font-family: system-ui,sans-serif; font-size: 14px; line-height: 1.5; color: rgba(243,230,184,0.85); text-align: left; max-width: 300px; }
+      .ta-ob-ul li { margin-top: 8px; padding-left: 22px; position: relative; }
+      .ta-ob-ul li::before { content: "✦"; position: absolute; left: 0; color: #d9b95a; }
+      .ta-ob-foot { position: relative; z-index: 3; padding: 8px 28px calc(env(safe-area-inset-bottom,0px) + 26px); display: flex; flex-direction: column; align-items: center; gap: 18px; }
+      .ta-ob-dots { display: flex; gap: 8px; }
+      .ta-ob-dot { width: 8px; height: 8px; border-radius: 999px; background: rgba(201,168,76,0.28); transition: all .25s ease; }
+      .ta-ob-dot.on { width: 24px; background: #d9b95a; }
+      .ta-ob-next { width: 100%; max-width: 340px; border: 0; border-radius: 14px; padding: 15px 20px; font: 700 16px system-ui,-apple-system,sans-serif; color: #0a1f14; background: linear-gradient(135deg, #e6c765, #c9a84c); box-shadow: 0 6px 22px rgba(201,168,76,0.3); }
+      .ta-ob-next:active { transform: scale(0.98); }
       @keyframes ta-w-in { to { opacity: 1; transform: none; } }
       @keyframes ta-w-spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
       @media (prefers-reduced-motion: reduce) { #ta-welcome::before { animation: none; } .ta-w-item { animation-duration: 0.01s; animation-delay: 0s; } }
@@ -230,23 +249,51 @@
 
   <body>
     <script>
-      // Native app only: warm welcome on a cold start, painted from this HTML (no React needed), so it is on screen
-      // the moment the native splash goes away. Skipped when the OS killed the app mid-use and we are restoring the page.
+      // Native app only: first-launch swipe intro (3 slides), painted from this HTML so it is on screen the
+      // moment the native splash goes away. Shown ONCE per install; skipped when restoring a killed session
+      // or when the user is already signed in (existing users who just updated the app).
       (function() {
         try {
           var C = window.Capacitor;
           if (!(C && C.isNativePlatform && C.isNativePlatform())) return;
-          if (sessionStorage.getItem('ta_restore_path') || sessionStorage.getItem('ta_welcomed')) return;
-          sessionStorage.setItem('ta_welcomed', '1');
+          if (sessionStorage.getItem('ta_restore_path')) return;
+          if (localStorage.getItem('ta_onboarded')) return;
+          for (var i = 0; i < localStorage.length; i++) {
+            var k = localStorage.key(i);
+            if (k && /^sb-.*-auth-token$/.test(k)) { localStorage.setItem('ta_onboarded', '1'); return; }
+          }
           document.write(
-            '<div id="ta-welcome" dir="ltr">' +
-              '<img class="ta-w-item ta-w-logo" src="/brand-logo.png" alt="">' +
-              '<div class="ta-w-item ta-w-bism" dir="rtl" lang="ar">بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ</div>' +
-              '<div class="ta-w-item ta-w-salam" dir="rtl" lang="ar">ٱلسَّلَامُ عَلَيْكُمْ وَرَحْمَةُ ٱللَّهِ وَبَرَكَاتُهُ</div>' +
-              '<div class="ta-w-item ta-w-hello">Welcome to Tahleem Academy</div>' +
-              '<div class="ta-w-item ta-w-sub">A place to learn the Qur’an and the Arabic language.</div>' +
-              '<div class="ta-w-item ta-w-dua"><b dir="rtl" lang="ar">رَبِّ زِدْنِي عِلْمًا</b><i>“My Lord, increase me in knowledge.”</i></div>' +
-              '<div class="ta-w-bar"></div>' +
+            '<div id="ta-welcome" class="ta-ob" dir="ltr">' +
+              '<button class="ta-ob-skip" type="button">Skip</button>' +
+              '<div class="ta-ob-track">' +
+                '<div class="ta-ob-slide">' +
+                  '<img class="ta-w-item ta-w-logo" src="/brand-logo.png" alt="">' +
+                  '<div class="ta-w-item ta-w-bism" dir="rtl" lang="ar">بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ</div>' +
+                  '<div class="ta-w-item ta-w-salam" dir="rtl" lang="ar">ٱلسَّلَامُ عَلَيْكُمْ وَرَحْمَةُ ٱللَّهِ وَبَرَكَاتُهُ</div>' +
+                  '<div class="ta-w-item ta-w-hello">Welcome to Tahleem Academy</div>' +
+                  '<div class="ta-w-item ta-w-sub">A place to learn the Qur’an and the Arabic language.</div>' +
+                '</div>' +
+                '<div class="ta-ob-slide">' +
+                  '<div class="ta-ob-ico">📖</div>' +
+                  '<div class="ta-ob-h">What you can learn</div>' +
+                  '<ul class="ta-ob-ul">' +
+                    '<li>Qur’an recitation and Tajweed</li>' +
+                    '<li>Hifdh and daily revision</li>' +
+                    '<li>Arabic language: reading, Nahw and Sarf</li>' +
+                    '<li>Islamic studies: Fiqh, Aqeedah, Hadith, Seerah</li>' +
+                  '</ul>' +
+                '</div>' +
+                '<div class="ta-ob-slide">' +
+                  '<div class="ta-ob-ico">🎓</div>' +
+                  '<div class="ta-ob-h">Learn live, grow daily</div>' +
+                  '<div class="ta-ob-p">Join live classes with qualified teachers, practise your recitation, take exams and follow your progress, all in one app.</div>' +
+                  '<div class="ta-w-dua" style="position:static;margin-top:26px;opacity:1;transform:none;animation:none"><b dir="rtl" lang="ar">رَبِّ زِدْنِي عِلْمًا</b><i>“My Lord, increase me in knowledge.”</i></div>' +
+                '</div>' +
+              '</div>' +
+              '<div class="ta-ob-foot">' +
+                '<div class="ta-ob-dots"><span class="ta-ob-dot on"></span><span class="ta-ob-dot"></span><span class="ta-ob-dot"></span></div>' +
+                '<button class="ta-ob-next" type="button">Next</button>' +
+              '</div>' +
             '</div>');
         } catch(e) {}
       })();
@@ -278,23 +325,31 @@
     -->
     <script>
       (function() {
-        var shownAt = Date.now(), MIN_MS = 2600, MAX_MS = 6000, ready = false, closed = false;
-        function closeWelcome() {
-          var el = document.getElementById('ta-welcome');
-          if (!el || closed) return;
-          closed = true;
-          el.classList.add('ta-fade');
-          setTimeout(function() { el.classList.add('ta-gone'); }, 560);
-        }
-        function maybeClose() {
-          if (!ready) return;
-          var wait = MIN_MS - (Date.now() - shownAt);
-          if (wait <= 0) closeWelcome(); else setTimeout(closeWelcome, wait);
-        }
-        window.addEventListener('ta-app-ready', function() { ready = true; maybeClose(); }, { once: true });
-        setTimeout(closeWelcome, MAX_MS);                      // never trap the user, even if the app fails to start
         var w = document.getElementById('ta-welcome');
-        if (w) w.addEventListener('click', function() { if (Date.now() - shownAt > 800) closeWelcome(); });   // tap to skip
+        if (!w) return;
+        var track = w.querySelector('.ta-ob-track'),
+            dots = w.querySelectorAll('.ta-ob-dot'),
+            next = w.querySelector('.ta-ob-next'),
+            skip = w.querySelector('.ta-ob-skip'),
+            n = dots.length, idx = 0;
+        function render() {
+          for (var i = 0; i < n; i++) dots[i].className = 'ta-ob-dot' + (i === idx ? ' on' : '');
+          next.textContent = idx === n - 1 ? 'Get Started' : 'Next';
+          skip.style.visibility = idx === n - 1 ? 'hidden' : 'visible';
+        }
+        function goTo(i) { track.scrollTo({ left: i * track.clientWidth, behavior: 'smooth' }); }
+        function finish() {
+          try { localStorage.setItem('ta_onboarded', '1'); } catch (e) {}
+          w.classList.add('ta-fade');
+          setTimeout(function() { w.classList.add('ta-gone'); }, 560);
+        }
+        track.addEventListener('scroll', function() {
+          var i = Math.round(track.scrollLeft / (track.clientWidth || 1));
+          if (i !== idx && i >= 0 && i < n) { idx = i; render(); }
+        }, { passive: true });
+        next.addEventListener('click', function() { if (idx < n - 1) goTo(idx + 1); else finish(); });
+        skip.addEventListener('click', function() { goTo(n - 1); });   // jump to the last slide, where Get Started is
+        render();
       })();
       (function() {
         function dismissSplash() {
