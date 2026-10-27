@@ -38,6 +38,10 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
   const [muteOnEntry,      setMuteOnEntry]      = useState(true);
   const [chatEnabled,      setChatEnabled]      = useState(true);
   const [handRaiseEnabled, setHandRaiseEnabled] = useState(true);
+  // "Allow student video" — OFF by default. Seeded from the session row so a value set in the
+  // schedule form carries through; students can only use their camera once it is on.
+  const [allowVideo, setAllowVideo] = useState<boolean>(!!session?.class_settings?.allow_video);
+  const videoBlocked = !isPrivileged && session?.class_settings?.allow_video !== true;
   // Which lesson this class covers — saved on the live session so its recording/materials show under that lesson.
   const [lessonId, setLessonId] = useState<string | null>(null);
   useEffect(() => { if (session?.lesson_id) setLessonId(prev => prev ?? session.lesson_id); }, [session?.lesson_id]);
@@ -161,14 +165,14 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
     stopAllMedia();
     onStartClass({
       waiting_room_enabled: waitingRoom, chat_enabled: chatEnabled,
-      hand_raise_enabled: handRaiseEnabled, class_settings: { mute_on_entry: muteOnEntry },
+      hand_raise_enabled: handRaiseEnabled, class_settings: { ...(session?.class_settings || {}), mute_on_entry: muteOnEntry, allow_video: allowVideo },
       ...(lessonId ? { lesson_id: lessonId } : {}),
     }, { micOn, cameraOn });
   };
 
   const handleJoin = () => {
     stopAllMedia();
-    onJoinClass({ micOn, cameraOn });
+    onJoinClass({ micOn, cameraOn: cameraOn && !videoBlocked });
   };
 
   const Toggle = ({ checked, onChange }: { checked: boolean; onChange: () => void }) => (
@@ -269,8 +273,13 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
             }}>
               {micOn ? <Mic style={{ width: 20, height: 20, color: "#22c55e" }} /> : <MicOff style={{ width: 20, height: 20, color: "#fff" }} />}
             </button>
-            <button onClick={() => setCameraOn(v => !v)} style={{
-              width: 50, height: 50, borderRadius: "50%", border: "none", cursor: "pointer",
+            <button
+              onClick={videoBlocked ? undefined : () => setCameraOn(v => !v)}
+              disabled={videoBlocked}
+              title={videoBlocked ? "Video is turned off for this class" : undefined}
+              style={{
+              width: 50, height: 50, borderRadius: "50%", border: "none", cursor: videoBlocked ? "not-allowed" : "pointer",
+              opacity: videoBlocked ? 0.4 : 1,
               background: cameraOn ? "rgba(34,197,94,.15)" : "#ea4335",
               display: "flex", alignItems: "center", justifyContent: "center",
               boxShadow: cameraOn ? "0 0 0 2px rgba(34,197,94,.35)" : "0 3px 14px rgba(234,67,53,.4)",
@@ -330,8 +339,9 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
                   { label: "Mute on entry", checked: muteOnEntry,      onChange: () => setMuteOnEntry(v => !v) },
                   { label: "Enable chat",   checked: chatEnabled,      onChange: () => setChatEnabled(v => !v) },
                   { label: "Hand raising",  checked: handRaiseEnabled, onChange: () => setHandRaiseEnabled(v => !v) },
-                ].map((item, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 0", borderBottom: i < 3 ? "1px solid rgba(255,255,255,.05)" : "none" }}>
+                  { label: "Allow student video", checked: allowVideo,  onChange: () => setAllowVideo(v => !v) },
+                ].map((item, i, arr) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 0", borderBottom: i < arr.length - 1 ? "1px solid rgba(255,255,255,.05)" : "none" }}>
                     <span style={{ fontSize: 13, color: "rgba(255,255,255,.7)" }}>{item.label}</span>
                     <Toggle checked={item.checked} onChange={item.onChange} />
                   </div>

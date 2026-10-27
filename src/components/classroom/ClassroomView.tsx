@@ -86,6 +86,7 @@ import {
   ReconnectMonitor,
   ConnectionStateBanner,
   AudioOnlyBridge,
+  VideoPolicyBridge,
   ProfileSyncBridge,
   HeartbeatBridge,
   WbSyncBridge,
@@ -481,6 +482,29 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     try{roomRef.current?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"force_audio_only",active:next})),{reliable:true});}catch{}
     toast({title:next?"📵 Audio-only mode ON for everyone — cameras locked off":"🎥 Audio-only mode ended — cameras unlocked"});
   };
+  // "Allow student video" class setting (class_settings.allow_video on the live session).
+  // OFF by default: students' camera button is disabled and not clickable until the
+  // admin/teacher switches it on — in the lobby's Class Settings, the schedule form, or
+  // live from the three-dot menu. Admins/teachers are never locked by it. Late joiners
+  // read it from the session row; people already in the room get it instantly over the
+  // data channel ("video_allowed") and via the realtime session-row update.
+  const[videoAllowed,setVideoAllowed]=useState(false);
+  const[videoPolicyLoaded,setVideoPolicyLoaded]=useState(false);
+  const classSettingsRef=useRef<any>({});
+  const applyVideoPolicy=(allowed:boolean)=>{setVideoAllowed(allowed);setVideoPolicyLoaded(true);};
+  const videoLocked=!isPrivileged&&!videoAllowed;
+  const toggleVideoAllowed=async()=>{
+    const next=!videoAllowed;
+    applyVideoPolicy(next);
+    try{roomRef.current?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"video_allowed",active:next})),{reliable:true});}catch{}
+    const merged={...(classSettingsRef.current||{}),allow_video:next};
+    classSettingsRef.current=merged;
+    if(sessionId){
+      const{error:updErr}=await supabase.from("live_sessions").update({class_settings:merged} as any).eq("id",sessionId);
+      if(updErr)console.warn("[ClassroomView] could not save allow_video:",updErr.message);
+    }
+    toast({title:next?"🎥 Student video allowed":"📵 Student video turned off — cameras locked"});
+  };
   const stuChunksTop=useRef<Blob[]>([]);
   const stuAddRemoteTrack=(track:any,pub:any)=>{
     try{
@@ -851,6 +875,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             if(!alreadyLive){liveUpdate.status="live";liveUpdate.actual_start_time=sessions[0].actual_start_time||new Date().toISOString();}
             if(Object.keys(liveUpdate).length){await supabase.from("live_sessions").update(liveUpdate).eq("id",freshSessionId);}
             setSessionId(freshSessionId);setSessionInfo(alreadyLive?sessions[0]:{...sessions[0],...liveUpdate});
+            // "Allow student video": the lobby's choice (liveUpdate) wins, otherwise whatever is saved on the row.
+            {const cs=(liveUpdate.class_settings??sessions[0].class_settings)||{};classSettingsRef.current=cs;applyVideoPolicy(cs.allow_video===true);}
             // Students can't UPDATE live_sessions / INSERT notifications under RLS, so the old client-side
             // "mark live" silently failed for them. This RPC (SECURITY DEFINER) flips the class live for
             // ANY joiner and notifies: student joined -> admins + class teacher; teacher/admin joined -> students.
@@ -876,7 +902,11 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             if(!isPrivileged&&!sessionEndChannelRef.current){
               const endCh=supabase.channel(`session-end-${freshSessionId}`)
                 .on("postgres_changes",{event:"UPDATE",schema:"public",table:"live_sessions",filter:`id=eq.${freshSessionId}`},
-                  (payload:any)=>{if(payload.new?.status==="ended"&&!intentionalLeaveRef.current)setPhase("ended");})
+                  (payload:any)=>{
+                    if(payload.new?.status==="ended"&&!intentionalLeaveRef.current)setPhase("ended");
+                    const cs=payload.new?.class_settings;
+                    if(cs&&typeof cs==="object"){classSettingsRef.current=cs;applyVideoPolicy(cs.allow_video===true);}
+                  })
                 .subscribe();
               sessionEndChannelRef.current=endCh;
             }
@@ -1567,14 +1597,15 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             onDisconnected={autoReconnect}
           />
           {/* Feature 2: audio-only bridge — applies camera/bitrate changes from outside LiveKitRoom */}
-          <AudioOnlyBridge active={audioOnlyActive}/>
+          <AudioOnlyBridge active={audioOnlyActive} canResumeCamera={!videoLocked}/>
+          <VideoPolicyBridge locked={videoLocked&&videoPolicyLoaded}/>
           <ProfileSyncBridge/>
           {/* Feature 5: heartbeat — proactively degrades video before LiveKit detects drop */}
           <HeartbeatBridge sessionId={sessionId} active={phase==="live"}/>
           {/* Feature 9: data channel queue flusher — replays queued messages on reconnect */}
           <DataQueueFlusher roomRef={roomRef}/>
           <JoinLeaveOverlay/>
-          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>{setMatOpen(mat);setMatMinimized(false);}} onMatClose={()=>{setMatOpen(null);setMatMinimized(false);}} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}} onForceAudioOnly={(active:boolean)=>{setForcedAudioOnly(active);setAudioOnlyActive(active);}}
+          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>{setMatOpen(mat);setMatMinimized(false);}} onMatClose={()=>{setMatOpen(null);setMatMinimized(false);}} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}} onForceAudioOnly={(active:boolean)=>{setForcedAudioOnly(active);setAudioOnlyActive(active);}} onVideoAllowed={(allowed:boolean)=>applyVideoPolicy(allowed)}
             onClassEnded={!isPrivileged?()=>setPhase("ended"):undefined} roomRef={roomRef}/>{/* FIX BUG 10: pass roomRef */}
           {reconnecting&&<ReconnectingOverlay attempt={autoReconnectCountRef.current}/>}
           {/* ══ FEATURE 4: CONNECTION STATE BANNER — shown during LiveKit's own reconnect ══ */}
@@ -1665,7 +1696,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           {/* Content — material panels render here so footer always stays visible */}
           <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden"}}>
             <div style={{flex:1,position:"relative",minWidth:0}}>
-              <ClassroomAdminContext.Provider value={{isPrivileged,sessionId}}>
+              <ClassroomAdminContext.Provider value={{isPrivileged,sessionId,camLocked:forcedAudioOnly||videoLocked}}>
                 {/* Full-bleed stage: the header (top) and control bar (bottom)
                     are their own `position:fixed` overlays with a
                     transparent-fading gradient background, designed to float
@@ -1898,7 +1929,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             collapsed={uiHidden}
             onLaunchPoll={()=>{setChatOpen(true);setSideTab("polls");}}
             onLaunchQuiz={()=>setQuizOpen(true)}
-            camLocked={forcedAudioOnly}
+            camLocked={forcedAudioOnly||videoLocked}
             handRaiseEnabled={sessionSettings.hand_raise_enabled}
             extraMenuItems={
               <>
@@ -1933,6 +1964,11 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                     style={{margin:"0 4px",borderRadius:8,opacity:forcedAudioOnly?0.5:1,cursor:forcedAudioOnly?"not-allowed":"pointer"}}
                   >
                     <Zap style={{width:16,height:16,marginRight:8}}/> {forcedAudioOnly?"Audio-Only Mode (set by teacher)":audioOnlyActive?"Exit Audio-Only Mode":"Audio-Only Mode"}
+                  </DropdownMenuItem>
+                )}
+                {isPrivileged&&(
+                  <DropdownMenuItem onClick={toggleVideoAllowed} style={{margin:"0 4px",borderRadius:8}}>
+                    <Video style={{width:16,height:16,marginRight:8}}/> {videoAllowed?"Turn Off Student Video":"Allow Student Video"}
                   </DropdownMenuItem>
                 )}
                 {isPrivileged&&(

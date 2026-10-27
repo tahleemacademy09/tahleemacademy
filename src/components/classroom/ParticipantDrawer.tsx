@@ -11,7 +11,7 @@ import { toast } from "@/hooks/use-toast";
 //    (same force_mute / force_unmute / force_cam_off signals the Participants panel uses).
 const ParticipantControlRow = ({ participant, isLocal }: { participant: any; isLocal: boolean }) => {
   const room = useRoomContext();
-  const { isPrivileged } = useContext(ClassroomAdminContext);
+  const { isPrivileged, camLocked } = useContext(ClassroomAdminContext);
   const [, tick] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {
     const evs = ["trackMuted", "trackUnmuted", "trackPublished", "trackUnpublished", "trackSubscribed", "trackUnsubscribed", "participantNameChanged"];
@@ -27,6 +27,8 @@ const ParticipantControlRow = ({ participant, isLocal }: { participant: any; isL
   const camOn = pubOn(Track.Source.Camera);
   const name = participant.name || participant.identity || "User";
   const canControl = isLocal || isPrivileged;
+  // Your own camera button is disabled while the class has video turned off.
+  const camBlocked = isLocal && !!camLocked;
 
   const send = (type: string) => {
     try {
@@ -48,6 +50,7 @@ const ParticipantControlRow = ({ participant, isLocal }: { participant: any; isL
   const toggleCam = async (e: any) => {
     e.stopPropagation();
     if (isLocal) {
+      if (camBlocked) return;
       try { await queueMediaOp(room, () => room.localParticipant.setCameraEnabled(!room.localParticipant.isCameraEnabled)); } catch {}
       return;
     }
@@ -69,7 +72,7 @@ const ParticipantControlRow = ({ participant, isLocal }: { participant: any; isL
       <button data-tile-control="true" onClick={canControl ? toggleMic : undefined} title={micOn ? "Mute" : "Unmute"} style={btn(micOn, canControl)}>
         {micOn ? <Mic style={{ width: 15, height: 15 }} /> : <MicOff style={{ width: 15, height: 15 }} />}
       </button>
-      <button data-tile-control="true" onClick={canControl ? toggleCam : undefined} title={camOn ? "Turn camera off" : "Camera off"} style={btn(camOn, canControl)}>
+      <button data-tile-control="true" disabled={camBlocked} onClick={canControl && !camBlocked ? toggleCam : undefined} title={camBlocked ? "Video is turned off for this class" : camOn ? "Turn camera off" : "Camera off"} style={{ ...btn(camOn, canControl && !camBlocked), ...(camBlocked ? { cursor: "not-allowed" } : {}) }}>
         {camOn ? <Video style={{ width: 15, height: 15 }} /> : <VideoOff style={{ width: 15, height: 15 }} />}
       </button>
     </div>

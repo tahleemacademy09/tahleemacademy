@@ -799,7 +799,7 @@ export const ConnectionStateBanner = () => {
 };
 
 /* ══ AUDIO-ONLY BRIDGE — inside LiveKitRoom ══ */
-export const AudioOnlyBridge = ({ active }: { active: boolean }) => {
+export const AudioOnlyBridge = ({ active, canResumeCamera = true }: { active: boolean; canResumeCamera?: boolean }) => {
   const room = useRoomContext();
   const prevRef = useRef(false);
   useEffect(() => {
@@ -827,7 +827,9 @@ export const AudioOnlyBridge = ({ active }: { active: boolean }) => {
             }
           }
         } else {
-          await queueMediaOp(room, () => lp.setCameraEnabled(true));
+          // Leaving audio-only brings the camera back — but not when the teacher has not
+          // allowed video for this class (canResumeCamera === false).
+          if (canResumeCamera) await queueMediaOp(room, () => lp.setCameraEnabled(true));
           const micPub = lp.getTrackPublication(Track.Source.Microphone);
           const sender = (micPub?.track as any)?.sender as RTCRtpSender | undefined;
           if (sender) {
@@ -838,6 +840,32 @@ export const AudioOnlyBridge = ({ active }: { active: boolean }) => {
       } catch {}
     })();
   }, [active, room]);
+  return null;
+};
+
+/* ══ VIDEO POLICY BRIDGE — inside LiveKitRoom ══
+   "Allow student video" class setting. While `locked` is true this participant's camera
+   must stay off no matter which path tries to switch it on (tile controls, the minimized
+   pill, a reconnect restoring the last-known state, leaving audio-only mode…). The buttons
+   themselves are disabled in the UI — this is the backstop that also turns the camera off
+   the moment the teacher withdraws permission mid-class. */
+export const VideoPolicyBridge = ({ locked }: { locked: boolean }) => {
+  const room = useRoomContext();
+  useEffect(() => {
+    if (!locked || !room?.localParticipant) return;
+    const lp = room.localParticipant;
+    const forceOff = () => {
+      if (!lp.isCameraEnabled) return;
+      queueMediaOp(room, () => lp.setCameraEnabled(false)).catch(() => {});
+    };
+    forceOff();
+    room.on(RoomEvent.LocalTrackPublished, forceOff);
+    room.on(RoomEvent.TrackUnmuted, forceOff);
+    return () => {
+      room.off(RoomEvent.LocalTrackPublished, forceOff);
+      room.off(RoomEvent.TrackUnmuted, forceOff);
+    };
+  }, [locked, room]);
   return null;
 };
 
@@ -1716,7 +1744,7 @@ export const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false, isFirstJo
 };
 
 /* ══ ROOM DATA LISTENER ══ */
-export const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed,onEmojiReact,onGroupRecite,onHandRaise,onAdminMuteAll,onClassEnded,onForceAudioOnly,roomRef }:any) => {
+export const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed,onEmojiReact,onGroupRecite,onHandRaise,onAdminMuteAll,onClassEnded,onForceAudioOnly,onVideoAllowed,roomRef }:any) => {
   const room = useRoomContext();
   useEffect(() => {
     // FIX BUG 10: Store room in a React ref instead of window.__lkRoom__ global.
@@ -1747,6 +1775,7 @@ export const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,on
         if(msg.type==="hand_raise")       onHandRaise?.(msg.identity||participant?.identity, msg.name, msg.raised);
         if(msg.type==="admin_mute_all")   onAdminMuteAll?.();
         if(msg.type==="force_audio_only") onForceAudioOnly?.(msg.active);
+        if(msg.type==="video_allowed")    onVideoAllowed?.(!!msg.active);
         if(msg.type==="class_ended")      onClassEnded?.();
       } catch {}
     };
@@ -5896,7 +5925,7 @@ export const ParticipantSignalIcon=({participant}:{participant:any})=>{
 // every tile underneath just reads it directly. Defaults are safe no-ops
 // (mic/kick controls simply don't render) for any tree that doesn't wrap
 // with a Provider — e.g. if ParticipantTile is ever reused somewhere else.
-export const ClassroomAdminContext = createContext<{isPrivileged:boolean;sessionId:string|null}>({isPrivileged:false,sessionId:null});
+export const ClassroomAdminContext = createContext<{isPrivileged:boolean;sessionId:string|null;camLocked?:boolean}>({isPrivileged:false,sessionId:null,camLocked:false});
 
 const nameInitials=(n:string)=>{
   const parts=String(n||"").replace(/\(.*?\)/g,"").trim().split(/\s+/).filter(Boolean);

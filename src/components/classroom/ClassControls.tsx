@@ -583,10 +583,7 @@ const ClassControls = ({
 
   // ── Cam toggle — busy-guarded ─────────────────────────────────────────
   const toggleCam = useCallback(async () => {
-    if (camLocked) {
-      toast({ title: t("Camera disabled by teacher", "الكاميرا معطّلة من قبل المعلم"), description: t("Audio-only mode is active for everyone right now.", "وضع الصوت فقط مفعّل للجميع الآن.") });
-      return;
-    }
+    if (camLocked) return; // button is disabled while locked; this is just a safety net
     if (camBusy.current) return;
     camBusy.current = true;
     try {
@@ -599,7 +596,7 @@ const ClassControls = ({
     } finally {
       camBusy.current = false;
     }
-  }, [room, t, setCtxCamEnabled]);
+  }, [room, t, setCtxCamEnabled, camLocked]);
 
   // ── Register live toggle functions into context refs ──────────────────
   useEffect(() => {
@@ -931,10 +928,10 @@ const ClassControls = ({
         <div style={{ position: "relative", flex: "1 1 0", maxWidth: 64, minWidth: 40 }}>
           <button
             {...(camLocked
-              ? { onClick: toggleCam }
+              ? { disabled: true, "aria-disabled": true }
               : longPressProps(camLP, () => { refreshDevices(); setCamMenuOpen(true); }, toggleCam))}
             style={{ ...sqBtn(camLocked ? { background: "rgba(255,255,255,.06)", color: "rgba(255,255,255,.35)", cursor: "not-allowed" } : {}), ...noSelect }}
-            title={camLocked ? t("Camera disabled by teacher", "الكاميرا معطّلة من قبل المعلم") : undefined}
+            title={camLocked ? t("Video is turned off for this class", "الفيديو معطّل في هذه الحصة") : undefined}
           >
             {camEnabled && !camLocked ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" style={camLocked ? undefined : { color: "#f28b82" }} />}
           </button>
