@@ -145,7 +145,7 @@ const LiveClassManagement = () => {
   const [form, setForm] = useState({
     subject_id:"", lesson_id:"" as string, topic:"", topic_ar:"", scheduled_at:"",
     duration_minutes:60, recording_enabled:true, chat_enabled:true,
-    hand_raise_enabled:true, waiting_room_enabled:true,
+    hand_raise_enabled:true, waiting_room_enabled:true, allow_video:false,
     homework:"", homework_ar:"", quiz_code:"",
   });
 
@@ -248,15 +248,15 @@ const LiveClassManagement = () => {
     return (cfg as any)?.color || "#6b7280";
   };
 
-  const resetForm = () => setForm({subject_id:"",lesson_id:"",topic:"",topic_ar:"",scheduled_at:"",duration_minutes:60,recording_enabled:true,chat_enabled:true,hand_raise_enabled:true,waiting_room_enabled:true,homework:"",homework_ar:"",quiz_code:""});
+  const resetForm = () => setForm({subject_id:"",lesson_id:"",topic:"",topic_ar:"",scheduled_at:"",duration_minutes:60,recording_enabled:true,chat_enabled:true,hand_raise_enabled:true,waiting_room_enabled:true,allow_video:false,homework:"",homework_ar:"",quiz_code:""});
   const openCreate = () => { resetForm(); setEditingSession(null); setShowCreate(true); };
   const openEdit   = (s:any) => {
-    setForm({subject_id:s.subject_id||"",lesson_id:s.lesson_id||"",topic:s.topic||"",topic_ar:s.topic_ar||"",scheduled_at:s.scheduled_at?s.scheduled_at.slice(0,16):"",duration_minutes:s.duration_minutes||60,recording_enabled:s.recording_enabled??true,chat_enabled:s.chat_enabled??true,hand_raise_enabled:s.hand_raise_enabled??true,waiting_room_enabled:s.waiting_room_enabled??true,homework:s.homework||"",homework_ar:s.homework_ar||"",quiz_code:s.quiz_code||""});
+    setForm({subject_id:s.subject_id||"",lesson_id:s.lesson_id||"",topic:s.topic||"",topic_ar:s.topic_ar||"",scheduled_at:s.scheduled_at?s.scheduled_at.slice(0,16):"",duration_minutes:s.duration_minutes||60,recording_enabled:s.recording_enabled??true,chat_enabled:s.chat_enabled??true,hand_raise_enabled:s.hand_raise_enabled??true,waiting_room_enabled:s.waiting_room_enabled??true,allow_video:s.class_settings?.allow_video===true,homework:s.homework||"",homework_ar:s.homework_ar||"",quiz_code:s.quiz_code||""});
     setEditingSession(s); setShowCreate(true);
   };
   const handleSave = async () => {
     if (!form.subject_id) { toast({title:"Please select a subject",variant:"destructive"}); return; }
-    const payload = {subject_id:form.subject_id,lesson_id:form.lesson_id||null,topic:form.topic||null,topic_ar:form.topic_ar||null,scheduled_at:form.scheduled_at||null,duration_minutes:form.duration_minutes,recording_enabled:form.recording_enabled,chat_enabled:form.chat_enabled,hand_raise_enabled:form.hand_raise_enabled,waiting_room_enabled:form.waiting_room_enabled,homework:form.homework||null,homework_ar:form.homework_ar||null,quiz_code:form.quiz_code||null};
+    const payload = {subject_id:form.subject_id,lesson_id:form.lesson_id||null,topic:form.topic||null,topic_ar:form.topic_ar||null,scheduled_at:form.scheduled_at||null,duration_minutes:form.duration_minutes,recording_enabled:form.recording_enabled,chat_enabled:form.chat_enabled,hand_raise_enabled:form.hand_raise_enabled,waiting_room_enabled:form.waiting_room_enabled,class_settings:{...(editingSession?.class_settings||{}),allow_video:form.allow_video},homework:form.homework||null,homework_ar:form.homework_ar||null,quiz_code:form.quiz_code||null};
     if (editingSession) {
       await supabase.from("live_sessions").update(payload).eq("id",editingSession.id);
       toast({title:"Class updated"});
@@ -1317,6 +1317,7 @@ const CreateEditDialog = ({open,onClose,form,setForm,subjects,editing,onSave}:an
             {key:"chat_enabled",         label:"Enable Chat",  icon:"💬"},
             {key:"hand_raise_enabled",   label:"Hand Raising", icon:"✋"},
             {key:"waiting_room_enabled", label:"Waiting Room", icon:"🚪"},
+            {key:"allow_video",          label:"Allow Student Video", icon:"🎥"},
           ] as const).map(row=>(
             <div key={row.key} className="flex items-center justify-between px-4 py-3">
               <span className="text-sm">{row.icon} {row.label}</span>
