@@ -192,7 +192,7 @@ interface PageResult {
 interface Question {
   id: number;
   // mcq = multiple choice  |  record = student records answer  |  listen_record = play audio then record
-  type: "mcq_next" | "mcq_blank" | "mcq_continuation" | "record_continue" | "record_complete" | "listen_choose";
+  type: "mcq_next" | "mcq_blank" | "mcq_continuation" | "record_continue" | "record_complete" | "listen_choose" | "tafsir_verse" | "tafsir_meaning";
   section: "A" | "B";
   isErrorFocused?: boolean;
   // For MCQ
@@ -211,6 +211,11 @@ interface Question {
   recordPrompt?: string;
   // Snippet of just a few words, not full verse
   snippet?: boolean;
+  // TAFSEER questions — bilingual (Arabic + English) wording, and an English line under every option.
+  promptAr?: string;       // the question, in Arabic
+  promptEn?: string;       // the question, in English
+  promptSubEn?: string;    // English meaning shown under the main prompt (tafsir_meaning)
+  optionsEn?: string[];    // English text matching each entry of `options`
 }
 type Phase = "intro"|"pre_test_review"|"reading"|"page_result"|"proctor_intro"|"testing"|"test_result"|"complete";
 type MainTab = "today"|"schedule"|"live"|"history";
@@ -483,7 +488,59 @@ function shuffle<T>(arr:T[]): T[] {
   for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
   return a;
 }
-function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[] {
+/* ── Arabic text styling — big, high-contrast, generous line-height so the harakat stay readable ── */
+const AR_QURAN_FONT = "'Amiri Quran','Amiri','Scheherazade New','Noto Naskh Arabic',serif";
+const AR_PROSE_FONT = "'Amiri','Scheherazade New','Noto Naskh Arabic',serif";
+const arQuran = (size: number, lh = 2.4): React.CSSProperties => ({
+  direction: "rtl", textAlign: "right", fontFamily: AR_QURAN_FONT, fontSize: size, lineHeight: lh,
+  color: "#0b0802", fontWeight: 400, wordSpacing: "0.14em", textRendering: "optimizeLegibility",
+  WebkitFontSmoothing: "antialiased", fontFeatureSettings: '"kern" 1, "liga" 1, "calt" 1',
+});
+const arProse = (size: number, lh = 2.1): React.CSSProperties => ({
+  direction: "rtl", textAlign: "right", fontFamily: AR_PROSE_FONT, fontSize: size, lineHeight: lh,
+  color: "#14100a", fontWeight: 400, wordSpacing: "0.08em", textRendering: "optimizeLegibility",
+  WebkitFontSmoothing: "antialiased",
+});
+
+/* ── Tafsir data (Tafsir al-Muyassar in Arabic + Sahih International in English) ─────────────
+   One request per page. Cached for the session. Any failure just means no tafsir questions. */
+type TafsirEntry = { ar: string; en: string };
+const tafsirPageCache = new Map<number, Promise<Record<string, TafsirEntry>>>();
+function fetchPageTafsir(page: number): Promise<Record<string, TafsirEntry>> {
+  const hit = tafsirPageCache.get(page);
+  if (hit) return hit;
+  const p = (async () => {
+    const out: Record<string, TafsirEntry> = {};
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 12000);
+      const r = await fetch(`https://api.alquran.cloud/v1/page/${page}/editions/ar.muyassar,en.sahih`, { signal: ctrl.signal });
+      clearTimeout(t);
+      if (!r.ok) return out;
+      const j = await r.json();
+      const eds: any[] = Array.isArray(j?.data) ? j.data : [];
+      for (const ed of eds) {
+        const id = String(ed?.edition?.identifier ?? "");
+        const field = id === "ar.muyassar" ? "ar" : id === "en.sahih" ? "en" : null;
+        if (!field) continue;
+        for (const a of ed.ayahs ?? []) {
+          const k = `${a.surah?.number}:${a.numberInSurah}`;
+          (out[k] ||= { ar: "", en: "" })[field] = String(a.text ?? "").replace(/\s+/g, " ").trim();
+        }
+      }
+    } catch { /* offline / blocked — skip tafsir questions */ }
+    return out;
+  })();
+  tafsirPageCache.set(page, p);
+  p.then(o => { if (!Object.keys(o).length) tafsirPageCache.delete(page); });
+  return p;
+}
+async function fetchTafsirForPages(pages: number[]): Promise<Record<string, TafsirEntry>> {
+  const parts = await Promise.all(pages.map(fetchPageTafsir));
+  return Object.assign({}, ...parts);
+}
+
+function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = [], tafsir: Record<string, TafsirEntry> = {}): Question[] {
   const allAyahs = results.flatMap(r => r.ayahs ?? []).filter(a => a && a.text);
   const errorWords = results.flatMap(r => r.errorWords);
   const used = new Set<string>(); // dedup: key = type+promptSlice
@@ -700,9 +757,57 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[
     }
   }
 
+  // ── TAFSEER (about today's pages) — at most 5, bilingual ────────────────────
+  const tafQs: Question[] = [];
+  {
+    const keyOf = (a: Ayah) => `${a.surah.number}:${a.numberInSurah}`;
+    const clip = (t: string, max: number) => {
+      const x = t.replace(/\s+/g, " ").trim();
+      if (x.length <= max) return x;
+      const cut = x.slice(0, max); const sp = cut.lastIndexOf(" ");
+      return cut.slice(0, sp > 40 ? sp : max).trim() + "…";
+    };
+    const seen = new Set<string>();
+    const pool = allAyahs.filter(a => {
+      const t = tafsir[keyOf(a)];
+      if (!t || t.ar.length < 25 || t.en.length < 15) return false;
+      const k = normalizeArabic(t.ar).slice(0, 30);
+      if (seen.has(k)) return false; seen.add(k); return true;
+    });
+    if (pool.length >= 3) {
+      const picks = shuffle(pool).slice(0, 5);
+      picks.forEach((a, n) => {
+        const t = tafsir[keyOf(a)];
+        const others = shuffle(pool.filter(x => x !== a)).slice(0, 3);
+        const label = `§A Tafseer · ${a.surah.englishName} ${a.numberInSurah}`;
+        if (n < 3) {
+          // verse → which tafsir explains it?
+          const correctTxt = clip(t.ar, 170);
+          const opts = shuffle([{ ar: correctTxt, en: clip(t.en, 150) },
+            ...others.map(o => ({ ar: clip(tafsir[keyOf(o)].ar, 170), en: clip(tafsir[keyOf(o)].en, 150) }))]);
+          tafQs.push({ id: id++, type: "tafsir_verse", section: "A", snippet: false,
+            prompt: fullVerse(a), promptLabel: label,
+            promptAr: "ما تفسير هذه الآية؟", promptEn: "What is the tafseer of this verse?",
+            options: opts.map(o => o.ar), optionsEn: opts.map(o => o.en),
+            correct: opts.findIndex(o => o.ar === correctTxt), correctText: correctTxt });
+        } else {
+          // tafsir → which verse does it explain?
+          const correctTxt = fullVerse(a);
+          const opts = shuffle([{ ar: correctTxt, en: clip(t.en, 150) },
+            ...others.map(o => ({ ar: fullVerse(o), en: clip(tafsir[keyOf(o)].en, 150) }))]);
+          tafQs.push({ id: id++, type: "tafsir_meaning", section: "A", snippet: false,
+            prompt: clip(t.ar, 220), promptSubEn: clip(t.en, 200), promptLabel: label,
+            promptAr: "أيُّ آية يوافق هذا التفسير؟", promptEn: "Which verse matches this tafseer?",
+            options: opts.map(o => o.ar), optionsEn: opts.map(o => o.en),
+            correct: opts.findIndex(o => o.ar === correctTxt), correctText: correctTxt });
+        }
+      });
+    }
+  }
+
   const sA = shuffle(qs.filter(q=>q.section==="A"));
   const sB = shuffle(qs.filter(q=>q.section==="B"));
-  return [...sA, ...sB];
+  return [...sA, ...tafQs, ...sB];
 }
 
 
@@ -717,7 +822,9 @@ function questionTimeLimit(q: Question): number {
     case "mcq_blank":        return 20;                     // single-word recognition
     case "mcq_next":         return 25;                     // recognise the next full verse
     case "mcq_continuation": return 30;                     // harder — error-focused area
-    case "listen_choose":    return 40;                     // includes time to listen first
+    case "listen_choose":    return 30;                     // clock only starts AFTER the audio has played once
+    case "tafsir_verse":
+    case "tafsir_meaning":   return 45;                     // read Arabic + English options
     case "record_continue":  return q.isErrorFocused ? 60 : 45; // recall + recite from memory
     case "record_complete":  return 75;                     // multi-verse recall + recite
     default:                 return 30;
@@ -1412,8 +1519,15 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [retryMsg,     setRetryMsg]    = useState("");
   const [questions,    setQuestions]   = useState<Question[]>([]);
   const [juzAyahs,     setJuzAyahs]    = useState<Ayah[]>([]);
+  const [tafsirMap,    setTafsirMap]   = useState<Record<string, TafsirEntry>>({});
   const [qIdx,         setQIdx]        = useState(0);
   const [answers,      setAnswers]     = useState<(number|null)[]>([]);
+  const qIdxRef = useRef(0); qIdxRef.current = qIdx;
+  // Questions are built ONCE for the intro screen (counts + the real test use the same list).
+  const previewQs = useMemo(
+    () => (phase === "proctor_intro" && questions.length === 0 ? buildQuestions(pageResults, juzAyahs, tafsirMap) : []),
+    [phase, questions.length, pageResults, juzAyahs, tafsirMap],
+  );
   const [recitationScore, setRecitationScore] = useState<number|null>(
     recitationAlreadyDone ? (todayLog?.session_data?.recitation_score ?? null) : null
   );
@@ -1441,6 +1555,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [qRecDone,     setQRecDone]     = useState(false);
   const qRecTimerRef  = useRef<any>(null);
   const qMediaRecRef  = useRef<MediaRecorder|null>(null);
+  const [qChecking,   setQChecking]   = useState(false);      // transcribing / scoring the recorded answer
+  const [qRecErr,     setQRecErr]     = useState("");
+  const pendingAdvanceRef = useRef(false);                    // time ran out while recording → advance after scoring
+  const skippedQRef = useRef<Set<number>>(new Set());
+  const [listenLoading, setListenLoading] = useState(false);
   // Per-question complexity-based countdown timer (testing phase)
   const [qTimeLeft,    setQTimeLeft]    = useState(0);
   const qCountdownRef  = useRef<any>(null);
@@ -1479,7 +1598,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [ayahCorrectness, setAyahCorrectness] = useState<boolean[]>([]);
   // True when transcription returned nothing because no API key is configured
   const [noApiWarning, setNoApiWarning] = useState(false);
-  const hadith = HADITHS[Math.floor(Math.random()*HADITHS.length)];
+  // Picked once per session — picking at every render made the complete screen jump around.
+  const [hadith] = useState(() => HADITHS[Math.floor(Math.random()*HADITHS.length)]);
+  const [finalDur, setFinalDur] = useState<number|null>(null);
+  const completeDurRef = useRef<number|null>(null);
   const sessionStart = useRef(Date.now());
   const timerRef     = useRef<any>(null);
   const mediaRecRef  = useRef<MediaRecorder|null>(null);
@@ -1538,6 +1660,24 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     if (phase !== "reading") return;
     if (ctcOn) { ctcEngine.load().catch(() => { /* status is shown under the Start button */ }); return; }
     tarteelEngine.load(true).catch(() => { /* status is shown under the Start button */ });
+  }, [phase]);
+
+  // Load the Tarteel model BEFORE the test starts, so recorded answers are scored right after Stop
+  // instead of waiting for a ~100 MB model to load (which also made the result never appear).
+  useEffect(() => {
+    if (phase === "pre_test_review" || phase === "proctor_intro" || phase === "testing") {
+      // Same checker as the recitation phase: the CTC model on the app / ?ctc=1, otherwise Tarteel.
+      if (ctcEnabled()) ctcEngine.load().catch(() => { /* retried when the first recorded answer is scored */ });
+      else tarteelEngine.load(true).catch(() => { /* retried when the first recorded answer is scored */ });
+    }
+  }, [phase]);
+  // Tafseer text for today's pages (used for the tafseer questions).
+  useEffect(() => {
+    if (phase !== "pre_test_review" && phase !== "proctor_intro") return;
+    let cancelled = false;
+    fetchTafsirForPages(todayPages).then(m => { if (!cancelled && Object.keys(m).length) setTafsirMap(m); });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
   // ── WAKE LOCK: keep screen on for entire session ─────────────────────────
@@ -2314,16 +2454,23 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     setListenError(false);
     setListenErrorUrl("");
     clearInterval(qRecTimerRef.current);
-    if (qMediaRecRef.current && qMediaRecRef.current.state !== "inactive") {
-      try { qMediaRecRef.current.stop(); } catch {}
+    setQChecking(false); setQRecErr(""); setListenLoading(false);
+    pendingAdvanceRef.current = false;
+    const oldMr = qMediaRecRef.current;
+    if (oldMr && oldMr.state !== "inactive") {
+      try { oldMr.onstop = null; oldMr.stop(); oldMr.stream.getTracks().forEach(t => t.stop()); } catch {}
     }
     qMediaRecRef.current = null;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qIdx]);
 
   const startQRecording = async () => {
+    const idx = qIdx;
+    const q = questions[idx];
+    if (!q || qMediaRecRef.current || qChecking) return;
     try {
-      setQRecChunks([]); setQRecResult(null); setQRecDone(false); setQRecSecs(0);
+      setQRecChunks([]); setQRecResult(null); setQRecDone(false); setQRecSecs(0); setQRecErr("");
+      stopListenAudio();
       // Same raw-mic capture as the reading phase. Browser echo-cancel / noise-suppression / auto-gain are
       // tuned for calls and clip soft endings, madd and ghunnah, which makes Tarteel mis-hear the answer.
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -2346,31 +2493,73 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       mr.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
         clearInterval(qRecTimerRef.current);
-        setQRecording(false);
+        if (qMediaRecRef.current === mr) qMediaRecRef.current = null;
+        const stillHere = () => qIdxRef.current === idx;
+        if (stillHere()) { setQRecording(false); setQChecking(true); }
+
+        const advanceIfTimeUp = (fallbackAnswer: number | null) => {
+          if (!pendingAdvanceRef.current) return;
+          pendingAdvanceRef.current = false;
+          if (fallbackAnswer !== null) setAnswers(prev => { if (prev[idx] !== null && prev[idx] !== undefined) return prev; const a = [...prev]; a[idx] = fallbackAnswer; return a; });
+          setTimeout(() => { if (qIdxRef.current === idx) nextQRef.current(); }, 80);
+        };
+        const fail = (msg: string) => {
+          if (stillHere()) { setQChecking(false); setQRecErr(msg); }
+          advanceIfTimeUp(1);
+        };
+
         const blob = new Blob(chunks, { type: mime || "audio/webm" });
-        const tx0 = await transcribeAudio(blob);
-        const tx = tx0 === "__NO_API__" ? "" : tx0;
-        const q = questions[qIdx];
-        // Score against the expected answer
-        const expected = q.correctText || "";
-        const expWords = normalizeArabic(expected).split(/\s+/).filter(Boolean);
-        const gotWords = normalizeArabic(tx).split(/\s+/).filter(Boolean);
-        let matched = 0;
-        const used2 = new Set<number>();
-        for (const ew of expWords) {
-          for (let i = 0; i < gotWords.length; i++) {
-            if (used2.has(i)) continue;
-            const gw = gotWords[i];
-            if (wordsMatch(ew, gw)) {
-              matched++; used2.add(i); break;
+        if (blob.size < 1500) { fail("We couldn't hear anything. Tap record and try again."); return; }
+        const TIMEOUT_MSG = "Checking took too long. Tap record to try again, or skip this one.";
+        let raw = "";
+        let sc: number | null = null;
+        if (ctcEnabled()) {
+          // CTC model: every word of the expected verse is checked against the recording.
+          const refWords = refTokens(q.correctText || "");
+          if (!refWords.length) { fail("Couldn't check this question. Skip to continue."); return; }
+          let res: CtcCheckResult | null = null;
+          try {
+            res = await Promise.race([
+              ctcEngine.check(blob, refWords, { basmalah: false }),
+              new Promise<null>(r => setTimeout(() => r(null), 60000)),
+            ]);
+          } catch (e: any) {
+            console.error("[HifdhDaily] CTC answer check failed:", e?.message ?? e);
+            fail("Couldn't check this recording on your device. Tap record to try again, or skip.");
+            return;
+          }
+          if (!res) { fail(TIMEOUT_MSG); return; }
+          raw = (res.greedy || "").trim();
+          if (!raw) { fail("No recitation was detected. Tap record and try again."); return; }
+          sc = scoreOf(gradeFromCtc(refWords, res.words, res.heard));
+        } else {
+          // Tarteel (web without ?ctc=1). Never wait forever for the model: after 45 s tell the student.
+          const t = await Promise.race([
+            transcribeAudio(blob),
+            new Promise<string>(res => setTimeout(() => res("__TIMEOUT__"), 45000)),
+          ]);
+          if (t === "__TIMEOUT__") { fail(TIMEOUT_MSG); return; }
+          if (t === "__NO_API__")  { fail("Couldn't check this recording on your device. Tap record to try again, or skip."); return; }
+          if (!t.trim())           { fail("No recitation was detected. Tap record and try again."); return; }
+          raw = t;
+          const expWords = normalizeArabic(q.correctText || "").split(/\s+/).filter(Boolean);
+          const gotWords = normalizeArabic(raw).split(/\s+/).filter(Boolean);
+          let matched = 0;
+          const used2 = new Set<number>();
+          for (const ew of expWords) {
+            for (let i = 0; i < gotWords.length; i++) {
+              if (used2.has(i)) continue;
+              if (wordsMatch(ew, gotWords[i])) { matched++; used2.add(i); break; }
             }
           }
+          sc = expWords.length > 0 ? Math.round((matched / expWords.length) * 100) : 70;
         }
-        const sc = expWords.length > 0 ? Math.round((matched / expWords.length) * 100) : (tx.trim().length > 5 ? 70 : 10);
-        setQRecResult({ transcript: tx, score: sc });
-        setQRecDone(true);
-        // Auto-mark answer: score >= 60 = correct (index 0 = pass sentinel)
-        const a = [...answers]; a[qIdx] = sc >= 60 ? 0 : 1; setAnswers(a);
+        if (!skippedQRef.current.has(idx)) {
+          // Auto-mark answer: score >= 60 = correct (0 = pass sentinel). Functional update → never clobbers other answers.
+          setAnswers(prev => { const a = [...prev]; a[idx] = (sc ?? 0) >= 60 ? 0 : 1; return a; });
+        }
+        if (stillHere()) { setQRecResult({ transcript: raw, score: sc ?? 0 }); setQRecDone(true); setQChecking(false); }
+        advanceIfTimeUp(null);
       };
       mr.start(200);
       qMediaRecRef.current = mr;
@@ -2382,18 +2571,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const stopQRecording = () => {
     clearInterval(qRecTimerRef.current);
     const mr = qMediaRecRef.current;
-    if (mr && mr.state !== "inactive") {
-      // FIX BUG 5: Null the ref inside onstop, not before stop(), to avoid race condition
-      // where onstop fires after the ref is already null.
-      const prevOnStop = mr.onstop;
-      mr.onstop = async (e) => {
-        qMediaRecRef.current = null;
-        if (prevOnStop) prevOnStop.call(mr, e);
-      };
-      mr.stop();
-    } else {
-      qMediaRecRef.current = null;
-    }
+    if (mr && mr.state !== "inactive") { try { mr.stop(); } catch { /* noop */ } }
   };
 
   // ── playListenAudio ────────────────────────────────────────────────────────
@@ -2416,10 +2594,45 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       listenAudioRef.current.pause(); listenAudioRef.current.src = "";
       listenAudioRef.current = null;
     }
-    setIsSpeaking(false);
+    setIsSpeaking(false); setListenLoading(false);
   };
 
-  const playListenAudio = (text: string, surahNum?: number, numberInSurah?: number, globalNum?: number) => {
+  // The verse audio is downloaded + decoded in the background as soon as the test is known (both mirrors at
+  // once, first one wins), so the tap — or the automatic start — plays with no wait.
+  const listenBufCache = useRef(new Map<string, Promise<AudioBuffer | null>>());
+  const listenUrlsFor = (surahNum: number, ayahNum: number, globalNum?: number): string[] => {
+    const every = quranAyahAudioUrl(surahNum, ayahNum, "Alafasy_128kbps");
+    const isl = globalNum && globalNum > 0 ? `https://cdn.islamic.network/quran/audio/128/ar.alafasy/${globalNum}.mp3` : null;
+    return [isl, every].filter(Boolean) as string[];
+  };
+  const loadListenBuffer = (surahNum: number, ayahNum: number, globalNum?: number): Promise<AudioBuffer | null> => {
+    const key = `${surahNum}:${ayahNum}`;
+    const hit = listenBufCache.current.get(key);
+    if (hit) return hit;
+    const urls = listenUrlsFor(surahNum, ayahNum, globalNum);
+    const p = new Promise<AudioBuffer | null>(resolve => {
+      let left = urls.length;
+      if (!left) { resolve(null); return; }
+      urls.forEach(async url => {
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 15000);
+          const r = await fetch(url, { signal: ctrl.signal });
+          clearTimeout(t);
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          resolve(await decodeForPlayback(await r.arrayBuffer()));
+        } catch (e: any) {
+          console.warn("[HifdhDaily] listen audio fetch failed:", url, e?.message ?? e);
+          if (--left === 0) resolve(null);
+        }
+      });
+    });
+    listenBufCache.current.set(key, p);
+    p.then(b => { if (!b) listenBufCache.current.delete(key); });
+    return p;
+  };
+
+  const playListenAudio = async (_text: string, surahNum?: number, numberInSurah?: number, globalNum?: number, auto = false) => {
     stopListenAudio();
     setListenError(false);
     setListenErrorUrl("");
@@ -2430,69 +2643,67 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       setListenErrorUrl("missing verse data (surahNum=" + (surahNum??0) + " ayah=" + (numberInSurah??0) + ")");
       return;
     }
-    const everyAyahUrl = quranAyahAudioUrl(surahNum, numberInSurah, "Alafasy_128kbps");
-    const islamicNetUrl = globalNum && globalNum > 0
-      ? `https://cdn.islamic.network/quran/audio/128/ar.alafasy/${globalNum}.mp3`
-      : null;
-    const urls = [islamicNetUrl, everyAyahUrl].filter(Boolean) as string[];
-    const primaryUrl = urls[0];
     const token = ++listenTokenRef.current;
+    setListenLoading(true);
+    // A fresh context on the loudspeaker route (after the mic was used, Android otherwise plays silently or via
+    // the earpiece). Started right here, inside the tap / answer transition.
+    const ctxP = freshPlaybackContext(listenCtxRef.current).catch(() => null);
+    const bufP = loadListenBuffer(surahNum, numberInSurah, globalNum);
+    const [ctx, buf] = await Promise.all([ctxP, bufP]);
+    listenCtxRef.current = ctx;                         // kept even if superseded, so the next call closes it
+    if (token !== listenTokenRef.current) return;       // student moved on / tapped again
+    setListenLoading(false);
+    // Automatic start only when the browser lets sound play; otherwise wait quietly for the tap.
+    if (auto && (!ctx || ctx.state !== "running" || !buf)) return;
+
+    if (ctx && buf) {
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.onended = () => {
+        if (listenSrcRef.current === src) {
+          listenSrcRef.current = null; setIsSpeaking(false); setListenDone(true);   // ← the question clock starts now
+        }
+      };
+      listenSrcRef.current = src;
+      setIsSpeaking(true);
+      src.start(0);
+      return;
+    }
+    // Fallback: plain <audio> element, trying each mirror in turn.
+    const urls = listenUrlsFor(surahNum, numberInSurah, globalNum);
     setIsSpeaking(true);
-
-    // The student has just used the microphone. On Android that leaves the phone's audio in "call"
-    // mode, where a normal <audio> element plays silently (or through the earpiece). Playing the
-    // decoded audio through an AudioContext always uses the loudspeaker — same fix the
-    // "Your Recitation" player already uses. The context is created/resumed right here, inside the
-    // tap, so the browser allows it.
-    const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
-    let ctx: AudioContext | null = null;
-    let resumed: Promise<void> = Promise.resolve();
-    try {
-      if (AC) {
-        ctx = listenCtxRef.current && listenCtxRef.current.state !== "closed" ? listenCtxRef.current : new AC();
-        listenCtxRef.current = ctx;
-        if (ctx!.state === "suspended") resumed = ctx!.resume();
-      }
-    } catch { ctx = null; }
-
     const viaHtmlAudio = (i: number) => {
       if (token !== listenTokenRef.current) return;
-      if (i >= urls.length) { setIsSpeaking(false); setListenError(true); setListenErrorUrl(primaryUrl); return; }
+      if (i >= urls.length) { setIsSpeaking(false); setListenError(true); setListenErrorUrl(urls[0] ?? ""); return; }
       const audio = new Audio(urls[i]);
       listenAudioRef.current = audio;
       audio.onended = () => { setIsSpeaking(false); setListenDone(true); listenAudioRef.current = null; };
       audio.onerror = () => { listenAudioRef.current = null; viaHtmlAudio(i + 1); };
       audio.play().catch(() => { listenAudioRef.current = null; viaHtmlAudio(i + 1); });
     };
-
-    const viaContext = async (i: number): Promise<boolean> => {
-      if (!ctx || i >= urls.length) return false;
-      try {
-        const resp = await fetch(urls[i]);
-        if (!resp.ok) throw new Error("HTTP " + resp.status);
-        const buf = await resp.arrayBuffer();
-        await resumed;
-        const decoded = await ctx.decodeAudioData(buf);
-        if (token !== listenTokenRef.current) return true;     // student moved on
-        const src = ctx.createBufferSource();
-        src.buffer = decoded;
-        src.connect(ctx.destination);
-        src.onended = () => {
-          if (listenSrcRef.current === src) {
-            listenSrcRef.current = null; setIsSpeaking(false); setListenDone(true);
-          }
-        };
-        listenSrcRef.current = src;
-        src.start(0);
-        return true;
-      } catch (e: any) {
-        console.warn("[HifdhDaily] listen audio via AudioContext failed:", urls[i], e?.message ?? e);
-        return viaContext(i + 1);
-      }
-    };
-
-    viaContext(0).then(ok => { if (!ok && token === listenTokenRef.current) viaHtmlAudio(0); });
+    viaHtmlAudio(0);
   };
+
+  // Warm the cache while the student is still on the intro screen / earlier questions.
+  useEffect(() => {
+    if (phase !== "proctor_intro" && phase !== "testing") return;
+    (questions.length ? questions : previewQs).forEach(q => {
+      if (q.type === "listen_choose" && q.listenSurahNum && q.listenAyahNum) {
+        void loadListenBuffer(q.listenSurahNum, q.listenAyahNum, q.listenGlobalNum);
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, questions, previewQs]);
+
+  // Start the verse by itself when a listen question opens (runs after the per-question reset effect).
+  useEffect(() => {
+    if (phase !== "testing" || testScore !== null) return;
+    const q = questions[qIdx];
+    if (!q || q.type !== "listen_choose") return;
+    void playListenAudio(q.listenText || q.prompt, q.listenSurahNum, q.listenAyahNum, q.listenGlobalNum, true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qIdx, phase, questions.length]);
 
   const acceptPage = () => {
     const last = lastResultRef.current || { tx: "", ayahCorrectness: [] };
@@ -2532,9 +2743,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const nextQ=()=>{
     // For record questions, ensure at least attempted
     const q = questions[qIdx];
-    if ((q?.type==="record_continue"||q?.type==="record_complete") && answers[qIdx]===null) {
-      // Auto-mark as attempted with 0 score if not recorded
-      const a=[...answers]; a[qIdx]=1; setAnswers(a);
+    if (q?.type==="record_continue"||q?.type==="record_complete") {
+      // Not recorded → counts as not passed (never overwrites an answer that is already set)
+      setAnswers(prev=>{ if(prev[qIdx]!==null&&prev[qIdx]!==undefined) return prev; const a=[...prev]; a[qIdx]=1; return a; });
     }
     if(qIdx<questions.length-1) setQIdx(i=>i+1); else gradeTest();
   };
@@ -2548,28 +2759,39 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const nextQRef = useRef(nextQ);
   useEffect(() => { nextQRef.current = nextQ; });
 
+  // The clock for a LISTEN question only starts once the verse has finished playing once (or the audio
+  // failed, so the student is never stuck). It also pauses while a recorded answer is being checked.
+  const curQ = questions[qIdx];
+  const listenGateOpen = !curQ || curQ.type !== "listen_choose" || listenDone || listenError;
+  const timerRunning = phase === "testing" && testScore === null && !!curQ && listenGateOpen && !qChecking;
+  const qLeftRef = useRef(0);
+
+  // 1) new question → reset the clock to that question's limit (not yet ticking)
+  useEffect(() => {
+    if (phase !== "testing" || testScore !== null || !questions[qIdx]) { qLeftRef.current = 0; setQTimeLeft(0); return; }
+    const limit = questionTimeLimit(questions[qIdx]);
+    qLeftRef.current = limit; setQTimeLeft(limit);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qIdx, phase, questions.length]);
+
+  // 2) tick only while allowed; pausing keeps the remaining seconds
   useEffect(() => {
     clearInterval(qCountdownRef.current);
-    if (phase !== "testing" || testScore !== null || !questions[qIdx]) { setQTimeLeft(0); return; }
-    const limit = questionTimeLimit(questions[qIdx]);
-    setQTimeLeft(limit);
+    if (!timerRunning || qLeftRef.current <= 0) return;
     qCountdownRef.current = setInterval(() => {
-      setQTimeLeft(t => {
-        if (t <= 1) {
-          clearInterval(qCountdownRef.current);
-          // Time's up — stop any in-progress recording, then auto-advance.
-          if (qMediaRecRef.current && qMediaRecRef.current.state !== "inactive") {
-            try { qMediaRecRef.current.stop(); } catch {}
-          }
-          setTimeout(() => nextQRef.current(), 50);
-          return 0;
-        }
-        return t - 1;
-      });
+      qLeftRef.current = Math.max(0, qLeftRef.current - 1);
+      setQTimeLeft(qLeftRef.current);
+      if (qLeftRef.current <= 0) {
+        clearInterval(qCountdownRef.current);
+        // Time's up. A recording in progress is stopped and scored first, THEN the test moves on.
+        const mr = qMediaRecRef.current;
+        if (mr && mr.state !== "inactive") { pendingAdvanceRef.current = true; try { mr.stop(); } catch { /* noop */ } }
+        else nextQRef.current();
+      }
     }, 1000);
     return () => clearInterval(qCountdownRef.current);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qIdx, phase, questions.length]);
+  }, [timerRunning, qIdx]);
 
   const gradeTest=()=>{
     const sA = questions.filter(q=>q.section==="A");
@@ -2604,6 +2826,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     if(pct>=TEST_PASS_THRESHOLD) submitSession(pct, sa, sb);
   };
   const retryTest=()=>{
+    skippedQRef.current = new Set();
     setAnswers(new Array(questions.length).fill(null)); setQIdx(0); setTestScore(null);
     setPhase("proctor_intro");
   };
@@ -2616,6 +2839,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     setFinalScore(overall);
     const today=todayISO();
     const dur=Math.round((Date.now()-sessionStart.current)/1000);
+    setFinalDur(dur);
 
     // Audio was already uploaded in mr.onstop via Promise.all — just read the ref.
     const audioStorageUrl: string|null = audioStorageUrlRef.current;
@@ -2658,7 +2882,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             section: q.section,
             isErrorFocused: q.isErrorFocused || false,
             answer_given: answers[i] ?? null,
-            correct: answers[i] === q.correct,
+            correct: (q.type==="record_continue"||q.type==="record_complete") ? answers[i] === 0 : answers[i] === q.correct,
           })),
           // Preserve teacher override so it isn't wiped on re-completion
           ...(existingTeacherOverride ? { teacher_override: existingTeacherOverride } : {}),
@@ -2682,13 +2906,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       const items=assignment.selected_items.slice(0,3).join(", ");
       const msg=`${modeLabel} ${items} — Recitation: ${recAvg}% · Test: ${tScore}% · Overall: ${overall}% · ${todayPages.length} page${todayPages.length>1?"s":""} done`;
       const notifBase={title:`📖 ${name} completed Daily Hifdh Revision`,message:msg,type:"hifdh_complete",is_read:false,created_at:new Date().toISOString()};
-      const {data:admins}=await (supabase as any).from("profiles").select("user_id").eq("role","admin");
+      // Admins are notified by the DB trigger trg_notify_admin_hifdh_daily_submission (type
+      // hifdh_submission), so only the assigned teacher is notified from here. Students can't read
+      // admin rows in profiles (RLS), which is why the old client-side admin lookup returned nothing.
+      const {data:admins}=await (supabase as any).rpc("admin_user_ids");
       const adminIds=(admins||[]).map((a:any)=>a.user_id);
-      // Admin and teacher review this from different pages, so each recipient
-      // needs its own deep link rather than one shared link for both.
-      for(const uid of adminIds){
-        await (supabase as any).from("notifications").insert({...notifBase,user_id:uid,link:"/admin/recitation-review"});
-      }
       if(assignedTeacher && !adminIds.includes(assignedTeacher)){
         await (supabase as any).from("notifications").insert({...notifBase,user_id:assignedTeacher,link:"/teacher/hifdh"});
       }
@@ -3031,7 +3253,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         @keyframes slideUp { from{transform:translateY(12px);opacity:0} to{transform:translateY(0);opacity:1} }
         @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
         @keyframes barPulse { from{opacity:.55} to{opacity:1} }
-        @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&family=Cairo:wght@400;600;700;800;900&display=swap');
         .ar-word { unicode-bidi: isolate; display: inline; }
       `}</style>
 
@@ -3545,11 +3766,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             </div>
           </div>
           <ProctoringIntro
-            countA={questions.length>0?questions.filter(q=>q.section==="A").length:buildQuestions(pageResults,juzAyahs).filter(q=>q.section==="A").length}
-            countB={questions.length>0?questions.filter(q=>q.section==="B").length:buildQuestions(pageResults,juzAyahs).filter(q=>q.section==="B").length}
+            countA={(questions.length>0?questions:previewQs).filter(q=>q.section==="A").length}
+            countB={(questions.length>0?questions:previewQs).filter(q=>q.section==="B").length}
             onReady={()=>{
               if(questions.length===0){
-                const qs=buildQuestions(pageResults,juzAyahs);
+                const qs=previewQs.length?previewQs:buildQuestions(pageResults,juzAyahs,tafsirMap);
                 setQuestions(qs);
                 setAnswers(new Array(qs.length).fill(null));
                 setQIdx(0); setTestScore(null);
@@ -3602,17 +3823,19 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 border:`1px solid ${questions[qIdx]?.section==="A"?GOLD:"#7c3aed"}44`}}>
                 §{questions[qIdx]?.section}
               </div>
-              {qTimeLeft>0&&(
+              {qTimeLeft>0&&(()=>{
+                const hot=timerRunning&&qTimeLeft<=10;
+                const col=!timerRunning?"#9CA3AF":hot?"#dc2626":GOLD;
+                return(
                 <div style={{display:"flex",alignItems:"center",gap:4,padding:"3px 9px",borderRadius:8,
-                  background:qTimeLeft<=10?"#dc262633":`${GOLD}1a`,
-                  border:`1px solid ${qTimeLeft<=10?"#dc262666":`${GOLD}44`}`}}>
-                  <TimerIcon size={11} color={qTimeLeft<=10?"#dc2626":GOLD}/>
-                  <span style={{fontSize:11,fontWeight:900,fontVariantNumeric:"tabular-nums",
-                    color:qTimeLeft<=10?"#dc2626":GOLD}}>
+                  background:hot?"#dc262633":timerRunning?`${GOLD}1a`:"rgba(255,255,255,.08)",
+                  border:`1px solid ${hot?"#dc262666":timerRunning?`${GOLD}44`:"rgba(255,255,255,.18)"}`}}>
+                  <TimerIcon size={11} color={col}/>
+                  <span style={{fontSize:11,fontWeight:900,fontVariantNumeric:"tabular-nums",color:col}}>
                     0:{qTimeLeft.toString().padStart(2,"0")}
                   </span>
-                </div>
-              )}
+                </div>);
+              })()}
             </div>
 
             <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"16px 16px 28px",
@@ -3658,7 +3881,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                   :q.type==="record_continue"?"🎙️ Continue from where the reciter stopped"
                   :q.type==="record_complete"?"🎙️ Record the missing verses"
                   :q.type==="listen_choose" ?"👂 Listen — what comes after the reciter stops?"
+                  :q.type==="tafsir_verse"  ?"📖 Tafseer — التفسير"
+                  :q.type==="tafsir_meaning"?"📖 Tafseer — التفسير"
                   :"What comes next?";
+                const isTafsir = q.type==="tafsir_verse"||q.type==="tafsir_meaning";
 
                 return(
                   <div style={{background:W,borderRadius:16,border:`1px solid ${BRD}`,
@@ -3669,33 +3895,46 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                         textTransform:"uppercase",letterSpacing:.5}}>{q.promptLabel}</p>
                       <p style={{margin:"0 0 8px",fontSize:11,fontWeight:700,
                         color:isRecQ?GOLD:isListenQ?PURPLE:G2}}>{typeLabel}</p>
-                      {/* Prompt snippet — middle of verse, not full */}
+                      {/* Prompt */}
+                      {isTafsir&&(
+                        <div style={{margin:"0 0 10px",padding:"10px 12px",borderRadius:12,background:`${G1}0d`,border:`1px solid ${BRD}`}}>
+                          <p style={{...arProse(20,1.9),margin:0,fontWeight:700,color:G1}}>{q.promptAr}</p>
+                          <p style={{margin:"2px 0 0",fontSize:13,fontWeight:700,color:"#374151",textAlign:"left",direction:"ltr"}}>{q.promptEn}</p>
+                        </div>
+                      )}
                       {isListenQ?(
                         <div style={{display:"flex",alignItems:"center",gap:10}}>
                           <button onClick={()=>playListenAudio(q.listenText||q.prompt, q.listenSurahNum, q.listenAyahNum, q.listenGlobalNum)}
-                            disabled={isSpeaking}
-                            style={{flexShrink:0,width:48,height:48,borderRadius:"50%",border:"none",cursor:"pointer",
-                              background:isSpeaking?`${PURPLE}22`:`linear-gradient(135deg,${PURPLE},#6d28d9)`,
+                            disabled={isSpeaking||listenLoading}
+                            style={{flexShrink:0,width:52,height:52,borderRadius:"50%",border:"none",cursor:(isSpeaking||listenLoading)?"default":"pointer",
+                              background:(isSpeaking||listenLoading)?`${PURPLE}22`:`linear-gradient(135deg,${PURPLE},#6d28d9)`,
                               display:"flex",alignItems:"center",justifyContent:"center",
-                              boxShadow:isSpeaking?"none":`0 3px 12px ${PURPLE}55`}}>
-                            {isSpeaking
-                              ?<span style={{display:"flex",gap:2}}>
-                                  {[8,13,10].map((h,i)=><span key={i} style={{width:3,height:h,background:PURPLE,borderRadius:2}}/>)}
+                              boxShadow:(isSpeaking||listenLoading)?"none":`0 3px 12px ${PURPLE}55`}}>
+                            {listenLoading
+                              ?<Loader2 size={18} color={PURPLE} style={{animation:"spin .9s linear infinite"}}/>
+                              :isSpeaking
+                              ?<span style={{display:"flex",gap:2,alignItems:"center",height:16}}>
+                                  {[8,13,10].map((h,i)=><span key={i} style={{width:3,height:h,background:PURPLE,borderRadius:2,
+                                    animation:`wavePulse ${0.5+i*0.12}s ease-in-out ${i*0.08}s infinite`}}/>)}
                                </span>
                               :<Play size={16} color={W} style={{marginLeft:2}}/>}
                           </button>
                           <div>
                             <p style={{margin:0,fontSize:12,fontWeight:700,color:listenError?FAIL:PURPLE}}>
-                              {isSpeaking?"Playing…":listenError
+                              {listenLoading?"Loading the verse…":isSpeaking?"Playing…":listenError
                                 ?`⚠ Audio failed — tap to retry${listenErrorUrl?" ("+listenErrorUrl+")":""}`
-                                :listenDone?"✓ Heard — now choose what comes next":"Tap to hear — then choose the continuation"}
+                                :listenDone?"✓ Heard — now choose what comes next":"Tap to hear the verse — your time starts when it ends"}
                             </p>
                             {listenDone&&!listenError&&<p style={{margin:"2px 0 0",fontSize:10,color:"#9CA3AF"}}>You can replay it</p>}
                           </div>
                         </div>
+                      ):q.type==="tafsir_meaning"?(
+                        <div>
+                          <p style={{...arProse(21,2.1),margin:0}}>{q.prompt}</p>
+                          {q.promptSubEn&&<p style={{margin:"6px 0 0",fontSize:13,lineHeight:1.55,color:"#4B5563",textAlign:"left",direction:"ltr"}}>{q.promptSubEn}</p>}
+                        </div>
                       ):(
-                        <p style={{margin:0,fontSize:q.snippet?20:17,direction:"rtl",
-                          fontFamily:"'Amiri Quran','Amiri',serif",color:INK,lineHeight:2.8}}>
+                        <p style={{...arQuran(q.snippet?26:24,q.snippet?2.4:2.5),margin:0}}>
                           {q.prompt}
                         </p>
                       )}
@@ -3707,14 +3946,19 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                         {q.options.map((opt,oi)=>(
                           <button key={oi} onClick={()=>pickAnswer(oi)}
                             style={{
-                              width:"100%",padding:"12px 14px",borderRadius:12,cursor:"pointer",
-                              textAlign:"right",direction:"rtl",fontFamily:"'Amiri',serif",
-                              fontSize:15,lineHeight:2.0,color:INK,
+                              width:"100%",padding:"12px 16px",borderRadius:12,cursor:"pointer",
+                              textAlign:"right",direction:"rtl",
                               border:`2px solid ${ans===oi?G2:BRD}`,
-                              background:ans===oi?`${G1}0e`:WARM,
-                              fontWeight:ans===oi?700:400,transition:"all .15s",
+                              background:ans===oi?`${G1}12`:WARM,
+                              transition:"background .15s,border-color .15s",
                             }}>
-                            {opt}
+                            <span style={{display:"block",...(isTafsir&&q.type==="tafsir_verse"?arProse(19,2.0):arQuran(isTafsir?22:22,2.4)),
+                              fontWeight:ans===oi?700:400}}>{opt}</span>
+                            {isTafsir&&q.optionsEn?.[oi]&&(
+                              <span style={{display:"block",marginTop:4,fontSize:12.5,lineHeight:1.5,color:"#4B5563",textAlign:"left",direction:"ltr"}}>
+                                {q.optionsEn[oi]}
+                              </span>
+                            )}
                           </button>
                         ))}
                       </div>
@@ -3729,7 +3973,23 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                             🎙️ {q.recordPrompt||"Record what comes after the shown text"}
                           </p>
                         </div>
-                        {!qRecDone&&(
+                        {qRecErr&&!qChecking&&!qRecording&&(
+                          <div style={{padding:"10px 12px",borderRadius:10,background:"#FEF2F2",border:"1px solid #FECACA"}}>
+                            <p style={{margin:0,fontSize:12,fontWeight:700,color:FAIL,lineHeight:1.5}}>⚠ {qRecErr}</p>
+                          </div>
+                        )}
+                        {qChecking&&(
+                          <div style={{padding:"14px",borderRadius:12,background:`${GOLD}0d`,border:`1px solid ${GOLD}33`,
+                            display:"flex",alignItems:"center",gap:10}}>
+                            <Loader2 size={18} color={GOLD} style={{animation:"spin .9s linear infinite",flexShrink:0}}/>
+                            <p style={{margin:0,fontSize:12.5,fontWeight:700,color:"#78350F",lineHeight:1.5}}>
+                              {checkerState.status==="loading"
+                                ?`Preparing the checker… ${checkerState.totalMB?Math.round(((checkerState.loadedMB??0)/checkerState.totalMB)*100)+"%":""}`
+                                :"Checking your recitation…"}
+                            </p>
+                          </div>
+                        )}
+                        {!qRecDone&&!qChecking&&(
                           <button
                             onClick={qRecording?stopQRecording:startQRecording}
                             style={{padding:"14px",borderRadius:12,border:"none",cursor:"pointer",
@@ -3753,9 +4013,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                               {" "}— {qRecResult.score}% match
                             </p>
                             {qRecResult.transcript&&(
-                              <p style={{margin:0,fontSize:12,direction:"rtl",
-                                fontFamily:"'Amiri',serif",color:"#374151",lineHeight:2}}>
-                                {qRecResult.transcript.slice(0,120)}
+                              <p style={{...arQuran(20,2.2),margin:0,color:"#374151"}}>
+                                {qRecResult.transcript.slice(0,160)}
+                              </p>
+                            )}
+                            {qRecResult.score<60&&(
+                              <p style={{...arQuran(19,2.2),margin:"8px 0 0",paddingTop:8,borderTop:"1px dashed #FECACA",color:G2}}>
+                                {q.correctText}
                               </p>
                             )}
                           </div>
@@ -3775,7 +4039,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 return(
                   <div style={{display:"flex",gap:8}}>
                     {skipAllowed&&(
-                      <button onClick={()=>{const a=[...answers];a[qIdx]=1;setAnswers(a);setTimeout(nextQ,50);}}
+                      <button onClick={()=>{skippedQRef.current.add(qIdx);const i=qIdx;setAnswers(prev=>{const a=[...prev];a[i]=1;return a;});setTimeout(()=>nextQRef.current(),50);}}
                         style={{flex:"0 0 auto",padding:"12px 14px",borderRadius:14,border:`1.5px solid ${BRD}`,
                           cursor:"pointer",background:W,color:"#9CA3AF",fontWeight:700,fontSize:12,fontFamily:"inherit"}}>
                         Skip
@@ -3940,10 +4204,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
       {/* ══ COMPLETE ══ */}
       {phase==="complete"&&(
-        <div style={{flex:1,overflowY:"auto",
+        <div style={{flex:1,overflowY:"auto",overscrollBehavior:"contain",
           background:`linear-gradient(160deg,${G0} 0%,${G1} 40%,${G2} 100%)`,
           display:"flex",flexDirection:"column",alignItems:"center",
-          justifyContent:"center",padding:"32px 20px",gap:20}}>
+          padding:"32px 20px"}}>
+         <div style={{margin:"auto 0",width:"100%",display:"flex",flexDirection:"column",alignItems:"center",gap:20}}>
 
           {/* Trophy */}
           <div style={{width:100,height:100,borderRadius:"50%",
@@ -3987,7 +4252,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             <div style={{background:"rgba(255,255,255,.06)",borderRadius:12,padding:"10px",textAlign:"center"}}>
               <p style={{margin:0,fontWeight:800,fontSize:13,color:"rgba(255,255,255,.5)"}}>
                 Pages Done: <span style={{color:GOLD}}>{todayPages.length}</span>
-                {" · "}Duration: <span style={{color:"#93C5FD"}}>{fmtSecs(Math.round((Date.now()-sessionStart.current)/1000))}</span>
+                {" · "}Duration: <span style={{color:"#93C5FD"}}>{fmtSecs(finalDur ?? completeDurRef.current ?? (completeDurRef.current = Math.round((Date.now()-sessionStart.current)/1000)))}</span>
               </p>
             </div>
           </div>
@@ -4015,6 +4280,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               fontWeight:900,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>
             Return to Dashboard
           </button>
+         </div>
         </div>
       )}
     </div>
@@ -4591,7 +4857,6 @@ export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?
       <style>{`
         @keyframes spin { to{transform:rotate(360deg)} }
         @keyframes slideUp { from{transform:translateY(10px);opacity:0} to{transform:translateY(0);opacity:1} }
-        @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&family=Cairo:wght@400;600;700;800;900&display=swap');
         * { box-sizing:border-box; }
       `}</style>
 

@@ -266,7 +266,7 @@ const TeacherStudents = () => {
   const sendEnrolRequest = async () => {
     if (!requestDialog || !user) return;
     // Find admins
-    const { data: admins } = await supabase.from("user_roles").select("user_id").eq("role", "admin");
+    const { data: admins } = await (supabase as any).rpc("admin_user_ids");
     if (!admins?.length) { toast({ title: t("No admin found", "لم يتم العثور على مدير"), variant: "destructive" }); return; }
     const msg = requestDialog.type === "enrol"
       ? `Teacher requests to ENROL student "${requestDialog.student.full_name}" in a subject. ${requestMsg}`

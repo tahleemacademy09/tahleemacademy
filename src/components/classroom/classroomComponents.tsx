@@ -7247,7 +7247,7 @@ export const syncManualAttendanceFromSession=async(sessionId:string,subject:any,
       message:summary, type:"info", link:teacherLink, is_read:false,
     });
     // Also let admins know — they review from /admin/attendance, not the teacher's page.
-    const{data:admins}=await supabase.from("user_roles").select("user_id").eq("role","admin");
+    const{data:admins}=await (supabase as any).rpc("admin_user_ids");
     const adminIds=[...new Set((admins||[]).map((a:any)=>a.user_id))].filter(id=>id!==teacherId);
     if(adminIds.length>0){
       await supabase.from("notifications").insert(adminIds.map(id=>({

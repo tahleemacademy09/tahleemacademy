@@ -710,19 +710,15 @@ export default function HifdhDailySession({ assignment, userId, onClose }: Props
         : assignment.mode === "hizb" ? "Hizb" : "Surah";
       const itemsStr    = assignment.selected_items.slice(0, 3).join(", ");
 
-      const { data: admins } = await supabase
-        .from("profiles").select("user_id").eq("role", "admin" as any);
-
       const { data: enrollments } = await supabase
         .from("subject_enrollments" as any)
         .select("subjects(teacher_id)")
         .eq("student_id", userId).limit(1);
 
       const teacherId = (enrollments as any)?.[0]?.subjects?.teacher_id;
-      const notifyIds = [
-        ...(admins || []).map((a: any) => a.user_id),
-        teacherId,
-      ].filter(Boolean);
+      // Admins are notified by the DB trigger trg_notify_admin_hifdh_daily_submission,
+      // so only the teacher is notified from here (no duplicate admin rows).
+      const notifyIds = [teacherId].filter(Boolean);
 
       for (const nid of notifyIds) {
         await (supabase as any).from("notifications").insert({

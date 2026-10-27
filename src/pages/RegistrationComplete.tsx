@@ -42,10 +42,7 @@ const RegistrationComplete = () => {
           .eq("user_id", user.id);
 
         // 2. Fetch all admin user IDs to notify them
-        const { data: adminRoles } = await supabase
-          .from("user_roles")
-          .select("user_id")
-          .eq("role", "admin");
+        const { data: adminRoles } = await (supabase as any).rpc("admin_user_ids");
 
         const studentName = profile?.full_name || "A new student";
         const studentEmail = user.email || "";
