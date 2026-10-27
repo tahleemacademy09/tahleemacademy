@@ -2734,10 +2734,22 @@ function readScrollPct(target:Window|HTMLElement,win:Window):number{
   return Math.min(1,Math.max(0,el.scrollTop/maxScroll));
 }
 const scrollAnim=new WeakMap<object,{pct:number;raf:number|null}>();
-function writeScrollPct(target:Window|HTMLElement,win:Window,pct:number){
+function writeScrollPct(target:Window|HTMLElement,win:Window,pct:number,instant=false){
   let st=scrollAnim.get(target);
   if(!st){st={pct,raf:null};scrollAnim.set(target,st);}
   st.pct=pct;
+  if(instant){
+    // Late joiner: jump straight to the teacher's spot instead of animating down from the top.
+    if(st.raf!=null){try{win.cancelAnimationFrame(st.raf);}catch{}st.raf=null;}
+    let max:number;
+    if(target===win)max=Math.max(1,win.document.documentElement.scrollHeight-win.innerHeight);
+    else{const el=target as HTMLElement;max=Math.max(1,el.scrollHeight-el.clientHeight);}
+    try{
+      if(target===win)win.scrollTo({top:pct*max,behavior:"instant" as ScrollBehavior});
+      else (target as HTMLElement).scrollTo({top:pct*max,behavior:"instant" as ScrollBehavior});
+    }catch{}
+    return;
+  }
   if(st.raf!=null)return;
   const frame=()=>{
     const s2=scrollAnim.get(target);
@@ -2787,24 +2799,63 @@ function findNavButton(doc:Document,forward:boolean):HTMLElement|null{
   return null;
 }
 const stepLoopId=new WeakMap<Document,number>();
-function driveToStep(doc:Document,targetStep:number,onDone?:()=>void,attempts=0,loopId?:number){
-  if(loopId===undefined){
-    loopId=(stepLoopId.get(doc)||0)+1;
-    stepLoopId.set(doc,loopId);
-    revealLoopId.set(doc,(revealLoopId.get(doc)||0)+1);
-  } else if(stepLoopId.get(doc)!==loopId)return; // superseded by a newer teacher position
-  if(attempts>40){onDone?.();return;} // safety cap against an infinite loop if detection is off
-  const cur=detectDotStep(doc);
-  if(!cur||cur.step===targetStep){onDone?.();return;}
-  const forward=targetStep>cur.step;
-  const btn=findNavButton(doc,forward);
-  if(btn){ btn.click(); }
-  else{
-    const ev=new KeyboardEvent("keydown",{key:forward?" ":"ArrowLeft",code:forward?"Space":"ArrowLeft",bubbles:true,cancelable:true});
-    doc.dispatchEvent(ev);
-  }
-  const lid=loopId;
-  setTimeout(()=>driveToStep(doc,targetStep,onDone,attempts+1,lid),180);
+/* Cancel any running slide/reveal catch-up loop for this lesson document. */
+function cancelDrive(doc:Document){
+  stepLoopId.set(doc,(stepLoopId.get(doc)||0)+1);
+  revealLoopId.set(doc,(revealLoopId.get(doc)||0)+1);
+}
+/* While a late joiner is being fast-forwarded to the teacher's spot (hidden behind the "Joining…"
+   cover) switch the lesson's own animations/transitions off, so every click lands instantly instead
+   of waiting for a fade. Removed again as soon as the student is in place. */
+const NOANIM_ID="__tm_noanim";
+function freezeAnimations(doc:Document){
+  try{
+    if(doc.getElementById(NOANIM_ID))return;
+    const st=doc.createElement("style");
+    st.id=NOANIM_ID;
+    st.textContent="*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;transition-duration:0s!important;transition-delay:0s!important;scroll-behavior:auto!important}";
+    (doc.head||doc.documentElement).appendChild(st);
+  }catch{}
+}
+function unfreezeAnimations(doc:Document){
+  try{doc.getElementById(NOANIM_ID)?.remove();}catch{}
+}
+function finishAnimations(doc:Document){
+  try{(doc as any).getAnimations?.().forEach((a:any)=>{try{a.finish();}catch{}});}catch{}
+}
+/* Drive the student's copy to the teacher's slide.
+   After each click we WAIT for the lesson to actually show the new slide before clicking again.
+   (The old version clicked again on a fixed 180ms timer: on a slower phone the lesson hadn't
+   finished its transition yet, so it overshot, then clicked back — the visible "shaking".)
+   fast=true is the hidden late-joiner catch-up. */
+function driveToStep(doc:Document,targetStep:number,onDone?:()=>void,fast=false){
+  const loopId=(stepLoopId.get(doc)||0)+1;
+  stepLoopId.set(doc,loopId);
+  revealLoopId.set(doc,(revealLoopId.get(doc)||0)+1); // a newer teacher position cancels any reveal loop too
+  const poll=fast?20:60,settle=fast?150:700,budget=fast?10000:6000;
+  const started=Date.now();
+  let clicks=0,lastClickAt=0,stepAtClick=-999;
+  const tick=()=>{
+    if(stepLoopId.get(doc)!==loopId)return; // superseded by a newer teacher position
+    const cur=detectDotStep(doc);
+    if(!cur||cur.step===targetStep){onDone?.();return;}
+    const now=Date.now();
+    if(now-started>budget||clicks>400){onDone?.();return;} // safety cap against an infinite loop if detection is off
+    // click when: first time, the lesson moved since our last click (progress), or it's had long enough to react
+    if(clicks===0||cur.step!==stepAtClick||now-lastClickAt>=settle){
+      const forward=targetStep>cur.step;
+      const btn=findNavButton(doc,forward);
+      if(btn){btn.click();}
+      else{
+        const ev=new KeyboardEvent("keydown",{key:forward?" ":"ArrowLeft",code:forward?"Space":"ArrowLeft",bubbles:true,cancelable:true});
+        doc.dispatchEvent(ev);
+      }
+      clicks++;lastClickAt=now;stepAtClick=cur.step;
+      if(fast)finishAnimations(doc);
+    }
+    setTimeout(tick,poll);
+  };
+  tick();
 }
 
 /* ── Within-slide reveal sync ──
@@ -2875,26 +2926,33 @@ function clickStage(doc:Document,attempt=0){
 // One reveal catch-up loop per document: a newer sync update cancels the previous loop
 // (previously every 90ms update spawned another loop, all clicking at once).
 const revealLoopId=new WeakMap<Document,number>();
-function driveToReveal(doc:Document,targetCount:number,expectedStep:number,onDone?:()=>void){
+function driveToReveal(doc:Document,targetCount:number,expectedStep:number,onDone?:()=>void,fast=false){
   const id=(revealLoopId.get(doc)||0)+1;
   revealLoopId.set(doc,id);
-  let attempts=0,stalled=0,last=detectRevealCount(doc);
+  // Same rule as driveToStep: after a click, give the lesson time to show the result before
+  // clicking again. Clicking early either over-reveals or (once everything is shown) jumps to the
+  // NEXT slide, which then forces a click back — that flicker was the shake.
+  const poll=fast?20:60,settle=fast?120:650,budget=fast?10000:8000;
+  const started=Date.now();
+  let clicks=0,stalled=0,lastClickAt=0,countAtClick=detectRevealCount(doc);
   const tick=()=>{
     if(revealLoopId.get(doc)!==id)return; // superseded
     const cur=detectRevealCount(doc);
     if(cur>=targetCount){onDone?.();return;}
-    if(attempts++>80){onDone?.();return;}
-    stalled=cur>last?0:stalled+1;
-    last=cur;
-    clickStage(doc,stalled);
-    setTimeout(()=>{
-      if(revealLoopId.get(doc)!==id)return;
-      // If the click advanced to a different slide instead of revealing, stop —
-      // a fresh sync broadcast for the new slide arrives right behind it.
-      const step=detectDotStep(doc);
-      if(step&&expectedStep>=0&&step.step!==expectedStep)return;
-      tick();
-    },150);
+    const step=detectDotStep(doc);
+    // If a click advanced to a different slide instead of revealing, stop —
+    // a fresh sync broadcast for the new slide arrives right behind it.
+    if(step&&expectedStep>=0&&step.step!==expectedStep)return;
+    const now=Date.now();
+    if(now-started>budget||clicks>300){onDone?.();return;}
+    const progressed=cur>countAtClick;
+    if(clicks===0||progressed||now-lastClickAt>=settle){
+      stalled=progressed?0:stalled+1;
+      countAtClick=cur;lastClickAt=now;clicks++;
+      clickStage(doc,stalled);
+      if(fast)finishAnimations(doc);
+    }
+    setTimeout(tick,poll);
   };
   tick();
 }
@@ -3115,7 +3173,31 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
   //    Scroll-follow handles the rest (lessons that are one long scroll).
   //    The pointer dot itself is drawn as an overlay in the render below. ──
   const[frameReady,setFrameReady]=useState(false);
-  useEffect(()=>{setFrameReady(false);},[htmlDoc]);
+  // "joined" = the student's copy has reached the teacher's position for the first time since this
+  // lesson loaded. Until then a cover hides the lesson, so a late joiner never watches it
+  // fast-forward from the beginning — it just appears already at the right place.
+  const[joined,setJoined]=useState(false);
+  const firstApplyRef=useRef(true);
+  const catchUpRef=useRef(false);            // true while the hidden fast catch-up is running
+  const latestActivityRef=useRef<any>(null);
+  latestActivityRef.current=remoteActivity;
+  const followingRef=useRef(following);
+  useEffect(()=>{followingRef.current=following;},[following]);
+  useEffect(()=>{
+    setFrameReady(false);setJoined(false);
+    firstApplyRef.current=true;catchUpRef.current=false;
+  },[htmlDoc]);
+  // Never leave a student stuck behind the cover.
+  useEffect(()=>{
+    if(!(following&&kind==="html"&&htmlDoc!=null)||joined)return;
+    const hard=setTimeout(()=>{
+      try{const d=iframeRef.current?.contentDocument;if(d)unfreezeAnimations(d);}catch{}
+      catchUpRef.current=false;setJoined(true);
+    },6000);
+    const noPos=setTimeout(()=>{if(!latestActivityRef.current)setJoined(true);},2500);
+    return()=>{clearTimeout(hard);clearTimeout(noPos);};
+  },[following,kind,htmlDoc,joined]);
+
   const lastApplyKeyRef=useRef("");
   useEffect(()=>{
     if(kind!=="html"||!following||!remoteActivity||!frameReady)return;
@@ -3123,9 +3205,34 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
     const win=frame?.contentWindow;
     const doc=frame?.contentDocument;
     if(!win||!doc||!doc.body)return;
+    // First position since this lesson loaded → hidden, instant catch-up instead of a visible replay.
+    if(firstApplyRef.current){
+      firstApplyRef.current=false;
+      catchUpRef.current=true;
+      freezeAnimations(doc);
+    }
+    const fast=catchUpRef.current;
     const hasReveal=remoteActivity.revealCount!=null&&remoteActivity.revealCount>0;
-    const finish=()=>{
-      if(hasReveal)scrollLatestRevealIntoView(doc,win);
+    // The ONE place the student's scroll position is set while following (the reveal auto-scroll
+    // below is switched off for followers, so two scrollers can no longer fight each other).
+    const placeScroll=()=>{
+      const a=latestActivityRef.current;
+      if(!a)return;
+      const reveal=a.revealCount!=null&&a.revealCount>0;
+      if(reveal)scrollLatestRevealIntoView(doc,win,!catchUpRef.current);
+      else writeScrollPct(findScrollTarget(doc,win),win,a.scrollPct,catchUpRef.current);
+    };
+    const done=()=>{
+      placeScroll();
+      if(!catchUpRef.current)return;
+      // Re-assert once layout (fonts/images) has settled, then uncover the lesson.
+      setTimeout(placeScroll,120);
+      setTimeout(()=>{
+        if(!catchUpRef.current)return;
+        catchUpRef.current=false;
+        unfreezeAnimations(doc);
+        setJoined(true);
+      },320);
     };
     const stepNow=detectDotStep(doc);
     const stepOk=remoteActivity.step==null||!stepNow||stepNow.step===remoteActivity.step;
@@ -3136,21 +3243,21 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
       const catchUpReveal=()=>{
         if(hasReveal){
           const step=detectDotStep(doc);
-          driveToReveal(doc,remoteActivity.revealCount,step?.step??-1,finish);
-        }
+          driveToReveal(doc,remoteActivity.revealCount,step?.step??-1,done,fast);
+        } else done();
       };
       if(remoteActivity.step!=null){
-        driveToStep(doc,remoteActivity.step,catchUpReveal);
+        driveToStep(doc,remoteActivity.step,catchUpReveal,fast);
       } else {
         catchUpReveal();
       }
-    } else if(hasReveal&&lastApplyKeyRef.current!==key){
-      lastApplyKeyRef.current=key;
-      finish();
-    }
-    if(!hasReveal){
-      const target=findScrollTarget(doc,win);
-      writeScrollPct(target,win,remoteActivity.scrollPct);
+    } else {
+      // Already on the teacher's slide/reveal: stop any loop still heading somewhere older.
+      cancelDrive(doc);
+      if(fast){ lastApplyKeyRef.current=key; done(); }
+      else if(hasReveal){
+        if(lastApplyKeyRef.current!==key){lastApplyKeyRef.current=key;placeScroll();}
+      } else placeScroll();
     }
   },[kind,following,remoteActivity,frameReady]);
 
@@ -3172,7 +3279,7 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
         clearTimeout(t);
         t=setTimeout(()=>{
           const cur=detectRevealCount(doc);
-          if(cur>prev)scrollLatestRevealIntoView(doc,win);
+          if(cur>prev&&!followingRef.current)scrollLatestRevealIntoView(doc,win); // followers are positioned by the sync effect above
           prev=cur;
         },60);
       });
@@ -3304,6 +3411,12 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
             style={{width:"100%",height:"100%",border:"none",display:"block",background:"#fff",pointerEvents:following?"none":"auto"}}/>
           {following&&(
             <div style={{position:"absolute",inset:0,zIndex:5}}/>
+          )}
+          {following&&!joined&&(
+            <div style={{position:"absolute",inset:0,zIndex:6,background:"#0f1a14",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12}}>
+              <div style={{width:32,height:32,border:"3px solid rgba(255,255,255,.2)",borderTopColor:TEAL,borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
+              <p style={{color:"#9ca3af",fontSize:13,margin:0}}>Joining where the teacher is…</p>
+            </div>
           )}
         </>)}
       </div>
