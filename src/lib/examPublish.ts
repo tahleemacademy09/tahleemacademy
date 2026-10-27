@@ -100,7 +100,7 @@ export async function publishExam(
 
   // Admins always hear about a publish, whether or not it produced new
   // assignments (e.g. re-publishing after edits still matters to them).
-  const { data: admins } = await supabase.from("user_roles").select("user_id").eq("role", "admin");
+  const { data: admins } = await (supabase as any).rpc("admin_user_ids");
   const adminIds = Array.from(new Set((admins || []).map((a: any) => a.user_id)));
   await insertNotifications(adminIds.map(uid => ({
     user_id: uid,

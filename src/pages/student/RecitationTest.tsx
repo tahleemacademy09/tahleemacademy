@@ -746,7 +746,7 @@ const RecitationTest = () => {
 
       // Notify admins (non-critical)
       try {
-        const { data: adminRoles } = await supabase.from("user_roles").select("user_id").eq("role", "admin");
+        const { data: adminRoles } = await (supabase as any).rpc("admin_user_ids");
         const adminIds = (adminRoles || []).map((r: any) => r.user_id);
         if (adminIds.length > 0) {
           const notifications = adminIds.map((adminId: string) => ({

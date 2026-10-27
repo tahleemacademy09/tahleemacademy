@@ -45,7 +45,7 @@ export async function notifyOralSlotBooked(info: OralSlotBookedInfo): Promise<vo
     const title = "🎙️ Oral exam slot booked";
     const message = `${who} booked "${examTitle}" for ${when}.`;
 
-    const { data: admins } = await supabase.from("user_roles").select("user_id").eq("role", "admin");
+    const { data: admins } = await (supabase as any).rpc("admin_user_ids");
     const adminIds = new Set<string>((admins || []).map((a: any) => a.user_id));
 
     const rows: Record<string, any>[] = [];
