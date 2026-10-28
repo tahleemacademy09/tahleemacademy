@@ -25,6 +25,7 @@ import { Capacitor } from "@capacitor/core";
 import { App as CapApp } from "@capacitor/app";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { inAppInstallSupported, runInAppUpdate, useUpdaterState } from "@/lib/apkUpdater";
 
 const db = supabase as any;
 
@@ -64,17 +65,22 @@ export const formatBytes = (n?: number | null) => {
   return mb >= 1 ? `${mb.toFixed(mb >= 100 ? 0 : 1)} MB` : `${Math.round(n / 1024)} KB`;
 };
 
-/** Asks the edge function for a signed URL and starts the download. */
-export async function startReleaseDownload(release: AppRelease): Promise<void> {
+/** Asks the edge function for a signed download URL. */
+export async function signReleaseUrl(release: AppRelease): Promise<string> {
   const { data, error } = await supabase.functions.invoke("app-release-url", {
     body: { path: release.file_path, action: "sign", downloadName: release.file_name },
   });
   if (error || !data?.url) throw new Error(error?.message || data?.error || "Could not get the download link");
+  return data.url as string;
+}
+
+/** Browser / old-APK fallback: hands the download to the system browser. */
+export async function startReleaseDownload(release: AppRelease): Promise<void> {
+  const url = await signReleaseUrl(release);
   if (isNativeApp()) {
-    // Hand off to the system browser/download manager — Android then offers to install.
-    window.open(data.url, "_system");
+    window.open(url, "_system");
   } else {
-    window.location.href = data.url;
+    window.location.href = url;
   }
 }
 
@@ -141,6 +147,7 @@ export function useAppRelease(enabled = true) {
     dbMax == null && localMax == null ? null : Math.max(dbMax ?? 0, localMax ?? 0);
   const native = isNativeApp();
   const android = isAndroidDevice();
+  const updater = useUpdaterState();
 
   const upToDate = !latest
     ? true
@@ -155,21 +162,30 @@ export function useAppRelease(enabled = true) {
       ? installedBuild != null && latest.version_code > installedBuild
       : maxDownloaded != null && latest.version_code > maxDownloaded);
 
-  const download = useCallback(async () => {
-    if (!latest) return;
-    await startReleaseDownload(latest);
-    writeLocalDl(latest.version_code);
+  const recordDownload = useCallback(async (release: AppRelease) => {
+    writeLocalDl(release.version_code);
     if (uid) {
       await db
         .from("app_release_downloads")
         .upsert(
-          { user_id: uid, release_id: latest.id, version_code: latest.version_code },
+          { user_id: uid, release_id: release.id, version_code: release.version_code },
           { onConflict: "user_id,release_id", ignoreDuplicates: true },
         );
       qc.invalidateQueries({ queryKey: ["app-release", "my-downloads", uid] });
     }
     qc.invalidateQueries({ queryKey: ["app-release"] });
-  }, [latest, uid, qc]);
+  }, [uid, qc]);
+
+  const download = useCallback(async () => {
+    if (!latest) return;
+    if (inAppInstallSupported()) {
+      // Downloads inside the app with progress, then opens Android's installer.
+      await runInAppUpdate(latest, () => signReleaseUrl(latest), () => recordDownload(latest));
+      return;
+    }
+    await startReleaseDownload(latest);
+    await recordDownload(latest);
+  }, [latest, recordDownload]);
 
   const refresh = useCallback(
     () => qc.invalidateQueries({ queryKey: ["app-release"] }),
@@ -184,6 +200,9 @@ export function useAppRelease(enabled = true) {
     hasUpdate,
     upToDate,
     loading: latestQ.isLoading,
+    fetched: latestQ.isSuccess,
+    inApp: inAppInstallSupported(),
+    updater,
     download,
     refresh,
   };
