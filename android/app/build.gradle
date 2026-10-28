@@ -5,6 +5,13 @@ def ksFile = rootProject.file("keystore.properties")
 def ksProps = new Properties()
 if (ksFile.exists()) { ksFile.withInputStream { ksProps.load(it) } }
 
+// Automatic versioning: nobody edits these numbers by hand.
+//  - versionCode = minutes since 1970 (always goes up, fits an Int until the year 5000+).
+//  - versionName = build date, e.g. 2026.10.28
+// CI / scripts can override with APP_VERSION_CODE / APP_VERSION_NAME.
+def autoVersionCode = (System.getenv("APP_VERSION_CODE") ?: String.valueOf(System.currentTimeMillis().intdiv(60000L))).toInteger()
+def autoVersionName = System.getenv("APP_VERSION_NAME") ?: new Date().format("yyyy.MM.dd", TimeZone.getTimeZone("UTC"))
+
 android {
     applicationVariants.all { variant ->
         variant.outputs.all {
@@ -18,8 +25,8 @@ android {
         applicationId "com.tahleemacademy.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 2
-        versionName "1.1"
+        versionCode autoVersionCode
+        versionName autoVersionName
         // Ship native libs (LiveKit/WebRTC) for every common CPU type. Locking this to
         // arm64-v8a alone makes the APK uninstallable on 32-bit ARM phones (armeabi-v7a),
         // which many budget Android devices still run, and on x86_64 devices/emulators.
