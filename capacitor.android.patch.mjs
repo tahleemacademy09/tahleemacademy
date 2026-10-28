@@ -76,6 +76,7 @@ function addManifestQueries(packages, marker) {
   "WAKE_LOCK",
   "RECORD_AUDIO",
   "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+  "REQUEST_INSTALL_PACKAGES",              // in-app APK updates (ApkInstallerPlugin)
 ].forEach(addPermission);
 
 addApplicationNode(
