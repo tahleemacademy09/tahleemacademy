@@ -258,7 +258,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // initial mic state below) can actually honor it. Defaults match the
   // column defaults everyone had before this was wired up, so nothing
   // changes for a session whose settings we haven't heard back for yet.
-  const[sessionSettings,setSessionSettings]=useState({mute_on_entry:false,chat_enabled:true,hand_raise_enabled:true});
+  const[sessionSettings,setSessionSettings]=useState({mute_on_entry:false,chat_enabled:true,hand_raise_enabled:true,allow_video:true});
   // FIX ("lobby mic/cam choice doesn't reflect in class"): MediaAutoPublish used to decide
   // whether this was a first-join (apply lobby choice) vs a reconnect (apply last-known toggle
   // state) by reading `hasConnected` from LiveClassContext. But connect() below calls
@@ -611,10 +611,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[summaryOpen,setSummaryOpen]=useState(false);
   const[sessionSummary,setSessionSummary]=useState<any>(null);
   // FIX BUG 6: prefetch includes a fetchedAt timestamp so stale tokens can be detected
-  const prefetch=useRef<{token:string;url:string;fetchedAt:number;mute_on_entry?:boolean;chat_enabled?:boolean;hand_raise_enabled?:boolean}|null>(null);
+  const prefetch=useRef<{token:string;url:string;fetchedAt:number;mute_on_entry?:boolean;chat_enabled?:boolean;hand_raise_enabled?:boolean;allow_video?:boolean}|null>(null);
   useEffect(()=>{
     // Initial prefetch
-    const doFetch=()=>{supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}}).then(({data})=>{if(data?.token&&data?.url)prefetch.current={token:data.token,url:data.url,fetchedAt:Date.now(),mute_on_entry:data.mute_on_entry,chat_enabled:data.chat_enabled,hand_raise_enabled:data.hand_raise_enabled};}).catch(()=>{});};
+    const doFetch=()=>{supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}}).then(({data})=>{if(data?.token&&data?.url)prefetch.current={token:data.token,url:data.url,fetchedAt:Date.now(),mute_on_entry:data.mute_on_entry,chat_enabled:data.chat_enabled,hand_raise_enabled:data.hand_raise_enabled,allow_video:data.allow_video};}).catch(()=>{});};
     doFetch();
     // Feature 8: Re-fetch every 2.5 min so lobby users never have a stale token
     const iv=setInterval(()=>{if(phase==="lobby")doFetch();},2.5*60_000);
@@ -757,11 +757,12 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       let url=isFresh?prefetch.current!.url:null;
       // Class Settings echoed back alongside the token — see the prefetch/livekit-token
       // comments above for why these two are the only places this ever gets set.
-      let newSettings={mute_on_entry:false,chat_enabled:true,hand_raise_enabled:true};
+      let newSettings={mute_on_entry:false,chat_enabled:true,hand_raise_enabled:true,allow_video:true};
       if(isFresh)newSettings={
         mute_on_entry:!!prefetch.current!.mute_on_entry,
         chat_enabled:prefetch.current!.chat_enabled??true,
         hand_raise_enabled:prefetch.current!.hand_raise_enabled??true,
+        allow_video:prefetch.current!.allow_video??true,
       };
       prefetch.current=null; // always clear after reading so Try Again fetches a new token
       if(!tk||!url){
@@ -788,10 +789,13 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           mute_on_entry:!!data.mute_on_entry,
           chat_enabled:data.chat_enabled??true,
           hand_raise_enabled:data.hand_raise_enabled??true,
+          allow_video:data.allow_video??true,
         };
       }
       setToken(tk!);setWsUrl(url!);
       setSessionSettings(newSettings);
+      // "Allow student video" OFF: a student never starts with their camera on, whatever they picked in the lobby.
+      if(!newSettings.allow_video&&!isPrivileged)setLobbyCam(false);
       // "Mute on entry": force the initial mic publish off for a non-privileged
       // joiner, regardless of what they picked in the lobby — same pattern as
       // camLocked's forced-audio-only further down, just applied once up front
@@ -848,6 +852,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             // A student joining an unstarted-but-scheduled class now marks it live too.
             const alreadyLive=sessions[0].status==="live"||sessions[0].status==="active";
             const liveUpdate:any={...(settings||{})};
+            // MERGE class_settings instead of replacing the whole JSON column — the lobby only knows a few keys,
+            // and a plain replace wiped anything the admin had saved when scheduling (e.g. allow_video).
+            if(settings?.class_settings)liveUpdate.class_settings={...(sessions[0].class_settings||{}),...settings.class_settings};
             if(!alreadyLive){liveUpdate.status="live";liveUpdate.actual_start_time=sessions[0].actual_start_time||new Date().toISOString();}
             if(Object.keys(liveUpdate).length){await supabase.from("live_sessions").update(liveUpdate).eq("id",freshSessionId);}
             setSessionId(freshSessionId);setSessionInfo(alreadyLive?sessions[0]:{...sessions[0],...liveUpdate});
@@ -965,8 +972,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         return;
       }
       if(data?.token&&data?.url){
-        prefetch.current={token:data.token,url:data.url,fetchedAt:Date.now(),mute_on_entry:data.mute_on_entry,chat_enabled:data.chat_enabled,hand_raise_enabled:data.hand_raise_enabled};
-        setSessionSettings({mute_on_entry:!!data.mute_on_entry,chat_enabled:data.chat_enabled??true,hand_raise_enabled:data.hand_raise_enabled??true});
+        prefetch.current={token:data.token,url:data.url,fetchedAt:Date.now(),mute_on_entry:data.mute_on_entry,chat_enabled:data.chat_enabled,hand_raise_enabled:data.hand_raise_enabled,allow_video:data.allow_video};
+        setSessionSettings({mute_on_entry:!!data.mute_on_entry,chat_enabled:data.chat_enabled??true,hand_raise_enabled:data.hand_raise_enabled??true,allow_video:data.allow_video??true});
         autoReconnectCountRef.current+=1;  // ref — won't trigger useCallback recreation
         setToken(data.token);
         setWsUrl(data.url);
@@ -1898,7 +1905,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             collapsed={uiHidden}
             onLaunchPoll={()=>{setChatOpen(true);setSideTab("polls");}}
             onLaunchQuiz={()=>setQuizOpen(true)}
-            camLocked={forcedAudioOnly}
+            camLocked={forcedAudioOnly||(!isPrivileged&&!sessionSettings.allow_video)}
             handRaiseEnabled={sessionSettings.hand_raise_enabled}
             extraMenuItems={
               <>

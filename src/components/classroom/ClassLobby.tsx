@@ -38,6 +38,12 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
   const [muteOnEntry,      setMuteOnEntry]      = useState(true);
   const [chatEnabled,      setChatEnabled]      = useState(true);
   const [handRaiseEnabled, setHandRaiseEnabled] = useState(true);
+  // "Allow student video" — seeded from what the admin saved when scheduling the class, so
+  // starting from the lobby no longer silently resets it.
+  const [allowVideo, setAllowVideo] = useState<boolean>(session?.class_settings?.allow_video === true);
+  useEffect(() => { if (session?.class_settings) setAllowVideo(session.class_settings.allow_video === true); }, [session?.class_settings?.allow_video]);
+  // A student can only use the camera when the teacher allowed it for this class.
+  const studentVideoBlocked = !isPrivileged && session?.class_settings?.allow_video !== true;
   // Which lesson this class covers — saved on the live session so its recording/materials show under that lesson.
   const [lessonId, setLessonId] = useState<string | null>(null);
   useEffect(() => { if (session?.lesson_id) setLessonId(prev => prev ?? session.lesson_id); }, [session?.lesson_id]);
@@ -161,7 +167,7 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
     stopAllMedia();
     onStartClass({
       waiting_room_enabled: waitingRoom, chat_enabled: chatEnabled,
-      hand_raise_enabled: handRaiseEnabled, class_settings: { mute_on_entry: muteOnEntry },
+      hand_raise_enabled: handRaiseEnabled, class_settings: { mute_on_entry: muteOnEntry, allow_video: allowVideo },
       ...(lessonId ? { lesson_id: lessonId } : {}),
     }, { micOn, cameraOn });
   };
@@ -269,8 +275,8 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
             }}>
               {micOn ? <Mic style={{ width: 20, height: 20, color: "#22c55e" }} /> : <MicOff style={{ width: 20, height: 20, color: "#fff" }} />}
             </button>
-            <button onClick={() => setCameraOn(v => !v)} style={{
-              width: 50, height: 50, borderRadius: "50%", border: "none", cursor: "pointer",
+            <button onClick={() => { if (studentVideoBlocked) return; setCameraOn(v => !v); }} title={studentVideoBlocked ? t("Camera is disabled by the teacher for this class", "الكاميرا معطّلة من قبل المعلم في هذا الدرس") : undefined} style={{
+              width: 50, height: 50, borderRadius: "50%", border: "none", cursor: studentVideoBlocked ? "not-allowed" : "pointer", opacity: studentVideoBlocked ? 0.45 : 1,
               background: cameraOn ? "rgba(34,197,94,.15)" : "#ea4335",
               display: "flex", alignItems: "center", justifyContent: "center",
               boxShadow: cameraOn ? "0 0 0 2px rgba(34,197,94,.35)" : "0 3px 14px rgba(234,67,53,.4)",
@@ -330,8 +336,9 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
                   { label: "Mute on entry", checked: muteOnEntry,      onChange: () => setMuteOnEntry(v => !v) },
                   { label: "Enable chat",   checked: chatEnabled,      onChange: () => setChatEnabled(v => !v) },
                   { label: "Hand raising",  checked: handRaiseEnabled, onChange: () => setHandRaiseEnabled(v => !v) },
+                  { label: "Allow student video", checked: allowVideo, onChange: () => setAllowVideo(v => !v) },
                 ].map((item, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 0", borderBottom: i < 3 ? "1px solid rgba(255,255,255,.05)" : "none" }}>
+                  <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 0", borderBottom: i < 4 ? "1px solid rgba(255,255,255,.05)" : "none" }}>
                     <span style={{ fontSize: 13, color: "rgba(255,255,255,.7)" }}>{item.label}</span>
                     <Toggle checked={item.checked} onChange={item.onChange} />
                   </div>
