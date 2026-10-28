@@ -20,6 +20,7 @@ import NotFound from "@/pages/NotFound";
 import IdleWarningModal from "@/components/IdleWarningModal";
 import UpdateAvailableBanner from "@/components/UpdateAvailableBanner";
 import AppUpdateBanner from "@/components/AppUpdateBanner";
+import ForceUpdateGate from "@/components/ForceUpdateGate";
 import OtaUpdateBanner from "@/components/OtaUpdateBanner";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import DiagnosticsPanel from "@/components/dev/DiagnosticsPanel";
@@ -208,6 +209,7 @@ const AppMain = () => (
         <TooltipProvider>
           <Toaster />
           <Sonner />
+          <ForceUpdateGate>
           <BrowserRouter>
       <AppStateRestorer />
       <PageViewTracker />
@@ -446,6 +448,7 @@ const AppMain = () => (
             </LiveClassProvider>
             </RecordingPlayerProvider>
           </BrowserRouter>
+          </ForceUpdateGate>
         </TooltipProvider>
       </AuthProvider>
     </LanguageProvider>
