@@ -32,7 +32,8 @@ export default function AppUpdateBanner() {
     catch { setDismissed(false); }
   }, [latest]);
 
-  if (!latest || !hasUpdate || dismissed || !safe) return null;
+  // Inside the native app the update is mandatory — see ForceUpdateGate.
+  if (isNative || !latest || !hasUpdate || dismissed || !safe) return null;
 
   const onDownload = async () => {
     setBusy(true);
