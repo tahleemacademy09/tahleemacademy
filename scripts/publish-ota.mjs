@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync, rmSync } from "node:fs";
 
 const BASE = process.env.OTA_BASE_URL?.replace(/\/$/, "");
-const BUCKET = process.env.OTA_BUCKET || "tahleem-ota";
+const BUCKET = process.env.OTA_BUCKET || "tahleem-mushaf";
 const notes = process.argv[2] || "";
 if (!BASE) { console.error("Set OTA_BASE_URL"); process.exit(1); }
 
