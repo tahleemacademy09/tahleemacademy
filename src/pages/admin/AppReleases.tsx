@@ -14,6 +14,7 @@
   own build number with this to know an update exists.
 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { readApkMeta } from "@/lib/apkMeta";
 import { Upload, Smartphone, Trash2, Eye, EyeOff, Download, Bell, Loader2, Star, FileUp } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -94,6 +95,7 @@ export default function AppReleases() {
   const [versionName, setVersionName] = useState("");
   const [versionCode, setVersionCode] = useState("");
   const [notes, setNotes] = useState("");
+  const [autoMeta, setAutoMeta] = useState(false); // true = version read from the APK itself
   const [notify, setNotify] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -119,7 +121,7 @@ export default function AppReleases() {
   const highestCode = releases[0]?.version_code ?? 0;
 
   const resetForm = () => {
-    setFile(null); setVersionName(""); setVersionCode(""); setNotes("");
+    setFile(null); setVersionName(""); setVersionCode(""); setNotes(""); setAutoMeta(false);
     if (fileRef.current) fileRef.current.value = "";
   };
 
@@ -250,22 +252,36 @@ export default function AppReleases() {
             {file ? `${file.name} · ${formatBytes(file.size)}` : "Tap to choose the .apk file"}
           </div>
           <input ref={fileRef} type="file" accept=".apk,application/vnd.android.package-archive" hidden
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            onChange={async (e) => {
+              const f = e.target.files?.[0] ?? null;
+              setFile(f); setAutoMeta(false);
+              if (!f) return;
+              try {
+                const m = await readApkMeta(f);
+                setVersionCode(String(m.versionCode));
+                setVersionName(m.versionName);
+                setAutoMeta(true);
+              } catch (err: any) {
+                toast({ title: "Couldn't read the version from this APK", description: "Enter it by hand below.", variant: "destructive" });
+              }
+            }} />
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
           <div>
             <label style={lbl}>Version name</label>
-            <input style={inp} placeholder="1.3.0" value={versionName} onChange={(e) => setVersionName(e.target.value)} disabled={uploading} />
+            <input style={inp} placeholder="1.3.0" value={versionName} onChange={(e) => setVersionName(e.target.value)} disabled={uploading || autoMeta} />
           </div>
           <div>
             <label style={lbl}>Version code</label>
             <input style={inp} inputMode="numeric" placeholder={String((highestCode || 0) + 1)} value={versionCode}
-              onChange={(e) => setVersionCode(e.target.value.replace(/\D/g, ""))} disabled={uploading} />
+              onChange={(e) => setVersionCode(e.target.value.replace(/\D/g, ""))} disabled={uploading || autoMeta} />
           </div>
         </div>
         <div style={{ fontSize: 11.5, color: "#6B7280", marginTop: -6, marginBottom: 14, lineHeight: 1.5 }}>
-          Version code must be the same number as <code>versionCode</code> in <code>android/app/build.gradle</code> for this APK, and higher than the last one.
+          {autoMeta
+            ? "Read automatically from the APK, so it always matches the build."
+            : "Choose the APK and these fill in by themselves."}
           {highestCode ? ` Current highest: ${highestCode}.` : ""}
         </div>
 
