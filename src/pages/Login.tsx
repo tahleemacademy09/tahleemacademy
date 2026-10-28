@@ -415,7 +415,7 @@ const Login = () => {
               {/* ── WELCOME HEADING ── */}
               <div style={{ textAlign:"center", marginBottom:28 }}>
                 <h2 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:32, fontWeight:700, color:G, lineHeight:1.1, marginBottom:6 }}>
-                  {t("Welcome Back", "أهلاً وسهلاً")}
+                  {t("Welcome Back (update test)", "أهلاً وسهلاً (تجربة التحديث)")}
                   {language === "en" && <span style={{ fontFamily:"'Amiri',serif", fontSize:22, color:GOLD, display:"block", marginTop:2 }}>أهلاً وسهلاً</span>}
                 </h2>
                 <p style={{ fontSize:13.5, color:"#8a7d70", lineHeight:1.6 }}>
