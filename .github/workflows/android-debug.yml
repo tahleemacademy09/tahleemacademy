@@ -14,6 +14,9 @@ jobs:
       VITE_DASHSCOPE_API_KEY: ${{ secrets.VITE_DASHSCOPE_API_KEY }}
       VITE_PAYSTACK_PUBLIC_KEY: ${{ secrets.VITE_PAYSTACK_PUBLIC_KEY }}
       VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
+      # Turns on in-app updates: the APK checks this address for new versions.
+      VITE_OTA_BASE_URL: ${{ secrets.OTA_BASE_URL }}
+      VITE_OTA_VERSION: builtin
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
