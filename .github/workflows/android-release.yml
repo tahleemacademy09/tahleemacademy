@@ -1,0 +1,61 @@
+name: Build Android release APK (stable signing)
+# Builds a SIGNED release APK with the same key every time, so phones can update
+# over the old install (no more "package conflicts with an existing package").
+# versionCode / versionName are set automatically by android/app/build.gradle.
+#
+# One-time setup — add these 4 GitHub secrets (Settings > Secrets > Actions):
+#   ANDROID_KEYSTORE_BASE64  (base64 of your .jks file)
+#   ANDROID_KEYSTORE_PASSWORD
+#   ANDROID_KEY_ALIAS
+#   ANDROID_KEY_PASSWORD
+# Create the keystore once and KEEP A BACKUP of it:
+#   keytool -genkeypair -v -keystore tahleem.jks -alias tahleem -keyalg RSA -keysize 2048 -validity 10000
+#   base64 -w0 tahleem.jks
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      VITE_SUPABASE_URL: https://qasmwzwaorncalximemy.supabase.co
+      VITE_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFhc213endhb3JuY2FseGltZW15Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNjMxNDMsImV4cCI6MjA4ODYzOTE0M30.onM6tzQCPieJz0wwJNMRziXLi4CYXzCGWsXubFdw3O8
+      VITE_SUPABASE_PUBLISHABLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFhc213endhb3JuY2FseGltZW15Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNjMxNDMsImV4cCI6MjA4ODYzOTE0M30.onM6tzQCPieJz0wwJNMRziXLi4CYXzCGWsXubFdw3O8
+      VITE_GROQ_API_KEY: ${{ secrets.VITE_GROQ_API_KEY }}
+      VITE_DEEPGRAM_API_KEY: ${{ secrets.VITE_DEEPGRAM_API_KEY }}
+      VITE_DASHSCOPE_API_KEY: ${{ secrets.VITE_DASHSCOPE_API_KEY }}
+      VITE_PAYSTACK_PUBLIC_KEY: ${{ secrets.VITE_PAYSTACK_PUBLIC_KEY }}
+      VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
+      VITE_OTA_BASE_URL: ${{ secrets.OTA_BASE_URL }}
+      VITE_OTA_VERSION: builtin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build web app
+        run: npm run build
+      - name: Sync Capacitor Android
+        run: npm run cap:android:sync
+      - name: Restore signing key
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/tahleem.jks
+          cat > android/keystore.properties <<PROPS
+          storeFile=tahleem.jks
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          PROPS
+      - name: Build signed APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tahleem-release-apk
+          path: android/app/build/outputs/apk/release/*.apk
