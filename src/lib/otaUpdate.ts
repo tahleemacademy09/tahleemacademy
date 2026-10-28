@@ -3,7 +3,8 @@ import { App } from "@capacitor/app";
 import { CapacitorUpdater } from "@capgo/capacitor-updater";
 import { isReloadSafe, onReloadSafe } from "@/lib/reloadGuard";
 
-const BASE = (import.meta.env.VITE_OTA_BASE_URL as string | undefined)?.replace(/\/$/, "");
+const RAW_BASE = (import.meta.env.VITE_OTA_BASE_URL as string | undefined)?.trim();
+const BASE = RAW_BASE ? (/^https?:\/\//i.test(RAW_BASE) ? RAW_BASE : `https://${RAW_BASE}`).replace(/\/$/, "") : undefined;
 const BUILT_IN = (import.meta.env.VITE_OTA_VERSION as string | undefined) ?? "builtin";
 
 interface Manifest { version: string; url: string; minNativeBuild?: number; notes?: string }
