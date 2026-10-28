@@ -1,0 +1,36 @@
+name: Publish app update (OTA)
+# Run this after you change the app. Students get a banner "Update ready" next time they open the app.
+# No new APK needed. Only use a new APK when you change native things (plugins, Android code, permissions).
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: "What changed (shown to students)"
+        required: false
+        default: ""
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VITE_SUPABASE_URL: https://qasmwzwaorncalximemy.supabase.co
+      VITE_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFhc213endhb3JuY2FseGltZW15Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNjMxNDMsImV4cCI6MjA4ODYzOTE0M30.onM6tzQCPieJz0wwJNMRziXLi4CYXzCGWsXubFdw3O8
+      VITE_SUPABASE_PUBLISHABLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFhc213endhb3JuY2FseGltZW15Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNjMxNDMsImV4cCI6MjA4ODYzOTE0M30.onM6tzQCPieJz0wwJNMRziXLi4CYXzCGWsXubFdw3O8
+      VITE_GROQ_API_KEY: ${{ secrets.VITE_GROQ_API_KEY }}
+      VITE_DEEPGRAM_API_KEY: ${{ secrets.VITE_DEEPGRAM_API_KEY }}
+      VITE_DASHSCOPE_API_KEY: ${{ secrets.VITE_DASHSCOPE_API_KEY }}
+      VITE_PAYSTACK_PUBLIC_KEY: ${{ secrets.VITE_PAYSTACK_PUBLIC_KEY }}
+      VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
+      OTA_BASE_URL: ${{ secrets.OTA_BASE_URL }}
+      OTA_BUCKET: ${{ secrets.OTA_BUCKET }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build and publish update
+        run: node scripts/publish-ota.mjs "${{ github.event.inputs.notes }}"
