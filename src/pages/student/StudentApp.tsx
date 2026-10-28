@@ -8,13 +8,15 @@ import { useState } from "react";
 import { Download, Smartphone, CheckCircle2, Star, Loader2, Share, Plus } from "lucide-react";
 import { useAppRelease, formatBytes } from "@/hooks/useAppRelease";
 import { useToast } from "@/hooks/use-toast";
+import AppUpdateProgress from "@/components/AppUpdateProgress";
 
 const G = "#064E3B";
 const G2 = "#075E54";
 const GOLD = "#c9a84c";
 
 export default function StudentApp() {
-  const { latest, loading, hasUpdate, upToDate, isNative, isAndroid, installedBuild, download } = useAppRelease();
+  const { latest, loading, hasUpdate, upToDate, isNative, isAndroid, installedBuild, download, inApp, updater } = useAppRelease();
+  const working = updater.phase === "signing" || updater.phase === "downloading";
   const { toast } = useToast();
   const [busy, setBusy] = useState(false);
 
@@ -77,7 +79,7 @@ export default function StudentApp() {
             ) : isAndroid || isNative ? (
               <button
                 onClick={onDownload}
-                disabled={busy}
+                disabled={busy || working}
                 style={{
                   width: "100%", padding: 16, borderRadius: 14, border: "none", cursor: "pointer",
                   background: `linear-gradient(135deg,${G},${G2})`, color: "#fff", fontWeight: 800, fontSize: 15,
@@ -85,8 +87,12 @@ export default function StudentApp() {
                   boxShadow: `0 8px 24px ${G}40`,
                 }}
               >
-                {busy ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
-                {isNative ? "Download the update" : "Download the app (APK)"}
+                {busy || working ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+                {!isNative ? "Download the app (APK)"
+                  : updater.phase === "ready" || updater.phase === "installing" ? "Install now"
+                  : updater.phase === "needs-permission" ? "Open settings"
+                  : updater.phase === "error" ? "Try again"
+                  : inApp ? "Download & install update" : "Download the update"}
               </button>
             ) : (
               <div style={{ fontSize: 13, color: "#6B7280", lineHeight: 1.6 }}>
@@ -97,7 +103,9 @@ export default function StudentApp() {
               </div>
             )}
 
-            {(isAndroid || isNative) && !upToDate && (
+            {isNative && inApp && <AppUpdateProgress s={updater} />}
+
+            {(isAndroid || isNative) && !upToDate && !(isNative && inApp) && (
               <div style={{ marginTop: 12, fontSize: 12, color: "#6B7280", lineHeight: 1.6 }}>
                 When the download finishes, open it. If Android asks, allow installs from your browser, then tap <strong>Install</strong>.
                 Your account and data stay as they are.
