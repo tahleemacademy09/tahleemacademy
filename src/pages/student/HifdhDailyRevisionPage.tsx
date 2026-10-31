@@ -504,7 +504,13 @@ const arProse = (size: number, lh = 2.1): React.CSSProperties => ({
 
 /* ── Tafsir data (Tafsir al-Muyassar in Arabic + Sahih International in English) ─────────────
    One request per page. Cached for the session. Any failure just means no tafsir questions. */
-type TafsirEntry = { ar: string; en: string };
+type TafsirEntry = {
+  ar: string; en: string;
+  /** the Arabic verse itself + where it is — needed to ask about pages that aren't today's */
+  text?: string; surahNum?: number; surahName?: string; verse?: number;
+  /** true = from an EARLIER page the student revised before today (not one of today's pages) */
+  prev?: boolean;
+};
 const tafsirPageCache = new Map<number, Promise<Record<string, TafsirEntry>>>();
 function fetchPageTafsir(page: number): Promise<Record<string, TafsirEntry>> {
   const hit = tafsirPageCache.get(page);
@@ -514,18 +520,20 @@ function fetchPageTafsir(page: number): Promise<Record<string, TafsirEntry>> {
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 12000);
-      const r = await fetch(`https://api.alquran.cloud/v1/page/${page}/editions/ar.muyassar,en.sahih`, { signal: ctrl.signal });
+      const r = await fetch(`https://api.alquran.cloud/v1/page/${page}/editions/quran-uthmani,ar.muyassar,en.sahih`, { signal: ctrl.signal });
       clearTimeout(t);
       if (!r.ok) return out;
       const j = await r.json();
       const eds: any[] = Array.isArray(j?.data) ? j.data : [];
       for (const ed of eds) {
         const id = String(ed?.edition?.identifier ?? "");
-        const field = id === "ar.muyassar" ? "ar" : id === "en.sahih" ? "en" : null;
+        const field = id === "ar.muyassar" ? "ar" : id === "en.sahih" ? "en" : id === "quran-uthmani" ? "text" : null;
         if (!field) continue;
         for (const a of ed.ayahs ?? []) {
           const k = `${a.surah?.number}:${a.numberInSurah}`;
-          (out[k] ||= { ar: "", en: "" })[field] = String(a.text ?? "").replace(/\s+/g, " ").trim();
+          const e = (out[k] ||= { ar: "", en: "" });
+          e[field] = String(a.text ?? "").replace(/\s+/g, " ").trim();
+          e.surahNum = a.surah?.number; e.surahName = a.surah?.englishName; e.verse = a.numberInSurah;
         }
       }
     } catch { /* offline / blocked — skip tafsir questions */ }
@@ -538,6 +546,25 @@ function fetchPageTafsir(page: number): Promise<Record<string, TafsirEntry>> {
 async function fetchTafsirForPages(pages: number[]): Promise<Record<string, TafsirEntry>> {
   const parts = await Promise.all(pages.map(fetchPageTafsir));
   return Object.assign({}, ...parts);
+}
+/** Pages the student revised BEFORE today (same ordering rules as the Section B lookback), up to `max`
+    picked at random from the most recent 20, so the 2 "earlier" tafseer questions vary day to day. */
+function earlierPagesForTafsir(a: Assignment, todayPages: number[], max = 5): number[] {
+  const todayFirst = todayPages[0] ?? 1;
+  const LOOKBACK = 20;
+  let before: number[] = [];
+  const pageList = assignmentPageList(a);
+  if (pageList) {
+    const at = pageList.indexOf(todayFirst);
+    before = at > 0 ? pageList.slice(Math.max(0, at - LOOKBACK), at) : [];
+  } else {
+    const first = a.selected_items?.[0];
+    const base = first && a.mode === "juz" ? (JUZ_START_PAGES[first] ?? 1) : 1;
+    for (let p = Math.max(base, todayFirst - LOOKBACK); p < todayFirst; p++) if (p >= 1 && p <= 604) before.push(p);
+  }
+  before = before.filter(p => !todayPages.includes(p));
+  for (let i = before.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [before[i], before[j]] = [before[j], before[i]]; }
+  return before.slice(0, max);
 }
 
 function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = [], tafsir: Record<string, TafsirEntry> = {}): Question[] {
@@ -757,7 +784,9 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = [], tafsir: Re
     }
   }
 
-  // ── TAFSEER (about today's pages) — at most 5, bilingual ────────────────────
+  // ── TAFSEER — 5 questions: 3 about TODAY's pages + 2 about EARLIER pages the student revised before.
+  //    English-first wording (Arabic shown too) so the meaning is easy to follow. If no earlier pages are
+  //    available (day 1, or the data didn't load) all 5 come from today's pages, as before. ──
   const tafQs: Question[] = [];
   {
     const keyOf = (a: Ayah) => `${a.surah.number}:${a.numberInSurah}`;
@@ -768,36 +797,56 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = [], tafsir: Re
       return cut.slice(0, sp > 40 ? sp : max).trim() + "…";
     };
     const seen = new Set<string>();
-    const pool = allAyahs.filter(a => {
+    const usable = (t?: TafsirEntry) => !!t && t.ar.length >= 25 && t.en.length >= 15;
+    const todayPool = allAyahs.filter(a => {
       const t = tafsir[keyOf(a)];
-      if (!t || t.ar.length < 25 || t.en.length < 15) return false;
-      const k = normalizeArabic(t.ar).slice(0, 30);
+      if (!usable(t) || t!.prev) return false;
+      const k = normalizeArabic(t!.ar).slice(0, 30);
       if (seen.has(k)) return false; seen.add(k); return true;
     });
-    if (pool.length >= 3) {
-      const picks = shuffle(pool).slice(0, 5);
-      picks.forEach((a, n) => {
+    const todayKeys = new Set(todayPool.map(keyOf));
+    const prevPool: Ayah[] = Object.values(tafsir)
+      .filter(t => t.prev && usable(t) && t.text && t.surahNum && t.verse)
+      .map(t => ({ number: 0, numberInSurah: t.verse!, text: t.text!,
+                   surah: { number: t.surahNum!, name: "", englishName: t.surahName || `Surah ${t.surahNum}` } } as Ayah))
+      .filter(a => {
+        if (todayKeys.has(keyOf(a))) return false;
+        const k = normalizeArabic(tafsir[keyOf(a)].ar).slice(0, 30);
+        if (seen.has(k)) return false; seen.add(k); return true;
+      });
+    if (todayPool.length >= 3) {
+      const withPrev = prevPool.length >= 2;
+      const picks: { a: Ayah; prev: boolean }[] = [
+        ...shuffle(todayPool).slice(0, withPrev ? 3 : 5).map(a => ({ a, prev: false })),
+        ...(withPrev ? shuffle(prevPool).slice(0, 2).map(a => ({ a, prev: true })) : []),
+      ];
+      // verse→tafseer vs tafseer→verse: mixed within each group
+      const kinds = withPrev ? ["verse", "verse", "meaning", "verse", "meaning"] : ["verse", "verse", "verse", "meaning", "meaning"];
+      picks.forEach(({ a, prev }, n) => {
         const t = tafsir[keyOf(a)];
-        const others = shuffle(pool.filter(x => x !== a)).slice(0, 3);
-        const label = `§A Tafseer · ${a.surah.englishName} ${a.numberInSurah}`;
-        if (n < 3) {
-          // verse → which tafsir explains it?
+        const group = prev ? prevPool : todayPool;
+        let others = shuffle(group.filter(x => x !== a)).slice(0, 3);
+        if (others.length < 3) others = [...others, ...shuffle([...todayPool, ...prevPool].filter(x => x !== a && !others.includes(x)))].slice(0, 3);
+        if (others.length < 2) return;
+        const label = `§A Tafseer · ${a.surah.englishName} ${a.numberInSurah} · ${prev ? "earlier page" : "today's page"}`;
+        if (kinds[n] === "verse") {
+          // verse → which tafseer explains it?
           const correctTxt = clip(t.ar, 170);
           const opts = shuffle([{ ar: correctTxt, en: clip(t.en, 150) },
             ...others.map(o => ({ ar: clip(tafsir[keyOf(o)].ar, 170), en: clip(tafsir[keyOf(o)].en, 150) }))]);
           tafQs.push({ id: id++, type: "tafsir_verse", section: "A", snippet: false,
             prompt: fullVerse(a), promptLabel: label,
-            promptAr: "ما تفسير هذه الآية؟", promptEn: "What is the tafseer of this verse?",
+            promptAr: "ما تفسير هذه الآية؟", promptEn: "What is the tafseer (meaning) of this verse?",
             options: opts.map(o => o.ar), optionsEn: opts.map(o => o.en),
             correct: opts.findIndex(o => o.ar === correctTxt), correctText: correctTxt });
         } else {
-          // tafsir → which verse does it explain?
+          // tafseer → which verse does it explain?
           const correctTxt = fullVerse(a);
           const opts = shuffle([{ ar: correctTxt, en: clip(t.en, 150) },
             ...others.map(o => ({ ar: fullVerse(o), en: clip(tafsir[keyOf(o)].en, 150) }))]);
           tafQs.push({ id: id++, type: "tafsir_meaning", section: "A", snippet: false,
             prompt: clip(t.ar, 220), promptSubEn: clip(t.en, 200), promptLabel: label,
-            promptAr: "أيُّ آية يوافق هذا التفسير؟", promptEn: "Which verse matches this tafseer?",
+            promptAr: "أيُّ آية يوافق هذا التفسير؟", promptEn: "Which verse does this tafseer explain?",
             options: opts.map(o => o.ar), optionsEn: opts.map(o => o.en),
             correct: opts.findIndex(o => o.ar === correctTxt), correctText: correctTxt });
         }
@@ -1675,7 +1724,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   useEffect(() => {
     if (phase !== "pre_test_review" && phase !== "proctor_intro") return;
     let cancelled = false;
-    fetchTafsirForPages(todayPages).then(m => { if (!cancelled && Object.keys(m).length) setTafsirMap(m); });
+    (async () => {
+      const [todayMap, earlierMap] = await Promise.all([
+        fetchTafsirForPages(todayPages),
+        fetchTafsirForPages(earlierPagesForTafsir(assignment, todayPages)).catch(() => ({} as Record<string, TafsirEntry>)),
+      ]);
+      if (cancelled || !Object.keys(todayMap).length) return;
+      const earlier: Record<string, TafsirEntry> = {};
+      for (const [k, v] of Object.entries(earlierMap)) if (!(k in todayMap)) earlier[k] = { ...v, prev: true };
+      setTafsirMap({ ...earlier, ...todayMap });
+    })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
@@ -3898,8 +3956,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                       {/* Prompt */}
                       {isTafsir&&(
                         <div style={{margin:"0 0 10px",padding:"10px 12px",borderRadius:12,background:`${G1}0d`,border:`1px solid ${BRD}`}}>
-                          <p style={{...arProse(20,1.9),margin:0,fontWeight:700,color:G1}}>{q.promptAr}</p>
-                          <p style={{margin:"2px 0 0",fontSize:13,fontWeight:700,color:"#374151",textAlign:"left",direction:"ltr"}}>{q.promptEn}</p>
+                          <p style={{margin:0,fontSize:15,fontWeight:800,color:G1,textAlign:"left",direction:"ltr"}}>{q.promptEn}</p>
+                          <p style={{...arProse(16,1.8),margin:"2px 0 0",fontWeight:600,color:"#4B5563"}}>{q.promptAr}</p>
                         </div>
                       )}
                       {isListenQ?(
@@ -3930,8 +3988,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                         </div>
                       ):q.type==="tafsir_meaning"?(
                         <div>
-                          <p style={{...arProse(21,2.1),margin:0}}>{q.prompt}</p>
-                          {q.promptSubEn&&<p style={{margin:"6px 0 0",fontSize:13,lineHeight:1.55,color:"#4B5563",textAlign:"left",direction:"ltr"}}>{q.promptSubEn}</p>}
+                          {q.promptSubEn&&<p style={{margin:"0 0 6px",fontSize:15,lineHeight:1.6,fontWeight:600,color:"#111827",textAlign:"left",direction:"ltr"}}>{q.promptSubEn}</p>}
+                          <p style={{...arProse(18,2.0),margin:0,color:"#4B5563"}}>{q.prompt}</p>
                         </div>
                       ):(
                         <p style={{...arQuran(q.snippet?26:24,q.snippet?2.4:2.5),margin:0}}>
@@ -3952,9 +4010,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                               background:ans===oi?`${G1}12`:WARM,
                               transition:"background .15s,border-color .15s",
                             }}>
-                            <span style={{display:"block",...(isTafsir&&q.type==="tafsir_verse"?arProse(19,2.0):arQuran(isTafsir?22:22,2.4)),
+                            {/* Tafseer explanations: English first (easier to follow), Arabic underneath.
+                                Tafseer→verse questions keep the Arabic verse first, English meaning under it. */}
+                            {isTafsir&&q.type==="tafsir_verse"&&q.optionsEn?.[oi]&&(
+                              <span style={{display:"block",marginBottom:4,fontSize:14,lineHeight:1.55,fontWeight:ans===oi?700:500,color:"#111827",textAlign:"left",direction:"ltr"}}>
+                                {q.optionsEn[oi]}
+                              </span>
+                            )}
+                            <span style={{display:"block",...(isTafsir&&q.type==="tafsir_verse"?{...arProse(16,1.9),color:"#4B5563"}:arQuran(isTafsir?22:22,2.4)),
                               fontWeight:ans===oi?700:400}}>{opt}</span>
-                            {isTafsir&&q.optionsEn?.[oi]&&(
+                            {isTafsir&&q.type!=="tafsir_verse"&&q.optionsEn?.[oi]&&(
                               <span style={{display:"block",marginTop:4,fontSize:12.5,lineHeight:1.5,color:"#4B5563",textAlign:"left",direction:"ltr"}}>
                                 {q.optionsEn[oi]}
                               </span>
