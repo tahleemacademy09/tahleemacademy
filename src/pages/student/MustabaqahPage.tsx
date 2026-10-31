@@ -220,8 +220,45 @@ const fetchScopePool = async (scopeType:string, cfg:{
   juz_number?:number; hizb_number?:number;
   range_surah_start?:number; range_ayah_start?:number;
   range_surah_end?:number; range_ayah_end?:number;
+  mix_juz?:number[]; mix_surahs?:number[]; mix_pages?:number[];
 }): Promise<ScopeAyah[]> => {
   try {
+    if (scopeType==="mix") {
+      // Any combination of whole Juz, whole Surahs and individual mushaf pages (1–604).
+      // Every source is fetched, merged and de-duplicated into one ayah pool.
+      const seen = new Set<string>();
+      const pool: ScopeAyah[] = [];
+      const add = (surah:number, ayah:number, surahName:string, surahAr:string) => {
+        const k = `${surah}:${ayah}`;
+        if (!surah || !ayah || seen.has(k)) return;
+        seen.add(k); pool.push({ surah, ayah, surahName, surahAr });
+      };
+      let failed = false;
+      const get = async (path:string) => {
+        try {
+          const r = await fetch(`https://api.alquran.cloud/v1/${path}`);
+          const d = await r.json();
+          if (d?.code===200) return d.data;
+        } catch {}
+        failed = true; return null;
+      };
+      const jobs: (() => Promise<void>)[] = [];
+      (cfg.mix_juz||[]).forEach(n=>jobs.push(async()=>{
+        const d = await get(`juz/${n}/quran-uthmani`);
+        (d?.ayahs||[]).forEach((a:any)=>add(a.surah?.number, a.numberInSurah, a.surah?.englishName, a.surah?.name));
+      }));
+      (cfg.mix_surahs||[]).forEach(n=>jobs.push(async()=>{
+        const d = await get(`surah/${n}/quran-uthmani`);
+        (d?.ayahs||[]).forEach((a:any)=>add(d.number, a.numberInSurah, d.englishName, d.name));
+      }));
+      (cfg.mix_pages||[]).forEach(n=>jobs.push(async()=>{
+        const d = await get(`page/${n}/quran-uthmani`);
+        (d?.ayahs||[]).forEach((a:any)=>add(a.surah?.number, a.numberInSurah, a.surah?.englishName, a.surah?.name));
+      }));
+      // Run in small batches so a large page list doesn't fire hundreds of requests at once.
+      for (let i=0; i<jobs.length; i+=8) await Promise.all(jobs.slice(i,i+8).map(j=>j()));
+      return failed ? [] : pool;
+    }
     if (scopeType==="juz" && cfg.juz_number) {
       const r = await fetch(`https://api.alquran.cloud/v1/juz/${cfg.juz_number}/quran-uthmani`);
       const d = await r.json();
@@ -262,6 +299,53 @@ const fetchScopePool = async (scopeType:string, cfg:{
     }
   } catch(e) { console.warn("[Musabaqah] scope pool fetch failed", e); }
   return [];
+};
+
+/** Parse "1-5, 20, 100-110" into a sorted, unique list of mushaf page numbers (1–604). */
+const parsePageList = (txt:string): number[] => {
+  const out = new Set<number>();
+  (txt||"").split(/[,\s;،]+/).map(t=>t.trim()).filter(Boolean).forEach(tok=>{
+    const m = tok.match(/^(\d{1,3})\s*[-–—]\s*(\d{1,3})$/);
+    if (m) {
+      let a = Number(m[1]), b = Number(m[2]);
+      if (a>b) [a,b]=[b,a];
+      for (let n=Math.max(1,a); n<=Math.min(604,b); n++) out.add(n);
+    } else if (/^\d{1,3}$/.test(tok)) {
+      const n = Number(tok); if (n>=1 && n<=604) out.add(n);
+    }
+  });
+  return [...out].sort((a,b)=>a-b);
+};
+/** [1,2,3,7,20,21] → "1-3, 7, 20-21" */
+const compactPageList = (pages:number[]): string => {
+  const out:string[] = []; let i = 0;
+  while (i<pages.length) {
+    let j = i; while (j+1<pages.length && pages[j+1]===pages[j]+1) j++;
+    out.push(j>i ? `${pages[i]}-${pages[j]}` : `${pages[i]}`); i = j+1;
+  }
+  return out.join(", ");
+};
+/** First/last mushaf page of a Juz (Madani mushaf, 604 pages). */
+const juzPageRange = (j:number): [number,number] => [j===1 ? 1 : (j-1)*20+2, j===30 ? 604 : j*20+1];
+const SURAH_NAMES = ["Al-Fatihah","Al-Baqarah","Aal-E-Imran","An-Nisa","Al-Ma'idah","Al-An'am","Al-A'raf","Al-Anfal","At-Tawbah","Yunus","Hud","Yusuf","Ar-Ra'd","Ibrahim","Al-Hijr","An-Nahl","Al-Isra","Al-Kahf","Maryam","Ta-Ha","Al-Anbiya","Al-Hajj","Al-Mu'minun","An-Nur","Al-Furqan","Ash-Shu'ara","An-Naml","Al-Qasas","Al-Ankabut","Ar-Rum","Luqman","As-Sajdah","Al-Ahzab","Saba","Fatir","Ya-Sin","As-Saffat","Sad","Az-Zumar","Ghafir","Fussilat","Ash-Shura","Az-Zukhruf","Ad-Dukhan","Al-Jathiyah","Al-Ahqaf","Muhammad","Al-Fath","Al-Hujurat","Qaf","Adh-Dhariyat","At-Tur","An-Najm","Al-Qamar","Ar-Rahman","Al-Waqi'ah","Al-Hadid","Al-Mujadila","Al-Hashr","Al-Mumtahanah","As-Saff","Al-Jumu'ah","Al-Munafiqun","At-Taghabun","At-Talaq","At-Tahrim","Al-Mulk","Al-Qalam","Al-Haqqah","Al-Ma'arij","Nuh","Al-Jinn","Al-Muzzammil","Al-Muddaththir","Al-Qiyamah","Al-Insan","Al-Mursalat","An-Naba","An-Nazi'at","Abasa","At-Takwir","Al-Infitar","Al-Mutaffifin","Al-Inshiqaq","Al-Buruj","At-Tariq","Al-A'la","Al-Ghashiyah","Al-Fajr","Al-Balad","Ash-Shams","Al-Layl","Ad-Duha","Ash-Sharh","At-Tin","Al-Alaq","Al-Qadr","Al-Bayyinah","Az-Zalzalah","Al-Adiyat","Al-Qari'ah","At-Takathur","Al-Asr","Al-Humazah","Al-Fil","Quraysh","Al-Ma'un","Al-Kawthar","Al-Kafirun","An-Nasr","Al-Masad","Al-Ikhlas","Al-Falaq","An-Nas"];
+
+/** Competitions store their ayah pool compactly ("2:255") plus a small surah-name map, so the
+ *  competition row stays small (it is re-read often). Older competitions stored full objects in
+ *  scope_pool — this reads either format. */
+const compactScopePool = (pool:ScopeAyah[]) => {
+  const names: Record<string,[string,string]> = {};
+  pool.forEach(p=>{ if (!names[String(p.surah)]) names[String(p.surah)] = [p.surahName, p.surahAr]; });
+  return { scope_pool_c: pool.map(p=>`${p.surah}:${p.ayah}`), scope_surah_names: names };
+};
+const getScopePool = (cfg:any): ScopeAyah[] => {
+  if (Array.isArray(cfg?.scope_pool) && cfg.scope_pool.length>0) return cfg.scope_pool as ScopeAyah[];
+  const c: string[] = Array.isArray(cfg?.scope_pool_c) ? cfg.scope_pool_c : [];
+  const names: Record<string,[string,string]> = cfg?.scope_surah_names || {};
+  return c.map(k=>{
+    const [sn,an] = k.split(":").map(Number);
+    const nm = names[String(sn)] || [`Surah ${sn}`, ""];
+    return { surah:sn, ayah:an, surahName:nm[0], surahAr:nm[1] };
+  });
 };
 
 /** Registration is open unless the judge manually closed it, or a deadline has
@@ -817,6 +901,7 @@ const SCOPE_OPTIONS = [
   {id:"juz",label:"Specific Juz",desc:"Pick any single Juz (1–30)"},
   {id:"hizb",label:"Specific Hizb",desc:"Pick any single Hizb (1–60, half a Juz)"},
   {id:"custom_range",label:"Custom Surah/Ayah Range",desc:"Pick your own start & end point"},
+  {id:"mix",label:"Mix — Juz, Surahs & Pages",desc:"Combine several Juz, specific Surahs and any mushaf pages"},
 ];
 const STATUS_COLOR: Record<PStatus,string> = {pending:"#a78bfa",waiting:GOLD,called:"#f97316",reciting:GREEN,completed:"#60a5fa",absent:"#6b7280",disqualified:RED};
 const STATUS_ICON:  Record<PStatus,string> = {pending:"🕐",waiting:"⏳",called:"⚡",reciting:"🎙️",completed:"✅",absent:"❌",disqualified:"🚫"};
@@ -952,6 +1037,7 @@ export default function MustabaqahPage() {
   const [chatInput,      setChatInput]     = useState("");
   const [form, setForm] = useState({title:"",description:"",scope_type:"juz30",total_stages:5,time_limit:300,use_criteria:true,tiles_per_stage:10,use_custom_q:false,custom_questions:"",
     juz_number:1, hizb_number:1, range_surah_start:1, range_ayah_start:1, range_surah_end:1, range_ayah_end:7,
+    mix_juz:[] as number[], mix_surahs:[] as number[], mix_pages:"", mix_surah_q:"", mix_random_n:5,
     registration_deadline:"" as string, juz_options:[] as number[]});
   const [joinForm, setJoinForm] = useState({room_code:"",name:profile?.full_name||"",school:profile?.school||"",juz:undefined as number|undefined});
   // Live countdown (ms remaining) to a competition's registration_deadline —
@@ -1647,8 +1733,8 @@ export default function MustabaqahPage() {
     }
 
     // 3. Fall back to a pre-fetched Juz/Hizb/custom-range pool, else random Quran passages
-    const scopePool = comp.scope_config?.scope_pool as ScopeAyah[] | undefined;
-    if (scopePool && scopePool.length > 0) {
+    const scopePool = getScopePool(comp.scope_config);
+    if (scopePool.length > 0) {
       const fresh = scopePool.filter(p => !usedTileKeys.has(`${p.surah}:${p.ayah}`));
       const source = fresh.length > 0 ? fresh : scopePool;
       const shuffled = [...source].sort(()=>Math.random()-0.5).slice(0, count);
@@ -2359,8 +2445,15 @@ export default function MustabaqahPage() {
     // (once), then cached on the competition so every tile-build after this is instant
     // and works offline.
     let scopePool: any[] = [];
-    if (["juz","hizb","custom_range"].includes(form.scope_type) && !form.use_custom_q) {
+    const mixPages = parsePageList(form.mix_pages);
+    if (form.scope_type==="mix" && !form.use_custom_q && form.mix_juz.length===0 && form.mix_surahs.length===0 && mixPages.length===0) {
+      setLoading(false);
+      toast({title:"Pick something for the mix",description:"Select at least one Juz, Surah or page range.",variant:"destructive"});
+      return;
+    }
+    if (["juz","hizb","custom_range","mix"].includes(form.scope_type) && !form.use_custom_q) {
       scopePool = await fetchScopePool(form.scope_type, {
+        mix_juz: form.mix_juz, mix_surahs: form.mix_surahs, mix_pages: mixPages,
         juz_number: form.juz_number, hizb_number: form.hizb_number,
         range_surah_start: form.range_surah_start, range_ayah_start: form.range_ayah_start,
         range_surah_end: form.range_surah_end, range_ayah_end: form.range_ayah_end,
@@ -2374,7 +2467,8 @@ export default function MustabaqahPage() {
     const {data,error}=await supabase.from("musabaqah_competitions" as any).insert({
       title:form.title.trim(),description:form.description.trim(),scope_type:form.scope_type,
       scope_config:{
-        tiles_per_stage: form.tiles_per_stage, custom_questions: customQList, scope_pool: scopePool,
+        tiles_per_stage: form.tiles_per_stage, custom_questions: customQList, scope_pool: [], ...compactScopePool(scopePool),
+        mix_juz: form.mix_juz, mix_surahs: form.mix_surahs, mix_pages: mixPages,
         juz_number: form.juz_number, hizb_number: form.hizb_number,
         range_surah_start: form.range_surah_start, range_ayah_start: form.range_ayah_start,
         range_surah_end: form.range_surah_end, range_ayah_end: form.range_ayah_end,
@@ -2879,10 +2973,16 @@ export default function MustabaqahPage() {
       ? SURAHS.filter(s => s.juz >= 29)
       : SURAHS;
 
+    // If the competition has its own ayah pool (Juz / Hizb / range / Mix), draw from THAT —
+    // the built-in SURAHS list above only covers a handful of surahs.
+    let ayahPool: ScopeAyah[] = getScopePool(competition.scope_config);
+
     const g = (guide || "").trim().toLowerCase();
     if (g) {
       const narrowed = pool.filter(s => s.en.toLowerCase().includes(g) || s.ar.includes(guide!.trim()));
       if (narrowed.length > 0) pool = narrowed;
+      const narrowedAyahs = ayahPool.filter(p => (p.surahName||"").toLowerCase().includes(g) || (p.surahAr||"").includes(guide!.trim()));
+      if (narrowedAyahs.length > 0) ayahPool = narrowedAyahs;
     }
 
     // Don't repeat an ayah that's already used in another stage's live list,
@@ -2898,17 +2998,22 @@ export default function MustabaqahPage() {
     }
 
     const seen = new Set<string>(usedElsewhere);
-    const pairs: {s: typeof SURAHS[0], a: number}[] = [];
-    for (let attempt = 0; attempt < poolSize * 20 && pairs.length < poolSize; attempt++) {
+    const pairs: {s: {n:number; en:string}, a: number}[] = [];
+    const draw = (): {s:{n:number; en:string}, a:number} => {
+      if (ayahPool.length > 0) {
+        const p = ayahPool[Math.floor(Math.random() * ayahPool.length)];
+        return { s: { n: p.surah, en: p.surahName }, a: p.ayah };
+      }
       const s = pool[Math.floor(Math.random() * pool.length)];
-      const a = Math.floor(Math.random() * s.v) + 1;
-      const key = `${s.n}:${a}`;
-      if (!seen.has(key)) { seen.add(key); pairs.push({s, a}); }
+      return { s: { n: s.n, en: s.en }, a: Math.floor(Math.random() * s.v) + 1 };
+    };
+    for (let attempt = 0; attempt < poolSize * 20 && pairs.length < poolSize; attempt++) {
+      const d = draw();
+      const key = `${d.s.n}:${d.a}`;
+      if (!seen.has(key)) { seen.add(key); pairs.push(d); }
     }
     while (pairs.length < poolSize) { // pad if the (possibly narrowed) scope is too small
-      const s = pool[Math.floor(Math.random() * pool.length)];
-      const a = Math.floor(Math.random() * s.v) + 1;
-      pairs.push({s, a});
+      pairs.push(draw());
     }
 
     let questions: string[];
@@ -3120,6 +3225,56 @@ export default function MustabaqahPage() {
                 </select>
               </div>
             )}
+            {form.scope_type==="mix"&&(()=>{
+              const mixPagesParsed = parsePageList(form.mix_pages);
+              const q = form.mix_surah_q.trim().toLowerCase();
+              const chip = (on:boolean):React.CSSProperties => ({background:on?`${GOLD}30`:"rgba(255,255,255,.05)",border:`1.5px solid ${on?GOLD:"rgba(255,255,255,.12)"}`,color:on?GOLD:"rgba(255,255,255,.75)",borderRadius:10,padding:"9px 0",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"Cairo,sans-serif"});
+              const fieldStyle:React.CSSProperties = {width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14};
+              const addRandomPages = () => {
+                const n = Math.max(1, Math.min(100, Number(form.mix_random_n)||5));
+                const covered = new Set<number>(mixPagesParsed);
+                form.mix_juz.forEach(j=>{ const [a,b]=juzPageRange(j); for (let x=a;x<=b;x++) covered.add(x); });
+                const free:number[] = []; for (let x=1;x<=604;x++) if (!covered.has(x)) free.push(x);
+                const picked = free.sort(()=>Math.random()-0.5).slice(0,n);
+                if (picked.length===0) { toast({title:"No pages left to add"}); return; }
+                setForm(f=>({...f,mix_pages:compactPageList([...mixPagesParsed,...picked].sort((a,b)=>a-b))}));
+              };
+              return (
+                <div style={{marginTop:8}}>
+                  <Label>Juz — tap to select several ({form.mix_juz.length})</Label>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:6,marginBottom:14}}>
+                    {Array.from({length:30},(_,i)=>i+1).map(n=>{
+                      const on = form.mix_juz.includes(n);
+                      return <button type="button" key={n} onClick={()=>setForm(f=>({...f,mix_juz:on?f.mix_juz.filter(x=>x!==n):[...f.mix_juz,n].sort((a,b)=>a-b)}))} style={chip(on)}>{n}</button>;
+                    })}
+                  </div>
+                  <Label>Surahs ({form.mix_surahs.length} selected)</Label>
+                  <input value={form.mix_surah_q} onChange={e=>setForm(f=>({...f,mix_surah_q:e.target.value}))} placeholder="Search surah name or number…" style={{...fieldStyle,marginBottom:8}}/>
+                  <div style={{maxHeight:210,overflowY:"auto",border:"1.5px solid rgba(255,255,255,.1)",borderRadius:12,padding:6,marginBottom:14}}>
+                    {SURAH_NAMES.map((nm,i)=>{
+                      const n = i+1;
+                      if (q && !(nm.toLowerCase().includes(q) || String(n)===q)) return null;
+                      const on = form.mix_surahs.includes(n);
+                      return (
+                        <div key={n} onClick={()=>setForm(f=>({...f,mix_surahs:on?f.mix_surahs.filter(x=>x!==n):[...f.mix_surahs,n].sort((a,b)=>a-b)}))}
+                          style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:8,cursor:"pointer",background:on?`${GOLD}18`:"transparent"}}>
+                          <div style={{width:18,height:18,borderRadius:5,border:`2px solid ${on?GOLD:"rgba(255,255,255,.25)"}`,display:"flex",alignItems:"center",justifyContent:"center",color:GOLD,fontSize:12,fontWeight:900,flexShrink:0}}>{on?"✓":""}</div>
+                          <span style={{color:on?GOLD:"#fff",fontSize:13,fontWeight:on?700:500}}>{n}. {nm}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <Label>Mushaf pages (1–604)</Label>
+                  <input value={form.mix_pages} onChange={e=>setForm(f=>({...f,mix_pages:e.target.value}))} placeholder="e.g. 1-5, 20, 100-110, 582" style={fieldStyle}/>
+                  <div style={{display:"flex",gap:8,alignItems:"center",marginTop:8}}>
+                    <button type="button" onClick={addRandomPages} style={{background:`${GOLD}22`,border:`1.5px solid ${GOLD}`,color:GOLD,borderRadius:10,padding:"9px 14px",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"Cairo,sans-serif",whiteSpace:"nowrap"}}>🎲 Add random pages</button>
+                    <input type="number" min={1} max={100} value={form.mix_random_n} onChange={e=>setForm(f=>({...f,mix_random_n:Number(e.target.value)}))} style={{...fieldStyle,width:80,padding:"9px 10px"}}/>
+                    {form.mix_pages && <button type="button" onClick={()=>setForm(f=>({...f,mix_pages:""}))} style={{background:"transparent",border:"none",color:"rgba(255,255,255,.5)",fontSize:12,cursor:"pointer",fontFamily:"Cairo,sans-serif"}}>Clear</button>}
+                  </div>
+                  <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:6}}>Random pages skip anything already covered by the Juz you picked. Questions are drawn from everything combined — {form.mix_juz.length} Juz · {form.mix_surahs.length} Surahs · {mixPagesParsed.length} pages.</div>
+                </div>
+              );
+            })()}
             {form.scope_type==="custom_range"&&(
               <div style={{marginTop:8}}>
                 <Label>From — Surah : Ayah</Label>
