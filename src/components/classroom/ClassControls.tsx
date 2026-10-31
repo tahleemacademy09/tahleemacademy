@@ -57,6 +57,9 @@ interface ClassControlsProps {
       (including the admin who set it) can turn their camera back on until
       the admin reverts it from the three-dot menu. */
   camLocked?:            boolean;
+  /** Why the camera is locked: "audio_only" = room-wide audio-only mode, "no_video" = teacher turned
+      off "Allow student video". Only changes the wording of the tooltip/toast. */
+  camLockedReason?:      "audio_only" | "no_video";
   collapsed?:            boolean;
   /** "Hand raising" Class Setting from the lobby — when explicitly false for a
       non-privileged participant, the Raise Hand control is hidden. Defaults to
@@ -352,7 +355,7 @@ const SettingsModal = ({ onClose, room, initialTab }: { onClose: () => void; roo
    ───────────────────────────────────────────────────────────────────────── */
 const ClassControls = ({
   sessionId, onToggleChat, onToggleParticipants, onEndClass, onLeaveClass,
-  chatUnread, onLaunchPoll, onLaunchQuiz, isHostOverride, extraMenuItems, camLocked, collapsed,
+  chatUnread, onLaunchPoll, onLaunchQuiz, isHostOverride, extraMenuItems, camLocked, camLockedReason, collapsed,
   handRaiseEnabled = true, chatButtonTitle, chatButtonIcon,
 }: ClassControlsProps) => {
   const room = useRoomContext();
@@ -584,7 +587,9 @@ const ClassControls = ({
   // ── Cam toggle — busy-guarded ─────────────────────────────────────────
   const toggleCam = useCallback(async () => {
     if (camLocked) {
-      toast({ title: t("Camera disabled by teacher", "الكاميرا معطّلة من قبل المعلم"), description: t("Audio-only mode is active for everyone right now.", "وضع الصوت فقط مفعّل للجميع الآن.") });
+      toast(camLockedReason === "no_video"
+        ? { title: t("Video is turned off", "الفيديو متوقف"), description: t("The teacher has turned off student video for this class.", "قام المعلم بإيقاف فيديو الطلاب في هذا الدرس.") }
+        : { title: t("Camera disabled by teacher", "الكاميرا معطّلة من قبل المعلم"), description: t("Audio-only mode is active for everyone right now.", "وضع الصوت فقط مفعّل للجميع الآن.") });
       return;
     }
     if (camBusy.current) return;
@@ -599,7 +604,7 @@ const ClassControls = ({
     } finally {
       camBusy.current = false;
     }
-  }, [room, t, setCtxCamEnabled]);
+  }, [room, t, setCtxCamEnabled, camLocked, camLockedReason]);
 
   // ── Register live toggle functions into context refs ──────────────────
   useEffect(() => {
@@ -934,7 +939,8 @@ const ClassControls = ({
               ? { onClick: toggleCam }
               : longPressProps(camLP, () => { refreshDevices(); setCamMenuOpen(true); }, toggleCam))}
             style={{ ...sqBtn(camLocked ? { background: "rgba(255,255,255,.06)", color: "rgba(255,255,255,.35)", cursor: "not-allowed" } : {}), ...noSelect }}
-            title={camLocked ? t("Camera disabled by teacher", "الكاميرا معطّلة من قبل المعلم") : undefined}
+            aria-disabled={camLocked || undefined}
+            title={camLocked ? (camLockedReason === "no_video" ? t("Video is turned off by the teacher", "الفيديو متوقف من قبل المعلم") : t("Camera disabled by teacher", "الكاميرا معطّلة من قبل المعلم")) : undefined}
           >
             {camEnabled && !camLocked ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" style={camLocked ? undefined : { color: "#f28b82" }} />}
           </button>

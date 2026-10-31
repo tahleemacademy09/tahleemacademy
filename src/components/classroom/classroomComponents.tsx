@@ -841,6 +841,29 @@ export const AudioOnlyBridge = ({ active }: { active: boolean }) => {
   return null;
 };
 
+/* ══ CAMERA LOCK BRIDGE — inside LiveKitRoom ══
+   "Allow student video" OFF (teacher/admin class setting): while `locked` is true this keeps the
+   local camera off. It switches an already-running camera off the moment the teacher blocks video,
+   and also catches any other code path (lobby restore, audio-only recovery, reconnect re-publish)
+   that tries to put a camera track back up while video is blocked. Turning video back ON does NOT
+   re-enable anyone's camera — students opt in again themselves. */
+export const CameraLockBridge = ({ locked }: { locked: boolean }) => {
+  const room = useRoomContext();
+  useEffect(() => {
+    if (!locked || !room?.localParticipant) return;
+    const lp = room.localParticipant;
+    const off = () => {
+      if (!lp.isCameraEnabled) return;
+      queueMediaOp(room, () => lp.setCameraEnabled(false)).catch(() => {});
+    };
+    off();
+    const onPublished = (pub: any) => { if (pub?.source === Track.Source.Camera) off(); };
+    room.on(RoomEvent.LocalTrackPublished, onPublished);
+    return () => { room.off(RoomEvent.LocalTrackPublished, onPublished); };
+  }, [locked, room]);
+  return null;
+};
+
 /* ══ PROFILE SYNC BRIDGE — inside LiveKitRoom ══
    FIX ("when a user changes their profile pic it should show for everyone in
    the room"): ParticipantTile already reads name/avatar for REMOTE users from
@@ -966,8 +989,13 @@ export const TeacherMaterialFollower = ({ sessionId }: { sessionId: string | nul
         acceptMaterial(teacherEntry.material);
         acceptActivity(teacherEntry.activity);
       } else if (teacherEntry) {
-        // Teacher is present and says "not syncing" → close now.
-        if (materialRef.current) closeAll();
+        // Teacher is present and says "not syncing". A real stop also arrives instantly as a
+        // "material-close" broadcast, so presence only needs a short grace: a momentary presence
+        // flicker (teacher's channel re-tracking) used to close the lesson here and reopen it
+        // from the very beginning a moment later.
+        if (materialRef.current && !absentTimer) {
+          absentTimer = setTimeout(() => { absentTimer = null; if (materialRef.current) closeAll(); }, 3000);
+        }
       } else if (materialRef.current && !absentTimer) {
         // Teacher's presence vanished — usually a brief reconnect, NOT "close the material".
         // Wait before closing so a network blip doesn't make the lesson disappear and restart.
@@ -1716,7 +1744,7 @@ export const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false, isFirstJo
 };
 
 /* ══ ROOM DATA LISTENER ══ */
-export const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed,onEmojiReact,onGroupRecite,onHandRaise,onAdminMuteAll,onClassEnded,onForceAudioOnly,roomRef }:any) => {
+export const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed,onEmojiReact,onGroupRecite,onHandRaise,onAdminMuteAll,onClassEnded,onForceAudioOnly,onAllowVideo,roomRef }:any) => {
   const room = useRoomContext();
   useEffect(() => {
     // FIX BUG 10: Store room in a React ref instead of window.__lkRoom__ global.
@@ -1747,6 +1775,7 @@ export const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,on
         if(msg.type==="hand_raise")       onHandRaise?.(msg.identity||participant?.identity, msg.name, msg.raised);
         if(msg.type==="admin_mute_all")   onAdminMuteAll?.();
         if(msg.type==="force_audio_only") onForceAudioOnly?.(msg.active);
+        if(msg.type==="allow_video")      onAllowVideo?.(!!msg.allow);
         if(msg.type==="class_ended")      onClassEnded?.();
       } catch {}
     };
@@ -3183,9 +3212,13 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
   latestActivityRef.current=remoteActivity;
   const followingRef=useRef(following);
   useEffect(()=>{followingRef.current=following;},[following]);
+  // The exact position a click-through loop is currently heading to. While it runs, repeat updates for
+  // the SAME position (the teacher sends ~10/s plus a 2s heartbeat) must not restart it — a restarted
+  // loop clicks "Next" again straight away, overshoots the slide and then clicks back (the shake).
+  const drivingRef=useRef<{key:string;at:number}|null>(null);
   useEffect(()=>{
     setFrameReady(false);setJoined(false);
-    firstApplyRef.current=true;catchUpRef.current=false;
+    firstApplyRef.current=true;catchUpRef.current=false;drivingRef.current=null;
   },[htmlDoc]);
   // Never leave a student stuck behind the cover.
   useEffect(()=>{
@@ -3193,7 +3226,7 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
     const hard=setTimeout(()=>{
       try{const d=iframeRef.current?.contentDocument;if(d)unfreezeAnimations(d);}catch{}
       catchUpRef.current=false;setJoined(true);
-    },6000);
+    },12000); // longer than the 10s catch-up budget, so the cover never lifts while the jump is still running
     const noPos=setTimeout(()=>{if(!latestActivityRef.current)setJoined(true);},2500);
     return()=>{clearTimeout(hard);clearTimeout(noPos);};
   },[following,kind,htmlDoc,joined]);
@@ -3211,8 +3244,23 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
       catchUpRef.current=true;
       freezeAnimations(doc);
     }
-    const fast=catchUpRef.current;
     const hasReveal=remoteActivity.revealCount!=null&&remoteActivity.revealCount>0;
+    const stepNow=detectDotStep(doc);
+    const stepOk=remoteActivity.step==null||!stepNow||stepNow.step===remoteActivity.step;
+    const revealOk=!hasReveal||detectRevealCount(doc)>=remoteActivity.revealCount;
+    // Far behind the teacher mid-lesson (reconnect, tab was in the background, joined late after the
+    // cover lifted)? Don't replay the slides in front of the student: do the same hidden, instant jump
+    // a late joiner gets. A single slide/step behind is just followed normally.
+    if(!catchUpRef.current&&(!stepOk||!revealOk)){
+      const stepGap=remoteActivity.step!=null&&stepNow?Math.abs(remoteActivity.step-stepNow.step):0;
+      const revealGap=hasReveal?remoteActivity.revealCount-detectRevealCount(doc):0;
+      if(stepGap>1||revealGap>2){
+        catchUpRef.current=true;
+        freezeAnimations(doc);
+        setJoined(false);
+      }
+    }
+    const fast=catchUpRef.current;
     // The ONE place the student's scroll position is set while following (the reveal auto-scroll
     // below is switched off for followers, so two scrollers can no longer fight each other).
     const placeScroll=()=>{
@@ -3234,17 +3282,22 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
         setJoined(true);
       },320);
     };
-    const stepNow=detectDotStep(doc);
-    const stepOk=remoteActivity.step==null||!stepNow||stepNow.step===remoteActivity.step;
-    const revealOk=!hasReveal||detectRevealCount(doc)>=remoteActivity.revealCount;
     const key=`${remoteActivity.step??"-"}|${remoteActivity.revealCount??"-"}`;
     if(!stepOk||!revealOk){
+      const d=drivingRef.current;
+      // Already heading to exactly this position → let that loop finish; restarting it re-clicks.
+      if(d&&d.key===key&&Date.now()-d.at<(fast?10500:8500))return;
+      drivingRef.current={key,at:Date.now()};
       lastApplyKeyRef.current=key;
+      const finish=()=>{
+        if(drivingRef.current?.key===key)drivingRef.current=null;
+        done();
+      };
       const catchUpReveal=()=>{
         if(hasReveal){
           const step=detectDotStep(doc);
-          driveToReveal(doc,remoteActivity.revealCount,step?.step??-1,done,fast);
-        } else done();
+          driveToReveal(doc,remoteActivity.revealCount,step?.step??-1,finish,fast);
+        } else finish();
       };
       if(remoteActivity.step!=null){
         driveToStep(doc,remoteActivity.step,catchUpReveal,fast);
@@ -3253,6 +3306,7 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
       }
     } else {
       // Already on the teacher's slide/reveal: stop any loop still heading somewhere older.
+      drivingRef.current=null;
       cancelDrive(doc);
       if(fast){ lastApplyKeyRef.current=key; done(); }
       else if(hasReveal){
