@@ -3100,10 +3100,25 @@ export default function MustabaqahPage() {
       stage_types: stageTypes,
       scoring_config: scoringConfig,
     };
-    await supabase.from("musabaqah_competitions" as any)
+    const { data: savedRow, error: saveErr } = await supabase.from("musabaqah_competitions" as any)
       .update({ scope_config: newConfig, description: liveInstructions } as any)
-      .eq("id", competition.id);
-    setCompetition(c=>c?{...c,scope_config:newConfig,description:liveInstructions}:c);
+      .eq("id", competition.id)
+      .select()
+      .maybeSingle();
+    if (saveErr || !savedRow) {
+      // Previously this failed silently and still showed "Saved" — surface it instead.
+      toast({
+        title: "Couldn't save questions",
+        description: saveErr?.message || "No row was updated — your account may not have permission to edit this competition.",
+        variant: "destructive",
+      });
+      return false;
+    }
+    const updated = savedRow as unknown as Competition;
+    setCompetition(updated);
+    // Keep the list in sync, otherwise re-opening Settings / the arena from the
+    // list loads the OLD (stale) scope_config and the questions look unsaved.
+    setCompetitions(cs => cs.map(c => c.id===updated.id ? updated : c));
     broadcast("SETTINGS_UPDATE", { instructions: liveInstructions });
     setShowQSettings(false);
     const stageCount = Object.keys(stageQMap).length;
@@ -3111,6 +3126,7 @@ export default function MustabaqahPage() {
       ? `✅ Saved — ${stageCount} stage(s) with custom questions`
       : qList.length > 0 ? `✅ ${qList.length} flat custom questions saved` : "✅ Settings saved (random passages)";
     toast({ title: msg });
+    return true;
   };
 
   // ── AI question generation ───────────────────────────────────────
@@ -4183,7 +4199,7 @@ export default function MustabaqahPage() {
 
           <div style={{display:"flex",gap:8,paddingTop:6}}>
             <button onClick={()=>setView("list")} style={{flex:1,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:11,padding:"13px",cursor:"pointer",color:"rgba(255,255,255,.5)",fontWeight:700,fontSize:13,fontFamily:"Cairo,sans-serif"}}>Cancel</button>
-            <button onClick={async()=>{await saveQSettings();setView("list");}} style={{flex:2,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,border:"none",borderRadius:11,padding:"13px",cursor:"pointer",color:G,fontWeight:800,fontSize:13,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
+            <button onClick={async()=>{const ok=await saveQSettings();if(ok)setView("list");}} style={{flex:2,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,border:"none",borderRadius:11,padding:"13px",cursor:"pointer",color:G,fontWeight:800,fontSize:13,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
               <CheckCircle size={14}/> Save All Changes
             </button>
           </div>
