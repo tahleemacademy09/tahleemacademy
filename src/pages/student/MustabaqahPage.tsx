@@ -808,6 +808,60 @@ const CameraControls = ({ isActive, isJudge, videoAllowed, forceMuteToken }: { i
   );
 };
 
+/* ── Final-announcement mic/cam buttons ─────────────────────────────
+   Always visible to everyone. Students' buttons stay disabled (greyed,
+   not clickable) until the judge taps "allow talk" for them. */
+const TalkButtons = ({ canTalk, videoAllowed, micOn, camOn, onMic, onCam }: { canTalk:boolean; videoAllowed:boolean; micOn:boolean; camOn:boolean; onMic:()=>void; onCam:()=>void }) => {
+  const base = (on:boolean, enabled:boolean): React.CSSProperties => ({
+    background: on?`${GREEN}22`:"rgba(0,0,0,.5)", border:`1.5px solid ${on?GREEN:"rgba(255,255,255,.25)"}`, borderRadius:10,
+    padding:"8px 14px", cursor: enabled?"pointer":"not-allowed", opacity: enabled?1:.4,
+    color: on?GREEN:"rgba(255,255,255,.75)", display:"flex", flexDirection:"column", alignItems:"center", gap:2, fontFamily:"Cairo,sans-serif", fontWeight:700,
+  });
+  return (
+    <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+      <button disabled={!canTalk} onClick={onMic} title={canTalk?"Toggle microphone":"The judge has not allowed you to talk yet"} style={base(micOn,canTalk)}>
+        {micOn?<Mic size={18}/>:<MicOff size={18}/>}<span style={{fontSize:10}}>{micOn?"On":"Mic"}</span>
+      </button>
+      <button disabled={!canTalk||!videoAllowed} onClick={onCam} title={!videoAllowed?"Video is disabled for this competition":canTalk?"Toggle camera":"The judge has not allowed you to talk yet"} style={base(camOn,canTalk&&videoAllowed)}>
+        {camOn?<Video size={18}/>:<VideoOff size={18}/>}<span style={{fontSize:10}}>Cam</span>
+      </button>
+    </div>
+  );
+};
+
+// Lives inside <LiveKitRoom>. Judges can always talk; students only while allowed.
+const ResultsTalkControls = ({ canTalk, isJudge, videoAllowed }: { canTalk:boolean; isJudge:boolean; videoAllowed:boolean }) => {
+  const { localParticipant } = useLocalParticipant();
+  const room = useRoomContext();
+  const [micOn, setMicOn] = useState(false);
+  const [camOn, setCamOn] = useState(false);
+
+  // Judge announces with the mic open (same as the arena); camera stays off until tapped.
+  useEffect(() => {
+    if (!isJudge) return;
+    queueMediaOp(room, () => localParticipant.setMicrophoneEnabled(true)).then(()=>setMicOn(true)).catch(()=>{});
+  }, [isJudge]);
+
+  // Permission withdrawn (or never granted) → make sure mic and camera are off.
+  useEffect(() => {
+    if (canTalk) return;
+    queueMediaOp(room, () => localParticipant.setMicrophoneEnabled(false)).then(()=>setMicOn(false)).catch(()=>{});
+    queueMediaOp(room, () => localParticipant.setCameraEnabled(false)).then(()=>setCamOn(false)).catch(()=>{});
+  }, [canTalk]);
+
+  // Admin turned video off mid-session.
+  useEffect(() => {
+    if (videoAllowed || !camOn) return;
+    queueMediaOp(room, () => localParticipant.setCameraEnabled(false)).then(()=>setCamOn(false)).catch(()=>{});
+  }, [videoAllowed]);
+
+  return (
+    <TalkButtons canTalk={canTalk} videoAllowed={videoAllowed} micOn={micOn} camOn={camOn}
+      onMic={async()=>{ if(!canTalk) return; const n=!micOn; await queueMediaOp(room, () => localParticipant.setMicrophoneEnabled(n)); setMicOn(n); }}
+      onCam={async()=>{ if(!canTalk||!videoAllowed) return; const n=!camOn; await queueMediaOp(room, () => localParticipant.setCameraEnabled(n)); setCamOn(n); }}/>
+  );
+};
+
 // Tracks every connected user's live mic (on/off) + speaking state from inside
 // the LiveKitRoom context, and reports it up to the parent page (which lives
 // outside the room) so the roster can show a real mic status beside each name.
@@ -1052,6 +1106,7 @@ export default function MustabaqahPage() {
   const [showChat,       setShowChat]      = useState(false);
   const [chatMessages,   setChatMessages]  = useState<{id:string;name:string;text:string;time:string}[]>([]);
   const [chatInput,      setChatInput]     = useState("");
+  const [chatSeen,       setChatSeen]      = useState(0); // how many chat messages the viewer has already seen (unread badge)
   const [form, setForm] = useState({title:"",description:"",scope_type:"juz30",total_stages:5,time_limit:300,use_criteria:true,tiles_per_stage:10,use_custom_q:false,custom_questions:"",
     juz_number:1, hizb_number:1, range_surah_start:1, range_ayah_start:1, range_surah_end:1, range_ayah_end:7,
     mix_juz:[] as number[], mix_surahs:[] as number[], mix_pages:"", mix_surah_q:"", mix_random_n:5,
@@ -1248,6 +1303,19 @@ export default function MustabaqahPage() {
   };
 
   useEffect(()=>{ loadCompetitions(); },[]);
+
+  useEffect(()=>{ if (showChat) setChatSeen(chatMessages.length); },[showChat, chatMessages.length]);
+
+  // Ended session: non-judges can never sit in the arena — results only.
+  useEffect(()=>{
+    if (view==="arena" && competition?.status==="completed" && !canJudge) setView("results");
+  },[view, competition?.status, canJudge]);
+
+  // The final announcement has live mic/cam too — make sure we have a LiveKit token.
+  useEffect(()=>{
+    if (view==="results" && competition?.room_code && !livekitToken && !videoDisabled) fetchLkToken(competition.room_code);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[view, competition?.room_code]);
 
   // Self-heal: if this participant has been "called" for a while and hasn't
   // heard COUNTDOWN_START/START_RECITING (dropped websocket message), re-poll
@@ -1552,7 +1620,8 @@ export default function MustabaqahPage() {
         const mine=myParticipantRef.current;
         if (mine && payload.participant_id===mine.id) {
           setPickerStage(payload.stage);
-          toast({ title:`🎯 Stage ${payload.stage - 1} done: ${payload.prev_score} pts! Now Stage ${payload.stage} — pick your number` });
+          // Scores are never shown to participants between stages — only at the final announcement.
+          toast({ title:`🎯 Stage ${payload.stage - 1} complete! Now Stage ${payload.stage} — pick your number` });
           try{navigator.vibrate?.([200,100,200,100,400]);}catch{}
         }
       })
@@ -1596,6 +1665,16 @@ export default function MustabaqahPage() {
           toast({title:"🔇 Your mic was muted by the judge"});
         }
       })
+      .on("broadcast",{event:"SESSION_REVIVED"},()=>{
+        // Admin restored the session — reopen it for everyone still on the results page.
+        setCompetition(c=>c?{...c,status:"active",results_reveal_active:false,revealed_participant_ids:[]}:c);
+        setView(v=>v==="results"?"arena":v);
+        toast({title:"Session restored",description:"The admin has reopened this session."});
+      })
+      .on("broadcast",{event:"TALK_ALLOW"},({payload}:any)=>{
+        // Judge changed who may talk during the final announcement.
+        setCompetition(c=>c?{...c,scope_config:{...(c.scope_config||{}),talk_allowed_ids:payload.ids||[]}}:c);
+      })
       .on("broadcast",{event:"MIC_REQUEST"},({payload}:any)=>{
         setMicRequests(prev=>{
           const next=new Set(prev);
@@ -1610,9 +1689,9 @@ export default function MustabaqahPage() {
         setPickerStage(1);
         const mine=myParticipantRef.current;
         if (payload.participant_id===mine?.id) {
-          // payload.score is the grand total after all stages
-          setMyParticipant(p=>p?{...p,status:"completed",total_score:payload.score}:p);
-          toast({title:`🏆 All stages complete! Your total: ${payload.score} pts`});
+          // Total stays hidden from the participant until the final results are announced.
+          setMyParticipant(p=>p?{...p,status:"completed"}:p);
+          toast({title:"🏆 All stages complete! Results will be announced at the end."});
         }
       })
       .on("broadcast",{event:"STAGE_CHANGE"},({payload}:any)=>{
@@ -1879,6 +1958,24 @@ export default function MustabaqahPage() {
   const clearMicRequest = (p:Participant) => {
     setMicRequests(prev=>{ const next=new Set(prev); next.delete(p.id); return next; });
     broadcast("MIC_REQUEST",{participant_id:p.id, requesting:false});
+  };
+
+  // ── Final announcement: judge allows / stops a student from talking ──
+  // Stored on scope_config.talk_allowed_ids (no migration) + broadcast for instant effect.
+  const talkAllowedIds: string[] = competition?.scope_config?.talk_allowed_ids ?? [];
+  const saveTalkAllowed = async (ids:string[]) => {
+    if (!competition) return;
+    const newCfg = { ...(competition.scope_config||{}), talk_allowed_ids: ids };
+    setCompetition(c=>c?{...c,scope_config:newCfg}:c);
+    setCompetitions(cs=>cs.map(c=>c.id===competition.id?{...c,scope_config:newCfg}:c));
+    broadcast("TALK_ALLOW",{ids});
+    const { error } = await supabase.from("musabaqah_competitions" as any).update({ scope_config: newCfg } as any).eq("id", competition.id);
+    if (error) toast({title:"Couldn't save talk permission",description:error.message,variant:"destructive"});
+  };
+  const toggleTalkAllowed = (p:Participant) => {
+    const allowing = !talkAllowedIds.includes(p.id);
+    saveTalkAllowed(allowing ? [...talkAllowedIds, p.id] : talkAllowedIds.filter(x=>x!==p.id));
+    if (allowing && micRequests.has(p.id)) clearMicRequest(p); // request answered
   };
 
   // Judge taps a live (green) mic icon to force-mute that participant remotely.
@@ -2194,7 +2291,7 @@ export default function MustabaqahPage() {
           .eq("id", competition.id);
 
         // Notify participant: new stage starting
-        broadcast("NEXT_STAGE", { participant_id: activeP.id, stage: nextStage, prev_score: total });
+        broadcast("NEXT_STAGE", { participant_id: activeP.id, stage: nextStage });
         // Send new tiles
         broadcast("TILES_SHOWN", { tiles: newTiles, stage: nextStage, picker_participant_id: activeP.id });
         setTimeout(() => broadcast("TILES_SHOWN", { tiles: newTiles, stage: nextStage, picker_participant_id: activeP.id }), 800);
@@ -2208,7 +2305,7 @@ export default function MustabaqahPage() {
           stage_scores: newStageScores,
         } as any).eq("id", activeP.id);
 
-        broadcast("SCORE_SUBMITTED", { participant_id: activeP.id, score: newTotal });
+        broadcast("SCORE_SUBMITTED", { participant_id: activeP.id });
         toast({ title: `🏆 All ${competition.total_stages} stages complete! Total: ${newTotal} pts (mean of ${judgeCount} judge${judgeCount>1?"s":""})` });
 
         setActiveP(null); setCurAttempt(null); setShowScore(false);
@@ -2554,6 +2651,7 @@ export default function MustabaqahPage() {
   // countdown screen instead of the arena.
   const enterAsExistingParticipant = async (comp:Competition, participant:Participant) => {
     setCompetition(comp); setMyParticipant(participant); setUserRole("participant");
+    if (comp.status==="completed") { setView("results"); return; } // ended → results only, until the admin restores it
     if (participant.status==="pending" && needsWaitingGate(comp)) { setView("registered"); return; }
     setView("arena"); await fetchLkToken(comp.room_code);
   };
@@ -2684,7 +2782,12 @@ export default function MustabaqahPage() {
     toast({title:`👋 Welcome, ${participant.participant_name}!`});
   };
 
-  const openComp = async (comp:Competition) => {
+  const openComp = async (listComp:Competition) => {
+    // The list copy can be stale (loaded once on mount) — e.g. the admin ended or
+    // restored the session since. Always open from the live database row.
+    let comp = listComp;
+    const {data:fresh} = await supabase.from("musabaqah_competitions" as any).select("*").eq("id",listComp.id).maybeSingle();
+    if (fresh) { comp = fresh as Competition; setCompetitions(cs=>cs.map(c=>c.id===listComp.id?comp:c)); }
     clearUnreadInfo(comp.id);
     setCompetition(comp); setChatMessages([]); setUserRole(null);
     setJudgeTimerDuration(comp.time_limit_seconds);
@@ -2711,6 +2814,14 @@ export default function MustabaqahPage() {
       const codes = await ensureJudgeCodes(comp);
       setJudgeCodes(codes); setJudgeCodeInput("");
       setView("judge_gate");
+      return;
+    }
+    // Session ended by the admin: everyone except judges/admins only gets the results
+    // page until the admin restores the session.
+    if (comp.status==="completed") {
+      const {data:mine}=await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id",comp.id).eq("user_id",user?.id).maybeSingle();
+      if (mine) { setMyParticipant(mine as Participant); setUserRole("participant"); }
+      setView("results");
       return;
     }
     const {data}=await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id",comp.id).eq("user_id",user?.id).single();
@@ -4441,6 +4552,68 @@ export default function MustabaqahPage() {
             {!allRevealed && <p style={{color:GOLD,margin:"8px 0 0",fontSize:12,fontWeight:700}}>🎙️ Results being announced — {revealedSorted.length}/{sorted.length} revealed</p>}
           </div>
 
+          {/* ── Live mic / camera — icons are visible to everyone; students can tap only once the judge allows them ── */}
+          {(()=>{
+            const iCanTalk = isJudge || (!!myParticipant && talkAllowedIds.includes(myParticipant.id));
+            const hint = isJudge
+              ? "Tap the mic/camera icon beside a name below to allow or stop that student from talking."
+              : iCanTalk ? "The judge has allowed you to talk." : "Waiting for the judge to allow you to talk.";
+            const bar = (lkConnected && livekitToken && livekitUrl) ? (
+              <LiveKitRoom serverUrl={livekitUrl} token={livekitToken} connect={lkConnected} audio={false} video={false} options={LK_OPTIONS}>
+                <RoomAudioRenderer/>
+                <AudioEnabler onEnabled={()=>setAudioReady(true)}/>
+                <AudioStateSync onUpdate={setLiveMicStatus}/>
+                {!adminVideoOff && (
+                  <div style={{height:200,borderRadius:12,overflow:"hidden",marginBottom:10,position:"relative"}}>
+                    <LiveVideoGrid activeUserId={null} isJudge={isJudge} isObserver={isObserver} allowControls={false} activePStatus={null} pinnedUserId={pinnedUserId} onPin={setPinnedUserId}/>
+                  </div>
+                )}
+                <ResultsTalkControls canTalk={iCanTalk} isJudge={isJudge} videoAllowed={!adminVideoOff}/>
+              </LiveKitRoom>
+            ) : (
+              <TalkButtons canTalk={false} videoAllowed={!adminVideoOff} micOn={false} camOn={false} onMic={()=>{}} onCam={()=>{}}/>
+            );
+            return (
+              <div className="glass-card" style={{borderRadius:16,padding:14,marginBottom:24,position:"relative"}}>
+                <div style={{color:GOLD,fontWeight:800,fontSize:13,marginBottom:10,textAlign:"center"}}>🎙️ Live audio &amp; video</div>
+                {bar}
+                <div style={{color:"rgba(255,255,255,.4)",fontSize:11,textAlign:"center",marginTop:10}}>
+                  {videoDisabled || lkError ? "Live audio is not available right now." : hint}
+                </div>
+                {/* Student: ask the judge for permission to talk */}
+                {!isJudge && myParticipant && !iCanTalk && (()=>{
+                  const asking = micRequests.has(myParticipant.id);
+                  return (
+                    <button onClick={toggleMicRequest} style={{marginTop:10,width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,background:asking?`${GREEN}22`:"rgba(255,255,255,.05)",border:`1.5px solid ${asking?GREEN:"rgba(255,255,255,.2)"}`,borderRadius:10,padding:"10px",cursor:"pointer",color:asking?GREEN:"rgba(255,255,255,.7)",fontWeight:700,fontSize:13,fontFamily:"Cairo,sans-serif",animation:asking?"timerPulse 1.2s ease-in-out infinite":undefined}}>
+                      <Mic size={14}/>{asking?"✋ Request sent — tap to cancel":"✋ Request to talk"}
+                    </button>
+                  );
+                })()}
+                {/* Judge: pending requests with one-tap allow */}
+                {isJudge && (()=>{
+                  const asking = sorted.filter(p=>micRequests.has(p.id) && !talkAllowedIds.includes(p.id));
+                  if (!asking.length) return null;
+                  return (
+                    <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:6}}>
+                      <div style={{color:GREEN,fontWeight:800,fontSize:12}}>✋ Asking to talk ({asking.length})</div>
+                      {asking.map(p=>(
+                        <div key={p.id} style={{display:"flex",alignItems:"center",gap:8,background:`${GREEN}12`,border:`1px solid ${GREEN}44`,borderRadius:10,padding:"6px 10px"}}>
+                          <span style={{flex:1,minWidth:0,color:"#fff",fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</span>
+                          <button onClick={()=>toggleTalkAllowed(p)} style={{background:`${GREEN}33`,border:`1px solid ${GREEN}`,borderRadius:8,padding:"4px 10px",cursor:"pointer",color:GREEN,fontWeight:800,fontSize:12,fontFamily:"Cairo,sans-serif"}}>Allow</button>
+                          <button onClick={()=>clearMicRequest(p)} style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.15)",borderRadius:8,padding:"4px 8px",cursor:"pointer",color:"rgba(255,255,255,.5)",fontSize:12}}>✕</button>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+                {/* Quick reactions for everyone */}
+                <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"center",marginTop:12}}>
+                  {REACTION_EMOJIS.map(e=><button key={e} onClick={()=>sendReaction(e)} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",borderRadius:8,padding:"4px 8px",cursor:"pointer",fontSize:16}}>{e}</button>)}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* ── Judge-only announce controls ── */}
           {isJudge && !allRevealed && (
             <div className="glass-card" style={{borderRadius:16,padding:14,marginBottom:24}}>
@@ -4488,6 +4661,19 @@ export default function MustabaqahPage() {
                   <span style={{width:28,textAlign:"center",color:!done?"rgba(255,255,255,.2)":i<3?GOLD:"rgba(255,255,255,.25)",fontWeight:800}}>{!done?"🔒":i<3?medals[i]:`#${i+1}`}</span>
                   <Avatar name={p.participant_name} size={34} active={done&&i===0}/>
                   <div style={{flex:1,minWidth:0}}><div style={{color:"#fff",fontWeight:600,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>{p.school&&<div style={{color:"rgba(255,255,255,.3)",fontSize:11}}>{p.school}</div>}</div>
+                  {(()=>{
+                    const st = p.user_id ? liveMicStatus[p.user_id] : undefined;
+                    const live = !!st?.micOn; const allowed = talkAllowedIds.includes(p.id);
+                    return (
+                      <button disabled={!isJudge} onClick={()=>toggleTalkAllowed(p)}
+                        title={isJudge ? (allowed?"Tap to stop this student talking":"Tap to allow this student to talk") : (allowed?"Allowed to talk":"Not allowed to talk yet")}
+                        style={{display:"flex",gap:6,alignItems:"center",flexShrink:0,background:allowed?`${GREEN}18`:"rgba(255,255,255,.05)",border:`1px solid ${allowed?GREEN+"55":"rgba(255,255,255,.12)"}`,borderRadius:8,padding:"5px 8px",cursor:isJudge?"pointer":"default",color:live?GREEN:allowed?GOLD:"rgba(255,255,255,.3)",animation:live&&st?.speaking?"timerPulse .6s ease-in-out infinite":undefined}}>
+                        {micRequests.has(p.id)&&!allowed&&<span style={{fontSize:12}}>✋</span>}
+                        {live||allowed?<Mic size={14}/>:<MicOff size={14}/>}
+                        {allowed&&!adminVideoOff?<Video size={14}/>:<VideoOff size={14}/>}
+                      </button>
+                    );
+                  })()}
                   {done&&(
                     <div style={{display:"flex",gap:4}}>
                       {Array.from({length:competition?.total_stages||5},(_,si)=>(
@@ -4507,6 +4693,58 @@ export default function MustabaqahPage() {
             <button onClick={()=>setView("list")} style={{background:"rgba(255,255,255,.07)",color:"#fff",border:"1px solid rgba(255,255,255,.15)",borderRadius:12,padding:"12px 32px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontWeight:600,fontSize:14}}><ArrowLeft size={14} style={{marginRight:6,verticalAlign:"middle"}}/> Back to List</button>
           </div>
         </div>
+
+        {/* Floating reactions */}
+        <div style={{position:"fixed",inset:0,zIndex:9997,pointerEvents:"none",overflow:"hidden"}}>
+          {floatReactions.map(r=>(
+            <div key={r.id} style={{position:"absolute",bottom:90,left:`${r.x}%`,animation:"fadeSlideUp .4s ease both",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+              <div style={{fontSize:32,filter:"drop-shadow(0 2px 8px rgba(0,0,0,.6))",animation:"floatUp 3s ease-in-out both"}}>{r.emoji}</div>
+              <div style={{color:"rgba(255,255,255,.6)",fontSize:10,background:"rgba(0,0,0,.5)",borderRadius:20,padding:"2px 8px",whiteSpace:"nowrap"}}>{r.name}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Chat button */}
+        {!showChat && (
+          <button onClick={()=>setShowChat(true)} title="Open chat" style={{position:"fixed",bottom:18,right:18,zIndex:29,width:54,height:54,borderRadius:"50%",background:`linear-gradient(135deg,${GOLD},${GOLDD})`,border:"none",cursor:"pointer",fontSize:24,boxShadow:"0 6px 20px rgba(0,0,0,.45)"}}>
+            💬
+            {chatMessages.length>chatSeen&&<span style={{position:"absolute",top:-3,right:-3,background:RED,borderRadius:"50%",minWidth:18,height:18,padding:"0 4px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff",fontWeight:900}}>{Math.min(chatMessages.length-chatSeen,99)}</span>}
+          </button>
+        )}
+
+        {/* Chat panel */}
+        {showChat && (
+          <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:30,height:"55vh",maxWidth:600,margin:"0 auto",display:"flex",flexDirection:"column",background:"rgba(5,15,8,.97)",backdropFilter:"blur(24px)",borderTop:`1.5px solid ${GOLD}33`,borderRadius:"20px 20px 0 0",animation:"fadeSlideUp .3s ease"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
+              <span style={{color:GOLD,fontWeight:800,fontSize:14}}>💬 Live Chat</span>
+              <div style={{display:"flex",gap:4,flex:1,overflowX:"auto"}}>
+                {onlineUsers.slice(0,5).map((u,i)=>(
+                  <span key={i} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",borderRadius:20,padding:"2px 8px",fontSize:11,color:"rgba(255,255,255,.55)",whiteSpace:"nowrap",flexShrink:0}}>
+                    {u.role==="judge"?"⚖️":u.role==="participant"?"🎙️":"👁️"} {u.name}
+                  </span>
+                ))}
+              </div>
+              <button onClick={()=>setShowChat(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.35)",cursor:"pointer",fontSize:20,padding:0,lineHeight:1,flexShrink:0}}>✕</button>
+            </div>
+            <div style={{flex:1,overflowY:"auto",padding:"10px 14px",display:"flex",flexDirection:"column",gap:8}}>
+              {chatMessages.length===0
+                ? <div style={{textAlign:"center",color:"rgba(255,255,255,.2)",fontSize:13,marginTop:24}}>No messages yet — say salam! 👋</div>
+                : chatMessages.map(m=>(
+                  <div key={m.id} style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                    <div style={{width:28,height:28,borderRadius:"50%",background:`linear-gradient(135deg,${GOLD}88,${GOLDD}88)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:G,flexShrink:0}}>{m.name[0]?.toUpperCase()}</div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:"flex",alignItems:"baseline",gap:6}}><span style={{color:GOLD,fontWeight:700,fontSize:12}}>{m.name}</span><span style={{color:"rgba(255,255,255,.2)",fontSize:10}}>{m.time}</span></div>
+                      <div style={{color:"rgba(255,255,255,.8)",fontSize:13,marginTop:2,lineHeight:1.4,wordBreak:"break-word"}}>{m.text}</div>
+                    </div>
+                  </div>
+                ))}
+            </div>
+            <div style={{display:"flex",gap:8,padding:"10px 14px 14px",flexShrink:0,borderTop:"1px solid rgba(255,255,255,.07)"}}>
+              <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendChat()} placeholder="Type a message..." style={{flex:1,background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.12)",borderRadius:12,padding:"10px 14px",color:"#fff",fontSize:14,fontFamily:"Cairo,sans-serif",outline:"none"}}/>
+              <button onClick={sendChat} style={{background:`linear-gradient(135deg,${GOLD},${GOLDD})`,border:"none",borderRadius:12,padding:"10px 16px",cursor:"pointer",color:G,fontWeight:800,fontSize:14,fontFamily:"Cairo,sans-serif",flexShrink:0}}>Send</button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -4784,7 +5022,7 @@ export default function MustabaqahPage() {
                   <Avatar name={p.participant_name} size={26} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
                   <div style={{flex:1,minWidth:0}}><div style={{color:isActive?GOLD:"#fff",fontWeight:isActive?700:500,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div></div>
                   <span style={{color:STATUS_COLOR[p.status],fontSize:10,fontWeight:700,flexShrink:0}}>{STATUS_ICON[p.status]}</span>
-                  {p.total_score>0&&<span style={{color:GOLD,fontWeight:800,fontSize:11,flexShrink:0}}>{p.total_score}</span>}
+                  {canJudge&&p.total_score>0&&<span style={{color:GOLD,fontWeight:800,fontSize:11,flexShrink:0}}>{p.total_score}</span>}
                 </div>
               );
             })}
@@ -5169,7 +5407,7 @@ export default function MustabaqahPage() {
                               </span>
                             </div>
                             <span style={{color:STATUS_COLOR[p.status],fontSize:9,fontWeight:700,flexShrink:0}}>{STATUS_ICON[p.status]}</span>
-                            {p.total_score>0&&<span style={{color:GOLD,fontWeight:800,fontSize:11,flexShrink:0}}>{p.total_score}</span>}
+                            {canJudge&&p.total_score>0&&<span style={{color:GOLD,fontWeight:800,fontSize:11,flexShrink:0}}>{p.total_score}</span>}
                             {competition.status==="active"&&p.status==="waiting"&&!activeP&&(
                               <button onClick={()=>callParticipant(p)} style={{background:`${GOLD}18`,color:GOLD,border:`1px solid ${GOLD}44`,borderRadius:6,padding:"3px 7px",cursor:"pointer",fontWeight:700,fontSize:9,fontFamily:"Cairo,sans-serif",flexShrink:0}}>Call</button>
                             )}
@@ -5234,7 +5472,7 @@ export default function MustabaqahPage() {
                             </div>
                             <div style={{color:isActive?GOLD:"#fff",fontWeight:700,fontSize:9,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
                             <div style={{color:STATUS_COLOR[p.status],fontSize:8,fontWeight:700,marginTop:2}}>{STATUS_ICON[p.status]}</div>
-                            {p.total_score>0&&<div style={{color:GOLD,fontWeight:900,fontSize:12,marginTop:2}}>{p.total_score}</div>}
+                            {canJudge&&p.total_score>0&&<div style={{color:GOLD,fontWeight:900,fontSize:12,marginTop:2}}>{p.total_score}</div>}
                             {competition.status==="active"&&p.status==="waiting"&&!activeP&&(
                               <button onClick={()=>callParticipant(p)} style={{width:"100%",marginTop:4,background:`${GOLD}18`,color:GOLD,border:`1px solid ${GOLD}44`,borderRadius:6,padding:"3px 0",cursor:"pointer",fontWeight:700,fontSize:8,fontFamily:"Cairo,sans-serif"}}>Call</button>
                             )}
