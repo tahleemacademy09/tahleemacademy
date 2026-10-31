@@ -3652,7 +3652,10 @@ export default function MustabaqahPage() {
      LIST VIEW
   ════════════════════════════════════════════════════════════════ */
   if (view==="list") {
-    const shown=isJudge?competitions:competitions.filter(c=>c.status==="open"||c.status==="active");
+    // Everyone sees every competition, including finished ones (tapping a finished one opens
+    // its final results). Live/open ones are listed first, finished ones after, newest first.
+    const rank=(c:Competition)=>c.status==="completed"?1:0;
+    const shown=[...competitions].sort((a,b)=>rank(a)-rank(b));
     return (
       <div style={{minHeight:"100vh",position:"relative",fontFamily:"Cairo,sans-serif",overflowY:"auto",paddingBottom:80}}>
         <GlobalStyles/><IslamicBackground/>
