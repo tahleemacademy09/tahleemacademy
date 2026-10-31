@@ -386,6 +386,20 @@ const sessionStarted = (comp?: {session_start_at?:string|null}|null) => {
   return new Date(comp.session_start_at).getTime() <= Date.now();
 };
 
+/** A competition with a scheduled start time (or a registration deadline) keeps every newly
+ *  registered participant on the waiting screen until the start time arrives. Competitions made
+ *  before the mandatory start time existed have neither, and keep their old instant-join behaviour. */
+const needsWaitingGate = (comp?: {session_start_at?:string|null; registration_deadline?:string|null}|null) =>
+  !!(comp?.session_start_at || comp?.registration_deadline);
+/** ISO timestamp → value for <input type="datetime-local"> in the device's own time zone. */
+const toLocalInput = (iso?:string|null): string => {
+  if (!iso) return "";
+  const d = new Date(iso); if (isNaN(d.getTime())) return "";
+  const z = (n:number) => String(n).padStart(2,"0");
+  return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}`;
+};
+const fmtDT = (iso:string) => new Date(iso).toLocaleString("en",{weekday:"short",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
+
 const fmt = (s:number) => `${Math.floor(s/60)}:${String(Math.max(0,s)%60).padStart(2,"0")}`;
 
 const NumberTilePicker = ({ tiles, pickedNum, onPick, canPick, stage }: { tiles:Tile[]; pickedNum:number|null; onPick:(t:Tile)=>void; canPick:boolean; stage:number }) => (
@@ -1038,7 +1052,10 @@ export default function MustabaqahPage() {
   const [form, setForm] = useState({title:"",description:"",scope_type:"juz30",total_stages:5,time_limit:300,use_criteria:true,tiles_per_stage:10,use_custom_q:false,custom_questions:"",
     juz_number:1, hizb_number:1, range_surah_start:1, range_ayah_start:1, range_surah_end:1, range_ayah_end:7,
     mix_juz:[] as number[], mix_surahs:[] as number[], mix_pages:"", mix_surah_q:"", mix_random_n:5,
-    registration_deadline:"" as string, juz_options:[] as number[]});
+    registration_deadline:"" as string, session_start_at:"" as string, juz_options:[] as number[]});
+  // Editable copy of a competition's registration-time settings (Settings page).
+  const [editForm, setEditForm] = useState<any>(null);
+  const [savingDetails, setSavingDetails] = useState(false);
   const [joinForm, setJoinForm] = useState({room_code:"",name:profile?.full_name||"",school:profile?.school||"",juz:undefined as number|undefined});
   // Live countdown (ms remaining) to a competition's registration_deadline —
   // drives the "registered" holding screen: shows the countdown while it's
@@ -1106,6 +1123,19 @@ export default function MustabaqahPage() {
     return () => clearInterval(iv);
   }, [view, competition?.registration_deadline]);
 
+  // ── Keep the waiting screen in sync with the admin ─────────────────
+  // If the admin changes (or brings forward) the start time, the countdown here follows.
+  useEffect(() => {
+    if (view!=="registered" || !competition?.id) return;
+    let stop = false;
+    const poll = async () => {
+      const {data} = await supabase.from("musabaqah_competitions" as any).select("*").eq("id",competition.id).maybeSingle();
+      if (!stop && data) setCompetition(c => c ? { ...c, ...(data as any) } : c);
+    };
+    const iv = setInterval(poll, 8000);
+    return () => { stop = true; clearInterval(iv); };
+  }, [view, competition?.id]);
+
   // ── Session-start countdown ───────────────────────────────────────
   // Once the admin sets competition.session_start_at, tick down to it on the
   // holding/preroom screens. Independent of the registration-deadline
@@ -1144,6 +1174,13 @@ export default function MustabaqahPage() {
       if (p) setMyParticipant(p as Participant);
     }
     setSavedSession(null);
+    // Still waiting for the start time? Back to the countdown, not the room.
+    if (savedSession.userRole==="participant" && needsWaitingGate(comp as Competition)) {
+      const {data:pp} = savedSession.participantId
+        ? await supabase.from("musabaqah_participants" as any).select("*").eq("id",savedSession.participantId).single()
+        : {data:null};
+      if (pp && (pp as Participant).status==="pending") { setMyParticipant(pp as Participant); setView("registered"); return; }
+    }
     setView("arena");
     await fetchLkToken((comp as Competition).room_code);
   };
@@ -2438,6 +2475,14 @@ export default function MustabaqahPage() {
 
   const createCompetition = async () => {
     if (!form.title.trim()) { toast({title:"Enter a title"}); return; }
+    // The start date & time is mandatory — registered students count down to it and only
+    // see the Join button once it arrives.
+    if (!form.session_start_at) { toast({title:"Set the competition start date & time",description:"Students see a countdown to this moment.",variant:"destructive"}); return; }
+    const startMs = new Date(form.session_start_at).getTime();
+    if (!(startMs > Date.now())) { toast({title:"Start time must be in the future",variant:"destructive"}); return; }
+    if (form.registration_deadline && new Date(form.registration_deadline).getTime() > startMs) {
+      toast({title:"Registration deadline must be before the start time",variant:"destructive"}); return;
+    }
     setLoading(true);
     const room_code=genCode();
     const customQList = form.use_custom_q ? form.custom_questions.split("\n").map(s=>s.trim()).filter(Boolean) : [];
@@ -2479,6 +2524,7 @@ export default function MustabaqahPage() {
       status:"open",room_code,created_by:user?.id,use_criteria_scoring:form.use_criteria,
       registration_deadline: form.registration_deadline ? new Date(form.registration_deadline).toISOString() : null,
       registration_override: "auto",
+      session_start_at: new Date(form.session_start_at).toISOString(),
       juz_options: form.juz_options.length ? form.juz_options : null,
     } as any).select().single();
     setLoading(false);
@@ -2501,7 +2547,7 @@ export default function MustabaqahPage() {
   // countdown screen instead of the arena.
   const enterAsExistingParticipant = async (comp:Competition, participant:Participant) => {
     setCompetition(comp); setMyParticipant(participant); setUserRole("participant");
-    if (participant.status==="pending" && comp.registration_deadline) { setView("registered"); return; }
+    if (participant.status==="pending" && needsWaitingGate(comp)) { setView("registered"); return; }
     setView("arena"); await fetchLkToken(comp.room_code);
   };
 
@@ -2540,9 +2586,9 @@ export default function MustabaqahPage() {
     setLoading(false);
     if (!participant) { toast({title:"Failed",description:insertErr?.message||"Could not register",variant:"destructive"}); return; }
     setCompetition(compRow); setMyParticipant(participant as Participant); setUserRole("participant");
-    if (compRow.registration_deadline) {
+    if (needsWaitingGate(compRow)) {
       setView("registered");
-      toast({title:"🎉 Successfully registered!",description:"Awaiting session — you'll get a one-time look at your personal code next, so make sure to save it."});
+      toast({title:"🎉 Successfully registered!",description:"You'll wait here with a countdown — the Join button appears when the competition starts."});
     } else {
       setView("arena"); await fetchLkToken(code);
       toast({title:"✅ Registered!",description:`Your personal code is ${participant.access_code} — save it to come back anytime.`});
@@ -2563,16 +2609,19 @@ export default function MustabaqahPage() {
   // Admin/judge sets (or updates) the session start time — separate action
   // from the registration deadline. Notifies every registered/waiting
   // participant so the red-dot + notification center picks it up.
-  const setSessionStartTime = async () => {
-    if (!competition || !sessionTimeInput) return;
+  const setSessionStartTime = async (overrideIso?:string) => {
+    if (!competition) return;
+    const iso = overrideIso || (sessionTimeInput ? new Date(sessionTimeInput).toISOString() : "");
+    if (!iso) return;
     setLoading(true);
-    const iso = new Date(sessionTimeInput).toISOString();
     const { error } = await supabase.from("musabaqah_competitions" as any).update({ session_start_at: iso } as any).eq("id", competition.id);
     setLoading(false);
     if (error) { toast({title:"Couldn't set session time", description:error.message, variant:"destructive"}); return; }
     setCompetition(c => c ? { ...c, session_start_at: iso } : c);
     const when = new Date(iso).toLocaleString("en",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
-    toast({title:"⏰ Session time set", description:`Participants will see a countdown to ${when}.`});
+    toast(overrideIso
+      ? {title:"▶ Session started", description:"Registered participants can join now."}
+      : {title:"⏰ Session time set", description:`Participants will see a countdown to ${when}.`});
     const notifyIds = participants.filter(p=>p.role!=="judge"&&p.user_id).map(p=>p.user_id!);
     if (notifyIds.length) {
       await supabase.from("notifications" as any).insert(notifyIds.map(uid=>({
@@ -2584,8 +2633,31 @@ export default function MustabaqahPage() {
     }
   };
 
-  // Participant enters their personal access code once the registration
-  // deadline has passed, to "log in" to the waiting room.
+  // One-tap entry once the start time has arrived. Re-checks the start time against the
+  // database first, so a participant can't get in early on a stale screen.
+  const joinNow = async () => {
+    if (!competition || !myParticipant) return;
+    setLoading(true);
+    const {data:fresh} = await supabase.from("musabaqah_competitions" as any).select("*").eq("id",competition.id).maybeSingle();
+    const comp = (fresh ? { ...competition, ...(fresh as any) } : competition) as Competition;
+    setCompetition(comp);
+    if (!sessionStarted(comp)) {
+      setLoading(false);
+      toast({title:"Not started yet",description:"The start time was moved — keep this page open.",variant:"destructive"});
+      return;
+    }
+    let status = myParticipant.status;
+    if (status==="pending") {
+      await supabase.from("musabaqah_participants" as any).update({status:"waiting"}).eq("id",myParticipant.id);
+      status = "waiting";
+    }
+    setLoading(false);
+    setMyParticipant({ ...myParticipant, status });
+    setView("arena"); await fetchLkToken(comp.room_code);
+    toast({title:`👋 Welcome, ${myParticipant.participant_name}!`});
+  };
+
+  // Participant enters their personal access code (fallback, e.g. joining from another device).
   const activateWithCode = async () => {
     if (!competition) return;
     const codeInput = accessCodeInput.trim().toUpperCase();
@@ -2642,8 +2714,108 @@ export default function MustabaqahPage() {
   // ── Standalone Settings page (gear icon on a competition card) ────
   // Same live-editable Q-settings state used inside the arena drawer,
   // just entered directly from the list without opening the room.
+  const buildEditForm = (c: Competition) => {
+    const cfg:any = c.scope_config || {};
+    return {
+      title:c.title, description:c.description||"", scope_type:c.scope_type,
+      total_stages:c.total_stages, time_limit:c.time_limit_seconds, use_criteria:c.use_criteria_scoring ?? true,
+      tiles_per_stage:cfg.tiles_per_stage ?? 10, use_custom_q:false, custom_questions:"",
+      juz_number:cfg.juz_number ?? 1, hizb_number:cfg.hizb_number ?? 1,
+      range_surah_start:cfg.range_surah_start ?? 1, range_ayah_start:cfg.range_ayah_start ?? 1,
+      range_surah_end:cfg.range_surah_end ?? 1, range_ayah_end:cfg.range_ayah_end ?? 7,
+      mix_juz:(cfg.mix_juz||[]) as number[], mix_surahs:(cfg.mix_surahs||[]) as number[],
+      mix_pages:compactPageList(cfg.mix_pages||[]), mix_surah_q:"", mix_random_n:5,
+      registration_deadline:toLocalInput(c.registration_deadline), session_start_at:toLocalInput(c.session_start_at),
+      registration_override:c.registration_override || "auto", juz_options:(c.juz_options||[]) as number[],
+    };
+  };
+
+  // Save the registration-time details (title, scope, stages, timer, deadline, start time…).
+  // Re-fetches the ayah pool only when the scope itself actually changed.
+  const saveCompetitionDetails = async () => {
+    if (!competition || !editForm) return;
+    const ef = editForm;
+    if (!ef.title.trim()) { toast({title:"Enter a title"}); return; }
+    if (!ef.session_start_at) { toast({title:"Start date & time is required",variant:"destructive"}); return; }
+    const startMs = new Date(ef.session_start_at).getTime();
+    if (ef.registration_deadline && new Date(ef.registration_deadline).getTime() > startMs) {
+      toast({title:"Registration deadline must be before the start time",variant:"destructive"}); return;
+    }
+    if (ef.total_stages < competition.current_stage) {
+      toast({title:`Can't go below the current stage (${competition.current_stage})`,variant:"destructive"}); return;
+    }
+    const mixPages = parsePageList(ef.mix_pages);
+    if (ef.scope_type==="mix" && !ef.mix_juz.length && !ef.mix_surahs.length && !mixPages.length) {
+      toast({title:"Pick something for the mix",description:"Select at least one Juz, Surah or page range.",variant:"destructive"}); return;
+    }
+    setSavingDetails(true);
+    const cfgOld:any = competition.scope_config || {};
+    const sig = (v:any) => JSON.stringify([v.scope_type,v.juz_number,v.hizb_number,v.range_surah_start,v.range_ayah_start,v.range_surah_end,v.range_ayah_end,v.mix_juz,v.mix_surahs,v.mix_pages]);
+    const oldSig = sig({scope_type:competition.scope_type, juz_number:cfgOld.juz_number??1, hizb_number:cfgOld.hizb_number??1,
+      range_surah_start:cfgOld.range_surah_start??1, range_ayah_start:cfgOld.range_ayah_start??1, range_surah_end:cfgOld.range_surah_end??1, range_ayah_end:cfgOld.range_ayah_end??7,
+      mix_juz:cfgOld.mix_juz||[], mix_surahs:cfgOld.mix_surahs||[], mix_pages:cfgOld.mix_pages||[]});
+    const newSig = sig({...ef, mix_pages:mixPages});
+    let poolPatch:any = {};
+    if (oldSig !== newSig) {
+      if (["juz","hizb","custom_range","mix"].includes(ef.scope_type)) {
+        const pool = await fetchScopePool(ef.scope_type, {
+          juz_number:ef.juz_number, hizb_number:ef.hizb_number,
+          range_surah_start:ef.range_surah_start, range_ayah_start:ef.range_ayah_start,
+          range_surah_end:ef.range_surah_end, range_ayah_end:ef.range_ayah_end,
+          mix_juz:ef.mix_juz, mix_surahs:ef.mix_surahs, mix_pages:mixPages,
+        });
+        if (pool.length===0) {
+          setSavingDetails(false);
+          toast({title:"Couldn't fetch that scope",description:"Check your connection and try again.",variant:"destructive"}); return;
+        }
+        poolPatch = { scope_pool: [], ...compactScopePool(pool) };
+      } else {
+        poolPatch = { scope_pool: [], scope_pool_c: [], scope_surah_names: {} };
+      }
+    }
+    const newConfig = { ...cfgOld, ...poolPatch,
+      tiles_per_stage: ef.tiles_per_stage,
+      juz_number: ef.juz_number, hizb_number: ef.hizb_number,
+      range_surah_start: ef.range_surah_start, range_ayah_start: ef.range_ayah_start,
+      range_surah_end: ef.range_surah_end, range_ayah_end: ef.range_ayah_end,
+      mix_juz: ef.mix_juz, mix_surahs: ef.mix_surahs, mix_pages: mixPages };
+    const startIso = new Date(ef.session_start_at).toISOString();
+    const patch:any = {
+      title: ef.title.trim(), description: ef.description.trim(), scope_type: ef.scope_type, scope_config: newConfig,
+      total_stages: ef.total_stages, time_limit_seconds: ef.time_limit, use_criteria_scoring: ef.use_criteria,
+      registration_deadline: ef.registration_deadline ? new Date(ef.registration_deadline).toISOString() : null,
+      registration_override: ef.registration_override || "auto",
+      session_start_at: startIso,
+      juz_options: ef.juz_options.length ? ef.juz_options : null,
+    };
+    const { data, error } = await supabase.from("musabaqah_competitions" as any).update(patch).eq("id", competition.id).select().single();
+    setSavingDetails(false);
+    if (error) { toast({title:"Couldn't save",description:error.message,variant:"destructive"}); return; }
+    const updated = data as Competition;
+    setCompetition(updated);
+    setCompetitions(cs => cs.map(c => c.id===updated.id ? updated : c));
+    setLiveInstructions(updated.description||"");
+    setJudgeTimerDuration(updated.time_limit_seconds);
+    // Tell registered students if the start time moved.
+    const oldStart = competition.session_start_at ? new Date(competition.session_start_at).getTime() : 0;
+    if (oldStart !== new Date(startIso).getTime()) {
+      const {data:roster} = await supabase.from("musabaqah_participants" as any).select("user_id,role").eq("competition_id", competition.id);
+      const ids = ((roster||[]) as any[]).filter(r=>r.role!=="judge" && r.user_id).map(r=>r.user_id as string);
+      if (ids.length) {
+        await supabase.from("notifications" as any).insert(ids.map(uid=>({
+          user_id: uid, type: "musabaqah_session_set", priority: "normal",
+          title: "Musabaqah start time updated", title_ar: null,
+          message: `${updated.title}: the competition starts ${fmtDT(startIso)}.`, message_ar: null,
+          link: `/musabaqah/recitation?comp=${competition.id}`, is_read: false,
+        })));
+      }
+    }
+    toast({title:"✅ Competition details saved"});
+  };
+
   const openSettings = async (comp: Competition) => {
     setCompetition(comp);
+    setEditForm(buildEditForm(comp));
     const cqs: string[] = comp.scope_config?.custom_questions ?? [];
     setLiveCustomQ(cqs.join("\n"));
     setLiveInstructions(comp.description||"");
@@ -3075,6 +3247,196 @@ export default function MustabaqahPage() {
     } finally { setAiGenLoading(false); }
   };
 
+  const renderCompetitionFields = (fm:any, setFm:(u:(f:any)=>any)=>void, mode:"create"|"edit") => (
+    <>
+          <Inp label="Competition Title" value={fm.title} onChange={(e:any)=>setFm(f=>({...f,title:e.target.value}))} placeholder="e.g. Ramadan Tajweed Championship"/>
+          <Inp label="Description (optional)" value={fm.description} onChange={(e:any)=>setFm(f=>({...f,description:e.target.value}))} placeholder="Brief description..."/>
+          <div style={{marginBottom:16}}>
+            <Label>Quran Scope</Label>
+            {SCOPE_OPTIONS.map(s=>(
+              <div key={s.id} onClick={()=>setFm(f=>({...f,scope_type:s.id}))} style={{background:fm.scope_type===s.id?`${GOLD}18`:"rgba(255,255,255,.04)",border:`1.5px solid ${fm.scope_type===s.id?GOLD:"rgba(255,255,255,.1)"}`,borderRadius:12,padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
+                <div style={{width:18,height:18,borderRadius:"50%",border:`2px solid ${fm.scope_type===s.id?GOLD:"rgba(255,255,255,.25)"}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{fm.scope_type===s.id&&<div style={{width:8,height:8,borderRadius:"50%",background:GOLD}}/>}</div>
+                <div><div style={{color:fm.scope_type===s.id?GOLD:"#fff",fontWeight:700,fontSize:13}}>{s.label}</div><div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{s.desc}</div></div>
+              </div>
+            ))}
+            {fm.scope_type==="juz"&&(
+              <div style={{marginTop:8}}>
+                <Label>Which Juz?</Label>
+                <select value={fm.juz_number} onChange={e=>setFm(f=>({...f,juz_number:Number(e.target.value)}))} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}>
+                  {Array.from({length:30},(_,i)=>i+1).map(n=><option key={n} value={n} style={{background:G}}>Juz {n}</option>)}
+                </select>
+              </div>
+            )}
+            {fm.scope_type==="hizb"&&(
+              <div style={{marginTop:8}}>
+                <Label>Which Hizb?</Label>
+                <select value={fm.hizb_number} onChange={e=>setFm(f=>({...f,hizb_number:Number(e.target.value)}))} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}>
+                  {Array.from({length:60},(_,i)=>i+1).map(n=><option key={n} value={n} style={{background:G}}>Hizb {n}</option>)}
+                </select>
+              </div>
+            )}
+            {fm.scope_type==="mix"&&(()=>{
+              const mixPagesParsed = parsePageList(fm.mix_pages);
+              const q = fm.mix_surah_q.trim().toLowerCase();
+              const chip = (on:boolean):React.CSSProperties => ({background:on?`${GOLD}30`:"rgba(255,255,255,.05)",border:`1.5px solid ${on?GOLD:"rgba(255,255,255,.12)"}`,color:on?GOLD:"rgba(255,255,255,.75)",borderRadius:10,padding:"9px 0",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"Cairo,sans-serif"});
+              const fieldStyle:React.CSSProperties = {width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14};
+              const addRandomPages = () => {
+                const n = Math.max(1, Math.min(100, Number(fm.mix_random_n)||5));
+                const covered = new Set<number>(mixPagesParsed);
+                fm.mix_juz.forEach(j=>{ const [a,b]=juzPageRange(j); for (let x=a;x<=b;x++) covered.add(x); });
+                const free:number[] = []; for (let x=1;x<=604;x++) if (!covered.has(x)) free.push(x);
+                const picked = free.sort(()=>Math.random()-0.5).slice(0,n);
+                if (picked.length===0) { toast({title:"No pages left to add"}); return; }
+                setFm(f=>({...f,mix_pages:compactPageList([...mixPagesParsed,...picked].sort((a,b)=>a-b))}));
+              };
+              return (
+                <div style={{marginTop:8}}>
+                  <Label>Juz — tap to select several ({fm.mix_juz.length})</Label>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:6,marginBottom:14}}>
+                    {Array.from({length:30},(_,i)=>i+1).map(n=>{
+                      const on = fm.mix_juz.includes(n);
+                      return <button type="button" key={n} onClick={()=>setFm(f=>({...f,mix_juz:on?f.mix_juz.filter(x=>x!==n):[...f.mix_juz,n].sort((a,b)=>a-b)}))} style={chip(on)}>{n}</button>;
+                    })}
+                  </div>
+                  <Label>Surahs ({fm.mix_surahs.length} selected)</Label>
+                  <input value={fm.mix_surah_q} onChange={e=>setFm(f=>({...f,mix_surah_q:e.target.value}))} placeholder="Search surah name or number…" style={{...fieldStyle,marginBottom:8}}/>
+                  <div style={{maxHeight:210,overflowY:"auto",border:"1.5px solid rgba(255,255,255,.1)",borderRadius:12,padding:6,marginBottom:14}}>
+                    {SURAH_NAMES.map((nm,i)=>{
+                      const n = i+1;
+                      if (q && !(nm.toLowerCase().includes(q) || String(n)===q)) return null;
+                      const on = fm.mix_surahs.includes(n);
+                      return (
+                        <div key={n} onClick={()=>setFm(f=>({...f,mix_surahs:on?f.mix_surahs.filter(x=>x!==n):[...f.mix_surahs,n].sort((a,b)=>a-b)}))}
+                          style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:8,cursor:"pointer",background:on?`${GOLD}18`:"transparent"}}>
+                          <div style={{width:18,height:18,borderRadius:5,border:`2px solid ${on?GOLD:"rgba(255,255,255,.25)"}`,display:"flex",alignItems:"center",justifyContent:"center",color:GOLD,fontSize:12,fontWeight:900,flexShrink:0}}>{on?"✓":""}</div>
+                          <span style={{color:on?GOLD:"#fff",fontSize:13,fontWeight:on?700:500}}>{n}. {nm}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <Label>Mushaf pages (1–604)</Label>
+                  <input value={fm.mix_pages} onChange={e=>setFm(f=>({...f,mix_pages:e.target.value}))} placeholder="e.g. 1-5, 20, 100-110, 582" style={fieldStyle}/>
+                  <div style={{display:"flex",gap:8,alignItems:"center",marginTop:8}}>
+                    <button type="button" onClick={addRandomPages} style={{background:`${GOLD}22`,border:`1.5px solid ${GOLD}`,color:GOLD,borderRadius:10,padding:"9px 14px",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"Cairo,sans-serif",whiteSpace:"nowrap"}}>🎲 Add random pages</button>
+                    <input type="number" min={1} max={100} value={fm.mix_random_n} onChange={e=>setFm(f=>({...f,mix_random_n:Number(e.target.value)}))} style={{...fieldStyle,width:80,padding:"9px 10px"}}/>
+                    {fm.mix_pages && <button type="button" onClick={()=>setFm(f=>({...f,mix_pages:""}))} style={{background:"transparent",border:"none",color:"rgba(255,255,255,.5)",fontSize:12,cursor:"pointer",fontFamily:"Cairo,sans-serif"}}>Clear</button>}
+                  </div>
+                  <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:6}}>Random pages skip anything already covered by the Juz you picked. Questions are drawn from everything combined — {fm.mix_juz.length} Juz · {fm.mix_surahs.length} Surahs · {mixPagesParsed.length} pages.</div>
+                </div>
+              );
+            })()}
+            {fm.scope_type==="custom_range"&&(
+              <div style={{marginTop:8}}>
+                <Label>From — Surah : Ayah</Label>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                  <input type="number" min={1} max={114} value={fm.range_surah_start} onChange={e=>setFm(f=>({...f,range_surah_start:Number(e.target.value)}))} placeholder="Surah #" style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}/>
+                  <input type="number" min={1} value={fm.range_ayah_start} onChange={e=>setFm(f=>({...f,range_ayah_start:Number(e.target.value)}))} placeholder="Ayah #" style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}/>
+                </div>
+                <Label>To — Surah : Ayah</Label>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                  <input type="number" min={1} max={114} value={fm.range_surah_end} onChange={e=>setFm(f=>({...f,range_surah_end:Number(e.target.value)}))} placeholder="Surah #" style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}/>
+                  <input type="number" min={1} value={fm.range_ayah_end} onChange={e=>setFm(f=>({...f,range_ayah_end:Number(e.target.value)}))} placeholder="Ayah #" style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}/>
+                </div>
+                <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>Surah numbers 1–114. Leave ayah as 1 / max if unsure — we'll fetch the exact ayah counts when you create the competition.</div>
+              </div>
+            )}
+          </div>
+          <div style={{marginBottom:16}}>
+            <Label>Competition Start — Date &amp; Time *</Label>
+            <input type="datetime-local" required value={fm.session_start_at} min={mode==="create"?toLocalInput(new Date().toISOString()):undefined} onChange={e=>setFm(f=>({...f,session_start_at:e.target.value}))}
+              style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.45)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14,colorScheme:"dark"}}/>
+            <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>Required. Students who register see a countdown to this moment, and a Join button appears when it arrives. You can change it later in Settings, or start early from the room.</div>
+          </div>
+          <div style={{marginBottom:16}}>
+            <Label>Registration Deadline (optional)</Label>
+            <input type="datetime-local" value={fm.registration_deadline} onChange={e=>setFm(f=>({...f,registration_deadline:e.target.value}))}
+              style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14,colorScheme:"dark"}}/>
+            <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>Leave blank for no deadline. Registration auto-closes at this time — you can always reopen it manually from the arena. Must be before the start time.</div>
+          </div>
+          {mode==="edit"&&(
+            <div style={{marginBottom:16}}>
+              <Label>Registration</Label>
+              <div style={{display:"flex",gap:6}}>
+                {([["auto","Auto (by deadline)"],["open","Keep open"],["closed","Closed"]] as const).map(([v,l])=>(
+                  <button key={v} type="button" onClick={()=>setFm(f=>({...f,registration_override:v}))}
+                    style={{flex:1,background:fm.registration_override===v?`${GOLD}22`:"rgba(255,255,255,.05)",border:`1.5px solid ${fm.registration_override===v?GOLD:"rgba(255,255,255,.12)"}`,color:fm.registration_override===v?GOLD:"rgba(255,255,255,.6)",borderRadius:10,padding:"9px 4px",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"Cairo,sans-serif"}}>{l}</button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div style={{marginBottom:16}}>
+            <Label>Juz Options for Registration (optional)</Label>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {Array.from({length:30},(_,i)=>i+1).map(n=>{
+                const active = fm.juz_options.includes(n);
+                return (
+                  <button key={n} type="button" onClick={()=>setFm(f=>({...f,juz_options: active ? f.juz_options.filter(x=>x!==n) : [...f.juz_options,n]}))}
+                    style={{background:active?`${GOLD}22`:"rgba(255,255,255,.06)",border:`1.5px solid ${active?GOLD:"rgba(255,255,255,.15)"}`,borderRadius:8,padding:"6px 10px",cursor:"pointer",color:active?GOLD:"rgba(255,255,255,.6)",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:12,minWidth:34}}>
+                    {n}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>
+              {fm.juz_options.length ? `Participants will pick their Juz from ${fm.juz_options.length} option${fm.juz_options.length>1?"s":""} when they register.` : "Leave empty to skip Juz selection during registration."}
+            </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+            <div><Label>Total Stages</Label>
+              <select value={fm.total_stages} onChange={e=>setFm(f=>({...f,total_stages:Number(e.target.value)}))} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}>
+                {[1,2,3,4,5,6,7,8,10].map(n=><option key={n} value={n} style={{background:G}}>{n} Stage{n>1?"s":""}</option>)}
+              </select>
+            </div>
+            <div><Label>Timer per Student (sec)</Label>
+              <input type="number" value={fm.time_limit} onChange={e=>setFm(f=>({...f,time_limit:Number(e.target.value)}))} min={30} max={1800} step={30} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}/>
+            </div>
+          </div>
+          <div style={{marginBottom:16}}>
+            <Label>Tiles per stage</Label>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {[5,8,10,12,15,20,25,30].map(n=>(
+                <button key={n} onClick={()=>setFm(f=>({...f,tiles_per_stage:n}))}
+                  style={{background:fm.tiles_per_stage===n?`${GOLD}22`:"rgba(255,255,255,.06)",border:`1.5px solid ${fm.tiles_per_stage===n?GOLD:"rgba(255,255,255,.15)"}`,borderRadius:10,padding:"8px 16px",cursor:"pointer",color:fm.tiles_per_stage===n?GOLD:"rgba(255,255,255,.6)",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:13}}>
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+          {mode==="create"&&(<>
+          <div style={{marginBottom:fm.use_custom_q?0:16}}>
+            <div onClick={()=>setFm(f=>({...f,use_custom_q:!f.use_custom_q}))}
+              style={{background:fm.use_custom_q?`${GOLD}18`:"rgba(255,255,255,.04)",border:`1.5px solid ${fm.use_custom_q?GOLD:"rgba(255,255,255,.12)"}`,borderRadius:12,padding:"12px 16px",cursor:"pointer",display:"flex",alignItems:"center",gap:12}}>
+              <div style={{width:36,height:20,borderRadius:10,background:fm.use_custom_q?GOLD:"rgba(255,255,255,.15)",position:"relative",transition:"background .2s",flexShrink:0}}>
+                <div style={{position:"absolute",top:2,left:fm.use_custom_q?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
+              </div>
+              <div>
+                <div style={{color:fm.use_custom_q?GOLD:"#fff",fontWeight:700,fontSize:13}}>Custom Questions</div>
+                <div style={{color:"rgba(255,255,255,.35)",fontSize:11,marginTop:2}}>Enter your own question list instead of random Quran passages</div>
+              </div>
+            </div>
+          </div>
+          {fm.use_custom_q&&(
+            <div style={{marginBottom:16,marginTop:10}}>
+              <Label>Custom Questions (one per line)</Label>
+              <textarea value={fm.custom_questions} onChange={e=>setFm(f=>({...f,custom_questions:e.target.value}))}
+                placeholder={"Al-Baqarah 1-5\nAl-Imran 10-20\nAl-Fatiha full\n..."}
+                rows={6} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 16px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"vertical",lineHeight:1.6}}/>
+              <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>{fm.custom_questions.split("\n").filter(s=>s.trim()).length} questions</div>
+            </div>
+          )}
+          </>)}
+          <div style={{marginBottom:24}}>
+            <Label>Scoring Mode</Label>
+            {[{v:true,label:"Criteria scoring",desc:"Tajweed 40 + Hifdh 30 + Fluency 20 + Voice 10"},{v:false,label:"Simple score",desc:"0–100 direct score"}].map(o=>(
+              <div key={String(o.v)} onClick={()=>setFm(f=>({...f,use_criteria:o.v}))} style={{background:fm.use_criteria===o.v?`${GOLD}15`:"rgba(255,255,255,.04)",border:`1.5px solid ${fm.use_criteria===o.v?GOLD:"rgba(255,255,255,.1)"}`,borderRadius:12,padding:"12px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:12,marginBottom:8}}>
+                <div style={{width:18,height:18,borderRadius:"50%",border:`2px solid ${fm.use_criteria===o.v?GOLD:"rgba(255,255,255,.25)"}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{fm.use_criteria===o.v&&<div style={{width:8,height:8,borderRadius:"50%",background:GOLD}}/>}</div>
+                <div><div style={{color:fm.use_criteria===o.v?GOLD:"#fff",fontWeight:700,fontSize:13}}>{o.label}</div><div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{o.desc}</div></div>
+              </div>
+            ))}
+          </div>
+    </>
+  );
+
   /* ════════════════════════════════════════════════════════════════
      LIST VIEW
   ════════════════════════════════════════════════════════════════ */
@@ -3199,172 +3561,7 @@ export default function MustabaqahPage() {
             <div style={{width:44,height:44,borderRadius:14,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,display:"flex",alignItems:"center",justifyContent:"center"}}><Plus size={22} color={G}/></div>
             <div><h2 style={{color:"#fff",fontFamily:"Cinzel,sans-serif",fontSize:20,margin:0,fontWeight:600}}>New Competition</h2><p style={{color:"rgba(255,255,255,.35)",fontSize:12,margin:0}}>Set up your musabaqah</p></div>
           </div>
-          <Inp label="Competition Title" value={form.title} onChange={(e:any)=>setForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Ramadan Tajweed Championship"/>
-          <Inp label="Description (optional)" value={form.description} onChange={(e:any)=>setForm(f=>({...f,description:e.target.value}))} placeholder="Brief description..."/>
-          <div style={{marginBottom:16}}>
-            <Label>Quran Scope</Label>
-            {SCOPE_OPTIONS.map(s=>(
-              <div key={s.id} onClick={()=>setForm(f=>({...f,scope_type:s.id}))} style={{background:form.scope_type===s.id?`${GOLD}18`:"rgba(255,255,255,.04)",border:`1.5px solid ${form.scope_type===s.id?GOLD:"rgba(255,255,255,.1)"}`,borderRadius:12,padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
-                <div style={{width:18,height:18,borderRadius:"50%",border:`2px solid ${form.scope_type===s.id?GOLD:"rgba(255,255,255,.25)"}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{form.scope_type===s.id&&<div style={{width:8,height:8,borderRadius:"50%",background:GOLD}}/>}</div>
-                <div><div style={{color:form.scope_type===s.id?GOLD:"#fff",fontWeight:700,fontSize:13}}>{s.label}</div><div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{s.desc}</div></div>
-              </div>
-            ))}
-            {form.scope_type==="juz"&&(
-              <div style={{marginTop:8}}>
-                <Label>Which Juz?</Label>
-                <select value={form.juz_number} onChange={e=>setForm(f=>({...f,juz_number:Number(e.target.value)}))} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}>
-                  {Array.from({length:30},(_,i)=>i+1).map(n=><option key={n} value={n} style={{background:G}}>Juz {n}</option>)}
-                </select>
-              </div>
-            )}
-            {form.scope_type==="hizb"&&(
-              <div style={{marginTop:8}}>
-                <Label>Which Hizb?</Label>
-                <select value={form.hizb_number} onChange={e=>setForm(f=>({...f,hizb_number:Number(e.target.value)}))} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}>
-                  {Array.from({length:60},(_,i)=>i+1).map(n=><option key={n} value={n} style={{background:G}}>Hizb {n}</option>)}
-                </select>
-              </div>
-            )}
-            {form.scope_type==="mix"&&(()=>{
-              const mixPagesParsed = parsePageList(form.mix_pages);
-              const q = form.mix_surah_q.trim().toLowerCase();
-              const chip = (on:boolean):React.CSSProperties => ({background:on?`${GOLD}30`:"rgba(255,255,255,.05)",border:`1.5px solid ${on?GOLD:"rgba(255,255,255,.12)"}`,color:on?GOLD:"rgba(255,255,255,.75)",borderRadius:10,padding:"9px 0",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"Cairo,sans-serif"});
-              const fieldStyle:React.CSSProperties = {width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14};
-              const addRandomPages = () => {
-                const n = Math.max(1, Math.min(100, Number(form.mix_random_n)||5));
-                const covered = new Set<number>(mixPagesParsed);
-                form.mix_juz.forEach(j=>{ const [a,b]=juzPageRange(j); for (let x=a;x<=b;x++) covered.add(x); });
-                const free:number[] = []; for (let x=1;x<=604;x++) if (!covered.has(x)) free.push(x);
-                const picked = free.sort(()=>Math.random()-0.5).slice(0,n);
-                if (picked.length===0) { toast({title:"No pages left to add"}); return; }
-                setForm(f=>({...f,mix_pages:compactPageList([...mixPagesParsed,...picked].sort((a,b)=>a-b))}));
-              };
-              return (
-                <div style={{marginTop:8}}>
-                  <Label>Juz — tap to select several ({form.mix_juz.length})</Label>
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:6,marginBottom:14}}>
-                    {Array.from({length:30},(_,i)=>i+1).map(n=>{
-                      const on = form.mix_juz.includes(n);
-                      return <button type="button" key={n} onClick={()=>setForm(f=>({...f,mix_juz:on?f.mix_juz.filter(x=>x!==n):[...f.mix_juz,n].sort((a,b)=>a-b)}))} style={chip(on)}>{n}</button>;
-                    })}
-                  </div>
-                  <Label>Surahs ({form.mix_surahs.length} selected)</Label>
-                  <input value={form.mix_surah_q} onChange={e=>setForm(f=>({...f,mix_surah_q:e.target.value}))} placeholder="Search surah name or number…" style={{...fieldStyle,marginBottom:8}}/>
-                  <div style={{maxHeight:210,overflowY:"auto",border:"1.5px solid rgba(255,255,255,.1)",borderRadius:12,padding:6,marginBottom:14}}>
-                    {SURAH_NAMES.map((nm,i)=>{
-                      const n = i+1;
-                      if (q && !(nm.toLowerCase().includes(q) || String(n)===q)) return null;
-                      const on = form.mix_surahs.includes(n);
-                      return (
-                        <div key={n} onClick={()=>setForm(f=>({...f,mix_surahs:on?f.mix_surahs.filter(x=>x!==n):[...f.mix_surahs,n].sort((a,b)=>a-b)}))}
-                          style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:8,cursor:"pointer",background:on?`${GOLD}18`:"transparent"}}>
-                          <div style={{width:18,height:18,borderRadius:5,border:`2px solid ${on?GOLD:"rgba(255,255,255,.25)"}`,display:"flex",alignItems:"center",justifyContent:"center",color:GOLD,fontSize:12,fontWeight:900,flexShrink:0}}>{on?"✓":""}</div>
-                          <span style={{color:on?GOLD:"#fff",fontSize:13,fontWeight:on?700:500}}>{n}. {nm}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <Label>Mushaf pages (1–604)</Label>
-                  <input value={form.mix_pages} onChange={e=>setForm(f=>({...f,mix_pages:e.target.value}))} placeholder="e.g. 1-5, 20, 100-110, 582" style={fieldStyle}/>
-                  <div style={{display:"flex",gap:8,alignItems:"center",marginTop:8}}>
-                    <button type="button" onClick={addRandomPages} style={{background:`${GOLD}22`,border:`1.5px solid ${GOLD}`,color:GOLD,borderRadius:10,padding:"9px 14px",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"Cairo,sans-serif",whiteSpace:"nowrap"}}>🎲 Add random pages</button>
-                    <input type="number" min={1} max={100} value={form.mix_random_n} onChange={e=>setForm(f=>({...f,mix_random_n:Number(e.target.value)}))} style={{...fieldStyle,width:80,padding:"9px 10px"}}/>
-                    {form.mix_pages && <button type="button" onClick={()=>setForm(f=>({...f,mix_pages:""}))} style={{background:"transparent",border:"none",color:"rgba(255,255,255,.5)",fontSize:12,cursor:"pointer",fontFamily:"Cairo,sans-serif"}}>Clear</button>}
-                  </div>
-                  <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:6}}>Random pages skip anything already covered by the Juz you picked. Questions are drawn from everything combined — {form.mix_juz.length} Juz · {form.mix_surahs.length} Surahs · {mixPagesParsed.length} pages.</div>
-                </div>
-              );
-            })()}
-            {form.scope_type==="custom_range"&&(
-              <div style={{marginTop:8}}>
-                <Label>From — Surah : Ayah</Label>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-                  <input type="number" min={1} max={114} value={form.range_surah_start} onChange={e=>setForm(f=>({...f,range_surah_start:Number(e.target.value)}))} placeholder="Surah #" style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}/>
-                  <input type="number" min={1} value={form.range_ayah_start} onChange={e=>setForm(f=>({...f,range_ayah_start:Number(e.target.value)}))} placeholder="Ayah #" style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}/>
-                </div>
-                <Label>To — Surah : Ayah</Label>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                  <input type="number" min={1} max={114} value={form.range_surah_end} onChange={e=>setForm(f=>({...f,range_surah_end:Number(e.target.value)}))} placeholder="Surah #" style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}/>
-                  <input type="number" min={1} value={form.range_ayah_end} onChange={e=>setForm(f=>({...f,range_ayah_end:Number(e.target.value)}))} placeholder="Ayah #" style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}/>
-                </div>
-                <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>Surah numbers 1–114. Leave ayah as 1 / max if unsure — we'll fetch the exact ayah counts when you create the competition.</div>
-              </div>
-            )}
-          </div>
-          <div style={{marginBottom:16}}>
-            <Label>Registration Deadline (optional)</Label>
-            <input type="datetime-local" value={form.registration_deadline} onChange={e=>setForm(f=>({...f,registration_deadline:e.target.value}))}
-              style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14,colorScheme:"dark"}}/>
-            <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>Leave blank for no deadline. Registration auto-closes at this time — you can always reopen it manually from the arena. Once closed, participants wait for you to separately set a session start time (from the room, before entering) — that's what actually opens their code-entry gate.</div>
-          </div>
-          <div style={{marginBottom:16}}>
-            <Label>Juz Options for Registration (optional)</Label>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {Array.from({length:30},(_,i)=>i+1).map(n=>{
-                const active = form.juz_options.includes(n);
-                return (
-                  <button key={n} type="button" onClick={()=>setForm(f=>({...f,juz_options: active ? f.juz_options.filter(x=>x!==n) : [...f.juz_options,n]}))}
-                    style={{background:active?`${GOLD}22`:"rgba(255,255,255,.06)",border:`1.5px solid ${active?GOLD:"rgba(255,255,255,.15)"}`,borderRadius:8,padding:"6px 10px",cursor:"pointer",color:active?GOLD:"rgba(255,255,255,.6)",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:12,minWidth:34}}>
-                    {n}
-                  </button>
-                );
-              })}
-            </div>
-            <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>
-              {form.juz_options.length ? `Participants will pick their Juz from ${form.juz_options.length} option${form.juz_options.length>1?"s":""} when they register.` : "Leave empty to skip Juz selection during registration."}
-            </div>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
-            <div><Label>Total Stages</Label>
-              <select value={form.total_stages} onChange={e=>setForm(f=>({...f,total_stages:Number(e.target.value)}))} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}>
-                {[1,2,3,4,5,6,7,8,10].map(n=><option key={n} value={n} style={{background:G}}>{n} Stage{n>1?"s":""}</option>)}
-              </select>
-            </div>
-            <div><Label>Timer per Student (sec)</Label>
-              <input type="number" value={form.time_limit} onChange={e=>setForm(f=>({...f,time_limit:Number(e.target.value)}))} min={30} max={1800} step={30} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}/>
-            </div>
-          </div>
-          <div style={{marginBottom:16}}>
-            <Label>Tiles per stage</Label>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {[5,8,10,12,15,20,25,30].map(n=>(
-                <button key={n} onClick={()=>setForm(f=>({...f,tiles_per_stage:n}))}
-                  style={{background:form.tiles_per_stage===n?`${GOLD}22`:"rgba(255,255,255,.06)",border:`1.5px solid ${form.tiles_per_stage===n?GOLD:"rgba(255,255,255,.15)"}`,borderRadius:10,padding:"8px 16px",cursor:"pointer",color:form.tiles_per_stage===n?GOLD:"rgba(255,255,255,.6)",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:13}}>
-                  {n}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div style={{marginBottom:form.use_custom_q?0:16}}>
-            <div onClick={()=>setForm(f=>({...f,use_custom_q:!f.use_custom_q}))}
-              style={{background:form.use_custom_q?`${GOLD}18`:"rgba(255,255,255,.04)",border:`1.5px solid ${form.use_custom_q?GOLD:"rgba(255,255,255,.12)"}`,borderRadius:12,padding:"12px 16px",cursor:"pointer",display:"flex",alignItems:"center",gap:12}}>
-              <div style={{width:36,height:20,borderRadius:10,background:form.use_custom_q?GOLD:"rgba(255,255,255,.15)",position:"relative",transition:"background .2s",flexShrink:0}}>
-                <div style={{position:"absolute",top:2,left:form.use_custom_q?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
-              </div>
-              <div>
-                <div style={{color:form.use_custom_q?GOLD:"#fff",fontWeight:700,fontSize:13}}>Custom Questions</div>
-                <div style={{color:"rgba(255,255,255,.35)",fontSize:11,marginTop:2}}>Enter your own question list instead of random Quran passages</div>
-              </div>
-            </div>
-          </div>
-          {form.use_custom_q&&(
-            <div style={{marginBottom:16,marginTop:10}}>
-              <Label>Custom Questions (one per line)</Label>
-              <textarea value={form.custom_questions} onChange={e=>setForm(f=>({...f,custom_questions:e.target.value}))}
-                placeholder={"Al-Baqarah 1-5\nAl-Imran 10-20\nAl-Fatiha full\n..."}
-                rows={6} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 16px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"vertical",lineHeight:1.6}}/>
-              <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>{form.custom_questions.split("\n").filter(s=>s.trim()).length} questions</div>
-            </div>
-          )}
-          <div style={{marginBottom:24}}>
-            <Label>Scoring Mode</Label>
-            {[{v:true,label:"Criteria scoring",desc:"Tajweed 40 + Hifdh 30 + Fluency 20 + Voice 10"},{v:false,label:"Simple score",desc:"0–100 direct score"}].map(o=>(
-              <div key={String(o.v)} onClick={()=>setForm(f=>({...f,use_criteria:o.v}))} style={{background:form.use_criteria===o.v?`${GOLD}15`:"rgba(255,255,255,.04)",border:`1.5px solid ${form.use_criteria===o.v?GOLD:"rgba(255,255,255,.1)"}`,borderRadius:12,padding:"12px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:12,marginBottom:8}}>
-                <div style={{width:18,height:18,borderRadius:"50%",border:`2px solid ${form.use_criteria===o.v?GOLD:"rgba(255,255,255,.25)"}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{form.use_criteria===o.v&&<div style={{width:8,height:8,borderRadius:"50%",background:GOLD}}/>}</div>
-                <div><div style={{color:form.use_criteria===o.v?GOLD:"#fff",fontWeight:700,fontSize:13}}>{o.label}</div><div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{o.desc}</div></div>
-              </div>
-            ))}
-          </div>
+          {renderCompetitionFields(form, setForm, "create")}
           <button className="gold-btn" onClick={createCompetition} disabled={loading} style={{width:"100%",color:G,border:"none",borderRadius:14,padding:"16px",fontWeight:800,cursor:loading?"not-allowed":"pointer",fontSize:16,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8,opacity:loading?.7:1}}>
             {loading?<Loader2 size={18} style={{animation:"spin 1s linear infinite"}}/>:<Trophy size={18}/>}{loading?"Creating...":"Create Competition"}
           </button>
@@ -3424,11 +3621,11 @@ export default function MustabaqahPage() {
      The participant's own access code is shown ONCE — right after registering,
      while code_acknowledged is still false — then never displayed again. */
   if (view==="registered" && competition && myParticipant) {
-    const deadlineDone = deadlinePassed(competition);
     const hasSessionTime = !!competition.session_start_at;
     const sessionDone = sessionStarted(competition);
-    const phase: "beforeDeadline"|"awaitingSession"|"countingToSession"|"readyToEnter" =
-      !deadlineDone ? "beforeDeadline" : !hasSessionTime ? "awaitingSession" : !sessionDone ? "countingToSession" : "readyToEnter";
+    const phase: "awaitingSession"|"countingToSession"|"readyToEnter" =
+      !hasSessionTime ? "awaitingSession" : !sessionDone ? "countingToSession" : "readyToEnter";
+    const regStillOpen = !!competition.registration_deadline && !deadlinePassed(competition);
     const needsCodeReveal = !myParticipant.code_acknowledged;
 
     const regSecs = regCountdownMs !== null ? Math.floor(regCountdownMs/1000) : 0;
@@ -3436,13 +3633,12 @@ export default function MustabaqahPage() {
     const sesSecs = sessionCountdownMs !== null ? Math.floor(sessionCountdownMs/1000) : 0;
     const sdd = Math.floor(sesSecs/86400), shh = Math.floor((sesSecs%86400)/3600), smm = Math.floor((sesSecs%3600)/60), sss = sesSecs%60;
 
-    const headline = needsCodeReveal ? "🎉" : phase==="readyToEnter" ? "🔓" : phase==="countingToSession" ? "⏳" : phase==="awaitingSession" ? "🕊️" : "🎉";
+    const headline = phase==="readyToEnter" ? "🔓" : needsCodeReveal ? "🎉" : phase==="countingToSession" ? "⏳" : "🕊️";
     const subtitle =
+      phase==="readyToEnter" ? "It's time! Tap Join to enter the waiting room." :
       needsCodeReveal ? "Successfully registered — save your code below." :
-      phase==="beforeDeadline" ? "You're registered! Registration is still open." :
-      phase==="awaitingSession" ? "Successfully registered — awaiting session." :
-      phase==="countingToSession" ? "Session starts soon — hang tight." :
-      "The session has started — enter your code to join the waiting room.";
+      phase==="awaitingSession" ? "Successfully registered — the start time hasn't been set yet." :
+      "You're registered! The competition hasn't started yet.";
 
     return (
       <div style={{minHeight:"100vh",position:"relative",fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -3487,32 +3683,22 @@ export default function MustabaqahPage() {
             </div>
           )}
 
-          {!needsCodeReveal && phase==="beforeDeadline" && (
-            <div>
-              <Label>Registration Closes In</Label>
-              <div style={{display:"flex",justifyContent:"center",gap:10,marginBottom:6}}>
-                {[[rdd,"d"],[rhh,"h"],[rmm,"m"],[rss,"s"]].map(([v,u]:any)=>(
-                  <div key={u} style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,padding:"10px 14px",minWidth:56}}>
-                    <div style={{color:GOLD,fontWeight:900,fontSize:22,fontFamily:"Cinzel,serif"}}>{String(v).padStart(2,"0")}</div>
-                    <div style={{color:"rgba(255,255,255,.35)",fontSize:10,textTransform:"uppercase"}}>{u}</div>
-                  </div>
-                ))}
-              </div>
-              <p style={{color:"rgba(255,255,255,.35)",fontSize:11,margin:0}}>Once registration closes you'll wait here for the admin to schedule the session.</p>
-            </div>
+          {regStillOpen && phase!=="readyToEnter" && (
+            <p style={{color:"rgba(255,255,255,.3)",fontSize:11,margin:"0 0 14px"}}>Registration closes {fmtDT(competition.registration_deadline!)}.</p>
           )}
 
-          {!needsCodeReveal && phase==="awaitingSession" && (
+          {phase==="awaitingSession" && (
             <div>
               <div style={{fontSize:28,marginBottom:6}}>🕊️</div>
-              <p style={{color:"rgba(255,255,255,.4)",fontSize:12,margin:0}}>The admin hasn't scheduled the session yet. Come back once it's set — you'll see a countdown here.</p>
+              <p style={{color:"rgba(255,255,255,.4)",fontSize:12,margin:0}}>The admin hasn't set the start time yet. This page updates by itself — you'll see the countdown as soon as it's set.</p>
             </div>
           )}
 
-          {!needsCodeReveal && phase==="countingToSession" && (
+          {phase==="countingToSession" && (
             <div>
-              <Label>Session Starts In</Label>
-              <div style={{display:"flex",justifyContent:"center",gap:10,marginBottom:6}}>
+              <Label>Competition Starts In</Label>
+              <div style={{color:"rgba(255,255,255,.55)",fontSize:12,marginBottom:10}}>{fmtDT(competition.session_start_at!)}</div>
+              <div style={{display:"flex",justifyContent:"center",gap:10,marginBottom:8}}>
                 {[[sdd,"d"],[shh,"h"],[smm,"m"],[sss,"s"]].map(([v,u]:any)=>(
                   <div key={u} style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,padding:"10px 14px",minWidth:56}}>
                     <div style={{color:GOLD,fontWeight:900,fontSize:22,fontFamily:"Cinzel,serif"}}>{String(v).padStart(2,"0")}</div>
@@ -3520,19 +3706,24 @@ export default function MustabaqahPage() {
                   </div>
                 ))}
               </div>
-              <p style={{color:"rgba(255,255,255,.35)",fontSize:11,margin:0}}>Come back once the countdown ends and enter your code.</p>
+              <p style={{color:"rgba(255,255,255,.35)",fontSize:11,margin:0}}>The Join button appears here when the countdown ends — keep this page open.</p>
             </div>
           )}
 
-          {!needsCodeReveal && phase==="readyToEnter" && (
+          {phase==="readyToEnter" && (
             <div style={{marginTop:8}}>
-              <p style={{color:"rgba(255,255,255,.3)",fontSize:11,margin:"0 0 10px"}}>Your code is <span style={{color:GOLD,fontWeight:800,letterSpacing:2}}>{myParticipant.access_code}</span> — tap below to copy, or type it in.</p>
-              <Label>Enter Your Code</Label>
-              <input value={accessCodeInput} onChange={e=>setAccessCodeInput(e.target.value.toUpperCase())} placeholder="CODE" maxLength={6}
-                style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.3)",borderRadius:14,padding:"14px 20px",color:"#fff",fontSize:22,fontWeight:800,letterSpacing:6,textAlign:"center",textTransform:"uppercase",marginBottom:14}}/>
-              <button className="gold-btn" onClick={activateWithCode} disabled={loading} style={{width:"100%",color:G,border:"none",borderRadius:14,padding:"16px",fontWeight:800,cursor:loading?"not-allowed":"pointer",fontSize:16,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8,opacity:loading?.7:1}}>
-                {loading?<Loader2 size={18} style={{animation:"spin 1s linear infinite"}}/>:<LogIn size={18}/>}{loading?"Entering...":"Enter Waiting Room"}
+              <div style={{color:GREEN,fontWeight:800,fontSize:14,marginBottom:12}}>The competition has started</div>
+              <button className="gold-btn" onClick={joinNow} disabled={loading} style={{width:"100%",color:G,border:"none",borderRadius:14,padding:"16px",fontWeight:800,cursor:loading?"not-allowed":"pointer",fontSize:16,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8,opacity:loading?.7:1}}>
+                {loading?<Loader2 size={18} style={{animation:"spin 1s linear infinite"}}/>:<LogIn size={18}/>}{loading?"Joining...":"Join Now"}
               </button>
+              <details style={{marginTop:16,textAlign:"left"}}>
+                <summary style={{color:"rgba(255,255,255,.4)",fontSize:12,cursor:"pointer",textAlign:"center"}}>Joining from another device? Use your code</summary>
+                <div style={{marginTop:10}}>
+                  <input value={accessCodeInput} onChange={e=>setAccessCodeInput(e.target.value.toUpperCase())} placeholder="CODE" maxLength={6}
+                    style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.3)",borderRadius:14,padding:"12px 16px",color:"#fff",fontSize:20,fontWeight:800,letterSpacing:6,textAlign:"center",textTransform:"uppercase",marginBottom:10}}/>
+                  <button onClick={activateWithCode} disabled={loading} style={{width:"100%",background:"rgba(255,255,255,.07)",color:"#fff",border:"1.5px solid rgba(201,168,76,.3)",borderRadius:12,padding:"12px",fontWeight:700,cursor:"pointer",fontSize:14,fontFamily:"Cairo,sans-serif"}}>Enter with code</button>
+                </div>
+              </details>
             </div>
           )}
         </div>
@@ -3585,7 +3776,7 @@ export default function MustabaqahPage() {
             )}
           </div>
 
-          {hasDeadline && isAdmin && (
+          {isAdmin && (
             <div className="glass-card" style={{borderRadius:18,padding:"16px 18px",marginBottom:16}}>
               <div style={{color:"rgba(255,255,255,.4)",fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Session Start Time</div>
               {competition.session_start_at ? (
@@ -3594,7 +3785,7 @@ export default function MustabaqahPage() {
                     {new Date(competition.session_start_at).toLocaleString("en",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}
                   </div>
                   <div style={{color: sessionStarted(competition) ? GREEN : "rgba(255,255,255,.35)", fontSize:11, fontWeight:700}}>
-                    {sessionStarted(competition) ? "Session has started — the code gate is open" : "Countdown showing to registered participants"}
+                    {sessionStarted(competition) ? "Session has started — registered participants can join" : "Countdown showing to registered participants"}
                   </div>
                 </div>
               ) : (
@@ -3603,16 +3794,22 @@ export default function MustabaqahPage() {
               <div style={{display:"flex",gap:8}}>
                 <input type="datetime-local" value={sessionTimeInput} onChange={e=>setSessionTimeInput(e.target.value)}
                   style={{flex:1,background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"10px 12px",color:"#fff",fontSize:13,colorScheme:"dark"}}/>
-                <button onClick={setSessionStartTime} disabled={loading||!sessionTimeInput} style={{background:`linear-gradient(135deg,${GOLD},${GOLDD})`,color:G,border:"none",borderRadius:12,padding:"0 16px",cursor:loading||!sessionTimeInput?"not-allowed":"pointer",fontWeight:800,fontSize:13,fontFamily:"Cairo,sans-serif",opacity:loading||!sessionTimeInput?.6:1}}>
+                <button onClick={()=>setSessionStartTime()} disabled={loading||!sessionTimeInput} style={{background:`linear-gradient(135deg,${GOLD},${GOLDD})`,color:G,border:"none",borderRadius:12,padding:"0 16px",cursor:loading||!sessionTimeInput?"not-allowed":"pointer",fontWeight:800,fontSize:13,fontFamily:"Cairo,sans-serif",opacity:loading||!sessionTimeInput?.6:1}}>
                   {competition.session_start_at?"Update":"Set"}
                 </button>
               </div>
+              {!sessionStarted(competition) && (
+                <button onClick={()=>{ if (window.confirm("Start the session now? Registered participants will be able to join immediately.")) setSessionStartTime(new Date().toISOString()); }}
+                  style={{width:"100%",marginTop:10,background:"rgba(34,197,94,.12)",border:"1.5px solid rgba(34,197,94,.45)",color:GREEN,borderRadius:12,padding:"11px",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"Cairo,sans-serif"}}>
+                  ▶ Start now
+                </button>
+              )}
             </div>
           )}
 
           {/* Teacher/judge (non-admin) view: read-only countdown to the session — no
               ability to set or edit the time, just watch it and wait for the code gate. */}
-          {hasDeadline && !isAdmin && (
+          {!isAdmin && (
             <div className="glass-card" style={{borderRadius:18,padding:"16px 18px",marginBottom:16,textAlign:"center"}}>
               <div style={{color:"rgba(255,255,255,.4)",fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Session Start Time</div>
               {!competition.session_start_at ? (
@@ -3701,10 +3898,25 @@ export default function MustabaqahPage() {
           <div style={{display:"flex",alignItems:"center",gap:9,marginBottom:16}}>
             <div style={{width:36,height:36,borderRadius:10,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Wand2 size={16} color={G}/></div>
             <div>
-              <div style={{color:"#fff",fontWeight:800,fontSize:16}}>Question Settings</div>
-              <div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{competition.title} — set questions & instructions per stage</div>
+              <div style={{color:"#fff",fontWeight:800,fontSize:16}}>Competition Settings</div>
+              <div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{competition.title} — details, registration, questions & scoring</div>
             </div>
           </div>
+
+          {/* ── Competition details — everything chosen at registration time, editable ── */}
+          {editForm && (
+            <div className="glass-card" style={{borderRadius:16,padding:"16px 16px 18px",marginBottom:16}}>
+              <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:14}}>
+                <Settings size={13} color={GOLD}/>
+                <div style={{color:GOLD,fontWeight:800,fontSize:12,letterSpacing:.5}}>Competition Details</div>
+              </div>
+              {renderCompetitionFields(editForm, setEditForm, "edit")}
+              <button className="gold-btn" onClick={saveCompetitionDetails} disabled={savingDetails} style={{width:"100%",color:G,border:"none",borderRadius:14,padding:"14px",fontWeight:800,cursor:savingDetails?"not-allowed":"pointer",fontSize:15,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8,opacity:savingDetails?.7:1}}>
+                {savingDetails?<Loader2 size={16} style={{animation:"spin 1s linear infinite"}}/>:<CheckCircle size={16}/>}{savingDetails?"Saving...":"Save details"}
+              </button>
+              <div style={{color:"rgba(255,255,255,.3)",fontSize:10,marginTop:8,lineHeight:1.6}}>Changing the scope rebuilds the question pool. Questions you already wrote per stage are kept. Moving the start time notifies registered students.</div>
+            </div>
+          )}
 
           {/* ── Judge codes — generate as many seats as you need, one per judge ── */}
           <div className="glass-card" style={{borderRadius:16,padding:"14px 16px",marginBottom:16}}>
