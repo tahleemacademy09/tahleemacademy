@@ -1755,7 +1755,6 @@ export default function MustabaqahPage() {
         setCompetition(c=>c?{...c, revealed_participant_ids:payload.revealed_participant_ids}:c);
         const p = participantsRef.current.find(pp=>pp.id===payload.participant_id);
         if (p) { setRevealSpotlight({participant:p, rank:payload.rank}); setTimeout(()=>setRevealSpotlight(null),4500); }
-        playStageWin();
       })
       .on("broadcast",{event:"REVEAL_START"},({payload}:any)=>{
         setCompetition(c=>c?{...c, results_reveal_active:true, revealed_participant_ids:payload.revealed_participant_ids??[]}:c);
@@ -2493,7 +2492,6 @@ export default function MustabaqahPage() {
       broadcast("REVEAL_RESULT", { participant_id: participantId, rank, revealed_participant_ids: updated });
       const p = participants.find(pp=>pp.id===participantId);
       if (p) { setRevealSpotlight({participant:p, rank}); setTimeout(()=>setRevealSpotlight(null),4500); }
-      playStageWin();
     } finally { setRevealBusy(false); }
   };
 
@@ -4660,17 +4658,17 @@ export default function MustabaqahPage() {
             {sorted.map((p,i)=>{
               const done = revealedIds.includes(p.id);
               return (
-                <div key={p.id} className={done?"anim-slide-up":undefined} style={{padding:"12px 20px",borderBottom:"1px solid rgba(255,255,255,.05)",display:"flex",alignItems:"center",gap:12,background:done&&i<3?"rgba(201,168,76,.04)":"transparent",opacity:done?1:.5}}>
-                  <span style={{width:28,textAlign:"center",color:!done?"rgba(255,255,255,.2)":i<3?GOLD:"rgba(255,255,255,.25)",fontWeight:800}}>{!done?"🔒":i<3?medals[i]:`#${i+1}`}</span>
+                <div key={p.id} className={done?"anim-slide-up":undefined} style={{padding:"10px 12px",borderBottom:"1px solid rgba(255,255,255,.05)",display:"flex",flexWrap:"wrap",alignItems:"center",gap:"6px 8px",background:done&&i<3?"rgba(201,168,76,.04)":"transparent",opacity:done?1:.5}}>
+                  <span style={{width:26,flexShrink:0,textAlign:"center",color:!done?"rgba(255,255,255,.2)":i<3?GOLD:"rgba(255,255,255,.25)",fontWeight:800}}>{!done?"🔒":i<3?medals[i]:`#${i+1}`}</span>
                   <Avatar name={p.participant_name} size={34} active={done&&i===0}/>
-                  <div style={{flex:1,minWidth:0}}><div style={{color:"#fff",fontWeight:600,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>{p.school&&<div style={{color:"rgba(255,255,255,.3)",fontSize:11}}>{p.school}</div>}</div>
+                  <div style={{flex:"1 1 80px",minWidth:0}}><div style={{color:"#fff",fontWeight:600,fontSize:13,lineHeight:1.25,wordBreak:"break-word"}}>{p.participant_name}</div>{p.school&&<div style={{color:"rgba(255,255,255,.3)",fontSize:10}}>{p.school}</div>}</div>
                   {(()=>{
                     const st = p.user_id ? liveMicStatus[p.user_id] : undefined;
                     const live = !!st?.micOn; const allowed = talkAllowedIds.includes(p.id);
                     return (
                       <button disabled={!isJudge} onClick={()=>toggleTalkAllowed(p)}
                         title={isJudge ? (allowed?"Tap to stop this student talking":"Tap to allow this student to talk") : (allowed?"Allowed to talk":"Not allowed to talk yet")}
-                        style={{display:"flex",gap:6,alignItems:"center",flexShrink:0,background:allowed?`${GREEN}18`:"rgba(255,255,255,.05)",border:`1px solid ${allowed?GREEN+"55":"rgba(255,255,255,.12)"}`,borderRadius:8,padding:"5px 8px",cursor:isJudge?"pointer":"default",color:live?GREEN:allowed?GOLD:"rgba(255,255,255,.3)",animation:live&&st?.speaking?"timerPulse .6s ease-in-out infinite":undefined}}>
+                        style={{display:"flex",gap:4,alignItems:"center",flexShrink:0,background:allowed?`${GREEN}18`:"rgba(255,255,255,.05)",border:`1px solid ${allowed?GREEN+"55":"rgba(255,255,255,.12)"}`,borderRadius:8,padding:"4px 6px",cursor:isJudge?"pointer":"default",color:live?GREEN:allowed?GOLD:"rgba(255,255,255,.3)",animation:live&&st?.speaking?"timerPulse .6s ease-in-out infinite":undefined}}>
                         {micRequests.has(p.id)&&!allowed&&<span style={{fontSize:12}}>✋</span>}
                         {live||allowed?<Mic size={14}/>:<MicOff size={14}/>}
                         {allowed&&!adminVideoOff?<Video size={14}/>:<VideoOff size={14}/>}
@@ -4678,16 +4676,17 @@ export default function MustabaqahPage() {
                     );
                   })()}
                   {done&&(
-                    <div style={{display:"flex",gap:4}}>
+                    // Stage scores drop onto their own line so nothing runs off a phone screen.
+                    <div style={{order:9,flexBasis:"100%",display:"flex",gap:4,paddingLeft:34}}>
                       {Array.from({length:competition?.total_stages||5},(_,si)=>(
-                        <div key={si} style={{background:"rgba(255,255,255,.05)",borderRadius:6,padding:"2px 7px",textAlign:"center",fontSize:11}}>
+                        <div key={si} style={{flex:"1 1 0",minWidth:0,background:"rgba(255,255,255,.05)",borderRadius:6,padding:"2px 2px",textAlign:"center",fontSize:11}}>
                           <div style={{color:GOLD,fontWeight:700}}>{(p.stage_scores||{})[si+1]??"-"}</div>
                           <div style={{color:"rgba(255,255,255,.2)",fontSize:9}}>S{si+1}</div>
                         </div>
                       ))}
                     </div>
                   )}
-                  <div style={{color:done?GOLD:"rgba(255,255,255,.2)",fontWeight:900,fontSize:18,minWidth:40,textAlign:"right"}}>{done?p.total_score:"?"}</div>
+                  <div style={{color:done?GOLD:"rgba(255,255,255,.2)",fontWeight:900,fontSize:17,minWidth:34,textAlign:"right",flexShrink:0}}>{done?p.total_score:"?"}</div>
                 </div>
               );
             })}
