@@ -50,6 +50,7 @@ import { buzz } from "@/lib/ctcNative";
 import { buzzPattern } from "@/lib/liveMistake";
 import { gradeFromCtc, registerCtcGrading, ctcScoringFor, ctcAnalysisFor } from "@/lib/ctcGrading";
 import { refTokens } from "@/lib/recitationCompare";
+import { mergeCtcTarteel } from "@/lib/ctcTarteelMerge";
 // Transcription is 100% on-device Tarteel (no Groq / no server upload): the whole recording is transcribed once on Stop.
 
 // ── Lazy surah lookup ─────────────────────────────────────────────────────
@@ -2183,7 +2184,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       // Transcribe in the background AS the student recites (nothing is shown until Finished), so only
       // the last few seconds are left to process at Stop.
       try { bgRef.current?.cancel(); } catch { /* noop */ }
-      if (!ctcEnabled()) try { const bg = new ChunkTranscriber(stream, mime, 8000, 4000, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(!!info); bgRef.current = bg; } catch { bgRef.current = null; }
+      if (!ctcEnabled() || tarteelAssistAllowed()) try { const bg = new ChunkTranscriber(stream, mime, 8000, 4000, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(!!info); bgRef.current = bg; } catch { bgRef.current = null; }
       // Silent background processing: tap the same mic stream and let the worker check the audio WHILE the student
       // recites, so the result is ready within seconds of Stop. Nothing is shown on screen. Never blocks or breaks
       // recording — if anything here fails, the full check on Stop still runs.
@@ -2241,10 +2242,17 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     try {
       const refWords = refTokens(pageAyahsRef.current.map((a: any) => a.text).join(" "));
       if (!refWords.length) return "__NO_API__";
-      const res = await ctcEngine.check(blob, refWords, { basmalah: "auto" });
+      const [res, tText] = await Promise.all([ctcEngine.check(blob, refWords, { basmalah: "auto" }), tarteelTranscript(blob)]);
       ctcResRef.current = res; setCtcRes(res);
-      transcribeMsRef.current = res.ms;
-      const tx = registerCtcGrading(res.greedy, gradeFromCtc(refWords, res.words, res.heard));
+      let graded = gradeFromCtc(refWords, res.words, res.heard);
+      if (tText) {   // both engines ran → merge into the single final grading
+        const tWords = analyzeRecitation(refWords.join(" "), tText).words;
+        const m = mergeCtcTarteel(graded, res.words.map((w) => w.mean), tWords);
+        console.info("[HifdhDaily] CTC+Tarteel merge:", m.stats, "rescued words:", m.rescuedIdx);
+        graded = m.words;
+        transcribeMsRef.current = null;   // show the real wait after Stop
+      } else transcribeMsRef.current = res.ms;
+      const tx = registerCtcGrading(res.greedy, graded);
       try {   // keep the heard text + timing so a reload shows the same detailed result
         const r2 = (n: number | null) => (n == null ? null : Math.round(n * 100) / 100);
         const slim = { ...res, words: res.words.map((w) => ({ mean: r2(w.mean), min: r2(w.min), start: null, end: null })) };
@@ -2257,6 +2265,35 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       lastTranscribeErrorRef.current = `ctc_${msg}`; setCtcErr(msg);
       return "__NO_API__";
     }
+  };
+
+  // CTC + Tarteel run TOGETHER on the same recording and ONE merged result is shown (no instant-then-upgrade).
+  // Tarteel is skipped on low-memory phones or with localStorage ctc_assist = "0"; if it fails, CTC alone is used.
+  const tarteelAssistAllowed = (): boolean => {
+    try {
+      if (localStorage.getItem("ctc_assist") === "0") return false;
+      const mem = (navigator as any).deviceMemory;
+      return !(typeof mem === "number" && mem <= 3);
+    } catch { return true; }
+  };
+  // Tarteel transcribes the recording in 8 s chunks WHILE the student recites (same as CTC's live run), so at Stop only the
+  // tail is left and both results are ready almost together. Falls back to the whole recording if the chunks failed.
+  const tarteelTranscript = async (blob: Blob): Promise<string | null> => {
+    const bg = bgRef.current; bgRef.current = null;
+    if (!tarteelAssistAllowed()) { try { bg?.cancel(); } catch { /* noop */ } return null; }
+    try {
+      await tarteelEngine.load(true);
+      if (bg && !(forceWholeRef.current && blob.size <= 30 * 1048576)) {
+        try {
+          const r = await bg.finish();
+          const looped = /(\S+\s+\S+)(\s+\1){2,}/.test(normalizeArabic(r.text));
+          const long = blob.size > 10 * 1048576;
+          if (r.text.trim() && (long || (r.ok && !looped))) return r.text.trim();
+        } catch (e) { console.warn("[HifdhDaily] background Tarteel failed, whole recording:", e); }
+      } else { try { bg?.cancel(); } catch { /* noop */ } }
+      const t = await tarteelEngine.transcribeBlob(blob);
+      return t.error ? null : (t.text ?? "").trim() || null;
+    } catch (e) { console.warn("[HifdhDaily] Tarteel unavailable, CTC only:", e); return null; }
   };
 
   const bgRef = useRef<ChunkTranscriber | null>(null);
