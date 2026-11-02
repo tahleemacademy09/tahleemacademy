@@ -51,6 +51,7 @@ import { buzzPattern } from "@/lib/liveMistake";
 import { gradeFromCtc, registerCtcGrading, ctcScoringFor, ctcAnalysisFor } from "@/lib/ctcGrading";
 import { refTokens } from "@/lib/recitationCompare";
 import { mergeCtcTarteel } from "@/lib/ctcTarteelMerge";
+import { buildTarteelWords } from "@/lib/tarteelScore";
 // Transcription is 100% on-device Tarteel (no Groq / no server upload): the whole recording is transcribed once on Stop.
 
 // ── Lazy surah lookup ─────────────────────────────────────────────────────
@@ -2184,7 +2185,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       // Transcribe in the background AS the student recites (nothing is shown until Finished), so only
       // the last few seconds are left to process at Stop.
       try { bgRef.current?.cancel(); } catch { /* noop */ }
-      if (!ctcEnabled() || tarteelAssistAllowed()) try { const bg = new ChunkTranscriber(stream, mime, 8000, 4000, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(!!info); bgRef.current = bg; } catch { bgRef.current = null; }
+      if (ctcEnabled() && tarteelScoreMode() && tarteelAssistAllowed()) tarteelEngine.load(true).catch(() => { /* scoring falls back to CTC only */ });   // preload while the student recites
+      if (!ctcEnabled() || (tarteelAssistAllowed() && !tarteelScoreMode())) try { const bg = new ChunkTranscriber(stream, mime, 8000, 4000, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(!!info); bgRef.current = bg; } catch { bgRef.current = null; }
       // Silent background processing: tap the same mic stream and let the worker check the audio WHILE the student
       // recites, so the result is ready within seconds of Stop. Nothing is shown on screen. Never blocks or breaks
       // recording — if anything here fails, the full check on Stop still runs.
@@ -2242,10 +2244,27 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     try {
       const refWords = refTokens(pageAyahsRef.current.map((a: any) => a.text).join(" "));
       if (!refWords.length) return "__NO_API__";
-      const [res, tText] = await Promise.all([ctcEngine.check(blob, refWords, { basmalah: "auto" }), tarteelTranscript(blob)]);
+      const scoreMode = tarteelScoreMode();
+      const [res, tText] = await Promise.all([ctcEngine.check(blob, refWords, { basmalah: "auto" }), scoreMode ? Promise.resolve(null) : tarteelTranscript(blob)]);
       ctcResRef.current = res; setCtcRes(res);
       let graded = gradeFromCtc(refWords, res.words, res.heard);
-      if (tText) {   // both engines ran → merge into the single final grading
+      if (scoreMode) {
+        // Second opinion only where CTC was not sure; skipped entirely when every word is green, on low-memory
+        // phones, with ctc_assist = "0", or for very long recordings (decoding them whole needs too much memory).
+        const bg = bgRef.current; bgRef.current = null; try { bg?.cancel(); } catch { /* noop */ }
+        if (tarteelAssistAllowed() && blob.size <= 10 * 1048576) {
+          try {
+            const sc = await tarteelEngine.scoreRecitation(blob, refWords, graded, res.words.map((w) => w.start), res.words.map((w) => w.end));
+            if (sc.error) console.warn("[HifdhDaily] Tarteel scoring failed, CTC only:", sc.error);
+            else if (sc.scores.size) {
+              const m = mergeCtcTarteel(graded, res.words.map((w) => w.mean), buildTarteelWords(refWords, sc.scores));
+              console.info(`[HifdhDaily] CTC+Tarteel(score) ${sc.ms} ms, ${sc.windows} window(s):`, m.stats, "rescued words:", m.rescuedIdx);
+              graded = m.words;
+            }
+            transcribeMsRef.current = null;   // show the real wait after Stop
+          } catch (e) { console.warn("[HifdhDaily] Tarteel scoring unavailable, CTC only:", e); transcribeMsRef.current = res.ms; }
+        } else transcribeMsRef.current = res.ms;
+      } else if (tText) {   // both engines ran → merge into the single final grading
         const tWords = analyzeRecitation(refWords.join(" "), tText).words;
         const m = mergeCtcTarteel(graded, res.words.map((w) => w.mean), tWords);
         console.info("[HifdhDaily] CTC+Tarteel merge:", m.stats, "rescued words:", m.rescuedIdx);
@@ -2276,6 +2295,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       return !(typeof mem === "number" && mem <= 3);
     } catch { return true; }
   };
+  // Default: Tarteel only RATES the words CTC did not accept (one quick pass, no text generation). Set localStorage
+  // tarteel_mode = "generate" to get the old behaviour (full transcription while the student recites).
+  const tarteelScoreMode = (): boolean => { try { return localStorage.getItem("tarteel_mode") !== "generate"; } catch { return true; } };
   // Tarteel transcribes the recording in 8 s chunks WHILE the student recites (same as CTC's live run), so at Stop only the
   // tail is left and both results are ready almost together. Falls back to the whole recording if the chunks failed.
   const tarteelTranscript = async (blob: Blob): Promise<string | null> => {
