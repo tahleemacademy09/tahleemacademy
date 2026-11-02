@@ -4,6 +4,7 @@
   Opt-in per device:  open the page with ?ctc=1  (back to Tarteel with ?ctc=0).  First use downloads ~132 MB (then cached).
 */
 import { ctcStatus, type CtcWordScore } from "@/lib/ctcAlign";
+import { NativeLiveChecker, loadNativeCtc, nativeCheck, nativeCtcAvailable, prepareVocab } from "@/lib/ctcNative";
 
 export { ctcStatus };
 export type { CtcWordScore };
@@ -41,6 +42,11 @@ export function ctcEnabled(): boolean {
   } catch { return false; }
 }
 
+/** Android app: the native engine is used when the plugin exists. Set localStorage ctc_native = "0" to force WASM (for comparing). */
+function ctcNativeAllowed(): boolean {
+  try { return localStorage.getItem("ctc_native") !== "0"; } catch { return true; }
+}
+
 function isNative(): boolean {
   try { return !!(window as any).Capacitor?.isNativePlatform?.(); } catch { return false; }
 }
@@ -51,10 +57,10 @@ function isNative(): boolean {
 const NATIVE_MODEL_PATH = "ctc/model_with_encoder.q8.onnx";
 const NATIVE_MODEL_MIN_BYTES = 100 * 1024 * 1024;   // anything smaller is a broken/partial file
 
-async function nativeModelUrl(onProgress: (loaded: number, total: number) => void): Promise<string | null> {
+/** Saved model's file:// uri in app storage (downloading it first if needed), or null on web / on any failure. */
+async function nativeModelFile(onProgress: (loaded: number, total: number) => void): Promise<string | null> {
   if (!isNative()) return null;
   try {
-    const { Capacitor } = await import("@capacitor/core");
     const { Filesystem, Directory } = await import("@capacitor/filesystem");
     const where = { path: NATIVE_MODEL_PATH, directory: Directory.Data };
     let uri: string | null = null;
@@ -71,8 +77,15 @@ async function nativeModelUrl(onProgress: (loaded: number, total: number) => voi
       if (st.size < NATIVE_MODEL_MIN_BYTES) { try { await Filesystem.deleteFile(where); } catch { /* noop */ } throw new Error("model file incomplete"); }
       uri = st.uri;
     }
-    return Capacitor.convertFileSrc(uri);
+    return uri;
   } catch (e) { console.warn("[ctc] native model storage unavailable, using normal download:", e); return null; }
+}
+
+/** Same saved model as a WebView-fetchable url (for the WASM worker). */
+async function nativeModelUrl(onProgress: (loaded: number, total: number) => void): Promise<string | null> {
+  const uri = await nativeModelFile(onProgress);
+  if (!uri) return null;
+  try { const { Capacitor } = await import("@capacitor/core"); return Capacitor.convertFileSrc(uri); } catch { return null; }
 }
 
 /** Decode a recorded blob (webm/opus, mp4, ogg…) to mono 16 kHz Float32 samples. */
@@ -127,7 +140,46 @@ class CtcEngine {
   subscribe(fn: (s: CtcStatusState) => void) { this.listeners.add(fn); fn(this.state); return () => { this.listeners.delete(fn); }; }
   private emit(s: CtcStatusState) { this.state = s; this.listeners.forEach((l) => { try { l(s); } catch { /* noop */ } }); }
 
+  /** true once the model runs natively (Android app, ONNX Runtime Mobile) instead of in the WASM worker */
+  useNative = false;
+  private nativeTried = false;
+  private nativeLive: NativeLiveChecker | null = null;
+
+  /** Native model: save the file in app storage, hand its path to the plugin. Throws if anything is missing → caller falls back to WASM. */
+  private async loadNative(): Promise<void> {
+    const uri = await nativeModelFile((l, t) => { this.lastSignal = Date.now(); this.emit({ status: "loading", loadedMB: l / 1048576, totalMB: t / 1048576 }); });
+    if (!uri) throw new Error("native_model_file_unavailable");
+    await loadNativeCtc(decodeURIComponent(uri.replace(/^file:\/\//, "")));
+    await prepareVocab();
+    this.useNative = true;
+    this.emit({ status: "ready" });
+  }
+  /** The native engine failed at run time: forget it, the next load()/check() uses the WASM worker instead. */
+  private dropNative(reason: string) {
+    console.warn("[ctc] native engine failed, switching to WASM:", reason);
+    this.useNative = false; this.nativeTried = true; this.loadPromise = null;
+    try { this.nativeLive?.stop(); } catch { /* noop */ }
+    this.nativeLive = null; this.live = null;
+    this.emit({ status: "idle" });
+  }
+
   load(): Promise<void> {
+    if (this.state.status === "ready") return Promise.resolve();
+    if (this.loadPromise) return this.loadPromise;
+    if (!this.nativeTried && nativeCtcAvailable() && ctcNativeAllowed()) {
+      this.nativeTried = true;
+      this.emit({ status: "loading", loadedMB: 0, totalMB: 0 });
+      this.loadPromise = this.loadNative().catch((e) => {
+        console.warn("[ctc] native engine unavailable, using WASM:", String(e?.message ?? e));
+        this.loadPromise = null;
+        return this.loadWasm();
+      });
+      return this.loadPromise;
+    }
+    return this.loadWasm();
+  }
+
+  private loadWasm(): Promise<void> {
     if (this.state.status === "ready") return Promise.resolve();
     if (this.loadPromise) return this.loadPromise;
     this.emit({ status: "loading", loadedMB: 0, totalMB: 0 });
@@ -210,6 +262,27 @@ class CtcEngine {
         const t = setTimeout(() => reject(new Error(label + "_timeout")), ms);
         p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
       });
+    // Android app: run the whole recording through the native model (several times faster than WASM)
+    if (this.useNative || (!this.nativeTried && nativeCtcAvailable() && ctcNativeAllowed())) {
+      const id = this.nextId++;
+      this.activeCheckId = id;
+      this.setProgress({ stage: "decoding", done: 0, total: 0 });
+      try {
+        await this.load();
+        if (this.useNative) {
+          const audio = await withTimeout(decodeBlobTo16k(blob), 60_000, "decode");
+          this.setProgress({ stage: "listening", done: 0, total: audio.length / 16000 });
+          return await nativeCheck(audio, refWords, opts.basmalah ?? "auto", (done, total) => { if (this.activeCheckId === id) this.setProgress({ stage: "listening", done, total }); });
+        }
+      } catch (e: any) {
+        const msg = String(e?.message ?? e);
+        if (/^audio_too_short/.test(msg) || /decode_timeout/.test(msg)) throw e;   // the recording itself is the problem, WASM would say the same
+        this.dropNative(msg);   // plugin / model problem → fall through to the WASM path below
+      } finally {
+        this.activeCheckId = 0;
+        this.setProgress(null);
+      }
+    }
     const retryable = /(worker_(stalled|crashed|messageerror|gone)|load_stalled|decode_timeout)/;
     let lastErr: any = null;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -246,12 +319,25 @@ class CtcEngine {
   /* ── LIVE reveal: stream mic audio in while the student recites; cb(shownWords) fires as words are heard ── */
   private live: { words: string[]; cb: (shown: number, ms?: number) => void; ready: boolean; queue: Float32Array[] } | null = null;
 
-  /** Start a live session. Safe to call before the model has finished loading: audio is queued and replayed. */
-  liveBegin(words: string[], cb: (shown: number, ms?: number) => void) {
+  /**
+   * Start a live session. Safe to call before the model has finished loading: audio is queued and replayed.
+   * On the Android app (native engine) the words are checked WHILE the student recites and opts.onMistake fires with
+   * the page-word indexes that were skipped / said wrongly; on web the worker only does silent background grading.
+   */
+  liveBegin(words: string[], cb: (shown: number, ms?: number) => void, opts: { onMistake?: (wordIndexes: number[]) => void } = {}) {
     const L = { words, cb, ready: false, queue: [] as Float32Array[] };
     this.live = L;
-    this.load().then(() => {
-      if (this.live !== L || !this.worker) return;
+    this.load().then(async () => {
+      if (this.live !== L) return;
+      if (this.useNative) {
+        const chk = new NativeLiveChecker(words, { onProgress: (shown, ms) => cb(shown, ms), onMistake: opts.onMistake, onFatal: (r) => console.warn("[ctc] live checking stopped:", r) });
+        this.nativeLive = chk;
+        const pending = L.queue; L.queue = []; L.ready = true;
+        for (const q of pending) chk.feed(q);
+        await chk.start();
+        return;
+      }
+      if (!this.worker) return;
       this.worker.postMessage({ type: "live_start", words });
       for (const q of L.queue) this.worker.postMessage({ type: "live_audio", samples: q }, [q.buffer]);
       L.queue = []; L.ready = true;
@@ -261,11 +347,14 @@ class CtcEngine {
   liveFeed(samples: Float32Array) {
     const L = this.live;
     if (!L) return;
+    if (this.nativeLive) { this.nativeLive.feed(samples); return; }
     if (!L.ready || !this.worker) { if (L.queue.length < 4000) L.queue.push(samples); return; }
     this.worker.postMessage({ type: "live_audio", samples }, [samples.buffer]);
   }
   liveEnd() {
     this.live = null;
+    try { this.nativeLive?.stop(); } catch { /* noop */ }
+    this.nativeLive = null;
     try { this.worker?.postMessage({ type: "live_stop" }); } catch { /* noop */ }
   }
 
