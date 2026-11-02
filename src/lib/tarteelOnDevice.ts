@@ -24,6 +24,7 @@
 import { prepareForAsr } from "@/lib/audioEnhance";
 import { soundKey } from "@/lib/recitationCompare";
 import { mergeHeard } from "@/lib/transcriptMerge";
+import { planWindows, type WordScore } from "@/lib/tarteelScore";
 
 export const TARTEEL_MODEL = "iqbalaesthetic/Basira"; // ONNX export of tarteel-ai/whisper-base-ar-quran
 const TRANSFORMERS_CDN = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.0";
@@ -138,7 +139,7 @@ export function advanceReveal(
 /* ───────────────────────── Worker (model host) ───────────────────────── */
 
 const WORKER_SRC = `
-import { pipeline, env } from "${TRANSFORMERS_CDN}";
+import { pipeline, env, Tensor } from "${TRANSFORMERS_CDN}";
 try { if (self.crossOriginIsolated) env.backends.onnx.wasm.numThreads = Math.min(4, self.navigator.hardwareConcurrency || 2); } catch (e) {}
 let asr = null;
 let device = "wasm";
@@ -186,6 +187,42 @@ async function load(useGpu) {
   self.postMessage({ type: "ready", device: opts.device, dtype: opts.dtype });
 }
 
+// Teacher-forced scoring: feed the audio plus the EXPECTED words and read how likely the model finds each expected
+// token, in one forward pass (no token-by-token generation). Returns {mean,min,top1,n} per word (log-probabilities).
+async function scoreWords(audio, words) {
+  const tok = asr.tokenizer;
+  const wordTok = words.map((w) => tok.encode(" " + w, { add_special_tokens: false }));
+  const prompt = [50258, 50272, 50359, 50363]; // <|startoftranscript|> <|ar|> <|transcribe|> <|notimestamps|>
+  const flat = [];
+  for (const t of wordTok) for (const id of t) flat.push(id);
+  if (!flat.length) return words.map(() => ({ mean: -20, min: -20, top1: 0, n: 0 }));
+  const ids = prompt.concat(flat);
+  const feats = await asr.processor(audio);
+  const dec = new Tensor("int64", BigInt64Array.from(ids, (x) => BigInt(x)), [1, ids.length]);
+  const out = await asr.model({ input_features: feats.input_features, decoder_input_ids: dec });
+  let lg = out.logits;
+  if (lg.type !== "float32") lg = lg.to("float32");
+  const data = typeof lg.getData === "function" ? await lg.getData() : lg.data;
+  const V = lg.dims[lg.dims.length - 1];
+  const res = [];
+  let j = 0;
+  for (const toks of wordTok) {
+    let sum = 0, mn = 0, hit = 0;
+    mn = 0;
+    for (let k = 0; k < toks.length; k++, j++) {
+      const row = (prompt.length - 1 + j) * V;
+      let max = -Infinity, arg = 0;
+      for (let v = 0; v < V; v++) { const x = data[row + v]; if (x > max) { max = x; arg = v; } }
+      let se = 0;
+      for (let v = 0; v < V; v++) se += Math.exp(data[row + v] - max);
+      const lp = data[row + toks[k]] - max - Math.log(se);
+      sum += lp; if (lp < mn) mn = lp; if (arg === toks[k]) hit++;
+    }
+    res.push(toks.length ? { mean: sum / toks.length, min: mn, top1: hit / toks.length, n: toks.length } : { mean: -20, min: -20, top1: 0, n: 0 });
+  }
+  return res;
+}
+
 let chain = Promise.resolve();
 // One job at a time: two overlapping runs on the same model session can corrupt each other's output.
 self.onmessage = (ev) => { chain = chain.then(() => handle(ev)).catch(() => {}); };
@@ -194,6 +231,11 @@ async function handle(ev) {
   try {
     if (m.type === "load") {
       await load(!!m.useGpu);
+    } else if (m.type === "score") {
+      if (!asr) { self.postMessage({ type: "result", id: m.id, text: "", error: "not_loaded" }); return; }
+      const t0 = Date.now();
+      const scores = await scoreWords(m.audio, m.words);
+      self.postMessage({ type: "result", id: m.id, text: "", scores, ms: Date.now() - t0 });
     } else if (m.type === "transcribe") {
       if (!asr) { self.postMessage({ type: "result", id: m.id, text: "", error: "not_loaded" }); return; }
       const t0 = Date.now();
@@ -236,7 +278,7 @@ class TarteelEngine {
   private worker: Worker | null = null;
   private loadPromise: Promise<void> | null = null;
   private nextId = 1;
-  private pending = new Map<number, (r: { text: string; error?: string; ms?: number; tokens?: number; cap?: number }) => void>();
+  private pending = new Map<number, (r: { text: string; error?: string; ms?: number; tokens?: number; cap?: number; scores?: WordScore[] }) => void>();
   private listeners = new Set<(p: TarteelProgress) => void>();
   state: TarteelProgress = { status: "idle" };
 
@@ -291,7 +333,7 @@ class TarteelEngine {
           reject(new Error(m.error));
         } else if (m.type === "result") {
           const cb = this.pending.get(m.id);
-          if (cb) { this.pending.delete(m.id); cb({ text: m.text, error: m.error, ms: m.ms, tokens: m.tokens, cap: m.cap }); }
+          if (cb) { this.pending.delete(m.id); cb({ text: m.text, error: m.error, ms: m.ms, tokens: m.tokens, cap: m.cap, scores: m.scores }); }
         }
       };
       this.worker.onerror = (ev) => {
@@ -318,6 +360,57 @@ class TarteelEngine {
       this.pending.set(id, resolve);
       this.worker!.postMessage({ type: "transcribe", id, audio, full }, [audio.buffer]);
     });
+  }
+
+
+  /** Teacher-forced scoring of ONE audio window against its expected words (see tarteelScore.ts). */
+  private scoreWindow(audio: Float32Array, words: string[]): Promise<{ scores?: WordScore[]; error?: string; ms?: number }> {
+    if (!this.worker || this.state.status !== "ready") return Promise.resolve({ error: "not_ready" });
+    const id = this.nextId++;
+    return new Promise((resolve) => {
+      this.pending.set(id, (r) => resolve({ scores: r.scores, error: r.error, ms: r.ms }));
+      this.worker!.postMessage({ type: "score", id, audio, words }, [audio.buffer]);
+    });
+  }
+
+  /**
+   * Second opinion for the words CTC did not accept. Only the audio around those words is looked at (CTC's word
+   * timings say where it is) and the model is not asked to write anything — it just rates the expected words.
+   * Returns a score per page-word index, or an error (caller then keeps CTC's result as it is).
+   * Nothing to check (CTC accepted everything) returns immediately without touching the model.
+   */
+  async scoreRecitation(
+    blob: Blob, refWords: string[], graded: { grade: string }[],
+    starts: (number | null | undefined)[], ends: (number | null | undefined)[],
+  ): Promise<{ scores: Map<number, WordScore>; ms: number; windows: number; error?: string }> {
+    const t0 = Date.now();
+    const scores = new Map<number, WordScore>();
+    const fail = (error: string) => ({ scores, ms: Date.now() - t0, windows: 0, error });
+    if (!graded.some((g) => g.grade !== "ok")) return { scores, ms: 0, windows: 0 };
+    try { await this.load(true); } catch (e: any) { return fail(String(e?.message ?? e ?? "load_failed")); }
+    let audio: Float32Array;
+    try { audio = await decodeBlobTo16k(blob); } catch (e: any) { return fail("decode_failed: " + String(e?.message ?? e)); }
+    const totalSecs = audio.length / TARGET_SR;
+    const wins = planWindows(graded as any, starts, ends, totalSecs);
+    let failed = 0;
+    for (const w of wins) {
+      const from = Math.floor(w.t0 * TARGET_SR), to = Math.min(audio.length, Math.ceil(w.t1 * TARGET_SR));
+      const pad = new Float32Array(Math.round(TARGET_SR * 0.25));
+      const clip = new Float32Array(to - from + pad.length * 2);
+      clip.set(audio.subarray(from, to), pad.length);
+      const words = refWords.slice(w.a, w.b + 1);
+      const r = await this.scoreWindow(clip, words);
+      if (r.error || !r.scores) { failed++; console.warn("[Tarteel-score] window failed:", r.error); continue; }
+      for (const t of w.targets) {
+        const sc = r.scores[t - w.a];
+        if (sc) {
+          scores.set(t, sc);
+          console.info(`[Tarteel-score] word ${t} ${refWords[t]}  mean=${sc.mean.toFixed(2)} min=${sc.min.toFixed(2)} top1=${sc.top1.toFixed(2)}`);
+        }
+      }
+    }
+    if (wins.length && failed === wins.length) return fail("all_windows_failed");
+    return { scores, ms: Date.now() - t0, windows: wins.length };
   }
 
   /**
