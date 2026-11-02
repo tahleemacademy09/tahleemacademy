@@ -17,6 +17,7 @@ public class MainActivity extends BridgeActivity {
         // Local (in-app) Capacitor plugins must be registered before super.onCreate()
         registerPlugin(ScreenSharePlugin.class);
         registerPlugin(ApkInstallerPlugin.class);
+        registerPlugin(CtcInferencePlugin.class);
         super.onCreate(savedInstanceState);
     }
 

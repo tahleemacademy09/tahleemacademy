@@ -46,6 +46,8 @@ import RecitationResultGrid from "@/components/hifdh/RecitationResultGrid";
 // CTC-ONLY TEST MODE (?ctc=1): the FastConformer-Quran CTC check replaces Tarteel on this page.
 import { ctcEngine, ctcEnabled, type CtcCheckResult, type CtcStatusState, type CtcCheckProgress } from "@/lib/ctcEngine";
 import { LiveMic, revealFor } from "@/lib/ctcLive";
+import { buzz } from "@/lib/ctcNative";
+import { buzzPattern } from "@/lib/liveMistake";
 import { gradeFromCtc, registerCtcGrading, ctcScoringFor, ctcAnalysisFor } from "@/lib/ctcGrading";
 import { refTokens } from "@/lib/recitationCompare";
 // Transcription is 100% on-device Tarteel (no Groq / no server upload): the whole recording is transcribed once on Stop.
@@ -1700,10 +1702,35 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   }, [ctcOn, ctcRes, phase, score, lastTranscript]);
   // LIVE reveal (?ctc=1): the printed page is covered while reciting and uncovers word by word as the CTC model hears them.
   const [liveShown, setLiveShown] = useState(0);
+  // Android app: words skipped / said wrongly are caught WHILE reciting → the phone buzzes. The verse stays hidden
+  // (recite from memory), so only a count is shown, never the correct word. Turn the buzz off: localStorage hifdh_live_buzz = "0".
+  const [liveMiss, setLiveMiss] = useState(0);
+  const [liveFlash, setLiveFlash] = useState(false);
+  const liveFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onLiveMistake = useCallback((idx: number[]) => {
+    setLiveMiss((n) => n + idx.length);
+    setLiveFlash(true);
+    const starts = liveAyahStartsRef.current;
+    let ai = 0; starts.forEach((st, i) => { if (st <= idx[0]) ai = i; });
+    const ay: any = (pageAyahsRef.current as any[])[ai];
+    setLiveNote(ay ? `ayah ${ay.numberInSurah}${ay.surah?.englishName ? ` of ${ay.surah.englishName}` : ""}` : "this page");
+    if (liveFlashTimer.current) clearTimeout(liveFlashTimer.current);
+    liveFlashTimer.current = setTimeout(() => { setLiveFlash(false); setLiveNote(null); }, 4000);
+    let on = true;
+    try { on = localStorage.getItem("hifdh_live_buzz") !== "0"; } catch { /* noop */ }
+    if (on) void buzz(buzzPattern(idx.length));
+  }, []);
+  // Where the last mistake was (shown in the banner). The student just carries on reciting — nothing is rewound or cut.
+  const [liveNote, setLiveNote] = useState<string | null>(null);
+  const liveAyahStartsRef = useRef<number[]>([]);
   const liveMicRef = useRef<LiveMic | null>(null);
   const stopLive = () => { try { liveMicRef.current?.stop(); } catch { /* noop */ } liveMicRef.current = null; try { ctcEngine.liveEnd(); } catch { /* noop */ } };
   useEffect(() => () => { stopLive(); }, []);
   const liveProg = useMemo(() => revealFor(pageAyahs as any, liveShown), [pageAyahs, liveShown]);
+  // Android app (native engine running): the page is shown while reciting and uncovers word by word as each word is heard.
+  // localStorage hifdh_live_show = "all" keeps the whole page visible instead.
+  const liveVisible = ctcOn && ctcEng.status === "ready" && ctcEngine.useNative;
+  const liveCover = (() => { try { return localStorage.getItem("hifdh_live_show") !== "all"; } catch { return true; } })();
   const checkerState: TarteelProgress = ctcOn ? (ctcEng as TarteelProgress) : tarteelState;
   useEffect(() => {
     if (phase !== "reading") return;
@@ -2163,7 +2190,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       if (ctcEnabled()) {
         try {
           const bgWords = refTokens(pageAyahsRef.current.map((a: any) => a.text).join(" "));
-          ctcEngine.liveBegin(bgWords, () => { /* reveal is off */ });
+          if (!carry) { setLiveMiss(0); setLiveShown(0); setLiveNote(null); }
+          const starts: number[] = []; let acc = 0;
+          for (const a of pageAyahsRef.current as any[]) { starts.push(acc); acc += refTokens(a.text).length; }
+          liveAyahStartsRef.current = starts;
+          ctcEngine.liveBegin(bgWords, (shown) => setLiveShown(shown), { onMistake: onLiveMistake });
           const lm = new LiveMic(); liveMicRef.current = lm;
           lm.start(stream, (x) => { if (!isPausedRef.current) ctcEngine.liveFeed(x); }).catch((e) => console.warn("[HifdhDaily] background mic tap failed:", e));
         } catch (e) { console.warn("[HifdhDaily] background check unavailable:", e); }
@@ -3487,7 +3518,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             )}
           </div>
 
-          <div style={isRecording
+          <div style={(isRecording && !liveVisible)
             ? {flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"10px 14px 90px"}
             : {flex:1,minHeight:0,overflow:"hidden",display:"flex",flexDirection:"column",background:"#fff"}}>
 
@@ -3505,7 +3536,38 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 is intentionally hidden during recitation: the student should be
                 reciting from memory, not reading along with a blurred page, and
                 the previous blurred-word layout was confusing/distracting. */}
-            {isRecording && (
+            {isRecording && liveVisible && (
+              <div style={{flex:1,minHeight:0,display:"flex",flexDirection:"column"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"8px 14px",flexShrink:0}}>
+                  <span style={{padding:"4px 12px",borderRadius:20,background:`${PASS}18`,border:`1px solid ${PASS}50`,
+                    fontSize:13,fontWeight:900,color:PASS,fontVariantNumeric:"tabular-nums"}}>
+                    {isPaused?"⏸":"🔴"} {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
+                  </span>
+                  {liveMiss>0 && (
+                    <span style={{padding:"4px 12px",borderRadius:20,fontSize:12,fontWeight:800,transition:"all .25s",
+                      background:liveFlash?"#DC2626":"#FEE2E2",color:liveFlash?"#fff":"#B91C1C",border:"1px solid #FCA5A5"}}>
+                      ⚠ {liveMiss} {liveMiss===1?"mistake":"mistakes"}
+                    </span>
+                  )}
+                </div>
+                {liveNote && (
+                  <div role="alert" style={{margin:"0 14px 6px",flexShrink:0,padding:"10px 12px",borderRadius:12,background:"#FEF2F2",
+                    border:"1.5px solid #FCA5A5",color:"#991B1B",fontSize:13,fontWeight:700,lineHeight:1.5,animation:"slideUp .3s ease"}}>
+                    ⚠ Mistake caught in {liveNote} — carry on reciting.
+                  </div>
+                )}
+                {(todayPages[isGroup?0:pageIdx]) && (
+                  <div style={{flex:1,minHeight:0,position:"relative"}}>
+                    <SwipePages key={"live"+(isGroup?"group":String(todayPages[pageIdx]))}
+                      pages={isGroup?todayPages:[todayPages[pageIdx]]}
+                      viewIdx={isGroup?viewIdx:0} onView={isGroup?setViewIdx:()=>{}}
+                      onBg={setPrintedBg} clipFor={clipFor}
+                      coverUnrevealed={liveCover} revealProgress={liveProg}/>
+                  </div>
+                )}
+              </div>
+            )}
+            {isRecording && !liveVisible && (
               <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
                 gap:22,padding:"48px 20px",minHeight:"50vh"}}>
                 <div style={{position:"relative",width:128,height:128,display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -3522,6 +3584,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 </div>
                 {!isPaused&&<Wave/>}
                 <p style={{margin:0,fontWeight:800,fontSize:15,color:G1}}>{isPaused?"Paused":"Listening…"}</p>
+                {ctcOn && liveMiss>0 && (
+                  <span style={{padding:"6px 16px",borderRadius:20,fontSize:13,fontWeight:800,transition:"all .25s",
+                    background:liveFlash?"#DC2626":"#FEE2E2",color:liveFlash?"#fff":"#B91C1C",border:"1px solid #FCA5A5"}}>
+                    ⚠ {liveMiss} {liveMiss===1?"mistake":"mistakes"} caught
+                  </span>
+                )}
                 <span style={{padding:"5px 16px",borderRadius:20,
                   background:`${PASS}18`,border:`1px solid ${PASS}50`,
                   fontSize:14,fontWeight:900,color:PASS,fontVariantNumeric:"tabular-nums"}}>

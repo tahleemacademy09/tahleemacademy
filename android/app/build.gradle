@@ -79,6 +79,8 @@ dependencies {
     // version can't be found, use the newest 2.x from https://central.sonatype.com/artifact/io.livekit/livekit-android
     implementation 'io.livekit:livekit-android:2.9.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
+    // Quran CTC model on-device (CtcInferencePlugin.kt): native ONNX Runtime instead of WASM, so live checking can keep up
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.20.0'
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
