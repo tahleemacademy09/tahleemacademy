@@ -11,6 +11,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { useToast } from "@/hooks/use-toast";
 import { SURAHS } from "@/components/hifdh/surahData";
+import { HifdhAboutCard } from "@/components/hifdh/HifdhAbout";
 import { hpUnit, hpFromUnit, hpUnitsFor, hpUnitsOf, hpPortionFromUnits, hpPortionLabel, HP_AMOUNTS, hpReviewRange, hpUnitsLabel } from "@/lib/hifdhPortion";
 import { Loader2, Video, Check, RotateCcw, ChevronLeft, ChevronRight, BookOpen, ClipboardCheck, CheckCheck } from "lucide-react";
 
@@ -555,6 +556,9 @@ export default function TeacherHifdhProgram() {
         <div style={{ fontSize: 20, fontWeight: 800, color: TP_GREEN }}>Hifdh Program</div>
         <div style={{ fontSize: 12, color: TP_MUTED }}>Read-along groups and weekly grading</div>
       </div>
+
+      <HifdhAboutCard audience="teacher" memDays={settings?.memorization_days} reviewDays={settings?.review_days}
+        streakLimit={settings?.streak_limit} fine={settings?.fine_amount} />
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 12 }}>
         <button aria-label="Previous week" onClick={() => setWeek(tpShift(week, -1))} style={{ border: "none", background: "none", cursor: "pointer" }}><ChevronLeft /></button>
