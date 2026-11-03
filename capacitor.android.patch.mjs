@@ -73,6 +73,7 @@ function addManifestQueries(packages, marker) {
   "FOREGROUND_SERVICE_MICROPHONE",
   "FOREGROUND_SERVICE_MEDIA_PLAYBACK",
   "FOREGROUND_SERVICE_MEDIA_PROJECTION",   // screen sharing (ScreenSharePlugin)
+  "ACCESS_NOTIFICATION_POLICY",            // silence notifications while sharing
   "WAKE_LOCK",
   "RECORD_AUDIO",
   "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
