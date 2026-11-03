@@ -12,10 +12,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { useToast } from "@/hooks/use-toast";
 import MushafPageView from "@/components/hifdh/MushafPageView";
+import { HifdhAboutContent } from "@/components/hifdh/HifdhAbout";
 import { hpPortionLabel, hpPagesOf, hpSegmentFor, hpUnitsFor, hpReviewRange } from "@/lib/hifdhPortion";
 import {
   Loader2, BookOpen, Video, CheckCircle2, AlertTriangle, Lock, Flame, Layers,
-  ChevronRight, ArrowLeft, Users, BarChart3,
+  ChevronRight, ArrowLeft, Users, BarChart3, Info,
 } from "lucide-react";
 
 const hhDb = supabase as any;
@@ -153,7 +154,7 @@ const HhQuran = ({ portion, pages, cur, pick, bg, qSize, onBg, topExtra = 0, foo
   );
 };
 
-type View = null | "memorize" | "daily" | "weekly";
+type View = null | "memorize" | "daily" | "weekly" | "about";
 
 export default function HifdhProgramHome() {
   const { user } = useAuth();
@@ -458,7 +459,25 @@ export default function HifdhProgramHome() {
             />
           </>
         )}
+
+        <OCard
+          icon={<Info size={22} />} title="About the program"
+          sub="How everything works — step by step"
+          onClick={() => setView("about")}
+        />
       </div>
+
+      {/* ───────── ABOUT · full screen ───────── */}
+      {view === "about" && (
+        <HhScreen bg={HH_BG} title="About the program" onBack={() => setView(null)}>
+          <div style={{ flex: 1, overflowY: "auto", padding: 12, paddingBottom: "calc(20px + env(safe-area-inset-bottom, 0px))" }}>
+            <div style={{ maxWidth: 560, margin: "0 auto" }}>
+              <HifdhAboutContent audience="student" memDays={memDays} reviewDays={reviewDays} streakLimit={limit}
+                fine={settings?.fine_amount} amountLabel={level ? amountLabel : undefined} />
+            </div>
+          </div>
+        </HhScreen>
+      )}
 
       {/* ───────── MEMORIZATION · full screen ───────── */}
       {view === "memorize" && !suspended && (
