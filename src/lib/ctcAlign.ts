@@ -224,6 +224,42 @@ export function chunkAtQuiet(audio: Float32Array, target = 30, search = 6): Floa
   return out;
 }
 
+/* ───────────────────────── chunks WITH context (no words lost at the cuts) ─────────────────────────
+   The model sees a chunk's first and last fraction of a second without any neighbours, so a word that is cut in
+   half (very fast recitation has no real silence to cut in) comes out garbled or missing. Fix: every chunk is run
+   with CTX extra seconds of the neighbouring audio on each side, and only the middle ("core") frames are kept.
+   The cores tile the recording exactly, so the stitched log-probs are what one uncut pass would give. */
+export const FRAME = 1280;            // samples per model output frame (10 ms hop x 8 subsampling = 80 ms)
+export const CTX = 20 * FRAME;        // 1.6 s of extra audio on each side of a chunk
+export interface Win { audio: Float32Array; lead: number; core: number; isLast: boolean }   // lead = context samples before the core
+
+/** Same quiet-moment cuts as chunkAtQuiet, but each chunk carries CTX of its neighbours. `startAt` = where the first core
+ *  begins (audio before it is context only: already processed). Cuts are snapped to whole model frames. */
+export function chunkWithContext(audio: Float32Array, startAt = 0): Win[] {
+  const rest = audio.subarray(startAt);
+  const cores = chunkAtQuiet(rest);
+  const out: Win[] = [];
+  let pos = startAt;
+  for (let i = 0; i < cores.length; i++) {
+    const isLast = i === cores.length - 1;
+    const a = pos;
+    let b = isLast ? audio.length : startAt + Math.round((pos - startAt + cores[i].length) / FRAME) * FRAME;
+    if (!isLast) b = Math.min(b, audio.length);
+    const w0 = Math.max(0, a - CTX), w1 = isLast ? audio.length : Math.min(audio.length, b + CTX);
+    if (b - a >= SR * 0.3 || (isLast && b - a > 0)) out.push({ audio: audio.subarray(w0, w1), lead: a - w0, core: b - a, isLast });
+    pos = b;
+  }
+  return out;
+}
+
+/** Keep only the core frames of a chunk's log-probs (drop the context frames at both ends). */
+export function trimToCore<R extends { lp: Float32Array; T: number; V: number }>(r: R, w: { lead: number; core: number; isLast: boolean }): R {
+  const f0 = Math.round(w.lead / FRAME);
+  const f1 = w.isLast ? r.T : Math.min(r.T, f0 + Math.round(w.core / FRAME));
+  if (f0 === 0 && f1 === r.T) return r;
+  return { ...r, lp: r.lp.slice(f0 * r.V, f1 * r.V), T: Math.max(0, f1 - f0) };
+}
+
 /* ───────────────────────── CTC forced alignment ───────────────────────── */
 
 /**

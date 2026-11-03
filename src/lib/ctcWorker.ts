@@ -9,8 +9,8 @@
   Messages out: {type:"progress"|"ready"|"load_error"|"result"|"selftest_result"|"live_progress"}
 */
 import {
-  alignWords, alignWordsPartial, chunkAtQuiet, greedySpan, greedyText, quietCutPoint, logMel, modelForm, scorePrefix, SpEncoder, SR, stripMarks,
-  type CtcWordScore, type SpVocab,
+  alignWords, alignWordsPartial, chunkWithContext, trimToCore, CTX, FRAME, greedySpan, greedyText, quietCutPoint, logMel, modelForm, scorePrefix, SpEncoder, SR, stripMarks,
+  type CtcWordScore, type SpVocab, type Win,
 } from "./ctcAlign";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -123,7 +123,7 @@ async function check(m: { id: number; audio: Float32Array; words: string[]; basm
   // only the last few seconds are left to process. Used only if it covers the whole recording; otherwise the
   // normal path below processes the finished recording as before.
   const P = pipeDone; pipeDone = null;
-  let todo: Float32Array[] = [];
+  let todo: Win[] = [];
   if (!m.useLive) timing.liveNote = "background step off";
   else if (!P) timing.liveNote = "background step never started (no live audio reached the worker)";
   if (P && m.useLive) {
@@ -134,30 +134,30 @@ async function check(m: { id: number; audio: Float32Array; words: string[]; basm
     const gap = Math.abs(P.total / SR - secs);
     if (!P.failed && P.parts.length && gap <= 2.5) {
       for (const p of P.parts) parts.push(p);
-      todo = chunkAtQuiet(P.pend.subarray(0, P.len)).filter((c) => c.length >= SR * 0.3);
+      todo = chunkWithContext(P.pend.subarray(0, P.len), P.lead);
       secs = P.total / SR;
       timing.usedLive = true; timing.liveChunks = P.parts.length;
     } else if (P.parts.length) {
       // Live audio and the saved recording differ in length (or the background step stopped part-way): keep every part that
       // WAS finished (they are exact, the unprocessed rest is whatever follows them) and run only the remainder of the recording.
-      const consumed = P.total - P.len;
+      const consumed = P.total - P.len + P.lead;   // absolute sample where the unprocessed audio starts (lead = context already in pend)
       if (consumed > 0 && consumed < m.audio.length) {
         for (const p of P.parts) parts.push(p);
-        todo = chunkAtQuiet(m.audio.subarray(consumed)).filter((c) => c.length >= SR * 0.3);
+        todo = chunkWithContext(m.audio, consumed);
         timing.usedLive = true; timing.liveChunks = P.parts.length;
         timing.liveNote = `reused ${P.parts.length} finished parts (${(consumed / SR).toFixed(0)} s); ${P.failed ? "background step failed: " + P.failMsg : "length gap " + gap.toFixed(1) + " s"}`;
       } else timing.liveNote = `not usable (consumed ${(consumed / SR).toFixed(0)} s, recording ${(m.audio.length / SR).toFixed(0)} s)`;
     } else timing.liveNote = P.failed ? "background step failed before finishing any part: " + P.failMsg : `no part finished in time (${(P.total / SR).toFixed(0)} s of live audio, gap ${gap.toFixed(1)} s)`;
   }
-  if (!timing.usedLive) todo = chunkAtQuiet(m.audio).filter((c) => c.length >= SR * 0.3);
-  const totalSecs = todo.reduce((a, c) => a + c.length, 0) / SR;
+  if (!timing.usedLive) todo = chunkWithContext(m.audio);
+  const totalSecs = todo.reduce((a, w) => a + w.core, 0) / SR;
   timing.tailSecs = totalSecs;
   const ti = Date.now();
   let doneSecs = 0;
   progress("listening", 0, totalSecs);
-  for (const c of todo) {
-    parts.push(await runChunk(c));
-    doneSecs += c.length / SR;
+  for (const w of todo) {
+    parts.push(trimToCore(await runChunk(w.audio), w));
+    doneSecs += w.core / SR;
     progress("listening", doneSecs, totalSecs);
   }
   timing.inferMs = Date.now() - ti;
@@ -213,15 +213,17 @@ async function selftest(m: { id: number; testsUrl: string }) {
    the last few seconds are left. Same cutting rule as chunkAtQuiet, so grading is unchanged. */
 interface Pipe {
   pend: Float32Array; len: number; total: number;
+  lead: number;   // samples at the start of pend that are only left-context (already processed)
   parts: { lp: Float32Array; T: number; V: number }[];
   failed: boolean; failMsg: string; open: boolean; run: Promise<void> | null;
 }
 let pipe: Pipe | null = null;        // being filled while the student recites
 let pipeDone: Pipe | null = null;    // closed at Stop, waiting for the final check
-const PIPE_TARGET = 12, PIPE_SEARCH = 3;   // small pieces: at Stop at most ~15 s of audio is left to process
+const PIPE_TARGET = 12, PIPE_SEARCH = 3;
+const PIPE_NEED = (P: { lead: number }) => P.lead + (PIPE_TARGET + PIPE_SEARCH) * SR + CTX;   // enough audio for the cut AND its right-hand context   // small pieces: at Stop at most ~15 s of audio is left to process
 
 function pipeBegin() {
-  pipe = { pend: new Float32Array(SR * 40), len: 0, total: 0, parts: [], failed: false, failMsg: "", open: true, run: null };
+  pipe = { pend: new Float32Array(SR * 40), len: 0, total: 0, lead: 0, parts: [], failed: false, failMsg: "", open: true, run: null };
   pipeDone = null;
 }
 function pipeAppend(samples: Float32Array) {
@@ -234,15 +236,19 @@ function pipeAppend(samples: Float32Array) {
   }
   P.pend.set(samples, P.len);
   P.len += samples.length; P.total += samples.length;
-  if (!P.run && P.len >= (PIPE_TARGET + PIPE_SEARCH) * SR) P.run = pipeLoop(P).finally(() => { P.run = null; });
+  if (!P.run && P.len >= PIPE_NEED(P)) P.run = pipeLoop(P).finally(() => { P.run = null; });
 }
 async function pipeLoop(P: Pipe) {
   try {
-    while (P.open && !P.failed && P.len >= (PIPE_TARGET + PIPE_SEARCH) * SR) {
-      const cut = quietCutPoint(P.pend, P.len, PIPE_TARGET, PIPE_SEARCH);
-      const r = await runChunk(P.pend.slice(0, cut));
-      P.parts.push(r);
-      P.pend.copyWithin(0, cut, P.len); P.len -= cut;
+    while (P.open && !P.failed && P.len >= PIPE_NEED(P)) {
+      // cut at a quiet moment, snapped to a whole model frame; run it WITH the CTX of audio after the cut (and the CTX kept
+      // from before it), keep only the middle frames, and keep the last CTX before the cut as left-context for the next piece
+      let cut = quietCutPoint(P.pend, P.len, PIPE_TARGET + P.lead / SR, PIPE_SEARCH);
+      cut = Math.max(P.lead + FRAME, Math.round(cut / FRAME) * FRAME);
+      const r = await runChunk(P.pend.slice(0, cut + CTX));
+      P.parts.push(trimToCore(r, { lead: P.lead, core: cut - P.lead, isLast: false }));
+      const keep = Math.min(CTX, cut);
+      P.pend.copyWithin(0, cut - keep, P.len); P.len -= cut - keep; P.lead = keep;
     }
   } catch (e: any) { P.failed = true; P.failMsg = String(e?.message ?? e); }
 }

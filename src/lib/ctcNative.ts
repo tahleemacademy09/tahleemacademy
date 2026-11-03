@@ -14,7 +14,7 @@
 */
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import {
-  SR, SpEncoder, alignWords, alignWordsPartial, chunkAtQuiet, greedySpan, greedyText, logMel, modelForm, scorePrefix, stripMarks,
+  SR, SpEncoder, alignWords, alignWordsPartial, chunkWithContext, trimToCore, greedySpan, greedyText, logMel, modelForm, scorePrefix, stripMarks,
   type CtcWordScore, type SpVocab,
 } from "./ctcAlign";
 import { LiveMistakeTracker, type MistakeTrackerOptions } from "./liveMistake";
@@ -106,15 +106,15 @@ export async function nativeCheck(
   const { vocab, enc } = await prepareVocab();
   const t0 = Date.now();
   const secs = audio.length / SR;
-  const todo = chunkAtQuiet(audio).filter((c) => c.length >= SR * 0.3);
-  const totalSecs = todo.reduce((a, c) => a + c.length, 0) / SR;
+  const todo = chunkWithContext(audio);
+  const totalSecs = todo.reduce((a, w) => a + w.core, 0) / SR;
   onProgress?.(0, totalSecs);
   const ti = Date.now();
   const parts: { lp: Float32Array; T: number; V: number }[] = [];
   let doneSecs = 0;
-  for (const c of todo) {
-    parts.push(await nativeRunLogProbs(c));
-    doneSecs += c.length / SR;
+  for (const w of todo) {
+    parts.push(trimToCore(await nativeRunLogProbs(w.audio), w));
+    doneSecs += w.core / SR;
     onProgress?.(doneSecs, totalSecs);
   }
   const inferMs = Date.now() - ti;
