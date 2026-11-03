@@ -12,9 +12,11 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRoomContext } from "@livekit/components-react";
-import { Track, createLocalScreenTracks, RoomEvent } from "livekit-client";
+import { Track, RoomEvent } from "livekit-client";
 import { useAuth } from "@/contexts/AuthContext";
-import { canNativeScreenShare, startNativeScreenShare, stopNativeScreenShare, onNativeScreenShareStopped, isScreenBot } from "@/lib/nativeScreenShare";
+import { canNativeScreenShare, startNativeScreenShare, stopNativeScreenShare, pauseNativeScreenShare, resumeNativeScreenShare, onNativeScreenShareStopped, isScreenBot, describeShareError, type ShareOptions } from "@/lib/nativeScreenShare";
+import { startWebScreenShare, stopWebScreenShare, setWebScreenSharePaused } from "@/lib/webScreenShare";
+import ScreenShareOptionsDialog from "./ScreenShareOptionsDialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { Capacitor } from "@capacitor/core";
@@ -371,6 +373,8 @@ const ClassControls = ({
   const [micEnabled,    setMicEnabled]    = useState(() => room.localParticipant.isMicrophoneEnabled);
   const [camEnabled,    setCamEnabled]    = useState(() => room.localParticipant.isCameraEnabled);
   const [screenSharing, setScreenSharing] = useState(false);
+  const [sharePaused, setSharePaused] = useState(false);
+  const [shareDialog, setShareDialog] = useState(false);
 
   // ── Busy guards — prevent rapid-press race conditions ─────────────────
   const micBusy = useRef(false);
@@ -616,60 +620,60 @@ const ClassControls = ({
   // Android app: stop/start through the native plugin instead of getDisplayMedia
   useEffect(() => {
     if (!canNativeScreenShare()) return;
-    return onNativeScreenShareStopped(() => setScreenSharing(false));
+    return onNativeScreenShareStopped((reason) => {
+      setScreenSharing(false);
+      setSharePaused(false);
+      toast({ title: t("Screen share stopped", "توقفت مشاركة الشاشة"), description: reason, duration: 12000 });
+    });
   }, []);
 
+  // Tap Share → options sheet (one app / entire screen, quality, silence notifications) → startShare
   const toggleScreenShare = useCallback(async () => {
-    if (canNativeScreenShare()) {
+    if (screenSharing) {
       try {
-        if (screenSharing) {
-          await stopNativeScreenShare();
-          setScreenSharing(false);
-        } else {
-          await startNativeScreenShare({ sessionId });
-          setScreenSharing(true);
-        }
-      } catch (err: any) {
-        setScreenSharing(false);
-        const cancelled = err?.code === "DENIED" || /denied|cancel/i.test(err?.message || "");
-        toast({
-          title: cancelled ? t("Screen share cancelled", "تم إلغاء المشاركة") : t("Screen share failed", "فشلت مشاركة الشاشة"),
-          description: cancelled ? undefined : err?.message,
-          variant: "destructive",
-        });
-      }
+        if (canNativeScreenShare()) await stopNativeScreenShare();
+        else await stopWebScreenShare(room);
+      } catch { /* already stopped */ }
+      setScreenSharing(false);
+      setSharePaused(false);
       return;
     }
-    if (screenSharing) {
-      const pubs = Array.from(room.localParticipant.trackPublications.values())
-        .filter((pub: any) => pub.track?.source === Track.Source.ScreenShare || pub.track?.source === Track.Source.ScreenShareAudio);
-      for (const pub of pubs) {
-        if ((pub as any).track) {
-          await room.localParticipant.unpublishTrack((pub as any).track);
-          (pub as any).track.stop();
-        }
+    setShareDialog(true);
+  }, [room, screenSharing]);
+
+  const startShare = useCallback(async (opts: ShareOptions) => {
+    try {
+      if (canNativeScreenShare()) {
+        await startNativeScreenShare({ sessionId }, opts);
+      } else {
+        await startWebScreenShare(room, opts, () => {
+          stopWebScreenShare(room);
+          setScreenSharing(false);
+          setSharePaused(false);
+        });
       }
+      setScreenSharing(true);
+      setSharePaused(false);
+    } catch (err: any) {
       setScreenSharing(false);
-    } else {
-      try {
-        const tracks = await createLocalScreenTracks({
-          audio: true,
-          resolution: { width: 1280, height: 720, frameRate: 15 },
-        });
-        for (const track of tracks) await room.localParticipant.publishTrack(track);
-        setScreenSharing(true);
-        tracks.forEach(track => {
-          track.mediaStreamTrack.addEventListener("ended", () => {
-            room.localParticipant.unpublishTrack(track);
-            setScreenSharing(false);
-          });
-        });
-      } catch (err: any) {
-        if (err?.name !== "NotAllowedError")
-          toast({ title: t("Screen share failed", "فشل مشاركة الشاشة"), variant: "destructive" });
+      console.error("[screen-share]", err);
+      if (err?.code === "DND_NEEDED") {
+        toast({ title: t("One more step", "خطوة أخيرة"), description: err.message, duration: 12000 });
+        return;
       }
+      const d = describeShareError(err);
+      toast({ title: d.title, description: d.description, variant: "destructive", duration: 15000 });
     }
-  }, [room, screenSharing, t, sessionId]);
+  }, [room, sessionId, t]);
+
+  const toggleSharePause = useCallback(async () => {
+    const next = !sharePaused;
+    try {
+      if (canNativeScreenShare()) { if (next) await pauseNativeScreenShare(); else await resumeNativeScreenShare(); }
+      else await setWebScreenSharePaused(room, next);
+      setSharePaused(next);
+    } catch { /* ignore */ }
+  }, [room, sharePaused]);
 
   // ── Raise Hand ────────────────────────────────────────────────────────
   const toggleHand = useCallback(async () => {
@@ -856,11 +860,16 @@ const ClassControls = ({
         </div>
       )}
 
+      <ScreenShareOptionsDialog open={shareDialog} onOpenChange={setShareDialog} onConfirm={startShare} />
+
       {/* ── Screen share banner ── */}
       {screenSharing && (
         <div className="bg-destructive/90 text-destructive-foreground text-center py-1 text-xs flex items-center justify-center gap-2">
           <Monitor className="h-3 w-3 animate-pulse" />
-          {t("Sharing your screen", "تتم مشاركة شاشتك")}
+          {sharePaused ? t("Screen share paused", "المشاركة متوقفة مؤقتًا") : t("Sharing your screen", "تتم مشاركة شاشتك")}
+          <Button size="sm" variant="secondary" className="h-5 text-[10px] px-2" onClick={toggleSharePause}>
+            {sharePaused ? t("Resume", "استئناف") : t("Pause", "إيقاف مؤقت")}
+          </Button>
           <Button size="sm" variant="secondary" className="h-5 text-[10px] px-2" onClick={toggleScreenShare}>
             {t("Stop", "إيقاف")}
           </Button>
