@@ -915,7 +915,14 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               const{data:att}=await supabase.from("attendance_logs").insert({session_id:freshSessionId,user_id:user.id,device_info:navigator.userAgent}).select("id").single();
               if(att)setAttendanceId(att.id);
             }
-            await supabase.from("class_participants").upsert({session_id:freshSessionId,student_id:user.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,left_minutes:null},{onConflict:"session_id,student_id"});
+            {
+              // FIX: this used to also send `left_minutes:null`, a column that does not exist on
+              // class_participants. PostgREST rejected the whole upsert, and because supabase-js
+              // returns {error} instead of throwing, it failed SILENTLY — no participant row was
+              // ever saved, so the admin Live Classes page showed 0 while people were in the room.
+              const{error:partErr}=await supabase.from("class_participants").upsert({session_id:freshSessionId,student_id:user.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,duration_minutes:0},{onConflict:"session_id,student_id"});
+              if(partErr)console.warn("[ClassroomView] class_participants upsert failed:",partErr.message);
+            }
             // FIX BUG 8: Subscribe to session-end immediately here — before the useEffect cycle —
             // so there is no window where the teacher can end the class and students miss the event.
             if(!isPrivileged&&!sessionEndChannelRef.current){
