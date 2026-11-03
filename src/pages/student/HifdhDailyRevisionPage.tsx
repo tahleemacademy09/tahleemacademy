@@ -4858,8 +4858,65 @@ function DayDetailModal({day,totalPagesInProg,pagesReadSoFar,onClose}:{
 /* ══════════════════════════════════════════════════════════════════
    MAIN PAGE
 ═══════════════════════════════════════════════════════════════════*/
-type DailyBoot = { uid: string; name: string; assignments: Assignment[]; logs: DailyLog[] };
+type DailyBoot = { uid: string; name: string; assignments: Assignment[]; logs: DailyLog[]; full?: boolean };
 let DAILY_BOOT_CACHE: DailyBoot | null = null;
+let DAILY_BOOT_INFLIGHT: Promise<DailyBoot | null> | null = null;
+
+// Light log columns for the first paint: session_data is big (every ayah of every page), so only the small
+// fields the Today/Schedule screens need are read from it. Today's own log is fetched in full separately.
+const SLIM_LOG_COLS =
+  "id,log_date,completed,assignment_id,avg_score,pages_revised,duration_secs,acknowledged_at," +
+  "x_rs:session_data->recitation_score,x_ts:session_data->test_score,x_to:session_data->teacher_override," +
+  "x_ap:session_data->audio_path,x_au:session_data->audio_url,x_pd:session_data->pages_done";
+const unslimLog = (r: any): DailyLog => {
+  const { x_rs, x_ts, x_to, x_ap, x_au, x_pd, ...rest } = r;
+  const sd: any = {};
+  if (x_rs != null) sd.recitation_score = x_rs;
+  if (x_ts != null) sd.test_score = x_ts;
+  if (x_to != null) sd.teacher_override = x_to;
+  if (x_ap != null) sd.audio_path = x_ap;
+  if (x_au != null) sd.audio_url = x_au;
+  if (x_pd != null) sd.pages_done = x_pd;
+  return { ...rest, session_data: Object.keys(sd).length ? sd : undefined } as DailyLog;
+};
+
+/** Fetches assignments + logs and fills DAILY_BOOT_CACHE. Safe to call many times (shared in-flight request).
+ *  HifdhProgramHome calls this in the background as soon as it opens, so the first tap is instant. */
+export function warmDailyBoot(): Promise<DailyBoot | null> {
+  if (DAILY_BOOT_INFLIGHT) return DAILY_BOOT_INFLIGHT;
+  const run = (async (): Promise<DailyBoot | null> => {
+    const { data: sess } = await supabase.auth.getSession();
+    let uid = sess?.session?.user?.id ?? null;
+    if (!uid) { const { data } = await supabase.auth.getUser(); uid = data?.user?.id ?? null; }
+    if (!uid) return null;
+    const day = todayISO();
+    const db = supabase as any;
+    const [{ data: asgnAll }, { data: slim }, { data: todayFull }] = await Promise.all([
+      db.from("hifdh_daily_assignments").select("*").eq("student_id", uid).eq("active", true).order("created_at", { ascending: true }),
+      db.from("hifdh_daily_logs").select(SLIM_LOG_COLS).eq("student_id", uid).order("log_date", { ascending: false }).limit(60),
+      db.from("hifdh_daily_logs").select("*").eq("student_id", uid).eq("log_date", day),
+    ]);
+    const enrichedAll: Assignment[] = ((asgnAll as any[]) ?? []).map((asgn: any) => {
+      let extra: any = {};
+      try { extra = JSON.parse(asgn.notes || "{}"); } catch {}
+      return {
+        ...asgn,
+        program_start: extra.programStart ?? asgn.program_start ?? asgn.starts_on,
+        program_days:  extra.programDays  ?? asgn.program_days,
+        days_off:      extra.daysOff      ?? asgn.days_off ?? [],
+      } as Assignment;
+    });
+    const fullToday = (todayFull ?? []) as DailyLog[];
+    const fullIds = new Set(fullToday.map(l => l.id));
+    const logs = [...fullToday, ...((slim ?? []) as any[]).filter(r => !fullIds.has(r.id)).map(unslimLog)]
+      .sort((a, b) => b.log_date.localeCompare(a.log_date));
+    const prevName = DAILY_BOOT_CACHE?.uid === uid ? DAILY_BOOT_CACHE.name : "";
+    DAILY_BOOT_CACHE = { uid, name: prevName, assignments: enrichedAll, logs, full: false };
+    return DAILY_BOOT_CACHE;
+  })().catch(() => null).finally(() => { DAILY_BOOT_INFLIGHT = null; });
+  DAILY_BOOT_INFLIGHT = run;
+  return run;
+}
 
 export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?: boolean } = {}) {
   const navigate = useNavigate();
@@ -4897,36 +4954,36 @@ export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?
       setLoading(false);
     };
     (async()=>{
-      const { data: sess } = await supabase.auth.getSession();
-      let uid = sess?.session?.user?.id ?? null;
-      if(!uid){ const { data } = await supabase.auth.getUser(); uid = data?.user?.id ?? null; }
-      if(!uid || !alive) return;
-      if(DAILY_BOOT_CACHE?.uid === uid) apply(DAILY_BOOT_CACHE);
-      else setUserId(uid);
-
-      const [{data:pf},{data:asgnAll},{data:lgs}] = await Promise.all([
-        (supabase as any).from("profiles").select("full_name").eq("user_id",uid).maybeSingle(),
-        (supabase as any).from("hifdh_daily_assignments")
-          .select("*").eq("student_id",uid).eq("active",true).order("created_at",{ascending:true}),
-        (supabase as any).from("hifdh_daily_logs")
-          .select("*").eq("student_id",uid)
-          .order("log_date",{ascending:false}).limit(60),
-      ]);
+      // 1) Paint from memory if the home screen (or an earlier visit) already loaded everything.
+      let boot: DailyBoot | null = DAILY_BOOT_CACHE;
+      if(boot){ apply(boot); }
+      // 2) Otherwise wait for the shared request (usually already running from the home screen).
+      const fresh = await warmDailyBoot();
       if(!alive) return;
+      if(!fresh && !boot){ setLoading(false); return; }
+      if(fresh){ boot = fresh; apply(fresh); }
+      if(!boot) return;
+      const uid = boot.uid;
 
-      // Enrich all active assignments
-      const enrichedAll: Assignment[] = ((asgnAll as any[]) ?? []).map((asgn: any) => {
-        let extra: any = {};
-        try { extra = JSON.parse(asgn.notes || "{}"); } catch {}
-        return {
-          ...asgn,
-          program_start: extra.programStart ?? asgn.program_start ?? asgn.starts_on,
-          program_days:  extra.programDays  ?? asgn.program_days,
-          days_off:      extra.daysOff      ?? asgn.days_off ?? [],
-        } as Assignment;
-      });
-      DAILY_BOOT_CACHE = { uid, name: (pf as any)?.full_name ?? "", assignments: enrichedAll, logs: (lgs??[]) as DailyLog[] };
-      apply(DAILY_BOOT_CACHE);
+      // 3) Name is cosmetic — never block the screen on it.
+      if(!boot.name){
+        (supabase as any).from("profiles").select("full_name").eq("user_id",uid).maybeSingle().then(({data}:any)=>{
+          const n = data?.full_name;
+          if(!n) return;
+          if(DAILY_BOOT_CACHE?.uid === uid) DAILY_BOOT_CACHE = { ...DAILY_BOOT_CACHE, name: n };
+          if(alive) setStudentName(n);
+        });
+      }
+
+      // 4) Fill in the heavy history (page results, errors) quietly after the screen is already usable.
+      if(!boot.full){
+        const { data: lgs } = await (supabase as any).from("hifdh_daily_logs")
+          .select("*").eq("student_id",uid).order("log_date",{ascending:false}).limit(60);
+        if(!alive || !lgs) return;
+        if(DAILY_BOOT_CACHE?.uid === uid && DAILY_BOOT_CACHE.full) return; // a session just refreshed the logs
+        DAILY_BOOT_CACHE = { ...(DAILY_BOOT_CACHE as DailyBoot), uid, logs: lgs as DailyLog[], full: true };
+        setAllLogs(lgs as DailyLog[]);
+      }
     })().catch(()=>{ if(alive) setLoading(false); });
     return ()=>{ alive = false; };
   },[today]);
@@ -5006,7 +5063,7 @@ export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?
         ]);
         const fetchedLogs2=(lgs??[]) as DailyLog[];
         setAllLogs(fetchedLogs2);
-        if(DAILY_BOOT_CACHE) DAILY_BOOT_CACHE = { ...DAILY_BOOT_CACHE, logs: fetchedLogs2 };
+        if(DAILY_BOOT_CACHE) DAILY_BOOT_CACHE = { ...DAILY_BOOT_CACHE, logs: fetchedLogs2, full: true };
         // allLogs update triggers the activeAssignIdx useEffect to re-filter logs+todayLog
       });
     }

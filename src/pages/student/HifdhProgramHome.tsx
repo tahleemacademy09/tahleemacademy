@@ -21,6 +21,8 @@ import {
 
 const hhDb = supabase as any;
 const loadDailyRevision = () => import("./HifdhDailyRevisionPage");
+// Download the screen's code AND its data in the background so tapping "Daily revision" opens instantly
+const warmDailyRevision = () => { loadDailyRevision().then((m) => m.warmDailyBoot?.()).catch(() => {}); };
 const DailyRevision = lazy(loadDailyRevision);
 
 const HH_DARK = "#0f2e1f";
@@ -250,7 +252,7 @@ export default function HifdhProgramHome() {
 
   // Download the Daily revision screen in the background as soon as this home is open, so tapping it is instant
   useEffect(() => {
-    const t = window.setTimeout(() => { loadDailyRevision().catch(() => {}); }, 400);
+    const t = window.setTimeout(warmDailyRevision, 100);
     return () => window.clearTimeout(t);
   }, []);
 
@@ -447,7 +449,7 @@ export default function HifdhProgramHome() {
               sub={doneToday ? "Done today ✓" : `${revDays} day${revDays === 1 ? "" : "s"} this week`}
               pill={doneToday ? { text: "Done today", color: HH_OK } : { text: "Pending today", color: HH_AMBER }}
               badge={doneToday ? 0 : revisionPending > 0 ? revisionPending : 0}
-              onClick={() => setView("daily")} onWarm={() => { loadDailyRevision().catch(() => {}); }}
+              onClick={() => setView("daily")} onWarm={warmDailyRevision}
             />
             <OCard
               accent={reviewOpen}
