@@ -177,10 +177,24 @@ const LiveClassManagement = () => {
     if (!liveSessions.length) { setParticipants({}); return; }
     const map: Record<string,any[]> = {};
     await Promise.all(liveSessions.map(async s => {
-      const { data } = await supabase.from("class_participants")
-        .select("*,profiles:student_id(full_name,level)")
-        .eq("session_id", s.id).is("left_at", null);
-      map[s.id] = data || [];
+      const [{ data }, { data: att }] = await Promise.all([
+        supabase.from("class_participants")
+          .select("*,profiles:student_id(full_name,level)")
+          .eq("session_id", s.id).is("left_at", null),
+        // Fallback: attendance_logs is written on every join too, so anyone whose
+        // class_participants row is missing (older joins / failed writes) still shows up.
+        supabase.from("attendance_logs")
+          .select("id,user_id,joined_at,profiles:user_id(full_name,level)")
+          .eq("session_id", s.id).is("left_at", null),
+      ]);
+      const rows: any[] = [...(data || [])];
+      const seen = new Set(rows.map(r => r.student_id));
+      (att || []).forEach((a: any) => {
+        if (seen.has(a.user_id)) return;
+        seen.add(a.user_id);
+        rows.push({ id: `att-${a.id}`, student_id: a.user_id, joined_at: a.joined_at, profiles: a.profiles, is_muted: false, hand_raised: false });
+      });
+      map[s.id] = rows;
     }));
     setParticipants(map);
   }, []);
@@ -906,6 +920,19 @@ const LiveClassManagement = () => {
                           ))}
                           {(!slot.levels||slot.levels.length===0) && <span style={{fontSize:10,color:"#9ca3af"}}>All levels</span>}
                         </div>
+                        {isNow&&relatedSess&&(participants[relatedSess.id]||[]).length>0 && (
+                          <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:8}}>
+                            {(participants[relatedSess.id]||[]).map((p:any)=>(
+                              <div key={p.id} style={{display:"flex",alignItems:"center",gap:5,background:"#fff",borderRadius:99,padding:"3px 9px 3px 3px",boxShadow:"0 1px 4px rgba(0,0,0,.07)"}}>
+                                <Av name={p.profiles?.full_name||"?"} size={20} bg={G}/>
+                                <span style={{fontSize:11,fontWeight:600}}>{p.profiles?.full_name||"Student"}</span>
+                                {p.profiles?.level && <span style={{fontSize:9,color:"#9ca3af"}}>{p.profiles.level}</span>}
+                                {p.is_muted && <span style={{fontSize:9}}>🔇</span>}
+                                {p.hand_raised && <span style={{fontSize:9}}>✋</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       {isNow&&!relatedSess && (
                         <button className="lc-btn" style={{background:G,color:"#fff",fontSize:11,padding:"6px 12px",flexShrink:0}} onClick={e=>{
