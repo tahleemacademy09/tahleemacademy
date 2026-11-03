@@ -19,7 +19,8 @@ import {
 } from "lucide-react";
 
 const hhDb = supabase as any;
-const DailyRevision = lazy(() => import("./HifdhDailyRevisionPage"));
+const loadDailyRevision = () => import("./HifdhDailyRevisionPage");
+const DailyRevision = lazy(loadDailyRevision);
 
 const HH_DARK = "#0f2e1f";
 const HH_GREEN = "#064E3B";
@@ -100,44 +101,49 @@ const hhHalfHint = (page: number, p: { page_from: number; page_to: number; half_
   if (a === 0 && b === 1) return null;
   return a === 0 ? "top half of this page" : "bottom half of this page";
 };
-const HhHint = ({ text }: { text: string | null }) => text ? (
-  <div style={{ margin: "0 0 4px", padding: "4px 10px", borderRadius: 10, background: "#fbf3da", border: `1px solid ${HH_GOLD}88`, color: "#78350F", fontSize: 11, fontWeight: 700 }}>
-    Your portion: the {text}
+const HhHint = ({ text, right }: { text: string | null; right?: React.ReactNode }) => (
+  <div style={{
+    margin: "0 0 4px", padding: text ? "3px 6px 3px 10px" : "0", minHeight: 32, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: text ? "space-between" : "flex-end", gap: 8,
+    background: text ? "#fbf3da" : "transparent", border: text ? `1px solid ${HH_GOLD}88` : "none", color: "#78350F", fontSize: 11, fontWeight: 700,
+  }}>
+    {text && <span style={{ minWidth: 0 }}>Your portion: the {text}</span>}
+    {right}
   </div>
-) : null;
+);
 
 
 /** Full-screen shell: title bar on top, content below (module-level so children never remount) */
 const HhScreen = ({ title, onBack, right, bg, children }: { title: string; onBack: () => void; right?: React.ReactNode; bg: string; children: React.ReactNode }) => (
   <div style={{ position: "fixed", inset: 0, zIndex: 250, background: bg, display: "flex", flexDirection: "column" }}>
     <div style={{
-      display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", paddingTop: "calc(8px + env(safe-area-inset-top, 0px))",
+      display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", paddingTop: "calc(8px + env(safe-area-inset-top, 0px))",
       background: HH_DARK, color: "#fff",
     }}>
-      <button onClick={onBack} aria-label="Back" style={{ width: 34, height: 34, borderRadius: 10, border: "none", background: "#ffffff1f", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><ArrowLeft size={18} /></button>
-      <div style={{ flex: 1, fontWeight: 800, fontSize: 15 }}>{title}</div>
-      {right}
+      <button onClick={onBack} aria-label="Back" style={{ width: 34, height: 34, flexShrink: 0, borderRadius: 10, border: "none", background: "#ffffff1f", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><ArrowLeft size={18} /></button>
+      <div style={{ flex: right ? "0 0 auto" : 1, fontWeight: 800, fontSize: 15, whiteSpace: "nowrap" }}>{title}</div>
+      {right && <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 5 }}>{right}</div>}
     </div>
     {children}
   </div>
 );
 
 /** Page navigator + hint + Quran page (+ optional footer) */
-const HhQuran = ({ portion, pages, cur, pick, bg, qSize, onBg, topExtra = 0, footer, footerH = 0 }: {
+const HhQuran = ({ portion, pages, cur, pick, bg, qSize, onBg, topExtra = 0, footer, footerH = 0, sizer, hideChips }: {
   portion: any; pages: number[]; cur?: number; pick: (p: number) => void; bg: string; qSize: number; onBg: (c: string) => void;
-  topExtra?: number; footer?: React.ReactNode; footerH?: number;
+  topExtra?: number; footer?: React.ReactNode; footerH?: number; sizer?: React.ReactNode; hideChips?: boolean;
 }) => {
+  const showChips = !hideChips && pages.length > 1 && !!cur;
   const hint = cur ? hhHalfHint(cur, portion) : null;
   return (
     <>
-      {pages.length > 1 && cur && <div style={{ padding: "4px 10px 0", background: bg }}><HhPageChips pages={pages} active={cur} onPick={pick} /></div>}
-      {hint && <div style={{ padding: "0 10px", background: bg }}><HhHint text={hint} /></div>}
+      {showChips && cur && <div style={{ padding: "4px 10px 0", background: bg }}><HhPageChips pages={pages} active={cur} onPick={pick} /></div>}
+      <div style={{ padding: "4px 10px 0", background: bg }}><HhHint text={hint} right={sizer} /></div>
       <div style={{ flex: 1, overflowY: "auto", padding: "2px 6px 8px", display: "flex", flexDirection: "column" }}>
         <div style={{ margin: "auto 0", width: "100%" }}>
           {cur && (
             <MushafPageView
               page={cur} fontSize={qSize} seamless onBackground={onBg}
-              fitHeight={topExtra + 52 + (pages.length > 1 ? 58 : 0) + (hint ? 32 : 0) + footerH + 16}
+              fitHeight={topExtra + 52 + (showChips ? 58 : 0) + 40 + footerH + 16}
             />
           )}
         </div>
@@ -241,6 +247,12 @@ export default function HifdhProgramHome() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Download the Daily revision screen in the background as soon as this home is open, so tapping it is instant
+  useEffect(() => {
+    const t = window.setTimeout(() => { loadDailyRevision().catch(() => {}); }, 400);
+    return () => window.clearTimeout(t);
+  }, []);
+
   const taskOf = (s: number) => tasks.find((t) => t.slot === s);
   const activeTask = taskOf(selSlot);
   const activePages = useMemo(() => (activeTask ? hpPagesOf(activeTask) : []), [activeTask]);
@@ -334,26 +346,28 @@ export default function HifdhProgramHome() {
     }}>{children}</button>
   );
 
-  const JoinBtn = ({ onClick, disabled, label }: { onClick?: () => void; disabled?: boolean; label: string }) => (
+  const JoinBtn = ({ onClick, disabled, label, compact, onDark }: { onClick?: () => void; disabled?: boolean; label: string; compact?: boolean; onDark?: boolean }) => (
     <button onClick={onClick} disabled={disabled} style={{
-      border: "none", borderRadius: 12, padding: "0 12px", height: 46, whiteSpace: "nowrap", fontSize: 12, fontWeight: 800,
-      display: "inline-flex", alignItems: "center", gap: 6, cursor: disabled ? "default" : "pointer",
-      background: disabled ? "#e8ece9" : HH_GREEN, color: disabled ? HH_MUTED : "#fff",
-    }}><Video size={15} />{label}</button>
+      border: onDark ? `1.5px solid ${disabled ? "#ffffff33" : "#4ade80"}` : "none", borderRadius: compact ? 9 : 12, padding: compact ? "0 8px" : "0 12px", height: compact ? 34 : 40,
+      flexShrink: 0, whiteSpace: "nowrap", fontSize: compact ? 11 : 12, fontWeight: 800,
+      display: "inline-flex", alignItems: "center", gap: compact ? 4 : 6, cursor: disabled ? "default" : "pointer",
+      background: onDark ? (disabled ? "#ffffff14" : "#16a34a") : disabled ? "#e8ece9" : HH_GREEN,
+      color: onDark ? (disabled ? "#ffffff88" : "#fff") : disabled ? HH_MUTED : "#fff",
+    }}><Video size={compact ? 13 : 15} />{label}</button>
   );
 
   const TextSize = () => (
-    <div style={{ display: "flex", gap: 6 }}>
-      <button onClick={() => bump(-2)} aria-label="Smaller text" style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${HH_LINE}`, background: "#fff", fontWeight: 800, fontSize: 12, cursor: "pointer" }}>A−</button>
-      <button onClick={() => bump(2)} aria-label="Larger text" style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${HH_LINE}`, background: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>A+</button>
+    <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+      <button onClick={() => bump(-2)} aria-label="Smaller text" style={{ width: 28, height: 26, borderRadius: 8, border: `1px solid ${HH_GOLD}88`, background: "#fff", color: HH_INK, fontWeight: 800, fontSize: 11, cursor: "pointer", padding: 0 }}>A−</button>
+      <button onClick={() => bump(2)} aria-label="Larger text" style={{ width: 28, height: 26, borderRadius: 8, border: `1px solid ${HH_GOLD}88`, background: "#fff", color: HH_INK, fontWeight: 800, fontSize: 13, cursor: "pointer", padding: 0 }}>A+</button>
     </div>
   );
 
   /* ───── overview card ───── */
-  const OCard = ({ icon, title, sub, pill, badge, onClick, accent }: {
-    icon: React.ReactNode; title: string; sub: string; pill?: { text: string; color: string }; badge?: number; onClick: () => void; accent?: boolean;
+  const OCard = ({ icon, title, sub, pill, badge, onClick, accent, onWarm }: {
+    icon: React.ReactNode; title: string; sub: string; pill?: { text: string; color: string }; badge?: number; onClick: () => void; accent?: boolean; onWarm?: () => void;
   }) => (
-    <button onClick={onClick} style={{
+    <button onClick={onClick} onPointerDown={onWarm} onMouseEnter={onWarm} style={{
       width: "100%", display: "flex", alignItems: "center", gap: 12, textAlign: "left", cursor: "pointer",
       background: "#fff", borderRadius: 16, padding: 14, border: `2px solid ${accent ? HH_GOLD : HH_LINE}`,
     }}>
@@ -432,7 +446,7 @@ export default function HifdhProgramHome() {
               sub={doneToday ? "Done today ✓" : `${revDays} day${revDays === 1 ? "" : "s"} this week`}
               pill={doneToday ? { text: "Done today", color: HH_OK } : { text: "Pending today", color: HH_AMBER }}
               badge={doneToday ? 0 : revisionPending > 0 ? revisionPending : 0}
-              onClick={() => setView("daily")}
+              onClick={() => setView("daily")} onWarm={() => { loadDailyRevision().catch(() => {}); }}
             />
             <OCard
               accent={reviewOpen}
@@ -448,35 +462,41 @@ export default function HifdhProgramHome() {
 
       {/* ───────── MEMORIZATION · full screen ───────── */}
       {view === "memorize" && !suspended && (
-        <HhScreen bg={pageBg} title="Memorization" onBack={() => setView(null)} right={<TextSize />}>
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr) auto", gap: 6, padding: "8px 10px", background: pageBg }}>
+        <HhScreen bg={pageBg} title="Memorization" onBack={() => setView(null)}
+          right={<>
             {[1, 2].map((s) => {
               const t = taskOf(s);
-              const lb = taskPill(t);
               const dayN = memDays[s - 1];
+              const on = selSlot === s && !!t;
+              const st = t ? ({ passed: ["✓", "#4ade80"], submitted: ["…", "#93c5fd"], read_cleared: ["●", "#fbbf24"], failed: ["↻", "#f87171"] } as Record<string, [string, string]>)[t.status] : null;
+              const full = t ? `${hpPortionLabel(t)} — ${taskPill(t)?.text ?? ""}` : "Not ready";
               return (
-                <Chip key={s} on={selSlot === s && !!t} disabled={!t} onClick={() => { setSelSlot(s); setSelPage(null); }}>
-                  <div style={{ fontSize: 9, fontWeight: 800, color: HH_MUTED, letterSpacing: 0.5 }}>
-                    S{s}{dayN ? ` · ${HH_DAY_SHORT[dayN - 1].toUpperCase()}` : ""}
+                <button key={s} title={full} aria-label={`Session ${s}: ${full}`} disabled={!t} onClick={() => { setSelSlot(s); setSelPage(null); }} style={{
+                  flex: "1 1 0", minWidth: 0, maxWidth: 96, height: 34, borderRadius: 9, padding: "0 6px", textAlign: "left", lineHeight: 1.15,
+                  cursor: t ? "pointer" : "default", color: "#fff", opacity: t ? 1 : 0.5,
+                  border: `1.5px solid ${on ? HH_GOLD : "#ffffff33"}`, background: on ? "#ffffff24" : "#ffffff10",
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8.5, fontWeight: 800, opacity: 0.85, letterSpacing: 0.3 }}>
+                    <span>S{s}{dayN ? ` · ${HH_DAY_SHORT[dayN - 1].toUpperCase()}` : ""}</span>
+                    {st && <span style={{ color: st[1], opacity: 1 }}>{st[0]}</span>}
                   </div>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: HH_INK, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {t ? hpPortionLabel(t).replace("Page ", "P").replace(" · ", " ") : "—"}
+                  <div style={{ fontSize: 11, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {t ? hpPortionLabel(t).replace(/Pages? /g, "P").replace(" · ", " ").replace(/ half/g, "").replace(/[()]/g, "") : "—"}
                   </div>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: lb?.color || HH_MUTED }}>{lb ? lb.text : "Not ready"}</div>
-                </Chip>
+                </button>
               );
             })}
-            <JoinBtn
+            <JoinBtn compact onDark
               onClick={joinLive} disabled={!isMemDay}
               label={isMemDay ? `Join${slotTime(todayN) ? ` · ${slotTime(todayN).replace(":00", "")}` : ""}` : nextMemDay ? HH_DAY_SHORT[nextMemDay - 1] : "—"}
             />
-          </div>
+          </>}>
           {!activeTask ? (
             <div style={{ padding: 20, fontSize: 13, color: HH_MUTED, textAlign: "center" }}>Your page for this week will show here.</div>
           ) : (
             <HhQuran bg={pageBg} qSize={qSize} onBg={setPageBg}
               portion={activeTask} pages={activePages} cur={shownPage} pick={setSelPage}
-              topExtra={62}
+              sizer={<TextSize />} topExtra={0}
               footerH={HH_CAN_SUBMIT.includes(activeTask.status) ? 76 : 0}
               footer={HH_CAN_SUBMIT.includes(activeTask.status) ? (
                 <div style={{ padding: 10, paddingBottom: "calc(10px + env(safe-area-inset-bottom, 0px))", background: pageBg, borderTop: "1px solid rgba(0,0,0,.06)" }}>
@@ -503,15 +523,25 @@ export default function HifdhProgramHome() {
 
       {/* ───────── WEEKLY REVIEW · full screen ───────── */}
       {view === "weekly" && !suspended && (
-        <HhScreen bg={pageBg} title="Weekly review" onBack={() => setView(null)} right={<TextSize />}>
+        <HhScreen bg={pageBg} title="Weekly review" onBack={() => setView(null)}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: pageBg }}>
-            <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8, background: "#fff", border: `1px solid ${HH_LINE}`, borderRadius: 12, padding: "0 10px", height: 46 }}>
+            <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8, background: "#fff", border: `1px solid ${HH_LINE}`, borderRadius: 12, padding: "0 10px", height: 40 }}>
               <Users size={16} color={HH_GREEN} />
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 800, color: HH_INK, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ustadhName}</div>
                 <div style={{ fontSize: 10, fontWeight: 700, color: reviewStatus.color }}>{reviewStatus.text}</div>
               </div>
             </div>
+            {recTask && recPages.length > 0 && recShown && (
+              <div style={{ flex: "0 1 auto", minWidth: 0, maxWidth: "46%", display: "flex", gap: 5, overflowX: "auto", scrollbarWidth: "none" } as any}>
+                {recPages.map((p) => (
+                  <button key={p} onClick={() => setRecPage(p)} aria-label={`Page ${p}`} style={{
+                    flex: "0 0 auto", width: 34, height: 34, borderRadius: "50%", cursor: "pointer", fontSize: 11, fontWeight: 800, padding: 0,
+                    border: `2px solid ${p === recShown ? HH_GOLD : HH_LINE}`, background: p === recShown ? "#fbf3da" : "#f1f3f2", color: p === recShown ? HH_INK : HH_MUTED,
+                  }}>{p}</button>
+                ))}
+              </div>
+            )}
             {reviewAsg && !review && (
               <JoinBtn onClick={joinReview} disabled={!reviewOpen || busy} label={reviewOpen ? "Join" : reviewClosed ? "Closed" : HH_DAY_SHORT[nextRevDay - 1]} />
             )}
@@ -522,7 +552,7 @@ export default function HifdhProgramHome() {
               Portions appear here once your ustadh marks them memorized.
             </div>
           ) : (
-            <HhQuran bg={pageBg} qSize={qSize} onBg={setPageBg} portion={recTask} pages={recPages} cur={recShown} pick={setRecPage} topExtra={62} />
+            <HhQuran bg={pageBg} qSize={qSize} onBg={setPageBg} portion={recTask} pages={recPages} cur={recShown} pick={setRecPage} hideChips sizer={<TextSize />} topExtra={56} />
           )}
         </HhScreen>
       )}

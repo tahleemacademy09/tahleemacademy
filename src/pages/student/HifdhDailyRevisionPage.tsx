@@ -4858,6 +4858,9 @@ function DayDetailModal({day,totalPagesInProg,pagesReadSoFar,onClose}:{
 /* ══════════════════════════════════════════════════════════════════
    MAIN PAGE
 ═══════════════════════════════════════════════════════════════════*/
+type DailyBoot = { uid: string; name: string; assignments: Assignment[]; logs: DailyLog[] };
+let DAILY_BOOT_CACHE: DailyBoot | null = null;
+
 export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?: boolean } = {}) {
   const navigate = useNavigate();
   const [loading,      setLoading]      = useState(true);
@@ -4880,12 +4883,26 @@ export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?
   // Derived: current active assignment (the one student is viewing/doing session for)
   const assignment = assignments[activeAssignIdx] ?? null;
 
-  /* ── Load data ── */
+  /* ── Load data ──
+     • getSession() reads the signed-in user from the device (getUser() made a network round-trip to the auth server first).
+     • The last result is kept in memory, so re-opening this screen paints instantly and refreshes quietly behind it. */
   useEffect(()=>{
-    supabase.auth.getUser().then(async({data})=>{
-      if(!data?.user) return;
-      const uid=data.user.id;
-      setUserId(uid);
+    let alive = true;
+    const apply = (c: DailyBoot) => {
+      setUserId(c.uid);
+      if(c.name) setStudentName(c.name);
+      setAssignments(c.assignments);
+      setActiveAssignIdx(0);
+      setAllLogs(c.logs);
+      setLoading(false);
+    };
+    (async()=>{
+      const { data: sess } = await supabase.auth.getSession();
+      let uid = sess?.session?.user?.id ?? null;
+      if(!uid){ const { data } = await supabase.auth.getUser(); uid = data?.user?.id ?? null; }
+      if(!uid || !alive) return;
+      if(DAILY_BOOT_CACHE?.uid === uid) apply(DAILY_BOOT_CACHE);
+      else setUserId(uid);
 
       const [{data:pf},{data:asgnAll},{data:lgs}] = await Promise.all([
         (supabase as any).from("profiles").select("full_name").eq("user_id",uid).maybeSingle(),
@@ -4895,8 +4912,8 @@ export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?
           .select("*").eq("student_id",uid)
           .order("log_date",{ascending:false}).limit(60),
       ]);
+      if(!alive) return;
 
-      if((pf as any)?.full_name) setStudentName((pf as any).full_name);
       // Enrich all active assignments
       const enrichedAll: Assignment[] = ((asgnAll as any[]) ?? []).map((asgn: any) => {
         let extra: any = {};
@@ -4908,12 +4925,10 @@ export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?
           days_off:      extra.daysOff      ?? asgn.days_off ?? [],
         } as Assignment;
       });
-      setAssignments(enrichedAll);
-      setActiveAssignIdx(0);
-      // Store all logs — the activeAssignIdx useEffect below filters them per programme
-      setAllLogs((lgs??[]) as DailyLog[]);
-      setLoading(false);
-    });
+      DAILY_BOOT_CACHE = { uid, name: (pf as any)?.full_name ?? "", assignments: enrichedAll, logs: (lgs??[]) as DailyLog[] };
+      apply(DAILY_BOOT_CACHE);
+    })().catch(()=>{ if(alive) setLoading(false); });
+    return ()=>{ alive = false; };
   },[today]);
 
   // ── Re-filter logs whenever the active programme tab changes or new logs arrive ──
@@ -4991,6 +5006,7 @@ export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?
         ]);
         const fetchedLogs2=(lgs??[]) as DailyLog[];
         setAllLogs(fetchedLogs2);
+        if(DAILY_BOOT_CACHE) DAILY_BOOT_CACHE = { ...DAILY_BOOT_CACHE, logs: fetchedLogs2 };
         // allLogs update triggers the activeAssignIdx useEffect to re-filter logs+todayLog
       });
     }
