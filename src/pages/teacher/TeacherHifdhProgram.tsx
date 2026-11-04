@@ -14,6 +14,8 @@ import { SURAHS } from "@/components/hifdh/surahData";
 import { HifdhAboutCard } from "@/components/hifdh/HifdhAbout";
 import { hpUnit, hpFromUnit, hpUnitsFor, hpUnitsOf, hpPortionFromUnits, hpPortionLabel, HP_AMOUNTS, hpWeeklyReview, hpReviewNote } from "@/lib/hifdhPortion";
 import { loadDoneReviewWeeks } from "@/lib/hifdhReview";
+import { levelSlots, fmtSlots, type HifdhSlot } from "@/lib/hifdhSchedule";
+import LevelScheduleEditor from "@/components/hifdh/LevelScheduleEditor";
 import { Loader2, Video, Check, RotateCcw, ChevronLeft, ChevronRight, BookOpen, ClipboardCheck, CheckCheck, ChevronDown, ChevronsUp, ChevronsDown, Settings } from "lucide-react";
 
 const tpDb = supabase as any;
@@ -370,7 +372,7 @@ export default function TeacherHifdhProgram() {
   const submittedCount = waiting.filter((t) => t.status === "submitted").length;
   // 2 sessions a week, plus one more each time a student finishes everything early and moves straight on
   const sessionNums = Array.from({ length: Math.max(2, ...tasks.map((t) => Number(t.slot) || 0)) }, (_, i) => i + 1);
-  const defaultWhen = (g: any) => tpLocalInput(week, levels[g.level_id]?.readalong_day, levels[g.level_id]?.readalong_time);
+  const defaultWhen = (g: any) => (() => { const f = levelSlots(levels[g.level_id])[0]; return tpLocalInput(week, f?.day, f?.time); })();
 
   /* ───── UI ───── */
   const ReadAlong = (
@@ -408,8 +410,8 @@ export default function TeacherHifdhProgram() {
               <ChevronDown size={18} color={TP_GREEN} style={{ flexShrink: 0, transform: shut[g.id] ? "rotate(-90deg)" : "none", transition: "transform .15s" }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 800, color: TP_GREEN, fontSize: 15 }}>{g.name}</div>
-                {levels[g.level_id]?.readalong_day && (
-                  <div style={{ fontSize: 11, color: TP_MUTED }}>Read-along day: {TP_DAY[levels[g.level_id].readalong_day - 1]}{levels[g.level_id]?.readalong_time ? ` · ${String(levels[g.level_id].readalong_time).slice(0, 5)}` : ""}</div>
+                {levelSlots(levels[g.level_id]).length > 0 && (
+                  <div style={{ fontSize: 11, color: TP_MUTED }}>Read-along: {fmtSlots(levels[g.level_id])}</div>
                 )}
               </div>
               <div style={{ fontSize: 12, color: TP_MUTED }}>{ms.length} student{ms.length === 1 ? "" : "s"}</div>
@@ -425,6 +427,20 @@ export default function TeacherHifdhProgram() {
               </div>
             ) : (
               <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+                {levelSlots(levels[g.level_id]).length > 1 && (
+                  <div style={{ flex: "1 1 100%", display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {levelSlots(levels[g.level_id]).map((sl) => {
+                      const v = tpLocalInput(week, sl.day, sl.time);
+                      const on = (when[g.id] || defaultWhen(g)) === v;
+                      return (
+                        <button key={sl.day} onClick={() => setWhen({ ...when, [g.id]: v })} style={{
+                          padding: "6px 11px", borderRadius: 99, fontSize: 12, fontWeight: 800, cursor: "pointer",
+                          border: `1px solid ${on ? TP_GREEN : TP_LINE}`, background: on ? TP_GREEN : "#fff", color: on ? "#fff" : TP_INK,
+                        }}>{TP_DAY[sl.day - 1].slice(0, 3)} {sl.time}</button>
+                      );
+                    })}
+                  </div>
+                )}
                 <input type="datetime-local" value={when[g.id] || defaultWhen(g)} onChange={(e) => setWhen({ ...when, [g.id]: e.target.value })}
                   style={{ flex: 1, minWidth: 180, border: `1px solid ${TP_LINE}`, borderRadius: 10, padding: "8px 10px", fontSize: 13 }} />
                 <TpBtn small disabled={busy} onClick={() => schedule(g)}>Schedule class</TpBtn>
@@ -552,37 +568,29 @@ export default function TeacherHifdhProgram() {
     </div>
   );
 
-  const saveLevel = (l: any, day: number | null, time: string | null) =>
-    guard(() => tpDb.rpc("hifdh_set_level_schedule", { p_level: l.id, p_day: day, p_time: time || null }), "Schedule saved");
+  // saved in place (no page reload) so the day chips and times don't flicker while the ustadh is editing
+  const saveLevel = async (l: any, slots: HifdhSlot[]) => {
+    const { error } = await tpDb.rpc("hifdh_set_level_schedule_v2", { p_level: l.id, p_schedule: slots });
+    if (error) return toast({ title: "Couldn't save the schedule", description: error.message, variant: "destructive" });
+    const patch = { readalong_schedule: slots, readalong_day: slots[0]?.day ?? null, readalong_time: slots[0]?.time ?? null };
+    setLevelList((ls) => ls.map((x) => (x.id === l.id ? { ...x, ...patch } : x)));
+    setLevels((m) => (m[l.id] ? { ...m, [l.id]: { ...m[l.id], ...patch } } : m));
+    toast({ title: "Schedule saved" });
+  };
   const Settings_ = (
     <div style={{ display: "grid", gap: 10 }}>
       <HifdhAboutCard audience="teacher" memDays={settings?.memorization_days} reviewDays={settings?.review_days}
         streakLimit={settings?.streak_limit} fine={settings?.fine_amount} />
       <TpCard>
         <div style={{ fontSize: 13, color: TP_MUTED }}>
-          Set the day and time of the memorization (read-along) class for each level. New classes you schedule start from this day and time; you can still change a single class when scheduling it.
+          Choose the days of the memorization (read-along) class for each level, and a time for each day. When you schedule a class you can pick one of these days with one tap; you can still change a single class.
         </div>
       </TpCard>
       {levelList.length === 0 && <TpCard><div style={{ color: TP_MUTED, fontSize: 13 }}>No levels yet.</div></TpCard>}
       {levelList.map((l) => (
         <TpCard key={l.id}>
           <div style={{ fontWeight: 800, color: TP_GREEN, fontSize: 14, marginBottom: 8 }}>{l.name}</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <div>
-              <div style={{ fontSize: 12, color: TP_MUTED, marginBottom: 3 }}>Day</div>
-              <select disabled={busy} value={l.readalong_day || ""} onChange={(e) => saveLevel(l, e.target.value ? Number(e.target.value) : null, l.readalong_time)}
-                style={{ width: "100%", border: `1px solid ${TP_LINE}`, borderRadius: 8, padding: "8px 6px", fontSize: 13, background: "#fff" }}>
-                <option value="">Day…</option>
-                {TP_DAY.map((d, i) => <option key={d} value={i + 1}>{d}</option>)}
-              </select>
-            </div>
-            <div>
-              <div style={{ fontSize: 12, color: TP_MUTED, marginBottom: 3 }}>Time</div>
-              <input type="time" disabled={busy} defaultValue={l.readalong_time ? String(l.readalong_time).slice(0, 5) : ""}
-                onBlur={(e) => (e.target.value || "") !== (l.readalong_time ? String(l.readalong_time).slice(0, 5) : "") && saveLevel(l, l.readalong_day || null, e.target.value)}
-                style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${TP_LINE}`, borderRadius: 8, padding: "7px 6px", fontSize: 13 }} />
-            </div>
-          </div>
+          <LevelScheduleEditor level={l} onSave={(slots) => saveLevel(l, slots)} />
         </TpCard>
       ))}
     </div>
