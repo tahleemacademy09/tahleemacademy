@@ -364,7 +364,7 @@ export default function HifdhProgramAdmin() {
               <div>
                 <div style={{ fontWeight: 800, color: HP_GREEN }}>{g.name}</div>
                 {levels.find((l) => l.id === g.level_id)?.readalong_day && (
-                  <div style={{ fontSize: 11, color: HP_MUTED }}>Read-along day: {HP_DAYS[levels.find((l) => l.id === g.level_id).readalong_day - 1]}</div>
+                  <div style={{ fontSize: 11, color: HP_MUTED }}>Read-along day: {HP_DAYS[levels.find((l) => l.id === g.level_id).readalong_day - 1]}{levels.find((l) => l.id === g.level_id).readalong_time ? ` · ${String(levels.find((l) => l.id === g.level_id).readalong_time).slice(0, 5)}` : ""}</div>
                 )}
               </div>
               <div style={{ fontSize: 12, color: HP_MUTED }}>
@@ -536,7 +536,7 @@ export default function HifdhProgramAdmin() {
       <HpCard>
         <div style={{ fontWeight: 800, color: HP_INK, marginBottom: 8 }}>Hifdh levels</div>
         {levels.map((l) => (
-          <div key={l.id} style={{ display: "grid", gridTemplateColumns: "1fr 70px 96px 36px", gap: 8, marginBottom: 8, alignItems: "center" }}>
+          <div key={l.id} style={{ display: "grid", gridTemplateColumns: "1fr 60px 80px 92px 32px", gap: 6, marginBottom: 8, alignItems: "center" }}>
             <HpInput defaultValue={l.name} onBlur={(e) => e.target.value !== l.name && run(() => hpDb.from("hifdh_levels").update({ name: e.target.value }).eq("id", l.id))} />
             <HpInput type="number" step="0.5" min="0.5" defaultValue={l.daily_pages} title="Pages per memorization day"
               onBlur={(e) => Number(e.target.value) !== Number(l.daily_pages) && run(() => hpDb.from("hifdh_levels").update({ daily_pages: Number(e.target.value) || 0.5 }).eq("id", l.id))} />
@@ -545,11 +545,14 @@ export default function HifdhProgramAdmin() {
               <option value="">Day…</option>
               {HP_DAYS.map((d, i) => <option key={d} value={i + 1}>{d}</option>)}
             </HpSelect>
+            <input type="time" title="Read-along time for this level" defaultValue={l.readalong_time ? String(l.readalong_time).slice(0, 5) : ""}
+              onBlur={(e) => (e.target.value || "") !== (l.readalong_time ? String(l.readalong_time).slice(0, 5) : "") && run(() => hpDb.from("hifdh_levels").update({ readalong_time: e.target.value || null }).eq("id", l.id))}
+              style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${HP_LINE}`, borderRadius: 10, padding: "7px 4px", fontSize: 12 }} />
             <button aria-label="Delete level" onClick={() => window.confirm(`Delete "${l.name}"?`) && run(() => hpDb.from("hifdh_levels").delete().eq("id", l.id))}
               style={{ border: "none", background: "none", cursor: "pointer", color: HP_RED }}><Trash2 size={16} /></button>
           </div>
         ))}
-        <div style={{ fontSize: 11, color: HP_MUTED, marginBottom: 8 }}>Name · pages per memorization day (0.5 = half a page) · read-along day for the level</div>
+        <div style={{ fontSize: 11, color: HP_MUTED, marginBottom: 8 }}>Name · pages per memorization day (0.5 = half a page) · read-along day · read-along time</div>
         <HpBtn small kind="ghost" onClick={() => run(() => hpDb.from("hifdh_levels").insert({ name: `Level ${levels.length + 1}`, daily_pages: 0.5, sort_order: levels.length }))}>
           <Plus size={12} /> Add level
         </HpBtn>
