@@ -8,6 +8,8 @@ export interface HifdhPortion {
   page_to: number;
   half_from?: number | null;
   half_to?: number | null;
+  /** a second stretch read after the main one (weekly review: last slice wraps back to the start of Ankabut) */
+  extra?: HifdhPortion | null;
 }
 
 /** 0-based half-page index: page 1 first half = 0 */
@@ -33,7 +35,7 @@ export const hpPortionFromUnits = (start: number, count: number) => {
 
 const halfName = (h: number) => (h === 0 ? "1st half" : "2nd half");
 
-export const hpPortionLabel = (p: HifdhPortion) => {
+const hpOneLabel = (p: HifdhPortion) => {
   const hf = p.half_from ?? 0;
   const ht = p.half_to ?? 1;
   if (p.page_from === p.page_to) {
@@ -45,11 +47,21 @@ export const hpPortionLabel = (p: HifdhPortion) => {
   return `Page ${p.page_from}${hf ? " (2nd half)" : ""} → Page ${p.page_to}${ht ? "" : " (1st half)"}`;
 };
 
-export const hpPagesOf = (p: HifdhPortion) =>
-  Array.from({ length: Math.max(0, p.page_to - p.page_from + 1) }, (_, i) => p.page_from + i).slice(0, 14);
+export const hpPortionLabel = (p: HifdhPortion): string =>
+  p.extra ? `${hpOneLabel(p)} + ${hpOneLabel(p.extra)}` : hpOneLabel(p);
+
+const hpRunPages = (p: HifdhPortion) =>
+  Array.from({ length: Math.max(0, p.page_to - p.page_from + 1) }, (_, i) => p.page_from + i);
+
+export const hpPagesOf = (p: HifdhPortion) => {
+  const main = hpRunPages(p);
+  const more = p.extra ? hpRunPages(p.extra).filter((x) => !main.includes(x)) : [];
+  return [...main, ...more].slice(0, 14);
+};
 
 /** Which halves of `page` belong to the portion, as [startHalf, endHalf] */
 export const hpSegmentFor = (page: number, p: HifdhPortion): [number, number] => {
+  if (p.extra && (page < p.page_from || page > p.page_to)) return hpSegmentFor(page, { ...p.extra, extra: null });
   const hf = p.half_from ?? 0;
   const ht = p.half_to ?? 1;
   const start = page === p.page_from ? hf : 0;
@@ -106,8 +118,9 @@ export interface HifdhReviewRange extends HifdhPortion {
 /**
  * Weekly review for one student.
  *  • Finished Surat al-Ankabut → everything from the start of Ankabut up to the page they are at is cut into slices of
- *    5 pages. Week 1 = first 5 pages, week 2 = next 5, … and it starts over after the last slice. With only 12 pages
- *    memorized the slices are 5 + 5 + 2, then round again.
+ *    5 pages. Week 1 = first 5 pages, week 2 = next 5, … When it reaches the end it wraps to the start of Ankabut to
+ *    make up the 5 pages and the next week carries on from there (12 pages: 396–400, 401–405, 406–407+396–398,
+ *    399–403, 404–407+396, …).
  *  • Not there yet → the old behaviour (current round of what they memorized).
  * `current` is where the student memorizes NEXT (hifdh_program.current_page / current_half), so what is memorized
  * ends right before it. `doneWeeks` = how many earlier weekly reviews were passed (moves the cycle on).
@@ -123,10 +136,18 @@ export const hpWeeklyReview = (
       const end = next - 1;
       const total = end - HP_ANKABUT_START + 1;
       const rounds = Math.max(1, Math.ceil(total / HP_REVIEW_CYCLE));
-      const idx = ((doneWeeks % rounds) + rounds) % rounds;
-      const start = HP_ANKABUT_START + idx * HP_REVIEW_CYCLE;
-      const units = Math.min(HP_REVIEW_CYCLE, end - start + 1);
-      return { ...hpPortionFromUnits(start, units), units, round: idx + 1, rounds, fromAnkabut: true };
+      // everything memorized is one circle; each week reads the next 5 pages round it and carries on from there
+      if (total <= HP_REVIEW_CYCLE) {
+        return { ...hpPortionFromUnits(HP_ANKABUT_START, total), units: total, round: doneWeeks + 1, rounds, fromAnkabut: true };
+      }
+      const off = (((doneWeeks * HP_REVIEW_CYCLE) % total) + total) % total;
+      const run = Math.min(HP_REVIEW_CYCLE, total - off);
+      const main = hpPortionFromUnits(HP_ANKABUT_START + off, run);
+      if (run < HP_REVIEW_CYCLE) {
+        const extra = hpPortionFromUnits(HP_ANKABUT_START, HP_REVIEW_CYCLE - run);
+        return { ...main, extra, units: HP_REVIEW_CYCLE, round: doneWeeks + 1, rounds, fromAnkabut: true };
+      }
+      return { ...main, units: HP_REVIEW_CYCLE, round: doneWeeks + 1, rounds, fromAnkabut: true };
     }
   }
   const old = hpReviewRange(passed);
@@ -136,5 +157,5 @@ export const hpWeeklyReview = (
 /** One-line description of this week's review slice */
 export const hpReviewNote = (r: HifdhReviewRange) =>
   r.fromAnkabut
-    ? `From Surat al-Ankabut · part ${r.round} of ${r.rounds} · ${hpUnitsLabel(r.units)}`
+    ? `From Surat al-Ankabut · week ${r.round} · ${hpUnitsLabel(r.units)}`
     : `Round ${r.round} · ${hpUnitsLabel(r.units)} of 5 pages memorized`;
