@@ -44,9 +44,26 @@
 // Valid minimal WAV: 44-byte header + empty data chunk.
 // "Empty" data chunk with zero bytes still produces a valid looping audio element.
 // Chrome / Android WebView treats it as active media regardless of content.
-const SILENCE_WAV =
-  "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQAC" +
-  "ABAAZGF0YQAAAAA=";
+// The old file had an EMPTY data chunk (zero samples) — Chrome sees that as "nothing playing", so the tab was never
+// treated as audible and could be frozen the moment it went to the background. This builds 2 s of REAL samples: a
+// 25 Hz tone (below what a phone speaker can reproduce, so you cannot hear it) at ~8 % level. With volume = 0.01 the
+// output is about -62 dBFS, which is above Chrome's silence threshold (-72 dBFS, as far as I know), so the tab counts
+// as playing audio.
+function buildKeepAliveWav(): string {
+  const rate = 8000, secs = 2, n = rate * secs;
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const w = (o: number, t: string) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVE"); w(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, "data"); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.round(Math.sin((2 * Math.PI * 25 * i) / rate) * 0.08 * 32767), true);
+  let bin = ""; const u8 = new Uint8Array(buf);
+  for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+  return "data:audio/wav;base64," + btoa(bin);
+}
+let SILENCE_WAV = "";
 
 // ── Module-level singletons (survive React re-renders) ──────────────────────
 let audioEl:    HTMLAudioElement | null    = null;
@@ -219,9 +236,10 @@ export function startBackgroundAudio(title = "Live Class"): void {
   // ── Audio element ──────────────────────────────────────────────────────
   if (!audioEl) {
     audioEl = document.createElement("audio");
+    if (!SILENCE_WAV) SILENCE_WAV = buildKeepAliveWav();
     audioEl.src    = SILENCE_WAV;
     audioEl.loop   = true;
-    audioEl.volume = 0.001;   // inaudible but non-zero → real audio focus
+    audioEl.volume = 0.01;    // inaudible (25 Hz tone) but above Chrome's silence threshold → real audio focus
     audioEl.setAttribute("playsinline", "");
     audioEl.setAttribute("webkit-playsinline", "");
     audioEl.style.display = "none";
