@@ -23,6 +23,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
 import HifdhReviewPanel,{isHifdhReviewRoom} from "@/components/hifdh/HifdhReviewPanel";
+import HifdhMemorizationPanel from "@/components/hifdh/HifdhMemorizationPanel";
 import { Capacitor } from "@capacitor/core";
 import { canNativeScreenShare, startNativeScreenShare, stopNativeScreenShare, onNativeScreenShareStopped, isScreenBot } from "@/lib/nativeScreenShare";
 import { StatusBar } from "@capacitor/status-bar";
@@ -1606,6 +1607,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <AdminMuteListener isPrivileged={isPrivileged}/>
           <JoinRequestBanner sessionId={sessionId} isPrivileged={isPrivileged}/>
           {isPrivileged&&isHifdhReviewRoom(subject)&&<HifdhReviewPanel subject={subject}/>}
+          {isPrivileged&&!isHifdhReviewRoom(subject)&&<HifdhMemorizationPanel subject={subject}/>}
           <GroupReciteAutoMic active={groupRecite} isPrivileged={isPrivileged}/>
           {/* onDisconnected wired to autoReconnect — handles Android tab suspension */}
           <ReconnectMonitor
