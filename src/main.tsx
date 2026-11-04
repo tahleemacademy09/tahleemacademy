@@ -28,8 +28,8 @@ initDiagnostics();
 // not just after a user has visited Settings in the current session.
 bootstrapTheme();
 
+initOta();       // first: confirms the running update is healthy before anything else can throw
 initNativeApp();
-initOta();
 
 // Pre-download page code on hover/touch and while idle so taps feel instant.
 initRoutePrefetch();
