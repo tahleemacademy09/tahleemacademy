@@ -15,7 +15,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
-import { storageSupabase } from "../../integrations/supabase/storageClient";
+import { getProctoringImageUrl } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft, RefreshCw, Clock, Plus, Send, ShieldAlert,
@@ -394,8 +394,8 @@ const Thumb = ({ media, onClick }: { media: any; onClick: () => void }) => {
   const [url, setUrl] = useState<string | null>(null);
   const [err, setErr] = useState(false);
   useEffect(() => {
-    storageSupabase.storage.from("proctoring-media").createSignedUrl(media.file_url, 3600)
-      .then(({ data }) => data?.signedUrl ? setUrl(data.signedUrl) : setErr(true))
+    getProctoringImageUrl(media.file_url)
+      .then((u) => u ? setUrl(u) : setErr(true))
       .catch(() => setErr(true));
   }, [media.file_url]);
   return (
@@ -604,8 +604,7 @@ export default function ExamLiveMonitor() {
 
   useEffect(() => {
     if (!preview) { setPreviewUrl(null); return; }
-    storageSupabase.storage.from("proctoring-media").createSignedUrl(preview.file_url, 3600)
-      .then(({ data }) => setPreviewUrl(data?.signedUrl || null));
+    getProctoringImageUrl(preview.file_url).then((u) => setPreviewUrl(u));
   }, [preview]);
 
   /* ── Actions ────────────────────────────────────────────────── */

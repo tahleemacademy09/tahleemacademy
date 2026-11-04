@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
-import { storageSupabase } from "../../integrations/supabase/storageClient";
+import { getProctoringImageUrl, removeProctoringImages } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import { useHifdhSettings } from "@/hooks/useHifdhSettings";
@@ -32,8 +32,8 @@ const Thumb = ({ media, onClick }: { media: any; onClick: () => void }) => {
   const [url, setUrl] = useState<string|null>(null);
   const [err, setErr] = useState(false);
   useEffect(() => {
-    storageSupabase.storage.from("proctoring-media").createSignedUrl(media.file_url, 3600)
-      .then(({ data }) => data?.signedUrl ? setUrl(data.signedUrl) : setErr(true))
+    getProctoringImageUrl(media.file_url)
+      .then((u) => u ? setUrl(u) : setErr(true))
       .catch(() => setErr(true));
   }, [media.file_url]);
   const typeLabel = { face_snapshot:"Face", verification_snapshot:"ID", screen_capture:"Screen" }[media.file_type as string] || media.file_type;
@@ -160,10 +160,10 @@ const ProctoringDashboard = () => {
 
   const resolveUrl = async (fileUrl: string, force = false): Promise<string|null> => {
     if (!force && urlCache[fileUrl]) return urlCache[fileUrl];
-    const { data } = await storageSupabase.storage.from("proctoring-media").createSignedUrl(fileUrl, 3600);
-    if (data?.signedUrl) {
-      setUrlCache(prev => ({ ...prev, [fileUrl]: data.signedUrl! }));
-      return data.signedUrl;
+    const signed = await getProctoringImageUrl(fileUrl, force);
+    if (signed) {
+      setUrlCache(prev => ({ ...prev, [fileUrl]: signed }));
+      return signed;
     }
     setImgErr(prev => ({ ...prev, [fileUrl]: true }));
     return null;
@@ -201,6 +201,9 @@ const ProctoringDashboard = () => {
   };
 
   const deleteSession = async (sessionId:string, attemptId:string) => {
+    // also remove the stored image files (R2 / legacy bucket), best-effort
+    const { data: files } = await supabase.from("proctoring_media").select("file_url").eq("attempt_id", attemptId);
+    if (files?.length) removeProctoringImages(files.map((f: any) => f.file_url)).catch(() => {});
     await Promise.all([
       supabase.from("violations").delete().eq("attempt_id",attemptId),
       supabase.from("device_logs").delete().eq("attempt_id",attemptId),
