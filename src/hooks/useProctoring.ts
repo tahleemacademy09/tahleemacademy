@@ -8,7 +8,7 @@
 */
 import { useEffect, useRef, useCallback, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { storageSupabase } from "../integrations/supabase/storageClient";
+import { uploadProctoringImage } from "../integrations/supabase/storageClient";
 import { logger } from "@/lib/logger";
 
 // Note: this captures the exam page's own rendered content (via html2canvas),
@@ -166,9 +166,7 @@ export const useProctoring = (
 
   const uploadWithRetry = useCallback(async (path: string, blob: Blob): Promise<boolean> => {
     for (let i = 0; i < 3; i++) {
-      const { error } = await storageSupabase.storage.from("proctoring-media")
-        .upload(path, blob, { contentType: "image/jpeg", upsert: true });
-      if (!error) return true;
+      if (await uploadProctoringImage(path, blob)) return true;
       await new Promise(r => setTimeout(r, 1500 * (i + 1)));
     }
     return false;
@@ -210,7 +208,7 @@ export const useProctoring = (
       const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, "image/jpeg", 0.7));
       if (!blob || blob.size < 500 || blob.size > 800_000) return;
       const ts = Date.now();
-      const path = `${config.userId}/${config.attemptId}/face_${trigger}_${ts}.jpg`;
+      const path = `proctoring/${config.userId}/${config.attemptId}/face_${trigger}_${ts}.jpg`;
       const ok = await uploadWithRetry(path, blob);
       if (!ok) return;
       snapshotCount.current++;
@@ -276,7 +274,7 @@ export const useProctoring = (
       const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, "image/jpeg", 0.6));
       if (!blob || blob.size < 500) return;
       const ts = Date.now();
-      const path = `${config.userId}/${config.attemptId}/screen_${trigger}_${ts}.jpg`;
+      const path = `proctoring/${config.userId}/${config.attemptId}/screen_${trigger}_${ts}.jpg`;
       const ok = await uploadWithRetry(path, blob);
       if (!ok) return;
       screenShotCount.current++;
