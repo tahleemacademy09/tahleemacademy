@@ -45,7 +45,7 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
   const [isMemClass, setIsMemClass] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const [sel, setSel] = useState<string | null>(null);
-  const [slot, setSlot] = useState<1 | 2>(1);
+  const [slot, setSlot] = useState<number>(1);
   const [pg, setPg] = useState<number | null>(null);
   const [qSize, setQSize] = useState(26);
   const [adjust, setAdjust] = useState(false);
@@ -165,6 +165,7 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
     return out;
   }, [participants]);
 
+  const sessionNums = Array.from({ length: Math.max(2, ...tasks.map((t) => Number(t.slot) || 0)) }, (_, i) => i + 1);
   const nameOf = (id: string) => names[id] || "Student";
   const taskFor = (sid: string, s: number) => tasks.find((t) => t.student_id === sid && t.slot === s);
 
@@ -272,8 +273,8 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
   const canAllow = (sid: string, s: number): string | null => {
     const ex = taskFor(sid, s);
     if (!isAdmin && ex && ["submitted", "passed"].includes(ex.status)) return "already submitted";
-    const first = taskFor(sid, 1);
-    if (!isAdmin && s === 2 && first && first.status !== "passed") return "Session 1 isn't memorized yet";
+    const prev = s > 1 ? taskFor(sid, s - 1) : null;
+    if (!isAdmin && prev && prev.status !== "passed") return `Session ${s - 1} isn't memorized yet`;
     return null;
   };
 
@@ -353,10 +354,10 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
   });
   const slotTabs = (onDark: boolean) => (
     <div style={{ display: "flex", gap: 6 }}>
-      {[1, 2].map((s) => {
+      {sessionNums.map((s) => {
         const on = slot === s;
         return (
-          <button key={s} onClick={() => { setSlot(s as 1 | 2); setPg(null); setAdjust(false); }} aria-pressed={on} style={{
+          <button key={s} onClick={() => { setSlot(s); setPg(null); setAdjust(false); }} aria-pressed={on} style={{
             flex: 1, padding: "9px 0", borderRadius: 10, fontSize: 13, fontWeight: 800, cursor: "pointer",
             border: `1.5px solid ${on ? GOLD : onDark ? "#ffffff44" : LINE}`,
             background: on ? GOLD : onDark ? "transparent" : "#fff",
