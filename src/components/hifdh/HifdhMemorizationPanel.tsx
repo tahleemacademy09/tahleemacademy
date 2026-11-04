@@ -12,7 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import MushafPageView from "@/components/hifdh/MushafPageView";
 import { hpUnit, hpFromUnit, hpUnitsFor, hpUnitsOf, hpPortionFromUnits, hpPortionLabel, hpPagesOf, hpSegmentFor, HP_AMOUNTS } from "@/lib/hifdhPortion";
-import { Menu, X, ChevronLeft, ChevronRight, ChevronDown, Check, CheckCheck, RotateCcw, Search, Loader2, Settings2 } from "lucide-react";
+import { Menu, X, ChevronLeft, ChevronRight, ChevronDown, Check, CheckCheck, RotateCcw, Search, Loader2, Settings2, Minimize2, Maximize2, Radio } from "lucide-react";
 
 const db = supabase as any;
 const G = "#064E3B", GOLD = "#C9A84C", INK = "#1a1a2e", MUTED = "#6b7a72", LINE = "#e3e9e5", OK = "#16A34A", AMBER = "#D97706", RED = "#DC2626";
@@ -63,6 +63,10 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
   const [groupMemberIds, setGroupMemberIds] = useState<string[]>([]);
   const [edit, setEdit] = useState<Record<string, { start: number; units: number }>>({});
 
+  const [mini, setMini] = useState(false);   // sheet shrunk to a small bar so the class controls (mic, camera…) are reachable
+  const [sync, setSync] = useState(true);     // students in the room see the page you are showing
+  const [chReady, setChReady] = useState(false);
+  const bc = useRef<any>(null);
   const selRef = useRef<string | null>(null);
   selRef.current = sel;
 
@@ -132,7 +136,7 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
   }, [isMemClass, isStaff, subject?.id, programs, loadTasks]);
 
   // While the list or a student sheet is open the page behind must not move or show through
-  const locked = isMemClass && isStaff && (drawer || !!sel);
+  const locked = isMemClass && isStaff && (drawer || (!!sel && !mini));
   useEffect(() => {
     if (!locked) return;
     const y = window.scrollY;
@@ -171,6 +175,33 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
     return { start: hpUnit(prog?.current_page ?? 1, prog?.current_half ?? 0), units };
   };
   const rangeOf = (sid: string, s: number) => edit[`${sid}:${s}`] || suggest(sid, s);
+
+  /* ───── sync: broadcast the page being shown so students can follow along ───── */
+  const fRg = sel ? rangeOf(sel, slot) : null;
+  const fPortion = fRg ? hpPortionFromUnits(fRg.start, fRg.units) : null;
+  const fPages = fPortion ? hpPagesOf(fPortion) : [];
+  const fCur = fPortion ? (pg && fPages.includes(pg) ? pg : fPages[0]) : null;
+  const fKey = JSON.stringify([sync, fPortion, fCur]);
+  const sendFollow = () => {
+    const ch = bc.current; if (!ch) return;
+    const on = sync && !!fPortion && !!fCur;
+    ch.send({ type: "broadcast", event: "follow", payload: on ? { on: true, portion: fPortion, cur: fCur } : { on: false } });
+  };
+  useEffect(() => {
+    if (!isMemClass || !isStaff || !subject?.id) return;
+    const ch = supabase.channel(`hifdh-follow-${subject.id}`);
+    ch.subscribe((st: string) => { if (st === "SUBSCRIBED") { bc.current = ch; setChReady(true); } });
+    return () => {
+      try { ch.send({ type: "broadcast", event: "follow", payload: { on: false } }); } catch { /* ignore */ }
+      bc.current = null; setChReady(false); supabase.removeChannel(ch);
+    };
+  }, [isMemClass, isStaff, subject?.id]);
+  useEffect(() => {
+    sendFollow();
+    if (!(sync && fPortion)) return;
+    const id = window.setInterval(sendFollow, 5000);   // so a student who joins late catches up
+    return () => window.clearInterval(id);
+  }, [fKey, chReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scopeIds = useMemo(() => {
     const all = Object.keys(programs);
@@ -343,14 +374,14 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
 
   return (
     <>
-      <button onClick={() => setDrawer(true)} aria-label="Students" style={{
+      {!(sel && mini) && <button onClick={() => setDrawer(true)} aria-label="Students" style={{
         position: "fixed", left: 12, top: "calc(env(safe-area-inset-top, 0px) + 70px)", zIndex: 5000, display: "flex", alignItems: "center", gap: 6,
         padding: "10px 14px", borderRadius: 99, border: `1px solid ${GOLD}`, background: G, color: "#fff", fontWeight: 800, fontSize: 13,
         cursor: "pointer", boxShadow: "0 4px 14px rgba(0,0,0,.3)",
       }}>
         <Menu size={17} color={GOLD} /> Students
         {readyCount > 0 && <span style={{ background: RED, color: "#fff", borderRadius: 99, minWidth: 18, height: 18, padding: "0 5px", fontSize: 11, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{readyCount}</span>}
-      </button>
+      </button>}
 
       {/* ☰ list */}
       {drawer && (
@@ -421,7 +452,7 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
       )}
 
       {/* student sheet */}
-      {sel && portion && (
+      {sel && portion && !mini && (
         <div style={{ position: "fixed", inset: 0, zIndex: 5001, background: "#f6f8f6", display: "flex", justifyContent: "center", overscrollBehavior: "contain", touchAction: "none" }}>
           <div style={{ width: "100%", maxWidth: 640, height: "100dvh", background: "#f6f8f6", display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: "system-ui, sans-serif", color: INK, touchAction: "auto" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "calc(10px + env(safe-area-inset-top, 0px)) 10px 10px", background: "#fff", borderBottom: `1px solid ${LINE}` }}>
@@ -432,8 +463,16 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
                 <div style={{ fontSize: 11.5, color: MUTED }}>{hpPortionLabel(portion)}</div>
               </div>
               <button onClick={() => step(1)} aria-label="Next student" style={{ border: "none", background: "none", cursor: "pointer", padding: 2 }}><ChevronRight size={22} /></button>
-              <button onClick={() => setSel(null)} aria-label="Close" style={{ ...closeBtn(false), marginLeft: 4 }}><X size={20} strokeWidth={2.6} /></button>
+              <button onClick={() => setMini(true)} aria-label="Minimize" title="Minimize — use mic / camera" style={{ ...closeBtn(false), marginLeft: 2 }}><Minimize2 size={19} strokeWidth={2.4} /></button>
+              <button onClick={() => { setSel(null); setMini(false); }} aria-label="Close" style={closeBtn(false)}><X size={20} strokeWidth={2.6} /></button>
             </div>
+
+            <button onClick={() => setSync(!sync)} aria-pressed={sync} style={{
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 7, padding: "7px 10px", border: "none", borderBottom: `1px solid ${LINE}`, cursor: "pointer",
+              background: sync ? OK + "16" : "#f3f4f3", color: sync ? OK : MUTED, fontSize: 12.5, fontWeight: 800,
+            }}>
+              <Radio size={15} strokeWidth={2.5} /> {sync ? "Sync ON — students see this page and follow along" : "Sync OFF — students can't see this page"}
+            </button>
 
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "#fffdf5", borderBottom: `1px solid ${LINE}` }}>
               <div style={{ flex: 1 }}>{slotTabs(false)}</div>
@@ -480,7 +519,7 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
                   Portion: the {seg[0] === 0 ? "top" : "bottom"} half of this page
                 </div>
               )}
-              {cur && <MushafPageView key={`${cur}-${partial ? seg!.join("") : "f"}`} page={cur} fontSize={qSize} halves={partial ? seg! : undefined} coverOutside hidePortionChip />}
+              {cur && <MushafPageView key={`${cur}-${partial ? seg!.join("") : "f"}`} page={cur} fontSize={qSize} halves={partial ? seg! : undefined} hidePortionChip />}
             </div>
 
             <div style={{ background: "#fff", borderTop: `1px solid ${LINE}`, padding: 10, paddingBottom: "calc(10px + env(safe-area-inset-bottom, 0px))", display: "grid", gap: 8 }}>
@@ -513,6 +552,30 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* minimized: a small bar at the top, so the class controls at the bottom (mic, camera…) stay usable */}
+      {sel && portion && mini && (
+        <div style={{
+          position: "fixed", left: 8, right: 8, top: "calc(env(safe-area-inset-top, 0px) + 70px)", zIndex: 5001, display: "flex", alignItems: "center", gap: 8,
+          padding: 8, borderRadius: 16, background: "#fff", border: `1.5px solid ${GOLD}`, boxShadow: "0 6px 22px rgba(0,0,0,.35)", fontFamily: "system-ui, sans-serif", color: INK,
+        }}>
+          <button onClick={() => setMini(false)} aria-label="Open" style={{ ...closeBtn(false), background: G, color: GOLD }}><Maximize2 size={18} strokeWidth={2.4} /></button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 800, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameOf(sel)}</div>
+            <div style={{ fontSize: 11.5, color: MUTED, display: "flex", alignItems: "center", gap: 5 }}>
+              {sync && <Radio size={12} color={OK} strokeWidth={2.6} />}{hpPortionLabel(portion)}
+            </div>
+          </div>
+          {status === "passed" ? (
+            <span style={{ color: OK, fontWeight: 800, fontSize: 13 }}><Check size={15} style={{ verticalAlign: -3 }} /> Memorized</span>
+          ) : waiting ? (
+            <button disabled={busy} onClick={async () => { const nx = nextAfter(sel); if (await allow([sel])) goNext(sel, nx); }} style={{ ...big(OK), flex: "none", padding: "10px 12px", fontSize: 13 }}><Check size={15} /> Allow</button>
+          ) : (
+            <button disabled={busy} onClick={() => mark(sel, "passed")} style={{ ...big(G), flex: "none", padding: "10px 12px", fontSize: 13 }}><CheckCheck size={15} /> Memorized</button>
+          )}
+          <button onClick={() => { setSel(null); setMini(false); }} aria-label="Close" style={closeBtn(false)}><X size={20} strokeWidth={2.6} /></button>
         </div>
       )}
     </>

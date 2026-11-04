@@ -199,7 +199,7 @@ export default function HifdhReviewPanel({ subject }: { subject: any }) {
                                 Memorized: the {a === 0 ? "top" : "bottom"} half of this page
                               </div>
                             )}
-                            {Math.abs(i - idx) <= 1 ? <MushafPageView page={p} fontSize={26} halves={partial ? [a, b] : undefined} coverOutside hidePortionChip /> : <div style={{ minHeight: 400 }} />}
+                            {Math.abs(i - idx) <= 1 ? <MushafPageView page={p} fontSize={26} halves={partial ? [a, b] : undefined} hidePortionChip /> : <div style={{ minHeight: 400 }} />}
                           </div>
                         );
                       })}
