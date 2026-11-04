@@ -109,6 +109,7 @@ export default function TeacherHifdhProgram() {
   const [edit, setEdit] = useState<Record<string, { start: number; units: number }>>({});
   const [when, setWhen] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const [openEd, setOpenEd] = useState<Record<string, boolean>>({});
 
   const nameOf = (id: string) => names[id] || "Student";
 
@@ -282,6 +283,30 @@ export default function TeacherHifdhProgram() {
     });
   };
 
+  // Allow a whole group (everyone reading the same place) to go and memorize, in one tap
+  const markAll = (list: any[]) => {
+    const skip = (m: any) => {
+      const ex = taskFor(m.student_id, slot);
+      if (!isAdmin && ex && ["submitted", "passed"].includes(ex.status)) return true;
+      const first = taskFor(m.student_id, 1);
+      return !isAdmin && slot === 2 && !!first && first.status !== "passed";
+    };
+    const ok = list.filter((m) => !skip(m));
+    if (!ok.length) return toast({ title: "Nobody to allow", description: slot === 2 ? "Session 1 must be memorized first." : undefined, variant: "destructive" });
+    const now = new Date().toISOString();
+    guard(async () => {
+      for (const m of ok) {
+        const r = hpPortionFromUnits(rangeOf(m.student_id).start, rangeOf(m.student_id).units);
+        const up = await tpDb.from("hifdh_memorization_tasks").upsert({
+          student_id: m.student_id, week_start: week, slot, ...r, status: "read_cleared", read_cleared_at: now, read_cleared_by: user!.id,
+        }, { onConflict: "student_id,week_start,slot" });
+        if (up.error) return up;
+        await tpDb.from("hifdh_read_group_members").update({ read_status: "passed", marked_by: user!.id, marked_at: now, ...r }).eq("id", m.id);
+      }
+      return {};
+    }, `${ok.length} student${ok.length === 1 ? "" : "s"} can go and memorize`);
+  };
+
   /* ───── grading ───── */
   const grade = (sid: string, g: "pass" | "repeat" | "fail" | "excused") =>
     guard(() => tpDb.rpc("hifdh_grade_week", {
@@ -384,19 +409,33 @@ export default function TeacherHifdhProgram() {
               </div>
             )}
 
+            {(() => {
+              const todo = ms.filter((m) => { const t = taskFor(m.student_id, slot); return !(t && ["read_cleared", "submitted", "passed"].includes(t.status)); });
+              return todo.length > 1 ? (
+                <div style={{ marginBottom: 10 }}>
+                  <TpBtn disabled={busy} color={TP_OK} onClick={() => markAll(todo)}><Check size={15} /> Allow all to memorize ({todo.length})</TpBtn>
+                </div>
+              ) : null;
+            })()}
             <div style={{ display: "grid", gap: 8 }}>
               {ms.map((m) => {
                 const r = rangeOf(m.student_id);
                 const t = taskFor(m.student_id, slot);
                 const lb = TP_TASK[t?.status || "pending"];
                 const locked = !isAdmin && t && ["submitted", "passed"].includes(t.status);
+                const showEd = !!openEd[m.id];
                 return (
                   <div key={m.id} style={{ border: `1px solid ${TP_LINE}`, borderRadius: 12, padding: 10 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                      <div style={{ fontWeight: 700, fontSize: 14, color: TP_INK }}>{nameOf(m.student_id)}</div>
-                      <TpPill text={lb.text} color={lb.color} />
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: TP_INK }}>{nameOf(m.student_id)}</div>
+                        <div style={{ fontSize: 12, color: TP_MUTED }}>{hpPortionLabel(hpPortionFromUnits(r.start, r.units))}
+                          <span style={{ fontFamily: "'Amiri Quran','Amiri',serif", fontSize: 14 }}> · {surahTag(hpFromUnit(r.start).page)}</span></div>
+                      </div>
+                      <TpPill text={t?.status === "pending" || !t ? "Waiting" : lb.text} color={lb.color} />
                     </div>
-                    <div style={{ margin: "8px 0", fontSize: 12, color: TP_MUTED }}>
+                    {showEd && !locked && (
+                      <div style={{ margin: "8px 0 0", fontSize: 12, color: TP_MUTED }}>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                         <div>
                           <div style={{ marginBottom: 3 }}>Starts at page</div>
@@ -426,10 +465,12 @@ export default function TeacherHifdhProgram() {
                         {hpPortionLabel(hpPortionFromUnits(r.start, r.units))}
                         <span style={{ fontFamily: "'Amiri Quran','Amiri',serif", fontSize: 15, fontWeight: 400, color: TP_MUTED }}> · {surahTag(hpFromUnit(r.start).page)}</span>
                       </div>
-                    </div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <TpBtn small color={TP_OK} disabled={busy || !!locked} onClick={() => mark(m, "passed")}><Check size={14} /> Read correctly</TpBtn>
-                      <TpBtn small color={TP_AMBER} ghost disabled={busy || !!locked} onClick={() => mark(m, "repeat")}><RotateCcw size={14} /> Repeat</TpBtn>
+                      </div>
+                    )}
+                    <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                      <TpBtn small color={TP_OK} disabled={busy || !!locked} onClick={() => mark(m, "passed")}><Check size={14} /> Allow to memorize</TpBtn>
+                      <TpBtn small color={TP_AMBER} ghost disabled={busy || !!locked} onClick={() => mark(m, "repeat")}><RotateCcw size={14} /> Read again</TpBtn>
+                      {!locked && <TpBtn small color={TP_MUTED} ghost onClick={() => setOpenEd({ ...openEd, [m.id]: !showEd })}>{showEd ? "Done" : "Change page"}</TpBtn>}
                     </div>
                   </div>
                 );
