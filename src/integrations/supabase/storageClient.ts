@@ -109,6 +109,53 @@ export async function getSignedUrl(
   return null;
 }
 
+// ───────── Exam proctoring snapshots → Cloudflare R2 (via the proctoring-media-url edge function) ─────────
+// New snapshots are stored at "proctoring/<userId>/<attemptId>/<file>.jpg". Older/legacy paths without that prefix
+// still resolve through the Supabase "proctoring-media" bucket.
+export const PROCTORING_PREFIX = "proctoring/";
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+export async function uploadProctoringImage(path: string, blob: Blob): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.functions.invoke("proctoring-media-url", {
+      body: { action: "upload", path, data: await blobToBase64(blob), contentType: blob.type || "image/jpeg" },
+    });
+    return !error && !!data?.success;
+  } catch { return false; }
+}
+
+const proctorUrlCache = new Map<string, { url: string; exp: number }>();
+export async function getProctoringImageUrl(fileUrl: string, forceFresh = false): Promise<string | null> {
+  if (!fileUrl) return null;
+  if (fileUrl.startsWith("http://") || fileUrl.startsWith("https://")) return fileUrl;
+  const hit = proctorUrlCache.get(fileUrl);
+  if (!forceFresh && hit && hit.exp > Date.now()) return hit.url;
+  let url: string | null = null;
+  if (fileUrl.startsWith(PROCTORING_PREFIX)) {
+    const { data, error } = await supabase.functions.invoke("proctoring-media-url", { body: { action: "sign", path: fileUrl, expiresIn: 3600 } });
+    if (error || !data?.url) { console.error("[StorageClient] proctoring sign failed:", error || data); return null; }
+    url = data.url as string;
+  } else {
+    const { data } = await supabase.storage.from("proctoring-media").createSignedUrl(fileUrl, 3600);
+    url = data?.signedUrl || null;
+  }
+  if (url) proctorUrlCache.set(fileUrl, { url, exp: Date.now() + 50 * 60 * 1000 });
+  return url;
+}
+
+export async function removeProctoringImages(paths: string[]): Promise<void> {
+  const r2 = paths.filter((p) => p.startsWith(PROCTORING_PREFIX));
+  const legacy = paths.filter((p) => !p.startsWith(PROCTORING_PREFIX));
+  if (r2.length) await supabase.functions.invoke("proctoring-media-url", { body: { action: "delete", paths: r2 } }).catch(() => {});
+  if (legacy.length) await supabase.storage.from("proctoring-media").remove(legacy).catch(() => {});
+}
+
 export async function uploadStorageFile(
   bucket: "subject-materials" | "recordings", path: string,
   file: File | Blob,
