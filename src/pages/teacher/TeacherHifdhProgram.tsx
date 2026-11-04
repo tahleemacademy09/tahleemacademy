@@ -14,7 +14,7 @@ import { SURAHS } from "@/components/hifdh/surahData";
 import { HifdhAboutCard } from "@/components/hifdh/HifdhAbout";
 import { hpUnit, hpFromUnit, hpUnitsFor, hpUnitsOf, hpPortionFromUnits, hpPortionLabel, HP_AMOUNTS, hpWeeklyReview, hpReviewNote } from "@/lib/hifdhPortion";
 import { loadDoneReviewWeeks } from "@/lib/hifdhReview";
-import { Loader2, Video, Check, RotateCcw, ChevronLeft, ChevronRight, BookOpen, ClipboardCheck, CheckCheck, ChevronDown, Settings } from "lucide-react";
+import { Loader2, Video, Check, RotateCcw, ChevronLeft, ChevronRight, BookOpen, ClipboardCheck, CheckCheck, ChevronDown, ChevronsUp, ChevronsDown, Settings } from "lucide-react";
 
 const tpDb = supabase as any;
 
@@ -91,7 +91,7 @@ export default function TeacherHifdhProgram() {
 
   const [week, setWeek] = useState(tpMonday());
   const [tab, setTab] = useState<"readalong" | "memorized" | "grading" | "settings">("readalong");
-  const [slot, setSlot] = useState<1 | 2>(1);
+  const [slot, setSlot] = useState<number>(1);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
@@ -273,9 +273,9 @@ export default function TeacherHifdhProgram() {
       return toast({ title: "Already submitted", description: "This portion has already been memorized and submitted.", variant: "destructive" });
     }
     const cleared = result === "passed";
-    const first = taskFor(m.student_id, 1);
-    if (!isAdmin && cleared && slot === 2 && first && first.status !== "passed") {
-      return toast({ title: "Session 1 isn't memorized yet", description: "Mark Session 1 as memorized first — the student only moves to the next page after that.", variant: "destructive" });
+    const prev = slot > 1 ? taskFor(m.student_id, slot - 1) : null;
+    if (!isAdmin && cleared && prev && prev.status !== "passed") {
+      return toast({ title: `Session ${slot - 1} isn't memorized yet`, description: `Mark Session ${slot - 1} as memorized first — the student only moves to the next page after that.`, variant: "destructive" });
     }
     guard(async () => {
       const up = await tpDb.from("hifdh_memorization_tasks").upsert({
@@ -295,11 +295,11 @@ export default function TeacherHifdhProgram() {
     const skip = (m: any) => {
       const ex = taskFor(m.student_id, slot);
       if (!isAdmin && ex && ["submitted", "passed"].includes(ex.status)) return true;
-      const first = taskFor(m.student_id, 1);
-      return !isAdmin && slot === 2 && !!first && first.status !== "passed";
+      const prev = slot > 1 ? taskFor(m.student_id, slot - 1) : null;
+      return !isAdmin && !!prev && prev.status !== "passed";
     };
     const ok = list.filter((m) => !skip(m));
-    if (!ok.length) return toast({ title: "Nobody to allow", description: slot === 2 ? "Session 1 must be memorized first." : undefined, variant: "destructive" });
+    if (!ok.length) return toast({ title: "Nobody to allow", description: slot > 1 ? `Session ${slot - 1} must be memorized first.` : undefined, variant: "destructive" });
     const now = new Date().toISOString();
     guard(async () => {
       for (const m of ok) {
@@ -368,6 +368,8 @@ export default function TeacherHifdhProgram() {
       result === "passed" ? "Memorized — the student moves to the next page" : "Sent back — the student repeats it");
   const waiting = tasks.filter((t) => ["submitted", "read_cleared", "failed"].includes(t.status) && memStudents.some((x) => x.sid === t.student_id));
   const submittedCount = waiting.filter((t) => t.status === "submitted").length;
+  // 2 sessions a week, plus one more each time a student finishes everything early and moves straight on
+  const sessionNums = Array.from({ length: Math.max(2, ...tasks.map((t) => Number(t.slot) || 0)) }, (_, i) => i + 1);
   const defaultWhen = (g: any) => tpLocalInput(week, levels[g.level_id]?.readalong_day, levels[g.level_id]?.readalong_time);
 
   /* ───── UI ───── */
@@ -376,19 +378,23 @@ export default function TeacherHifdhProgram() {
       <TpCard>
         <div style={{ fontSize: 12, fontWeight: 700, color: TP_MUTED, marginBottom: 8 }}>Which session this week?</div>
         <div style={{ display: "flex", gap: 8 }}>
-          {[1, 2].map((s) => (
-            <button key={s} onClick={() => setSlot(s as 1 | 2)} style={{
+          {sessionNums.map((s) => (
+            <button key={s} onClick={() => setSlot(s)} style={{
               flex: 1, padding: "10px 0", borderRadius: 10, fontWeight: 800, fontSize: 13, cursor: "pointer",
               border: `1px solid ${slot === s ? TP_GREEN : TP_LINE}`, background: slot === s ? TP_GREEN : "#fff", color: slot === s ? "#fff" : TP_INK,
             }}>Session {s}</button>
           ))}
+          {groups.length > 0 && (() => {
+            const allShut = groups.every((g) => shut[g.id]);
+            return (
+              <button onClick={() => setShut(allShut ? {} : Object.fromEntries(groups.map((g) => [g.id, true])))}
+                aria-label={allShut ? "Expand all groups" : "Collapse all groups"} title={allShut ? "Expand all groups" : "Collapse all groups"}
+                style={{ flex: "0 0 44px", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 10, border: `1px solid ${TP_LINE}`, background: "#fff", cursor: "pointer", color: TP_GREEN }}>
+                {allShut ? <ChevronsDown size={20} /> : <ChevronsUp size={20} />}
+              </button>
+            );
+          })()}
         </div>
-        {groups.length > 1 && (
-          <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-            <TpBtn small ghost color={TP_MUTED} onClick={() => setShut(Object.fromEntries(groups.map((g) => [g.id, true])))}>Collapse all</TpBtn>
-            <TpBtn small ghost color={TP_MUTED} onClick={() => setShut({})}>Expand all</TpBtn>
-          </div>
-        )}
       </TpCard>
 
       {groups.length === 0 && <TpCard><div style={{ color: TP_MUTED, fontSize: 13 }}>No read-along groups {isAdmin ? "for this week yet." : "are assigned to you this week."}</div></TpCard>}
@@ -550,6 +556,8 @@ export default function TeacherHifdhProgram() {
     guard(() => tpDb.rpc("hifdh_set_level_schedule", { p_level: l.id, p_day: day, p_time: time || null }), "Schedule saved");
   const Settings_ = (
     <div style={{ display: "grid", gap: 10 }}>
+      <HifdhAboutCard audience="teacher" memDays={settings?.memorization_days} reviewDays={settings?.review_days}
+        streakLimit={settings?.streak_limit} fine={settings?.fine_amount} />
       <TpCard>
         <div style={{ fontSize: 13, color: TP_MUTED }}>
           Set the day and time of the memorization (read-along) class for each level. New classes you schedule start from this day and time; you can still change a single class when scheduling it.
@@ -644,25 +652,26 @@ export default function TeacherHifdhProgram() {
 
   return (
     <div style={{ background: TP_BG, minHeight: "100%", padding: 14, maxWidth: 720, margin: "0 auto" }}>
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 20, fontWeight: 800, color: TP_GREEN }}>Hifdh Program</div>
-        <div style={{ fontSize: 12, color: TP_MUTED }}>Read-along groups and weekly grading</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: TP_GREEN }}>Hifdh Program</div>
+          <div style={{ fontSize: 12, color: TP_MUTED }}>Read-along groups and weekly grading</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+          <button aria-label="Previous week" onClick={() => setWeek(tpShift(week, -1))} style={{ border: "none", background: "none", cursor: "pointer", padding: 4, color: TP_INK }}><ChevronLeft size={20} /></button>
+          <div style={{ textAlign: "center", lineHeight: 1.25 }}>
+            <div style={{ fontWeight: 800, fontSize: 13, color: TP_INK }}>{tpPretty(week)}</div>
+            <div style={{ fontSize: 10.5, color: TP_MUTED }}>{week === tpMonday() ? "This week" : "Week of"}</div>
+          </div>
+          <button aria-label="Next week" onClick={() => setWeek(tpShift(week, 1))} style={{ border: "none", background: "none", cursor: "pointer", padding: 4, color: TP_INK }}><ChevronRight size={20} /></button>
+        </div>
       </div>
 
-      <HifdhAboutCard audience="teacher" memDays={settings?.memorization_days} reviewDays={settings?.review_days}
-        streakLimit={settings?.streak_limit} fine={settings?.fine_amount} />
-
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 12 }}>
-        <button aria-label="Previous week" onClick={() => setWeek(tpShift(week, -1))} style={{ border: "none", background: "none", cursor: "pointer" }}><ChevronLeft /></button>
-        <div style={{ fontWeight: 700, fontSize: 13, color: TP_INK }}>Week of {tpPretty(week)}{week === tpMonday() ? " (this week)" : ""}</div>
-        <button aria-label="Next week" onClick={() => setWeek(tpShift(week, 1))} style={{ border: "none", background: "none", cursor: "pointer" }}><ChevronRight /></button>
-      </div>
-
-      <div style={{ display: "flex", gap: 6, marginBottom: 12, background: "#fff", padding: 4, borderRadius: 12, border: `1px solid ${TP_LINE}` }}>
-        {([["readalong", "Read-Along", <BookOpen size={14} key="a" />], ["memorized", submittedCount ? `Memorized (${submittedCount})` : "Memorized", <CheckCheck size={14} key="m" />], ["grading", "Weekly Review", <ClipboardCheck size={14} key="b" />], ["settings", "Settings", <Settings size={14} key="s" />]] as const).map(([id, label, icon]) => (
+      <div style={{ display: "flex", gap: 4, marginBottom: 12, background: "#fff", padding: 4, borderRadius: 12, border: `1px solid ${TP_LINE}` }}>
+        {([["readalong", "Read-Along", <BookOpen size={16} key="a" />], ["memorized", submittedCount ? `Memorized (${submittedCount})` : "Memorized", <CheckCheck size={16} key="m" />], ["grading", "Review", <ClipboardCheck size={16} key="b" />], ["settings", "Settings", <Settings size={16} key="s" />]] as const).map(([id, label, icon]) => (
           <button key={id} onClick={() => setTab(id)} style={{
-            flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 4px", borderRadius: 9, border: "none", cursor: "pointer",
-            fontSize: 12, fontWeight: 700, background: tab === id ? TP_GREEN : "transparent", color: tab === id ? "#fff" : TP_MUTED,
+            flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, padding: "8px 2px", borderRadius: 9, border: "none", cursor: "pointer",
+            fontSize: 11.5, fontWeight: 700, whiteSpace: "nowrap", background: tab === id ? TP_GREEN : "transparent", color: tab === id ? "#fff" : TP_MUTED,
           }}>{icon}{label}</button>
         ))}
       </div>
