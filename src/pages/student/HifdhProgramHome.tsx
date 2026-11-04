@@ -488,7 +488,7 @@ export default function HifdhProgramHome() {
       {view === "memorize" && !suspended && (
         <HhScreen bg={pageBg} title="Memorization" onBack={() => setView(null)}
           right={<>
-            {[1, 2].map((s) => {
+            {Array.from({ length: Math.max(2, ...tasks.map((x) => Number(x.slot) || 0)) }, (_, i) => i + 1).map((s) => {
               const t = taskOf(s);
               const dayN = memDays[s - 1];
               const on = selSlot === s && !!t;
