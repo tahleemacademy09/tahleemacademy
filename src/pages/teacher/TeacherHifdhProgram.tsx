@@ -12,7 +12,8 @@ import { useLiveClass } from "@/contexts/LiveClassContext";
 import { useToast } from "@/hooks/use-toast";
 import { SURAHS } from "@/components/hifdh/surahData";
 import { HifdhAboutCard } from "@/components/hifdh/HifdhAbout";
-import { hpUnit, hpFromUnit, hpUnitsFor, hpUnitsOf, hpPortionFromUnits, hpPortionLabel, HP_AMOUNTS, hpReviewRange, hpUnitsLabel } from "@/lib/hifdhPortion";
+import { hpUnit, hpFromUnit, hpUnitsFor, hpUnitsOf, hpPortionFromUnits, hpPortionLabel, HP_AMOUNTS, hpWeeklyReview, hpReviewNote } from "@/lib/hifdhPortion";
+import { loadDoneReviewWeeks } from "@/lib/hifdhReview";
 import { Loader2, Video, Check, RotateCcw, ChevronLeft, ChevronRight, BookOpen, ClipboardCheck, CheckCheck } from "lucide-react";
 
 const tpDb = supabase as any;
@@ -101,6 +102,7 @@ export default function TeacherHifdhProgram() {
   const [levels, setLevels] = useState<Record<string, any>>({});
   const [tasks, setTasks] = useState<any[]>([]);
   const [passedAll, setPassedAll] = useState<any[]>([]);
+  const [doneWeeks, setDoneWeeks] = useState<Record<string, number>>({});
   const [reviewAsg, setReviewAsg] = useState<any[]>([]);
   const [reviews, setReviews] = useState<Record<string, any>>({});
   const [logs, setLogs] = useState<Record<string, { days: number; avg: number | null }>>({});
@@ -159,6 +161,7 @@ export default function TeacherHifdhProgram() {
         tpDb.from("hifdh_memorization_tasks").select("student_id,page_from,page_to,half_from,half_to").in("student_id", sids).eq("status", "passed"),
       ]);
       setPassedAll(pa.data || []);
+      setDoneWeeks(await loadDoneReviewWeeks(tpDb, sids, week));
       const nm: Record<string, string> = {};
       (pf.data || []).forEach((p: any) => (nm[p.user_id] = p.full_name || "Unnamed"));
       setNames(nm);
@@ -573,10 +576,10 @@ export default function TeacherHifdhProgram() {
               {tk.length === 0 && <TpPill text="No memorization portions" color={TP_MUTED} />}
             </div>
             {(() => {
-              const rr = hpReviewRange(passedAll.filter((t) => t.student_id === sid));
+              const rr = hpWeeklyReview(program[sid], passedAll.filter((t) => t.student_id === sid), doneWeeks[sid] || 0);
               return (
                 <div style={{ margin: "0 0 10px", padding: "8px 10px", borderRadius: 10, background: "#fbf3da", border: `1px solid ${TP_AMBER}55`, fontSize: 12, color: TP_INK }}>
-                  <b>Review portion:</b> {rr ? `${hpPortionLabel(rr)} · round ${rr.round} · ${hpUnitsLabel(rr.units)} of 5 pages` : "nothing memorized yet"}
+                  <b>Review portion:</b> {rr ? `${hpPortionLabel(rr)} · ${hpReviewNote(rr)}` : "nothing memorized yet"}
                 </div>
               );
             })()}
