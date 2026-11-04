@@ -38,7 +38,6 @@ const LEVELS = [
       "Arabic alphabet & beginner vocabulary",
       "Foundational Islamic Studies",
       "Weekly live class sessions",
-      "Al-Majlis group chat",
       "Course materials & recordings",
     ],
   },
@@ -60,7 +59,6 @@ const LEVELS = [
       "Arabic grammar (Nahw & Sarf basics)",
       "Fiqh & Aqeedah studies",
       "Bi-weekly live sessions",
-      "Al-Majlis group chat",
       "Assignments & progress tracking",
       "Access to recordings library",
     ],
@@ -83,7 +81,7 @@ const LEVELS = [
       "Advanced Arabic language & literature",
       "Detailed Fiqh, Aqeedah & Tafseer",
       "Weekly live sessions + private sessions",
-      "Al-Majlis group chat + direct teacher access",
+      "Direct teacher access",
       "Transcripts & certificates",
       "All recordings & materials",
       "Priority exam & assessment slots",
@@ -118,7 +116,7 @@ const FAQS = [
   },
   {
     q: "What happens if I miss a payment?",
-    a: "After the grace period, access to courses, Al-Majlis chat, and other features will be restricted until payment is completed. You can pay anytime from the Enrollment & Payment page in your dashboard."
+    a: "After the grace period, access to courses and other features will be restricted until payment is completed. You can pay anytime from the Enrollment & Payment page in your dashboard."
   },
 ];
 
