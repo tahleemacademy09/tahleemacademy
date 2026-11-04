@@ -7,7 +7,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParticipants } from "@livekit/components-react";
 import { supabase } from "@/integrations/supabase/client";
 import MushafPageView from "@/components/hifdh/MushafPageView";
-import { hpReviewRange, hpPagesOf, hpPortionLabel, hpSegmentFor, hpUnitsLabel } from "@/lib/hifdhPortion";
+import { hpWeeklyReview, hpReviewNote, hpPagesOf, hpPortionLabel, hpSegmentFor } from "@/lib/hifdhPortion";
+import { loadDoneReviewWeeks } from "@/lib/hifdhReview";
 import { BookOpen, X, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 
 const db = supabase as any;
@@ -28,6 +29,8 @@ export default function HifdhReviewPanel({ subject }: { subject: any }) {
   const [assigned, setAssigned] = useState<{ id: string; name: string }[]>([]);
   const [sel, setSel] = useState<string | null>(null);
   const [passed, setPassed] = useState<Record<string, any[]>>({});
+  const [progs, setProgs] = useState<Record<string, any>>({});
+  const [done, setDone] = useState<Record<string, number>>({});
   const [loadingSel, setLoadingSel] = useState(false);
   const [idx, setIdx] = useState(0);
   const scroller = useRef<HTMLDivElement>(null);
@@ -75,8 +78,16 @@ export default function HifdhReviewPanel({ subject }: { subject: any }) {
   useEffect(() => {
     if (!sel || passed[sel]) return;
     setLoadingSel(true);
-    db.from("hifdh_memorization_tasks").select("page_from,page_to,half_from,half_to").eq("student_id", sel).eq("status", "passed")
-      .then(({ data }: any) => { setPassed((p) => ({ ...p, [sel]: data || [] })); setLoadingSel(false); });
+    Promise.all([
+      db.from("hifdh_memorization_tasks").select("page_from,page_to,half_from,half_to").eq("student_id", sel).eq("status", "passed"),
+      db.from("hifdh_program").select("current_page,current_half").eq("student_id", sel).eq("status", "active").order("created_at", { ascending: false }).limit(1),
+      loadDoneReviewWeeks(db, [sel], monday()),
+    ]).then(([t, pr, dw]: any[]) => {
+      setProgs((p) => ({ ...p, [sel]: pr.data?.[0] || null }));
+      setDone((d) => ({ ...d, [sel]: dw[sel] || 0 }));
+      setPassed((p) => ({ ...p, [sel]: t.data || [] }));
+      setLoadingSel(false);
+    });
   }, [sel, passed]);
 
   useEffect(() => {
@@ -97,7 +108,7 @@ export default function HifdhReviewPanel({ subject }: { subject: any }) {
   const cur = sel ? grades[sel] : null;
   const curGrade = cur ? (cur.excused ? "excused" : cur.grade) : null;
 
-  const range = sel && passed[sel] ? hpReviewRange(passed[sel]) : null;
+  const range = sel && passed[sel] ? hpWeeklyReview(progs[sel], passed[sel], done[sel] || 0) : null;
   const pages = useMemo(() => (range ? hpPagesOf(range) : []), [range]);
   useEffect(() => { setIdx(0); if (scroller.current) scroller.current.scrollTo({ left: 0 }); }, [sel, pages.length]);
 
@@ -162,7 +173,7 @@ export default function HifdhReviewPanel({ subject }: { subject: any }) {
                   <>
                     <div style={{ padding: "10px 14px", background: "#fff", borderBottom: `1px solid ${LINE}` }}>
                       <div style={{ fontWeight: 800, fontSize: 14 }}>{hpPortionLabel(range)}</div>
-                      <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>Round {range.round} · {hpUnitsLabel(range.units)} of 5 pages memorized</div>
+                      <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>{hpReviewNote(range)}</div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "8px 0" }}>
                       <button onClick={() => go(-1)} disabled={idx === 0} aria-label="Previous page" style={{ border: "none", background: "none", opacity: idx === 0 ? 0.3 : 1, cursor: "pointer" }}><ChevronLeft size={20} /></button>
@@ -188,7 +199,7 @@ export default function HifdhReviewPanel({ subject }: { subject: any }) {
                                 Memorized: the {a === 0 ? "top" : "bottom"} half of this page
                               </div>
                             )}
-                            {Math.abs(i - idx) <= 1 ? <MushafPageView page={p} fontSize={26} /> : <div style={{ minHeight: 400 }} />}
+                            {Math.abs(i - idx) <= 1 ? <MushafPageView page={p} fontSize={26} halves={partial ? [a, b] : undefined} coverOutside hidePortionChip /> : <div style={{ minHeight: 400 }} />}
                           </div>
                         );
                       })}

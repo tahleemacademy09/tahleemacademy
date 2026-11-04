@@ -63,6 +63,9 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
   const [groupMemberIds, setGroupMemberIds] = useState<string[]>([]);
   const [edit, setEdit] = useState<Record<string, { start: number; units: number }>>({});
 
+  const selRef = useRef<string | null>(null);
+  selRef.current = sel;
+
   const week = useMemo(() => monday(), []);
   const flash = (text: string, ok = true) => { setMsg({ text, ok }); window.setTimeout(() => setMsg((m) => (m?.text === text ? null : m)), 3500); };
 
@@ -128,6 +131,22 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
     return () => { clearTimeout(timer.current); supabase.removeChannel(ch); };
   }, [isMemClass, isStaff, subject?.id, programs, loadTasks]);
 
+  // While the list or a student sheet is open the page behind must not move or show through
+  const locked = isMemClass && isStaff && (drawer || !!sel);
+  useEffect(() => {
+    if (!locked) return;
+    const y = window.scrollY;
+    const b = document.body, h = document.documentElement;
+    const prev = { pos: b.style.position, top: b.style.top, left: b.style.left, right: b.style.right, w: b.style.width, ov: b.style.overflow, ob: h.style.overscrollBehavior };
+    b.style.position = "fixed"; b.style.top = `-${y}px`; b.style.left = "0"; b.style.right = "0"; b.style.width = "100%"; b.style.overflow = "hidden";
+    h.style.overscrollBehavior = "none";
+    return () => {
+      b.style.position = prev.pos; b.style.top = prev.top; b.style.left = prev.left; b.style.right = prev.right; b.style.width = prev.w; b.style.overflow = prev.ov;
+      h.style.overscrollBehavior = prev.ob;
+      window.scrollTo(0, y);
+    };
+  }, [locked]);
+
   const present = useMemo(() => {
     const out = new Set<string>();
     participants.forEach((p) => {
@@ -190,6 +209,19 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
     if (!sel || flat.length < 2) return;
     const n = flat[(flat.indexOf(sel) + d + flat.length) % flat.length];
     if (n) openStudent(n);
+  };
+
+  // the student after `id` in the list as it is NOW (taken before the list re-groups)
+  const nextAfter = (id: string): string | null => {
+    if (flat.length < 2) return null;
+    const i = flat.indexOf(id);
+    const n = flat[(i + 1) % flat.length];
+    return n && n !== id ? n : null;
+  };
+  // show the new state for a moment, then move on to the next student (only if the ustadh is still on this one)
+  const goNext = (from: string, to: string | null) => {
+    if (!to) return;
+    window.setTimeout(() => { if (selRef.current === from) openStudent(to); }, 900);
   };
 
   const guard = async (fn: () => Promise<any>) => {
@@ -256,6 +288,7 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
   const mark = async (sid: string, result: "passed" | "repeat") => {
     const t = taskFor(sid, slot);
     if (!t) return;
+    const nx = result === "passed" ? nextAfter(sid) : null;
     const ok = await guard(() => db.rpc("hifdh_mark_memorized", { p_task: t.id, p_result: result }));
     if (!ok) return;
     if (result === "passed") {
@@ -263,6 +296,7 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
       if (data?.[0]) setPrograms((p) => ({ ...p, [sid]: data[0] }));
       setEdit((e) => { const n = { ...e }; delete n[`${sid}:${slot}`]; return n; });
       flash(`${nameOf(sid)} memorized ✓ — moves to the next page`);
+      goNext(sid, nx);
     } else flash(`${nameOf(sid)} will repeat`);
   };
 
@@ -286,16 +320,26 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
     fontSize: 15, fontWeight: 800, cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1,
     border: ghost ? `2px solid ${bg}` : "none", background: ghost ? "#fff" : bg, color: ghost ? bg : "#fff",
   });
-  const slotTabs = (
+  const slotTabs = (onDark: boolean) => (
     <div style={{ display: "flex", gap: 6 }}>
-      {[1, 2].map((s) => (
-        <button key={s} onClick={() => { setSlot(s as 1 | 2); setPg(null); setAdjust(false); }} style={{
-          flex: 1, padding: "9px 0", borderRadius: 10, fontSize: 13, fontWeight: 800, cursor: "pointer",
-          border: `1.5px solid ${slot === s ? G : LINE}`, background: slot === s ? G : "#fff", color: slot === s ? "#fff" : INK,
-        }}>Session {s}</button>
-      ))}
+      {[1, 2].map((s) => {
+        const on = slot === s;
+        return (
+          <button key={s} onClick={() => { setSlot(s as 1 | 2); setPg(null); setAdjust(false); }} aria-pressed={on} style={{
+            flex: 1, padding: "9px 0", borderRadius: 10, fontSize: 13, fontWeight: 800, cursor: "pointer",
+            border: `1.5px solid ${on ? GOLD : onDark ? "#ffffff44" : LINE}`,
+            background: on ? GOLD : onDark ? "transparent" : "#fff",
+            color: on ? "#1a1a2e" : onDark ? "#fff" : INK,
+          }}>Session {s}</button>
+        );
+      })}
     </div>
   );
+  const closeBtn = (dark: boolean): CSSProperties => ({
+    width: 38, height: 38, flexShrink: 0, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center",
+    borderRadius: 10, border: "none", cursor: "pointer", lineHeight: 0,
+    background: dark ? "#ffffff26" : "#eef3f0", color: dark ? "#fff" : INK,
+  });
 
   return (
     <>
@@ -310,14 +354,14 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
 
       {/* ☰ list */}
       {drawer && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 5001, background: "rgba(0,0,0,.45)" }} onClick={() => setDrawer(false)}>
-          <div onClick={(e) => e.stopPropagation()} style={{ width: "min(92vw, 380px)", height: "100%", background: "#f6f8f6", display: "flex", flexDirection: "column", fontFamily: "system-ui, sans-serif", color: INK }}>
+        <div style={{ position: "fixed", inset: 0, zIndex: 5002, background: "rgba(0,0,0,.45)", overscrollBehavior: "contain", touchAction: "none" }} onClick={() => setDrawer(false)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "min(92vw, 380px)", height: "100dvh", touchAction: "auto", background: "#f6f8f6", display: "flex", flexDirection: "column", fontFamily: "system-ui, sans-serif", color: INK }}>
             <div style={{ padding: "calc(12px + env(safe-area-inset-top, 0px)) 14px 12px", background: G, color: "#fff", display: "grid", gap: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <div style={{ flex: 1, fontWeight: 800, fontSize: 16 }}>Students</div>
-                <button onClick={() => setDrawer(false)} aria-label="Close" style={{ border: "none", background: "#ffffff22", color: "#fff", width: 34, height: 34, borderRadius: 10, cursor: "pointer" }}><X size={18} /></button>
+                <button onClick={() => setDrawer(false)} aria-label="Close" style={closeBtn(true)}><X size={20} strokeWidth={2.6} /></button>
               </div>
-              {slotTabs}
+              {slotTabs(true)}
             </div>
             <div style={{ padding: 10, display: "flex", gap: 8, background: "#fff", borderBottom: `1px solid ${LINE}` }}>
               <div style={{ position: "relative", flex: 1 }}>
@@ -331,7 +375,7 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
               }}>In room</button>
             </div>
 
-            <div style={{ flex: 1, overflowY: "auto", padding: 10, display: "grid", gap: 10, alignContent: "start" }}>
+            <div style={{ flex: 1, overflowY: "auto", overscrollBehavior: "contain", padding: 10, display: "grid", gap: 10, alignContent: "start" }}>
               {loading && <div style={{ display: "flex", justifyContent: "center", padding: 20 }}><Loader2 className="animate-spin" color={GOLD} /></div>}
               {!loading && levelsView.length === 0 && <div style={{ color: MUTED, fontSize: 14, padding: 8 }}>No students to show.</div>}
               {levelsView.map((lv) => {
@@ -378,21 +422,21 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
 
       {/* student sheet */}
       {sel && portion && (
-        <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 5001, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
-          <div style={{ pointerEvents: "auto", width: "100%", maxWidth: 640, height: "92dvh", background: "#f6f8f6", borderRadius: "20px 20px 0 0", display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: "system-ui, sans-serif", color: INK, boxShadow: "0 -8px 30px rgba(0,0,0,.35)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: 10, background: "#fff", borderBottom: `1px solid ${LINE}` }}>
-              <button onClick={() => setDrawer(true)} aria-label="Student list" style={{ border: "none", background: "#eef3f0", borderRadius: 10, width: 36, height: 36, cursor: "pointer" }}><Menu size={19} color={G} /></button>
+        <div style={{ position: "fixed", inset: 0, zIndex: 5001, background: "#f6f8f6", display: "flex", justifyContent: "center", overscrollBehavior: "contain", touchAction: "none" }}>
+          <div style={{ width: "100%", maxWidth: 640, height: "100dvh", background: "#f6f8f6", display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: "system-ui, sans-serif", color: INK, touchAction: "auto" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "calc(10px + env(safe-area-inset-top, 0px)) 10px 10px", background: "#fff", borderBottom: `1px solid ${LINE}` }}>
+              <button onClick={() => setDrawer(true)} aria-label="Student list" style={{ ...closeBtn(false), color: G }}><Menu size={20} strokeWidth={2.4} /></button>
               <button onClick={() => step(-1)} aria-label="Previous student" style={{ border: "none", background: "none", cursor: "pointer", padding: 2 }}><ChevronLeft size={22} /></button>
               <div style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
                 <div style={{ fontWeight: 800, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameOf(sel)}</div>
                 <div style={{ fontSize: 11.5, color: MUTED }}>{hpPortionLabel(portion)}</div>
               </div>
               <button onClick={() => step(1)} aria-label="Next student" style={{ border: "none", background: "none", cursor: "pointer", padding: 2 }}><ChevronRight size={22} /></button>
-              <button onClick={() => setSel(null)} aria-label="Close" style={{ border: "none", background: "none", cursor: "pointer", padding: 4 }}><X size={21} /></button>
+              <button onClick={() => setSel(null)} aria-label="Close" style={{ ...closeBtn(false), marginLeft: 4 }}><X size={20} strokeWidth={2.6} /></button>
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "#fffdf5", borderBottom: `1px solid ${LINE}` }}>
-              <div style={{ flex: 1 }}>{slotTabs}</div>
+              <div style={{ flex: 1 }}>{slotTabs(false)}</div>
               <button onClick={() => setQSize(Math.max(18, qSize - 2))} aria-label="Smaller" style={{ border: `1px solid ${LINE}`, background: "#fff", borderRadius: 8, padding: "7px 10px", fontWeight: 800, cursor: "pointer" }}>A−</button>
               <button onClick={() => setQSize(Math.min(40, qSize + 2))} aria-label="Larger" style={{ border: `1px solid ${LINE}`, background: "#fff", borderRadius: 8, padding: "7px 10px", fontWeight: 800, cursor: "pointer" }}>A+</button>
               {!lockedEdit && waiting && <button onClick={() => setAdjust(!adjust)} aria-label="Change page" style={{ border: `1px solid ${adjust ? G : LINE}`, background: adjust ? "#eef6f1" : "#fff", borderRadius: 8, padding: "8px 9px", cursor: "pointer" }}><Settings2 size={16} color={G} /></button>}
@@ -430,13 +474,13 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
               </div>
             )}
 
-            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "8px 8px 10px" }}>
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", padding: "8px 8px 10px", background: "#fdf8ee" }}>
               {partial && seg && (
                 <div style={{ margin: "0 0 8px", padding: "6px 10px", borderRadius: 10, background: "#fbf3da", border: `1px solid ${GOLD}88`, color: "#78350F", fontSize: 12.5, fontWeight: 700 }}>
                   Portion: the {seg[0] === 0 ? "top" : "bottom"} half of this page
                 </div>
               )}
-              {cur && <MushafPageView key={`${cur}-${partial ? seg!.join("") : "f"}`} page={cur} fontSize={qSize} halves={partial ? seg! : undefined} />}
+              {cur && <MushafPageView key={`${cur}-${partial ? seg!.join("") : "f"}`} page={cur} fontSize={qSize} halves={partial ? seg! : undefined} coverOutside hidePortionChip />}
             </div>
 
             <div style={{ background: "#fff", borderTop: `1px solid ${LINE}`, padding: 10, paddingBottom: "calc(10px + env(safe-area-inset-bottom, 0px))", display: "grid", gap: 8 }}>
@@ -447,13 +491,18 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
                 </div>
               ) : waiting ? (
                 <div style={{ display: "flex", gap: 8 }}>
-                  <button disabled={busy} onClick={async () => { if (await allow([sel])) step(1); }} style={big(OK)}><Check size={18} /> Allow to memorize</button>
+                  <button disabled={busy} onClick={async () => { const nx = nextAfter(sel); if (await allow([sel])) goNext(sel, nx); }} style={big(OK)}><Check size={18} /> Allow to memorize</button>
                   <button disabled={busy} onClick={() => readAgain(sel)} style={{ ...big(AMBER, true), flex: "0 0 36%" }}><RotateCcw size={16} /> Read again</button>
                 </div>
               ) : (
                 <>
+                  {status === "read_cleared" && (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, padding: "12px 8px", borderRadius: 14, background: OK + "1a", color: OK, fontSize: 15, fontWeight: 800 }}>
+                      <Check size={18} strokeWidth={3} /> Allowed
+                    </div>
+                  )}
                   <div style={{ textAlign: "center", fontSize: 12.5, color: MUTED, fontWeight: 600 }}>
-                    {status === "submitted" ? "The student says they memorized it — hear them, then choose." : "Allowed — memorizing on their own. When you hear them recite:"}
+                    {status === "submitted" ? "The student says they memorized it — hear them, then choose." : status === "read_cleared" ? "Memorizing on their own. When you hear them recite:" : "Hear them recite, then choose:"}
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
                     <button disabled={busy} onClick={() => mark(sel, "passed")} style={big(G)}><CheckCheck size={18} /> Memorized</button>

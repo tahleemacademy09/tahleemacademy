@@ -409,8 +409,10 @@ function mvPrefetchAround(page: number, white = false): () => void {
 }
 
 /** fitHeight: pixels of screen NOT available to the page (bars, buttons). When set, the whole page is fitted to the screen height. */
-export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, onUnavailable, onlySurahs, coverUnrevealed, revealProgress, coverOutside }: {
+export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, onUnavailable, onlySurahs, coverUnrevealed, revealProgress, coverOutside, hidePortionChip }: {
   page: number; fontSize?: number; halves?: [number, number]; fitHeight?: number;
+  /** hide the floating "Your portion" chip (when the screen already says it) */
+  hidePortionChip?: boolean;
   /** with `halves`: show the whole page but hide (opaque cover) the half that is not part of the portion */
   coverOutside?: boolean;
   /** live-recitation mode: hide the whole printed page and uncover only the ayahs listed in `revealedAyahs` */
@@ -797,7 +799,7 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
               {coverOutside && <span style={{ fontSize: 12, fontWeight: 700, color: "#9a8a5a" }}>Covered — not in your portion</span>}
             </div>
           )}
-          {shown && partial && (
+          {shown && partial && !hidePortionChip && (
             <div style={{
               position: "absolute", left: "50%", transform: "translateX(-50%)", ...(dimTop ? { top: "calc(50% + 6px)" } : { top: 8 }),
               padding: "4px 11px", borderRadius: 999, background: "rgba(253,248,238,.96)", border: `1px solid ${MV_GOLD}99`, color: "#78350F",
