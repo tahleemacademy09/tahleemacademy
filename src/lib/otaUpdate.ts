@@ -96,10 +96,12 @@ export async function applyOta(): Promise<boolean> {
   return true;
 }
 
-export function initOta(): void {
-  if (!Capacitor.isNativePlatform()) return;
+/** Returns the first update check, so main.tsx can wait briefly for it before showing the app. Never rejects. */
+export function initOta(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return Promise.resolve();
   // Must run first and fast: if this isn't called within ~10s of an update loading, the plugin rolls the update back.
   CapacitorUpdater.notifyAppReady().catch(() => {});
-  void checkForOta(true);
+  const first = checkForOta(true);
   App.addListener("appStateChange", ({ isActive }) => { if (isActive) void checkForOta(); });
+  return first;
 }
