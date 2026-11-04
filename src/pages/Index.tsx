@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import tahleemHeaderArt from "@/assets/tahleem-header-art.png";
+import heroBg from "@/assets/hero-bg.jpg";
 import { useAuth } from "@/contexts/AuthContext";
 import { resolveTasjeelStep, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 
@@ -181,11 +182,11 @@ const Index = () => {
 
       /* ── HERO ── */
       .ta-hero { position:relative; min-height:min(100vh,880px); display:flex; flex-direction:column; align-items:center; justify-content:center; overflow:hidden; }
-      .ta-hero-bg { position:absolute; inset:0; background:#fdf9f0; }
+      .ta-hero-bg { position:absolute; inset:0; background-color:#fdf9f0; background-size:cover; background-position:center; background-repeat:no-repeat; }
       .ta-hero::after { content:''; position:absolute; left:0; right:0; bottom:0; height:4px; z-index:3; background:linear-gradient(90deg,#0f2d1f 0%,#c9973a 25%,#f0c060 50%,#c9973a 75%,#0f2d1f 100%); box-shadow:0 -6px 20px rgba(201,151,58,.25); }
       .ta-hero-bg::before { display:none; content:''; position:absolute; inset:0; background-image:url('/brand-logo.png'); background-repeat:no-repeat; background-position:center; background-size:min(70vh,640px); opacity:.06; filter:saturate(1.1); }
       @media(min-width:961px) { .ta-hero-bg::before { display:none; } }
-      .ta-hero-overlay { position:absolute; inset:0; background:transparent; }
+      .ta-hero-overlay { position:absolute; inset:0; background:radial-gradient(ellipse at 50% 50%,rgba(253,249,240,.72) 0%,rgba(253,249,240,.38) 55%,rgba(253,249,240,.12) 100%); }
 
       /* Geometric star behind hero text — the signature element */
       .ta-hero-star { position:absolute; top:50%; left:50%; transform:translate(-50%,-52%); width:min(700px,110vw); height:min(700px,110vw); pointer-events:none; animation:starPulse 6s ease-in-out infinite; }
@@ -444,7 +445,7 @@ const Index = () => {
 
       {/* ══ HERO ══ */}
       <section className="ta-hero">
-        <div className="ta-hero-bg" />
+        <div className="ta-hero-bg" style={{ backgroundImage: `url(${heroBg})` }} />
         <div className="ta-hero-overlay" />
 
 
