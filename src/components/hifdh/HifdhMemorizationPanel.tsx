@@ -11,7 +11,8 @@ import { useParticipants } from "@livekit/components-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import MushafPageView from "@/components/hifdh/MushafPageView";
-import { hpUnit, hpFromUnit, hpUnitsFor, hpUnitsOf, hpPortionFromUnits, hpPortionLabel, hpPagesOf, hpSegmentFor, HP_AMOUNTS } from "@/lib/hifdhPortion";
+import { useElementHeight } from "@/hooks/useElementHeight";
+import { hpUnit, hpFromUnit, hpUnitsFor, hpUnitsOf, hpPortionFromUnits, hpPortionLabel, hpPagesOf, HP_AMOUNTS } from "@/lib/hifdhPortion";
 import { Menu, X, ChevronLeft, ChevronRight, ChevronDown, Check, CheckCheck, RotateCcw, Search, Loader2, Settings2, Minimize2, Maximize2, Radio } from "lucide-react";
 
 const db = supabase as any;
@@ -63,6 +64,7 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
   const [groupMemberIds, setGroupMemberIds] = useState<string[]>([]);
   const [edit, setEdit] = useState<Record<string, { start: number; units: number }>>({});
 
+  const [pageBoxRef, pageBoxH] = useElementHeight();
   const [mini, setMini] = useState(false);   // sheet shrunk to a small bar so the class controls (mic, camera…) are reachable
   const [sync, setSync] = useState(true);     // students in the room see the page you are showing
   const [chReady, setChReady] = useState(false);
@@ -338,8 +340,6 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
   const portion = rg ? hpPortionFromUnits(rg.start, rg.units) : null;
   const pages = portion ? hpPagesOf(portion) : [];
   const cur = pg && pages.includes(pg) ? pg : pages[0];
-  const seg = portion && cur ? hpSegmentFor(cur, portion) : null;
-  const partial = !!seg && !(seg[0] === 0 && seg[1] === 1);
   const t = sel ? taskFor(sel, slot) : null;
   const status = t?.status || "none";
   const waiting = !t || status === "pending";
@@ -513,13 +513,9 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
               </div>
             )}
 
-            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", padding: "8px 8px 10px", background: "#fdf8ee" }}>
-              {partial && seg && (
-                <div style={{ margin: "0 0 8px", padding: "6px 10px", borderRadius: 10, background: "#fbf3da", border: `1px solid ${GOLD}88`, color: "#78350F", fontSize: 12.5, fontWeight: 700 }}>
-                  Portion: the {seg[0] === 0 ? "top" : "bottom"} half of this page
-                </div>
-              )}
-              {cur && <MushafPageView key={`${cur}-${partial ? seg!.join("") : "f"}`} page={cur} fontSize={qSize} halves={partial ? seg! : undefined} hidePortionChip />}
+            {/* the whole page, no cover, fitted to the space so it shows in full without scrolling (A+ zooms in and then scrolls) */}
+            <div ref={pageBoxRef} style={{ flex: 1, minHeight: 0, overflowY: qSize > 26 ? "auto" : "hidden", overscrollBehavior: "contain", padding: "4px 6px", background: "#fdf8ee", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+              {cur && <MushafPageView key={cur} page={cur} fontSize={qSize} seamless availableHeight={Math.max(0, pageBoxH - 8)} maxStretch={1.15} hidePortionChip />}
             </div>
 
             <div style={{ background: "#fff", borderTop: `1px solid ${LINE}`, padding: 10, paddingBottom: "calc(10px + env(safe-area-inset-bottom, 0px))", display: "grid", gap: 8 }}>

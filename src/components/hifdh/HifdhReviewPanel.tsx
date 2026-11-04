@@ -7,7 +7,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParticipants } from "@livekit/components-react";
 import { supabase } from "@/integrations/supabase/client";
 import MushafPageView from "@/components/hifdh/MushafPageView";
-import { hpWeeklyReview, hpReviewNote, hpPagesOf, hpPortionLabel, hpSegmentFor } from "@/lib/hifdhPortion";
+import { useElementHeight } from "@/hooks/useElementHeight";
+import { hpWeeklyReview, hpReviewNote, hpPagesOf, hpPortionLabel } from "@/lib/hifdhPortion";
 import { loadDoneReviewWeeks } from "@/lib/hifdhReview";
 import { BookOpen, X, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 
@@ -33,7 +34,9 @@ export default function HifdhReviewPanel({ subject }: { subject: any }) {
   const [done, setDone] = useState<Record<string, number>>({});
   const [loadingSel, setLoadingSel] = useState(false);
   const [idx, setIdx] = useState(0);
-  const scroller = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement | null>(null);
+  const [measureRef, boxH] = useElementHeight();
+  const setScroller = (n: HTMLDivElement | null) => { scroller.current = n; measureRef(n); };
   const [grades, setGrades] = useState<Record<string, { grade: string; excused: boolean; notes: string | null } | null>>({});
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
@@ -186,23 +189,15 @@ export default function HifdhReviewPanel({ subject }: { subject: any }) {
                       <button onClick={() => go(1)} disabled={idx >= pages.length - 1} aria-label="Next page" style={{ border: "none", background: "none", opacity: idx >= pages.length - 1 ? 0.3 : 1, cursor: "pointer" }}><ChevronRight size={20} /></button>
                     </div>
                     {/* swipe left / right between the memorized pages */}
-                    <div ref={scroller} dir="ltr"
+                    <div ref={setScroller} dir="ltr"
                       onScroll={(e) => { const el = e.currentTarget; setIdx(Math.round(el.scrollLeft / Math.max(1, el.clientWidth))); }}
                       style={{ flex: 1, minHeight: 0, display: "flex", overflowX: "auto", scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch" }}>
-                      {pages.map((p, i) => {
-                        const [a, b] = hpSegmentFor(p, range);
-                        const partial = !(a === 0 && b === 1);
-                        return (
-                          <div key={p} style={{ flex: "0 0 100%", scrollSnapAlign: "start", overflowY: "auto", padding: "0 8px 16px", boxSizing: "border-box" }}>
-                            {partial && (
-                              <div style={{ margin: "0 0 8px", padding: "6px 10px", borderRadius: 10, background: "#fbf3da", border: `1px solid ${GOLD}88`, color: "#78350F", fontSize: 12, fontWeight: 700 }}>
-                                Memorized: the {a === 0 ? "top" : "bottom"} half of this page
-                              </div>
-                            )}
-                            {Math.abs(i - idx) <= 1 ? <MushafPageView page={p} fontSize={26} halves={partial ? [a, b] : undefined} hidePortionChip /> : <div style={{ minHeight: 400 }} />}
-                          </div>
-                        );
-                      })}
+                      {pages.map((p, i) => (
+                        <div key={p} style={{ flex: "0 0 100%", scrollSnapAlign: "start", overflow: "hidden", padding: "4px 6px", boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                          {/* whole page, no cover, fitted to the screen so it shows in full without scrolling */}
+                          {Math.abs(i - idx) <= 1 ? <MushafPageView page={p} fontSize={26} seamless availableHeight={Math.max(0, boxH - 8)} maxStretch={1.15} hidePortionChip /> : <div style={{ minHeight: 400 }} />}
+                        </div>
+                      ))}
                     </div>
                   </>
                 )}

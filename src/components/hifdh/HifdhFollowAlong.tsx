@@ -6,7 +6,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import MushafPageView from "@/components/hifdh/MushafPageView";
-import { hpPagesOf, hpPortionLabel, hpSegmentFor } from "@/lib/hifdhPortion";
+import { useElementHeight } from "@/hooks/useElementHeight";
+import { hpPagesOf, hpPortionLabel } from "@/lib/hifdhPortion";
 import { BookOpen, Minimize2, Maximize2, Radio } from "lucide-react";
 
 const db = supabase as any;
@@ -19,6 +20,7 @@ export default function HifdhFollowAlong({ subject }: { subject: any }) {
   const [shown, setShown] = useState<Shown | null>(null);
   const [mini, setMini] = useState(false);
   const [size, setSize] = useState(26);
+  const [boxRef, boxH] = useElementHeight();
 
   // only the Hifdh read-along subject
   useEffect(() => {
@@ -43,8 +45,6 @@ export default function HifdhFollowAlong({ subject }: { subject: any }) {
     return () => { supabase.removeChannel(ch); };
   }, [isMemClass, subject?.id]);
 
-  const seg = useMemo(() => (shown ? hpSegmentFor(shown.cur, shown.portion) : null), [shown]);
-  const partial = !!seg && !(seg[0] === 0 && seg[1] === 1);
   const pages = useMemo(() => (shown ? hpPagesOf(shown.portion) : []), [shown]);
 
   if (!isMemClass || !shown) return null;
@@ -80,11 +80,8 @@ export default function HifdhFollowAlong({ subject }: { subject: any }) {
           <button onClick={() => setSize(Math.min(40, size + 2))} aria-label="Larger" style={{ ...btn, width: "auto", padding: "0 11px", fontWeight: 800 }}>A+</button>
           <button onClick={() => setMini(true)} aria-label="Minimize" style={btn}><Minimize2 size={19} strokeWidth={2.4} /></button>
         </div>
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", padding: "8px 8px 14px" }}>
-          {pages.length > 1 && (
-            <div style={{ fontSize: 11.5, color: MUTED, textAlign: "center", marginBottom: 4 }}>Your ustadh is on page {shown.cur} of {pages.length} in this portion</div>
-          )}
-          <MushafPageView key={`${shown.cur}-${partial ? seg!.join("") : "f"}`} page={shown.cur} fontSize={size} halves={partial ? seg! : undefined} hidePortionChip />
+        <div ref={boxRef} style={{ flex: 1, minHeight: 0, overflowY: size > 26 ? "auto" : "hidden", overscrollBehavior: "contain", padding: "4px 6px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+          <MushafPageView key={shown.cur} page={shown.cur} fontSize={size} seamless availableHeight={Math.max(0, boxH - 8)} maxStretch={1.15} hidePortionChip />
         </div>
       </div>
     </div>
