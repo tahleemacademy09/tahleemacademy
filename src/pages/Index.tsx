@@ -181,7 +181,8 @@ const Index = () => {
 
       /* ── HERO ── */
       .ta-hero { position:relative; min-height:min(100vh,880px); display:flex; flex-direction:column; align-items:center; justify-content:center; overflow:hidden; }
-      .ta-hero-bg { position:absolute; inset:0; background:#fdfcf8; }
+      .ta-hero-bg { position:absolute; inset:0; background:#fdf9f0; }
+      .ta-hero::after { content:''; position:absolute; left:0; right:0; bottom:0; height:4px; z-index:3; background:linear-gradient(90deg,#0f2d1f 0%,#c9973a 25%,#f0c060 50%,#c9973a 75%,#0f2d1f 100%); box-shadow:0 -6px 20px rgba(201,151,58,.25); }
       .ta-hero-bg::before { display:none; content:''; position:absolute; inset:0; background-image:url('/brand-logo.png'); background-repeat:no-repeat; background-position:center; background-size:min(70vh,640px); opacity:.06; filter:saturate(1.1); }
       @media(min-width:961px) { .ta-hero-bg::before { display:none; } }
       .ta-hero-overlay { position:absolute; inset:0; background:transparent; }
