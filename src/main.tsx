@@ -13,6 +13,7 @@ import App from "./App.tsx";
 import "./index.css";
 import { initNativeApp } from "./lib/nativeApp";
 import { initOta } from "./lib/otaUpdate";
+import OtaStartupGate from "./components/OtaStartupGate";
 import { Capacitor } from "@capacitor/core";
 import { isReloadSafe, onReloadSafe } from "./lib/reloadGuard";
 import { bootstrapTheme } from "./lib/theme";
@@ -28,7 +29,7 @@ initDiagnostics();
 // not just after a user has visited Settings in the current session.
 bootstrapTheme();
 
-initOta();       // first: confirms the running update is healthy before anything else can throw
+const otaFirstCheck = initOta();       // first: confirms the running update is healthy before anything else can throw
 initNativeApp();
 
 // Pre-download page code on hover/touch and while idle so taps feel instant.
@@ -109,22 +110,29 @@ if ("serviceWorker" in navigator && !Capacitor.isNativePlatform()) {
 }
 
 // ── Mount React ───────────────────────────────────────────────────────────────
-const root = createRoot(document.getElementById("root")!);
-root.render(
-  <HelmetProvider>
-    <App />
-  </HelmetProvider>
-);
+// On the phone app, wait up to 3.5s (the index.html splash is still showing) for the
+// first update check, so "Update ready" can appear on the very first screen.
+async function mount() {
+  if (Capacitor.isNativePlatform()) {
+    await Promise.race([otaFirstCheck, new Promise<void>((r) => setTimeout(r, 3500))]);
+  }
+  const root = createRoot(document.getElementById("root")!);
+  root.render(
+    <HelmetProvider>
+      <OtaStartupGate />
+      <App />
+    </HelmetProvider>
+  );
 
-// ── Signal splash screen to dismiss ──────────────────────────────────────────
-// Dispatched after React renders so index.html knows to fade out the splash.
-// requestIdleCallback (or rAF fallback) ensures the first React paint has
-// actually flushed to screen before we fade — avoids a flash of unstyled content.
-const dismissSplash = () => {
-  window.dispatchEvent(new Event("ta-app-ready"));
-};
-if ("requestIdleCallback" in window) {
-  requestIdleCallback(dismissSplash, { timeout: 1500 });
-} else {
-  requestAnimationFrame(() => requestAnimationFrame(dismissSplash));
+  // ── Signal splash screen to dismiss ────────────────────────────────────────
+  // Dispatched after React renders so index.html knows to fade out the splash.
+  const dismissSplash = () => {
+    window.dispatchEvent(new Event("ta-app-ready"));
+  };
+  if ("requestIdleCallback" in window) {
+    requestIdleCallback(dismissSplash, { timeout: 1500 });
+  } else {
+    requestAnimationFrame(() => requestAnimationFrame(dismissSplash));
+  }
 }
+void mount();
