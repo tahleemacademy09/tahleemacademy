@@ -325,7 +325,7 @@ export default function TeacherHifdhProgram() {
   // Admin-only overrides
   const clearTask = (id: string) => window.confirm("Remove this portion? The student's page position is not changed.") &&
     guard(() => tpDb.from("hifdh_memorization_tasks").delete().eq("id", id), "Portion removed");
-  const resetClass = (g: any) => window.confirm("Unlink this class so it can be scheduled again?") &&
+  const resetClass = (g: any) => window.confirm("Pick a new day and time for this class?") &&
     guard(() => tpDb.from("hifdh_read_groups").update({ live_session_id: null, scheduled_at: null, status: "planned" }).eq("id", g.id), "Class unlinked");
   const markDone = (g: any) => guard(() => tpDb.from("hifdh_read_groups").update({ status: "done" }).eq("id", g.id), "Marked done");
 
@@ -422,7 +422,7 @@ export default function TeacherHifdhProgram() {
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
                 <div style={{ fontSize: 12, color: TP_MUTED, flex: 1 }}>{tpWhen(g.scheduled_at)}</div>
                 <TpBtn small disabled={busy} onClick={() => startClass(g)}><Video size={14} /> Open class</TpBtn>
-                {isAdmin && <TpBtn small ghost disabled={busy} onClick={() => resetClass(g)}>Reschedule</TpBtn>}
+                {g.status !== "done" && <TpBtn small ghost disabled={busy} onClick={() => resetClass(g)}>Reschedule</TpBtn>}
                 {isAdmin && g.status !== "done" && <TpBtn small ghost color={TP_MUTED} disabled={busy} onClick={() => markDone(g)}>Done</TpBtn>}
               </div>
             ) : (
