@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import tahleemHeaderArt from "@/assets/tahleem-header-art.png";
 import { useAuth } from "@/contexts/AuthContext";
 import { resolveTasjeelStep, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 
@@ -180,8 +181,8 @@ const Index = () => {
 
       /* ── HERO ── */
       .ta-hero { position:relative; min-height:min(100vh,880px); display:flex; flex-direction:column; align-items:center; justify-content:center; overflow:hidden; }
-      .ta-hero-bg { position:absolute; inset:0; background:#ffffff; }
-      .ta-hero-bg::before { content:''; position:absolute; inset:0; background-image:url('/brand-logo.png'); background-repeat:no-repeat; background-position:center; background-size:min(70vh,640px); opacity:.06; filter:saturate(1.1); }
+      .ta-hero-bg { position:absolute; inset:0; background:#fdfcf8; }
+      .ta-hero-bg::before { display:none; content:''; position:absolute; inset:0; background-image:url('/brand-logo.png'); background-repeat:no-repeat; background-position:center; background-size:min(70vh,640px); opacity:.06; filter:saturate(1.1); }
       @media(min-width:961px) { .ta-hero-bg::before { display:none; } }
       .ta-hero-overlay { position:absolute; inset:0; background:transparent; }
 
@@ -445,40 +446,10 @@ const Index = () => {
         <div className="ta-hero-bg" />
         <div className="ta-hero-overlay" />
 
-        {/* Signature: 8-pointed Islamic geometric star radiating behind the title */}
-        <div className="ta-hero-star">
-          <svg viewBox="0 0 700 700" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <radialGradient id="starGrad" cx="50%" cy="50%" r="50%">
-                <stop offset="0%"   stopColor="#f0c060" stopOpacity=".18"/>
-                <stop offset="40%"  stopColor="#c9973a" stopOpacity=".08"/>
-                <stop offset="100%" stopColor="#c9973a" stopOpacity="0"/>
-              </radialGradient>
-            </defs>
-            <circle cx="350" cy="350" r="340" fill="url(#starGrad)"/>
-            {/* 8-pointed star */}
-            {[0,45,90,135,180,225,270,315].map((deg, i) => (
-              <line key={i} x1="350" y1="350"
-                x2={350 + 300 * Math.cos((deg-90)*Math.PI/180)}
-                y2={350 + 300 * Math.sin((deg-90)*Math.PI/180)}
-                stroke="#f0c060" strokeWidth=".6" strokeOpacity=".3"/>
-            ))}
-            {[0,45,90,135,180,225,270,315].map((deg, i) => (
-              <polygon key={i}
-                points={`350,350 ${350+300*Math.cos((deg-101)*Math.PI/180)},${350+300*Math.sin((deg-101)*Math.PI/180)} ${350+300*Math.cos((deg-79)*Math.PI/180)},${350+300*Math.sin((deg-79)*Math.PI/180)}`}
-                fill="#f0c060" fillOpacity=".04" stroke="#f0c060" strokeWidth=".4" strokeOpacity=".25"/>
-            ))}
-            <circle cx="350" cy="350" r="120" fill="none" stroke="#f0c060" strokeWidth=".6" strokeOpacity=".2"/>
-            <circle cx="350" cy="350" r="200" fill="none" stroke="#f0c060" strokeWidth=".4" strokeOpacity=".1"/>
-            <circle cx="350" cy="350" r="280" fill="none" stroke="#f0c060" strokeWidth=".3" strokeOpacity=".07"/>
-          </svg>
-        </div>
-
-        <div className="ta-hero-arch" />
 
         <div className="ta-hero-content">
           <div className="ta-hero-badge">✦ Excellence in Islamic Education ✦</div>
-          <div className="ta-hero-bismi">أكاديمية التعليم</div>
+          <div className="ta-hero-bismi"><img src={tahleemHeaderArt} alt="أكاديمية التعليم" style={{ width:"min(100%,520px)", height:"auto", display:"block", margin:"0 auto" }} /></div>
           <div className="ta-divider">
             <span className="ta-divider-line" />
             <span className="ta-divider-gem">◆</span>
