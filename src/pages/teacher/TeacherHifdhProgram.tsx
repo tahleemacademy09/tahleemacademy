@@ -14,7 +14,7 @@ import { SURAHS } from "@/components/hifdh/surahData";
 import { HifdhAboutCard } from "@/components/hifdh/HifdhAbout";
 import { hpUnit, hpFromUnit, hpUnitsFor, hpUnitsOf, hpPortionFromUnits, hpPortionLabel, HP_AMOUNTS, hpWeeklyReview, hpReviewNote } from "@/lib/hifdhPortion";
 import { loadDoneReviewWeeks } from "@/lib/hifdhReview";
-import { Loader2, Video, Check, RotateCcw, ChevronLeft, ChevronRight, BookOpen, ClipboardCheck, CheckCheck } from "lucide-react";
+import { Loader2, Video, Check, RotateCcw, ChevronLeft, ChevronRight, BookOpen, ClipboardCheck, CheckCheck, ChevronDown, Settings } from "lucide-react";
 
 const tpDb = supabase as any;
 
@@ -46,10 +46,10 @@ const tpPretty = (iso: string) => {
 const tpWhen = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "";
 const TP_DAY = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-const tpLocalInput = (weekIso?: string, day?: number | null) => {
+const tpLocalInput = (weekIso?: string, day?: number | null, time?: string | null) => {
   if (weekIso && day) {
     const [y, m, d0] = weekIso.split("-").map(Number);
-    return `${tpIso(new Date(y, m - 1, d0 + day - 1))}T16:00`;
+    return `${tpIso(new Date(y, m - 1, d0 + day - 1))}T${(time || "16:00").slice(0, 5)}`;
   }
   const d = new Date(Date.now() + 3600_000);
   d.setMinutes(0, 0, 0);
@@ -90,7 +90,7 @@ export default function TeacherHifdhProgram() {
   const isAdmin = hasRole ? hasRole("admin") : false;
 
   const [week, setWeek] = useState(tpMonday());
-  const [tab, setTab] = useState<"readalong" | "memorized" | "grading">("readalong");
+  const [tab, setTab] = useState<"readalong" | "memorized" | "grading" | "settings">("readalong");
   const [slot, setSlot] = useState<1 | 2>(1);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -112,6 +112,8 @@ export default function TeacherHifdhProgram() {
   const [when, setWhen] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [openEd, setOpenEd] = useState<Record<string, boolean>>({});
+  const [shut, setShut] = useState<Record<string, boolean>>({});          // collapsed read-along groups
+  const [levelList, setLevelList] = useState<any[]>([]);                   // every level (for the Settings tab)
 
   const nameOf = (id: string) => names[id] || "Student";
 
@@ -120,6 +122,8 @@ export default function TeacherHifdhProgram() {
     setLoading(true);
     const st = await tpDb.from("hifdh_settings").select("*").eq("id", true).maybeSingle();
     setSettings(st.data || null);
+    const lvAll = await tpDb.from("hifdh_levels").select("*");
+    setLevelList((lvAll.data || []).slice().sort((a: any, b: any) => Number(a.sort_order ?? 500) - Number(b.sort_order ?? 500) || String(a.name || "").localeCompare(String(b.name || ""))));
 
     let gq = tpDb.from("hifdh_read_groups").select("*").eq("week_start", week).order("name");
     if (!isAdmin) gq = gq.eq("ustadh_id", user.id);
@@ -364,7 +368,7 @@ export default function TeacherHifdhProgram() {
       result === "passed" ? "Memorized — the student moves to the next page" : "Sent back — the student repeats it");
   const waiting = tasks.filter((t) => ["submitted", "read_cleared", "failed"].includes(t.status) && memStudents.some((x) => x.sid === t.student_id));
   const submittedCount = waiting.filter((t) => t.status === "submitted").length;
-  const defaultWhen = (g: any) => tpLocalInput(week, levels[g.level_id]?.readalong_day);
+  const defaultWhen = (g: any) => tpLocalInput(week, levels[g.level_id]?.readalong_day, levels[g.level_id]?.readalong_time);
 
   /* ───── UI ───── */
   const ReadAlong = (
@@ -379,6 +383,12 @@ export default function TeacherHifdhProgram() {
             }}>Session {s}</button>
           ))}
         </div>
+        {groups.length > 1 && (
+          <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+            <TpBtn small ghost color={TP_MUTED} onClick={() => setShut(Object.fromEntries(groups.map((g) => [g.id, true])))}>Collapse all</TpBtn>
+            <TpBtn small ghost color={TP_MUTED} onClick={() => setShut({})}>Expand all</TpBtn>
+          </div>
+        )}
       </TpCard>
 
       {groups.length === 0 && <TpCard><div style={{ color: TP_MUTED, fontSize: 13 }}>No read-along groups {isAdmin ? "for this week yet." : "are assigned to you this week."}</div></TpCard>}
@@ -387,15 +397,18 @@ export default function TeacherHifdhProgram() {
         const ms = members.filter((m) => m.group_id === g.id);
         return (
           <TpCard key={g.id}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <div>
+            <button onClick={() => setShut({ ...shut, [g.id]: !shut[g.id] })} aria-expanded={!shut[g.id]} aria-label={shut[g.id] ? `Expand ${g.name}` : `Collapse ${g.name}`}
+              style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: shut[g.id] ? 0 : 10, padding: 0, border: "none", background: "none", cursor: "pointer", textAlign: "left" }}>
+              <ChevronDown size={18} color={TP_GREEN} style={{ flexShrink: 0, transform: shut[g.id] ? "rotate(-90deg)" : "none", transition: "transform .15s" }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 800, color: TP_GREEN, fontSize: 15 }}>{g.name}</div>
                 {levels[g.level_id]?.readalong_day && (
-                  <div style={{ fontSize: 11, color: TP_MUTED }}>Read-along day: {TP_DAY[levels[g.level_id].readalong_day - 1]}</div>
+                  <div style={{ fontSize: 11, color: TP_MUTED }}>Read-along day: {TP_DAY[levels[g.level_id].readalong_day - 1]}{levels[g.level_id]?.readalong_time ? ` · ${String(levels[g.level_id].readalong_time).slice(0, 5)}` : ""}</div>
                 )}
               </div>
               <div style={{ fontSize: 12, color: TP_MUTED }}>{ms.length} student{ms.length === 1 ? "" : "s"}</div>
-            </div>
+            </button>
+            {!shut[g.id] && (<>
 
             {g.live_session_id ? (
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
@@ -479,6 +492,7 @@ export default function TeacherHifdhProgram() {
                 );
               })}
             </div>
+            </>)}
           </TpCard>
         );
       })}
@@ -529,6 +543,40 @@ export default function TeacherHifdhProgram() {
             </TpCard>
           );
         })}
+    </div>
+  );
+
+  const saveLevel = (l: any, day: number | null, time: string | null) =>
+    guard(() => tpDb.rpc("hifdh_set_level_schedule", { p_level: l.id, p_day: day, p_time: time || null }), "Schedule saved");
+  const Settings_ = (
+    <div style={{ display: "grid", gap: 10 }}>
+      <TpCard>
+        <div style={{ fontSize: 13, color: TP_MUTED }}>
+          Set the day and time of the memorization (read-along) class for each level. New classes you schedule start from this day and time; you can still change a single class when scheduling it.
+        </div>
+      </TpCard>
+      {levelList.length === 0 && <TpCard><div style={{ color: TP_MUTED, fontSize: 13 }}>No levels yet.</div></TpCard>}
+      {levelList.map((l) => (
+        <TpCard key={l.id}>
+          <div style={{ fontWeight: 800, color: TP_GREEN, fontSize: 14, marginBottom: 8 }}>{l.name}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <div>
+              <div style={{ fontSize: 12, color: TP_MUTED, marginBottom: 3 }}>Day</div>
+              <select disabled={busy} value={l.readalong_day || ""} onChange={(e) => saveLevel(l, e.target.value ? Number(e.target.value) : null, l.readalong_time)}
+                style={{ width: "100%", border: `1px solid ${TP_LINE}`, borderRadius: 8, padding: "8px 6px", fontSize: 13, background: "#fff" }}>
+                <option value="">Day…</option>
+                {TP_DAY.map((d, i) => <option key={d} value={i + 1}>{d}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: TP_MUTED, marginBottom: 3 }}>Time</div>
+              <input type="time" disabled={busy} defaultValue={l.readalong_time ? String(l.readalong_time).slice(0, 5) : ""}
+                onBlur={(e) => (e.target.value || "") !== (l.readalong_time ? String(l.readalong_time).slice(0, 5) : "") && saveLevel(l, l.readalong_day || null, e.target.value)}
+                style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${TP_LINE}`, borderRadius: 8, padding: "7px 6px", fontSize: 13 }} />
+            </div>
+          </div>
+        </TpCard>
+      ))}
     </div>
   );
 
@@ -611,7 +659,7 @@ export default function TeacherHifdhProgram() {
       </div>
 
       <div style={{ display: "flex", gap: 6, marginBottom: 12, background: "#fff", padding: 4, borderRadius: 12, border: `1px solid ${TP_LINE}` }}>
-        {([["readalong", "Read-Along", <BookOpen size={14} key="a" />], ["memorized", submittedCount ? `Memorized (${submittedCount})` : "Memorized", <CheckCheck size={14} key="m" />], ["grading", "Weekly Review", <ClipboardCheck size={14} key="b" />]] as const).map(([id, label, icon]) => (
+        {([["readalong", "Read-Along", <BookOpen size={14} key="a" />], ["memorized", submittedCount ? `Memorized (${submittedCount})` : "Memorized", <CheckCheck size={14} key="m" />], ["grading", "Weekly Review", <ClipboardCheck size={14} key="b" />], ["settings", "Settings", <Settings size={14} key="s" />]] as const).map(([id, label, icon]) => (
           <button key={id} onClick={() => setTab(id)} style={{
             flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 4px", borderRadius: 9, border: "none", cursor: "pointer",
             fontSize: 12, fontWeight: 700, background: tab === id ? TP_GREEN : "transparent", color: tab === id ? "#fff" : TP_MUTED,
@@ -620,7 +668,7 @@ export default function TeacherHifdhProgram() {
       </div>
 
       {loading ? <div style={{ display: "flex", justifyContent: "center", padding: 40 }}><Loader2 className="animate-spin" color={TP_GOLD} /></div>
-        : tab === "readalong" ? ReadAlong : tab === "memorized" ? Memorized : Grading}
+        : tab === "readalong" ? ReadAlong : tab === "memorized" ? Memorized : tab === "settings" ? Settings_ : Grading}
     </div>
   );
 }
