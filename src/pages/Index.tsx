@@ -180,10 +180,10 @@ const Index = () => {
 
       /* ── HERO ── */
       .ta-hero { position:relative; min-height:min(100vh,880px); display:flex; flex-direction:column; align-items:center; justify-content:center; overflow:hidden; }
-      .ta-hero-bg { position:absolute; inset:0; background:radial-gradient(ellipse at center,#0f2e1c 0%,#0a1f12 55%,#040e06 100%); }
-      .ta-hero-bg::before { content:''; position:absolute; inset:0; background-image:url('/brand-logo.png'); background-repeat:no-repeat; background-position:center; background-size:min(70vh,640px); opacity:.14; filter:saturate(1.1); }
+      .ta-hero-bg { position:absolute; inset:0; background:#ffffff; }
+      .ta-hero-bg::before { content:''; position:absolute; inset:0; background-image:url('/brand-logo.png'); background-repeat:no-repeat; background-position:center; background-size:min(70vh,640px); opacity:.06; filter:saturate(1.1); }
       @media(min-width:961px) { .ta-hero-bg::before { display:none; } }
-      .ta-hero-overlay { position:absolute; inset:0; background:linear-gradient(165deg,rgba(4,14,7,.72) 0%,rgba(8,28,16,.4) 45%,rgba(4,12,7,.75) 100%); }
+      .ta-hero-overlay { position:absolute; inset:0; background:transparent; }
 
       /* Geometric star behind hero text — the signature element */
       .ta-hero-star { position:absolute; top:50%; left:50%; transform:translate(-50%,-52%); width:min(700px,110vw); height:min(700px,110vw); pointer-events:none; animation:starPulse 6s ease-in-out infinite; }
@@ -196,28 +196,28 @@ const Index = () => {
 
       .ta-hero-content { position:relative; z-index:2; text-align:center; padding:clamp(40px,10vh,100px) 24px clamp(60px,10vh,100px); max-width:760px; width:100%; animation:scaleIn 1s ease both; }
 
-      .ta-hero-badge { display:inline-flex; align-items:center; gap:10px; background:rgba(240,192,96,.08); border:1px solid rgba(240,192,96,.28); color:#f0c060; padding:8px 22px; border-radius:40px; font-size:10.5px; letter-spacing:2.5px; text-transform:uppercase; font-weight:800; margin-bottom:32px; animation:fadeUp .7s .1s ease both; }
+      .ta-hero-badge { display:inline-flex; align-items:center; gap:10px; background:rgba(240,192,96,.08); border:1px solid rgba(184,134,43,.4); color:#8a6420; padding:8px 22px; border-radius:40px; font-size:10.5px; letter-spacing:2.5px; text-transform:uppercase; font-weight:800; margin-bottom:32px; animation:fadeUp .7s .1s ease both; }
 
-      .ta-hero-bismi { font-family:'Scheherazade New',serif; font-size:clamp(28px,5.5vw,54px); color:#fff; line-height:1.7; direction:rtl; margin-bottom:8px; animation:goldGlow 4s ease-in-out infinite, fadeUp .7s .2s ease both; }
+      .ta-hero-bismi { font-family:'Scheherazade New',serif; font-size:clamp(40px,8vw,72px); font-weight:700; color:#0f2d1f; line-height:1.5; direction:rtl; margin-bottom:8px; animation:fadeUp .7s .2s ease both; }
 
       .ta-divider { display:flex; align-items:center; gap:16px; justify-content:center; margin:16px 0 24px; animation:fadeUp .7s .25s ease both; }
       .ta-divider-line { flex:1; max-width:120px; height:1px; background:linear-gradient(90deg,transparent,rgba(240,192,96,.5),transparent); }
       .ta-divider-gem { color:#f0c060; font-size:10px; }
 
-      .ta-hero-title { font-family:'Playfair Display',serif; font-size:clamp(40px,7vw,76px); font-weight:800; color:#fff; line-height:1.05; margin-bottom:8px; animation:fadeUp .7s .3s ease both; letter-spacing:-1px; text-shadow:0 4px 24px rgba(0,0,0,.55); }
-      .ta-hero-title em { font-style:italic; color:#f0c060; display:block; }
+      .ta-hero-title { font-family:'Playfair Display',serif; font-size:clamp(34px,6vw,60px); font-weight:800; color:#0f2d1f; line-height:1.1; margin-bottom:8px; animation:fadeUp .7s .3s ease both; letter-spacing:-1px; }
+      .ta-hero-title em { font-style:italic; font-weight:600; color:#b8862b; display:block; font-size:clamp(16px,2.6vw,24px); letter-spacing:0; margin-top:10px; }
 
-      .ta-hero-sub { color:rgba(255,255,255,.75); font-size:clamp(15px,2.2vw,18px); line-height:1.9; max-width:560px; margin:20px auto 40px; font-weight:400; animation:fadeUp .7s .4s ease both; text-shadow:0 2px 12px rgba(0,0,0,.5); }
+      .ta-hero-sub { color:#4b5563; font-size:clamp(15px,2.2vw,18px); line-height:1.9; max-width:560px; margin:20px auto 40px; font-weight:400; animation:fadeUp .7s .4s ease both; }
 
       .ta-hero-btns { display:flex; gap:14px; flex-wrap:wrap; justify-content:center; animation:fadeUp .7s .5s ease both; }
 
       .ta-btn-primary { padding:16px 44px; background:linear-gradient(135deg,#c9973a,#f0c060); color:#0a1f12; border:none; border-radius:6px; font-family:'Mulish',sans-serif; font-size:15px; font-weight:900; cursor:pointer; transition:.3s; letter-spacing:.5px; box-shadow:0 8px 32px rgba(201,151,58,.45); }
       .ta-btn-primary:hover { transform:translateY(-3px); box-shadow:0 16px 48px rgba(240,192,96,.55); background:linear-gradient(135deg,#dba94b,#f5ce6a); }
-      .ta-btn-secondary { padding:16px 44px; background:transparent; border:1.5px solid rgba(255,255,255,.3); color:#fff; border-radius:6px; font-family:'Mulish',sans-serif; font-size:15px; font-weight:700; cursor:pointer; transition:.3s; }
-      .ta-btn-secondary:hover { border-color:rgba(240,192,96,.7); color:#f0c060; background:rgba(240,192,96,.06); }
+      .ta-btn-secondary { padding:16px 44px; background:transparent; border:1.5px solid rgba(15,45,31,.35); color:#0f2d1f; border-radius:6px; font-family:'Mulish',sans-serif; font-size:15px; font-weight:700; cursor:pointer; transition:.3s; }
+      .ta-btn-secondary:hover { border-color:#b8862b; color:#8a6420; background:rgba(201,151,58,.08); }
 
       .ta-hero-scroll { position:absolute; bottom:32px; left:50%; transform:translateX(-50%); z-index:2; display:flex; flex-direction:column; align-items:center; gap:8px; opacity:.4; }
-      .ta-scroll-label { color:#fff; font-size:9px; letter-spacing:3px; text-transform:uppercase; font-weight:700; }
+      .ta-scroll-label { color:#0f2d1f; font-size:9px; letter-spacing:3px; text-transform:uppercase; font-weight:700; }
       .ta-scroll-line  { width:1px; height:44px; background:linear-gradient(to bottom,rgba(240,192,96,.6),transparent); animation:floatUp 2.5s ease-in-out infinite; }
 
       /* ── ENROLLMENT GUIDE ── */
@@ -478,15 +478,15 @@ const Index = () => {
 
         <div className="ta-hero-content">
           <div className="ta-hero-badge">✦ Excellence in Islamic Education ✦</div>
-          <div className="ta-hero-bismi">بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ</div>
+          <div className="ta-hero-bismi">أكاديمية التعليم</div>
           <div className="ta-divider">
             <span className="ta-divider-line" />
             <span className="ta-divider-gem">◆</span>
             <span className="ta-divider-line" />
           </div>
           <h1 className="ta-hero-title">
-            Master Arabic &amp;
-            <em>Islamic Sciences</em>
+            Tahleem Academy
+            <em>Master Arabic &amp; Islamic Sciences</em>
           </h1>
           <p className="ta-hero-sub">
             Learn Quran, Tajweed, Arabic Language and Islamic Studies with certified scholars — live, interactive, and structured for every level.
