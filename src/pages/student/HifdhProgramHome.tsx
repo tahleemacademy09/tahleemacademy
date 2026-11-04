@@ -13,7 +13,8 @@ import { useLiveClass } from "@/contexts/LiveClassContext";
 import { useToast } from "@/hooks/use-toast";
 import MushafPageView from "@/components/hifdh/MushafPageView";
 import { HifdhAboutContent } from "@/components/hifdh/HifdhAbout";
-import { hpPortionLabel, hpPagesOf, hpSegmentFor, hpUnitsFor, hpReviewRange } from "@/lib/hifdhPortion";
+import { hpPortionLabel, hpPagesOf, hpSegmentFor, hpUnitsFor, hpWeeklyReview } from "@/lib/hifdhPortion";
+import { loadDoneReviewWeeks } from "@/lib/hifdhReview";
 import {
   Loader2, BookOpen, Video, CheckCircle2, AlertTriangle, Lock, Flame, Layers,
   ChevronRight, ArrowLeft, Users, BarChart3, Info,
@@ -170,6 +171,7 @@ export default function HifdhProgramHome() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<View>(null);
   const [program, setProgram] = useState<any>(null);
+  const [doneWeeks, setDoneWeeks] = useState(0);
   const [level, setLevel] = useState<any>(null);
   const [settings, setSettings] = useState<any>(null);
   const [liveSubject, setLiveSubject] = useState<any>(null);
@@ -227,6 +229,7 @@ export default function HifdhProgramHome() {
     setReview(rv.data || null);
     setFines(fn.data || []);
     setReviewAsg(ra.data || null);
+    setDoneWeeks((await loadDoneReviewWeeks(hhDb, [sid], week))[sid] || 0);
     const logs: any[] = lg.data || [];
     setRevDays(new Set(logs.map((l) => l.log_date)).size);
     setDoneToday(logs.some((l) => l.log_date === today));
@@ -270,7 +273,7 @@ export default function HifdhProgramHome() {
   }, [tasks.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // everything memorized in the current round of 5 pages
-  const recTask = useMemo(() => hpReviewRange(recent), [recent]);
+  const recTask = useMemo(() => hpWeeklyReview(program, recent, doneWeeks), [program, recent, doneWeeks]);
   const recPages = useMemo(() => (recTask ? hpPagesOf(recTask) : []), [recTask]);
   const recShown = recPage && recPages.includes(recPage) ? recPage : recPages[0];
 
