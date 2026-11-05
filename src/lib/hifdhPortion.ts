@@ -121,13 +121,10 @@ export interface HifdhReviewRange extends HifdhPortion {
 
 /**
  * Weekly review for one student.
- *  • Finished Surat al-Ankabut → everything from the start of Ankabut up to the page they are at is cut into slices of
- *    5 pages. Week 1 = first 5 pages, week 2 = next 5, … When it reaches the end it wraps to the start of Ankabut to
- *    make up the 5 pages and the next week carries on from there (12 pages: 396–400, 401–405, 406–407+396–398,
- *    399–403, 404–407+396, …).
- *  • Not there yet → the old behaviour (current round of what they memorized).
- * `current` is where the student memorizes NEXT (hifdh_program.current_page / current_half), so what is memorized
- * ends right before it. `doneWeeks` = how many earlier weekly reviews were passed (moves the cycle on).
+ *  • Starts at the beginning of Surat al-Ankabut (page 396) and runs up to the last portion the ustadh tagged
+ *    memorized (hifdh_memorization_tasks.status = "passed"). Nothing is tagged → null → nothing shows.
+ *  • `current` (hifdh_program position) is no longer used for the range; `pending` is unused too (kept so callers don't change).
+ *  • `doneWeeks` only matters when HP_REVIEW_ALL_MEMORIZED is false (5-page weekly slices).
  */
 export const hpWeeklyReview = (
   current: { current_page?: number | null; current_half?: number | null } | null | undefined,
@@ -136,33 +133,28 @@ export const hpWeeklyReview = (
   /** this week's portions that are NOT memorized yet (waiting / read / submitted / failed). They never belong in the review. */
   pending: HifdhPortion[] = [],
 ): HifdhReviewRange | null => {
-  if (current?.current_page) {
-    let next = hpUnit(current.current_page, current.current_half ?? 0);
-    // only what the ustadh has marked memorized is reviewed: stop right before the first pending portion
-    if (pending.length) next = Math.min(next, ...pending.map((p) => hpUnitsOf(p).start));
-    if (next > HP_ANKABUT_LAST) {
-      const end = next - 1;
-      const total = end - HP_ANKABUT_START + 1;
-      const rounds = Math.max(1, Math.ceil(total / HP_REVIEW_CYCLE));
-      if (HP_REVIEW_ALL_MEMORIZED) {
-        return { ...hpPortionFromUnits(HP_ANKABUT_START, total), units: total, round: 1, rounds: 1, fromAnkabut: true };
-      }
-      // everything memorized is one circle; each week reads the next 5 pages round it and carries on from there
-      if (total <= HP_REVIEW_CYCLE) {
-        return { ...hpPortionFromUnits(HP_ANKABUT_START, total), units: total, round: doneWeeks + 1, rounds, fromAnkabut: true };
-      }
-      const off = (((doneWeeks * HP_REVIEW_CYCLE) % total) + total) % total;
-      const run = Math.min(HP_REVIEW_CYCLE, total - off);
-      const main = hpPortionFromUnits(HP_ANKABUT_START + off, run);
-      if (run < HP_REVIEW_CYCLE) {
-        const extra = hpPortionFromUnits(HP_ANKABUT_START, HP_REVIEW_CYCLE - run);
-        return { ...main, extra, units: HP_REVIEW_CYCLE, round: doneWeeks + 1, rounds, fromAnkabut: true };
-      }
-      return { ...main, units: HP_REVIEW_CYCLE, round: doneWeeks + 1, rounds, fromAnkabut: true };
-    }
+  // The review always starts at Surat al-Ankabut and ends at the last portion the ustadh tagged memorized (status "passed").
+  // Nothing is shown until something is tagged — program.current_page alone never makes pages appear.
+  const ends = (passed || []).map((p) => hpUnitsOf(p).end).filter((e) => e >= HP_ANKABUT_START);
+  if (!ends.length) return null;
+  const end = Math.max(...ends);
+  const total = end - HP_ANKABUT_START + 1;
+  const rounds = Math.max(1, Math.ceil(total / HP_REVIEW_CYCLE));
+  if (HP_REVIEW_ALL_MEMORIZED) {
+    return { ...hpPortionFromUnits(HP_ANKABUT_START, total), units: total, round: 1, rounds: 1, fromAnkabut: true };
   }
-  const old = hpReviewRange(passed);
-  return old ? { ...old, rounds: old.round, fromAnkabut: false } : null;
+  // everything memorized is one circle; each week reads the next 5 pages round it and carries on from there
+  if (total <= HP_REVIEW_CYCLE) {
+    return { ...hpPortionFromUnits(HP_ANKABUT_START, total), units: total, round: doneWeeks + 1, rounds, fromAnkabut: true };
+  }
+  const off = (((doneWeeks * HP_REVIEW_CYCLE) % total) + total) % total;
+  const run = Math.min(HP_REVIEW_CYCLE, total - off);
+  const main = hpPortionFromUnits(HP_ANKABUT_START + off, run);
+  if (run < HP_REVIEW_CYCLE) {
+    const extra = hpPortionFromUnits(HP_ANKABUT_START, HP_REVIEW_CYCLE - run);
+    return { ...main, extra, units: HP_REVIEW_CYCLE, round: doneWeeks + 1, rounds, fromAnkabut: true };
+  }
+  return { ...main, units: HP_REVIEW_CYCLE, round: doneWeeks + 1, rounds, fromAnkabut: true };
 };
 
 /** One-line description of this week's review slice */
