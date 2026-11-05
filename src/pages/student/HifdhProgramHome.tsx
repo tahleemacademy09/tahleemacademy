@@ -5,7 +5,7 @@
 //   with a Join button on the assigned day.
 
 import { useRevisionAssignedCount } from "@/hooks/useRevisionAssignedCount";
-import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -90,7 +90,9 @@ const HhStat = ({ icon, value, label }: { icon: React.ReactNode; value: React.Re
 const HhPageChips = ({ pages, active, onPick }: { pages: number[]; active: number; onPick: (p: number) => void }) => (
   <div style={{ display: "flex", gap: 8, overflowX: "auto", padding: "2px 2px 6px" }}>
     {pages.map((p) => (
-      <button key={p} onClick={() => onPick(p)} aria-label={`Page ${p}`} style={{
+      <button key={p} onClick={() => onPick(p)} aria-label={`Page ${p}`}
+        ref={(el) => { if (el && p === active) { try { el.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" }); } catch { /* ignore */ } } }}
+        style={{
         flex: "0 0 auto", width: 38, height: 38, borderRadius: "50%", cursor: "pointer", fontSize: 13, fontWeight: 800,
         border: `2px solid ${p === active ? HH_GOLD : HH_LINE}`, background: p === active ? "#fbf3da" : "#f1f3f2",
         color: p === active ? HH_INK : HH_MUTED,
@@ -138,11 +140,35 @@ const HhQuran = ({ portion, pages, cur, pick, bg, qSize, onBg, topExtra = 0, foo
 }) => {
   const showChips = !hideChips && pages.length > 1 && !!cur;
   const hint = cur ? hhHalfHint(cur, portion) : null;
+
+  // Swipe between the pages of the portion. Mushaf order is right-to-left: swipe right = next page, swipe left = previous.
+  // (Flip HH_SWIPE_RTL to false if you ever want the opposite direction.)
+  const HH_SWIPE_RTL = true;
+  const touch = useRef<{ x: number; y: number; multi: boolean } | null>(null);
+  const onTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    touch.current = { x: t.clientX, y: t.clientY, multi: e.touches.length > 1 };
+  };
+  const onTouchMove = (e: React.TouchEvent) => { if (touch.current && e.touches.length > 1) touch.current.multi = true; };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const s0 = touch.current; touch.current = null;
+    if (!s0 || s0.multi || !cur || pages.length < 2) return; // ignore pinch-zoom
+    const t = e.changedTouches[0];
+    const dx = t.clientX - s0.x, dy = t.clientY - s0.y;
+    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return; // too short, or mostly a vertical scroll
+    const i = pages.indexOf(cur);
+    if (i < 0) return;
+    const goNext = HH_SWIPE_RTL ? dx > 0 : dx < 0;
+    const target = pages[goNext ? i + 1 : i - 1];
+    if (target != null) pick(target);
+  };
   return (
     <>
       {showChips && cur && <div style={{ padding: "4px 10px 0", background: bg }}><HhPageChips pages={pages} active={cur} onPick={pick} /></div>}
       <div style={{ padding: "4px 10px 0", background: bg }}><HhHint text={hint} right={sizer} /></div>
-      <div style={{ flex: 1, overflowY: "auto", padding: "2px 6px 8px", display: "flex", flexDirection: "column" }}>
+      <div
+        onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
+        style={{ flex: 1, overflowY: "auto", padding: "2px 6px 8px", display: "flex", flexDirection: "column" }}>
         <div style={{ margin: "auto 0", width: "100%" }}>
           {cur && (
             <MushafPageView
@@ -593,7 +619,9 @@ export default function HifdhProgramHome() {
             {recTask && recPages.length > 0 && recShown && (
               <div style={{ flex: "0 1 auto", minWidth: 0, maxWidth: "46%", display: "flex", gap: 5, overflowX: "auto", scrollbarWidth: "none" } as any}>
                 {recPages.map((p) => (
-                  <button key={p} onClick={() => setRecPage(p)} aria-label={`Page ${p}`} style={{
+                  <button key={p} onClick={() => setRecPage(p)} aria-label={`Page ${p}`}
+                    ref={(el) => { if (el && p === recShown) { try { el.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" }); } catch { /* ignore */ } } }}
+                    style={{
                     flex: "0 0 auto", width: 34, height: 34, borderRadius: "50%", cursor: "pointer", fontSize: 11, fontWeight: 800, padding: 0,
                     border: `2px solid ${p === recShown ? HH_GOLD : HH_LINE}`, background: p === recShown ? "#fbf3da" : "#f1f3f2", color: p === recShown ? HH_INK : HH_MUTED,
                   }}>{p}</button>
