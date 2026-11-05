@@ -133,9 +133,13 @@ export const hpWeeklyReview = (
   current: { current_page?: number | null; current_half?: number | null } | null | undefined,
   passed: HifdhPortion[],
   doneWeeks = 0,
+  /** this week's portions that are NOT memorized yet (waiting / read / submitted / failed). They never belong in the review. */
+  pending: HifdhPortion[] = [],
 ): HifdhReviewRange | null => {
   if (current?.current_page) {
-    const next = hpUnit(current.current_page, current.current_half ?? 0);
+    let next = hpUnit(current.current_page, current.current_half ?? 0);
+    // only what the ustadh has marked memorized is reviewed: stop right before the first pending portion
+    if (pending.length) next = Math.min(next, ...pending.map((p) => hpUnitsOf(p).start));
     if (next > HP_ANKABUT_LAST) {
       const end = next - 1;
       const total = end - HP_ANKABUT_START + 1;
