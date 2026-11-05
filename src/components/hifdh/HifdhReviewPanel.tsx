@@ -30,6 +30,7 @@ export default function HifdhReviewPanel({ subject }: { subject: any }) {
   const [assigned, setAssigned] = useState<{ id: string; name: string }[]>([]);
   const [sel, setSel] = useState<string | null>(null);
   const [passed, setPassed] = useState<Record<string, any[]>>({});
+  const [pending, setPending] = useState<Record<string, any[]>>({});
   const [progs, setProgs] = useState<Record<string, any>>({});
   const [done, setDone] = useState<Record<string, number>>({});
   const [loadingSel, setLoadingSel] = useState(false);
@@ -82,13 +83,16 @@ export default function HifdhReviewPanel({ subject }: { subject: any }) {
     if (!sel || passed[sel]) return;
     setLoadingSel(true);
     Promise.all([
-      db.from("hifdh_memorization_tasks").select("page_from,page_to,half_from,half_to").eq("student_id", sel).eq("status", "passed"),
+      db.from("hifdh_memorization_tasks").select("page_from,page_to,half_from,half_to,status,week_start").eq("student_id", sel),
       db.from("hifdh_program").select("current_page,current_half").eq("student_id", sel).eq("status", "active").order("created_at", { ascending: false }).limit(1),
       loadDoneReviewWeeks(db, [sel], monday()),
     ]).then(([t, pr, dw]: any[]) => {
       setProgs((p) => ({ ...p, [sel]: pr.data?.[0] || null }));
       setDone((d) => ({ ...d, [sel]: dw[sel] || 0 }));
-      setPassed((p) => ({ ...p, [sel]: t.data || [] }));
+      const all: any[] = t.data || [];
+      setPassed((p) => ({ ...p, [sel]: all.filter((x) => x.status === "passed") }));
+      // this week's portions that are still pending must not show in the review
+      setPending((p) => ({ ...p, [sel]: all.filter((x) => x.status !== "passed" && x.week_start === monday()) }));
       setLoadingSel(false);
     });
   }, [sel, passed]);
@@ -112,7 +116,7 @@ export default function HifdhReviewPanel({ subject }: { subject: any }) {
   const cur = sel ? grades[sel] : null;
   const curGrade = cur ? (cur.excused ? "excused" : cur.grade) : null;
 
-  const range = sel && passed[sel] ? hpWeeklyReview(progs[sel], passed[sel], done[sel] || 0) : null;
+  const range = sel && passed[sel] ? hpWeeklyReview(progs[sel], passed[sel], done[sel] || 0, pending[sel] || []) : null;
   const pages = useMemo(() => (range ? hpPagesOf(range) : []), [range]);
   useEffect(() => { setIdx(0); if (scroller.current) scroller.current.scrollTo({ left: 0 }); }, [sel, pages.length]);
 
