@@ -184,11 +184,12 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
   const fPortion = fRg ? hpPortionFromUnits(fRg.start, fRg.units) : null;
   const fPages = fPortion ? hpPagesOf(fPortion) : [];
   const fCur = fPortion ? (pg && fPages.includes(pg) ? pg : fPages[0]) : null;
-  const fKey = JSON.stringify([sync, fPortion, fCur]);
+  const fName = sel ? (names[sel] || "") : "";   // the student who is reading → shown to everyone following along
+  const fKey = JSON.stringify([sync, fPortion, fCur, fName]);
   const sendFollow = () => {
     const ch = bc.current; if (!ch) return;
     const on = sync && !!fPortion && !!fCur;
-    ch.send({ type: "broadcast", event: "follow", payload: on ? { on: true, portion: fPortion, cur: fCur } : { on: false } });
+    ch.send({ type: "broadcast", event: "follow", payload: on ? { on: true, portion: fPortion, cur: fCur, name: fName } : { on: false } });
   };
   useEffect(() => {
     if (!isMemClass || !isStaff || !subject?.id) return;
