@@ -21,6 +21,7 @@ export default function HifdhFollowAlong({ subject }: { subject: any }) {
   const [mini, setMini] = useState(false);
   const [size, setSize] = useState(26);
   const [boxRef, boxH] = useElementHeight();
+  const [footerH, setFooterH] = useState(0);   // height of the class control bar at the bottom of the screen
 
   // only the Hifdh read-along subject
   useEffect(() => {
@@ -47,6 +48,28 @@ export default function HifdhFollowAlong({ subject }: { subject: any }) {
 
   const pages = useMemo(() => (shown ? hpPagesOf(shown.portion) : []), [shown]);
 
+  // Keep the panel exactly above the class control bar (any screen, rotation, safe-area, bar hidden/shown).
+  // Measured from the real bar (.cv-bar) instead of a fixed % of the screen, so the page can use ALL the space above it.
+  const open = isMemClass && !!shown && !mini;
+  useEffect(() => {
+    if (!open) return;
+    const read = () => {
+      const el = document.querySelector(".cv-bar") as HTMLElement | null;
+      const vh = window.visualViewport?.height ?? window.innerHeight;
+      const r = el?.getBoundingClientRect();
+      const h = r && r.height > 0 ? Math.max(0, Math.round(vh - r.top)) : 0;
+      setFooterH((prev) => (prev === h ? prev : h));
+    };
+    read();
+    const bar = document.querySelector(".cv-bar");
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(read) : null;
+    if (bar && ro) ro.observe(bar);
+    window.addEventListener("resize", read);
+    window.visualViewport?.addEventListener("resize", read);
+    const iv = window.setInterval(read, 800);            // catches the bar sliding away / coming back
+    return () => { ro?.disconnect(); window.removeEventListener("resize", read); window.visualViewport?.removeEventListener("resize", read); window.clearInterval(iv); };
+  }, [open]);
+
   if (!isMemClass || !shown) return null;
 
   const btn = { width: 38, height: 38, flexShrink: 0, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: 10, border: "none", cursor: "pointer", lineHeight: 0, background: "#eef3f0", color: INK } as const;
@@ -64,11 +87,11 @@ export default function HifdhFollowAlong({ subject }: { subject: any }) {
 
   return (
     <div style={{
-      position: "fixed", left: 0, right: 0, top: 0, zIndex: 5001, display: "flex", justifyContent: "center", pointerEvents: "none",
+      position: "fixed", left: 0, right: 0, top: 0, bottom: footerH, zIndex: 5001, display: "flex", justifyContent: "center", pointerEvents: "none",
     }}>
       <div style={{
-        pointerEvents: "auto", width: "100%", maxWidth: 640, height: "66dvh", background: "#fdf8ee", display: "flex", flexDirection: "column", overflow: "hidden",
-        borderRadius: "0 0 20px 20px", boxShadow: "0 10px 30px rgba(0,0,0,.4)", fontFamily: "system-ui, sans-serif", color: INK, overscrollBehavior: "contain",
+        pointerEvents: "auto", width: "100%", maxWidth: 640, height: "100%", background: "#fdf8ee", display: "flex", flexDirection: "column", overflow: "hidden",
+        borderRadius: 0, boxShadow: "0 0 24px rgba(0,0,0,.35)", fontFamily: "system-ui, sans-serif", color: INK, overscrollBehavior: "contain",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "calc(8px + env(safe-area-inset-top, 0px)) 10px 8px", background: "#fff", borderBottom: `1px solid ${LINE}` }}>
           <Radio size={17} color="#16A34A" strokeWidth={2.6} />
@@ -80,8 +103,8 @@ export default function HifdhFollowAlong({ subject }: { subject: any }) {
           <button onClick={() => setSize(Math.min(40, size + 2))} aria-label="Larger" style={{ ...btn, width: "auto", padding: "0 11px", fontWeight: 800 }}>A+</button>
           <button onClick={() => setMini(true)} aria-label="Minimize" style={btn}><Minimize2 size={19} strokeWidth={2.4} /></button>
         </div>
-        <div ref={boxRef} style={{ flex: 1, minHeight: 0, overflowY: size > 26 ? "auto" : "hidden", overscrollBehavior: "contain", padding: "4px 6px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-          <MushafPageView key={shown.cur} page={shown.cur} fontSize={size} seamless availableHeight={Math.max(0, boxH - 8)} maxStretch={1.15} hidePortionChip />
+        <div ref={boxRef} style={{ flex: 1, minHeight: 0, overflowY: size > 26 ? "auto" : "hidden", overscrollBehavior: "contain", padding: "2px 4px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+          <MushafPageView key={shown.cur} page={shown.cur} fontSize={size} seamless availableHeight={Math.max(0, boxH - 4)} maxStretch={1.15} hidePortionChip />
         </div>
       </div>
     </div>
