@@ -102,6 +102,7 @@ export default function HifdhReviewPanel({ subject }: { subject: any }) {
 
   const grade = async (g: "pass" | "repeat") => {
     if (!sel) return;
+    if (!window.confirm(`Mark this weekly review as "${g === "pass" ? "Pass" : "Repeat"}"?`)) return;
     setSaving(true); setErr("");
     const { error } = await db.rpc("hifdh_grade_week", { p_student: sel, p_week: monday(), p_grade: g, p_excused: false, p_notes: note.trim() || null });
     setSaving(false);

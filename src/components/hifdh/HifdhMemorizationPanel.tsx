@@ -283,6 +283,7 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
     const ok: string[] = []; let skipped = 0; let why = "";
     sids.forEach((id) => { const e = canAllow(id, slot); if (e) { skipped++; why = e; } else ok.push(id); });
     if (!ok.length) return flash(skipped ? `Can't allow: ${why}` : "Nobody to allow", false);
+    if (!window.confirm(ok.length === 1 ? `Allow ${nameOf(ok[0])} to go and memorize?` : `Allow ${ok.length} students to go and memorize?`)) return false;
     const now = new Date().toISOString();
     const rows = ok.map((id) => ({
       student_id: id, week_start: week, slot, ...hpPortionFromUnits(rangeOf(id, slot).start, rangeOf(id, slot).units),
@@ -307,6 +308,7 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
   const readAgain = async (sid: string) => {
     const e = canAllow(sid, slot);
     if (e === "already submitted") return flash("Already submitted", false);
+    if (!window.confirm(`Send ${nameOf(sid)} back to read again?`)) return;
     const r = hpPortionFromUnits(rangeOf(sid, slot).start, rangeOf(sid, slot).units);
     const ok = await guard(async () => {
       const up = await db.from("hifdh_memorization_tasks").upsert({
@@ -322,6 +324,9 @@ export default function HifdhMemorizationPanel({ subject }: { subject: any }) {
   const mark = async (sid: string, result: "passed" | "repeat") => {
     const t = taskFor(sid, slot);
     if (!t) return;
+    if (!window.confirm(result === "passed"
+      ? `Mark ${nameOf(sid)} as MEMORIZED?\n\nThey will move on to the next page.`
+      : `Send ${nameOf(sid)} back to repeat this portion?`)) return;
     const nx = result === "passed" ? nextAfter(sid) : null;
     const ok = await guard(() => db.rpc("hifdh_mark_memorized", { p_task: t.id, p_result: result }));
     if (!ok) return;
