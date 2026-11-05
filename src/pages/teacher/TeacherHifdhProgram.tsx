@@ -275,6 +275,9 @@ export default function TeacherHifdhProgram() {
       return toast({ title: "Already submitted", description: "This portion has already been memorized and submitted.", variant: "destructive" });
     }
     const cleared = result === "passed";
+    if (!window.confirm(cleared
+      ? `Allow ${nameOf(m.student_id)} to go and memorize ${hpPortionLabel(r)}?`
+      : `Send ${nameOf(m.student_id)} back to read ${hpPortionLabel(r)} again?`)) return;
     const prev = slot > 1 ? taskFor(m.student_id, slot - 1) : null;
     if (!isAdmin && cleared && prev && prev.status !== "passed") {
       return toast({ title: `Session ${slot - 1} isn't memorized yet`, description: `Mark Session ${slot - 1} as memorized first — the student only moves to the next page after that.`, variant: "destructive" });
@@ -302,6 +305,7 @@ export default function TeacherHifdhProgram() {
     };
     const ok = list.filter((m) => !skip(m));
     if (!ok.length) return toast({ title: "Nobody to allow", description: slot > 1 ? `Session ${slot - 1} must be memorized first.` : undefined, variant: "destructive" });
+    if (!window.confirm(`Allow ${ok.length} student${ok.length === 1 ? "" : "s"} to go and memorize?`)) return;
     const now = new Date().toISOString();
     guard(async () => {
       for (const m of ok) {
@@ -318,6 +322,7 @@ export default function TeacherHifdhProgram() {
 
   /* ───── grading ───── */
   const grade = (sid: string, g: "pass" | "repeat" | "fail" | "excused") =>
+    window.confirm(`Mark ${nameOf(sid)}'s weekly review as "${g === "excused" ? "Excused" : g === "pass" ? "Pass" : g === "repeat" ? "Repeat" : "Fail"}"?`) &&
     guard(() => tpDb.rpc("hifdh_grade_week", {
       p_student: sid, p_week: week, p_grade: g === "excused" ? "pass" : g, p_excused: g === "excused", p_notes: notes[sid] || null,
     }), "Saved");
@@ -365,9 +370,16 @@ export default function TeacherHifdhProgram() {
     return base;
   }, [reviewAsg, memStudents, names, activeIds, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const markMem = (taskId: string, result: "passed" | "repeat") =>
-    guard(() => tpDb.rpc("hifdh_mark_memorized", { p_task: taskId, p_result: result }),
+  const markMem = (taskId: string, result: "passed" | "repeat") => {
+    const t = tasks.find((x) => x.id === taskId);
+    const who = t ? nameOf(t.student_id) : "this student";
+    const what = t ? hpPortionLabel(t) : "this portion";
+    if (!window.confirm(result === "passed"
+      ? `Mark ${what} as MEMORIZED for ${who}?\n\nThey will move on to the next page.`
+      : `Send ${what} back to ${who} to repeat?`)) return;
+    return guard(() => tpDb.rpc("hifdh_mark_memorized", { p_task: taskId, p_result: result }),
       result === "passed" ? "Memorized — the student moves to the next page" : "Sent back — the student repeats it");
+  };
   const waiting = tasks.filter((t) => ["submitted", "read_cleared", "failed"].includes(t.status) && memStudents.some((x) => x.sid === t.student_id));
   const submittedCount = waiting.filter((t) => t.status === "submitted").length;
   // 2 sessions a week, plus one more each time a student finishes everything early and moves straight on
