@@ -105,7 +105,7 @@ const hhHalfHint = (page: number, p: { page_from: number; page_to: number; half_
   if (a === 0 && b === 1) return null;
   return a === 0 ? "top half of this page" : "bottom half of this page";
 };
-const HhHint = ({ text, right }: { text: string | null; right?: React.ReactNode }) => (
+const HhHint = ({ text, right }: { text: string | null; right?: React.ReactNode }) => (!text && !right) ? null : (
   <div style={{
     margin: "0 0 4px", padding: text ? "3px 6px 3px 10px" : "0", minHeight: 32, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: text ? "space-between" : "flex-end", gap: 8,
     background: text ? "#fbf3da" : "transparent", border: text ? `1px solid ${HH_GOLD}88` : "none", color: "#78350F", fontSize: 11, fontWeight: 700,
@@ -253,6 +253,32 @@ export default function HifdhProgramHome() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Keep this side in step with the ustadh: when a portion is marked memorized (or sent back) the student's page,
+  // sessions and weekly review must update by themselves — refresh on focus, on an interval while a screen is
+  // open, and instantly when the database pushes a change.
+  useEffect(() => {
+    if (!user?.id) return;
+    let alive = true;
+    const refresh = () => { if (alive && document.visibilityState === "visible") load(); };
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    let ch: any = null;
+    try {
+      ch = hhDb.channel(`hifdh-student-${user.id}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "hifdh_memorization_tasks", filter: `student_id=eq.${user.id}` }, refresh)
+        .on("postgres_changes", { event: "*", schema: "public", table: "hifdh_program", filter: `student_id=eq.${user.id}` }, refresh)
+        .subscribe();
+    } catch { /* realtime not available — the interval below still keeps it fresh */ }
+    const iv = window.setInterval(refresh, 15000);
+    return () => {
+      alive = false;
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
+      window.clearInterval(iv);
+      try { if (ch) hhDb.removeChannel(ch); } catch { /* ignore */ }
+    };
+  }, [user?.id, load]);
+
   // Download the Daily revision screen in the background as soon as this home is open, so tapping it is instant
   useEffect(() => {
     const t = window.setTimeout(warmDailyRevision, 100);
@@ -265,19 +291,27 @@ export default function HifdhProgramHome() {
   const shownPage = selPage && activePages.includes(selPage) ? selPage : activePages[0];
 
   // default to the first session that still needs work
+  // …and move on by itself whenever a session's status changes (memorized ✓ → straight to the next page)
+  const taskSig = tasks.map((t) => `${t.slot}:${t.status}:${t.page_from}.${t.half_from}`).join("|");
   useEffect(() => {
     if (!tasks.length) return;
     const next = tasks.find((t) => HH_CAN_SUBMIT.includes(t.status)) || tasks[0];
     setSelSlot(next.slot);
     setSelPage(null);
-  }, [tasks.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [taskSig]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // everything memorized in the current round of 5 pages
   const recTask = useMemo(() => hpWeeklyReview(program, recent, doneWeeks), [program, recent, doneWeeks]);
   const recPages = useMemo(() => (recTask ? hpPagesOf(recTask) : []), [recTask]);
   const recShown = recPage && recPages.includes(recPage) ? recPage : recPages[0];
 
-  const submitTask = async (id: string) => {
+  const submitTask = async (id: string, label: string, again: boolean) => {
+    const ok = window.confirm(
+      again
+        ? `Submit ${label} again to your ustadh?\n\nOnly do this once you have repeated it and know it by heart.`
+        : `Submit ${label} to your ustadh as memorized?\n\nOnly tap OK if you know it by heart — your ustadh will listen to it.`,
+    );
+    if (!ok) return;
     setBusy(true);
     const { error } = await hhDb.from("hifdh_memorization_tasks")
       .update({ status: "submitted", submitted_at: new Date().toISOString() }).eq("id", id);
@@ -524,7 +558,7 @@ export default function HifdhProgramHome() {
               footerH={HH_CAN_SUBMIT.includes(activeTask.status) ? 76 : 0}
               footer={HH_CAN_SUBMIT.includes(activeTask.status) ? (
                 <div style={{ padding: 10, paddingBottom: "calc(10px + env(safe-area-inset-bottom, 0px))", background: pageBg, borderTop: "1px solid rgba(0,0,0,.06)" }}>
-                  <HhBtn gold disabled={busy} onClick={() => submitTask(activeTask.id)}>
+                  <HhBtn gold disabled={busy} onClick={() => submitTask(activeTask.id, hpPortionLabel(activeTask), activeTask.status === "failed")}>
                     {activeTask.status === "failed" ? "I've repeated it — submit again" : "I've memorized this — submit"}
                   </HhBtn>
                 </div>
@@ -547,7 +581,7 @@ export default function HifdhProgramHome() {
 
       {/* ───────── WEEKLY REVIEW · full screen ───────── */}
       {view === "weekly" && !suspended && (
-        <HhScreen bg={pageBg} title="Weekly review" onBack={() => setView(null)}>
+        <HhScreen bg={pageBg} title="Weekly review" onBack={() => setView(null)} right={<TextSize />}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: pageBg }}>
             <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8, background: "#fff", border: `1px solid ${HH_LINE}`, borderRadius: 12, padding: "0 10px", height: 40 }}>
               <Users size={16} color={HH_GREEN} />
@@ -576,7 +610,7 @@ export default function HifdhProgramHome() {
               Portions appear here once your ustadh marks them memorized.
             </div>
           ) : (
-            <HhQuran bg={pageBg} qSize={qSize} onBg={setPageBg} portion={recTask} pages={recPages} cur={recShown} pick={setRecPage} hideChips sizer={<TextSize />} topExtra={56} />
+            <HhQuran bg={pageBg} qSize={qSize} onBg={setPageBg} portion={recTask} pages={recPages} cur={recShown} pick={setRecPage} hideChips topExtra={56} />
           )}
         </HhScreen>
       )}
