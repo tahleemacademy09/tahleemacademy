@@ -56,7 +56,7 @@ const hpRunPages = (p: HifdhPortion) =>
 export const hpPagesOf = (p: HifdhPortion) => {
   const main = hpRunPages(p);
   const more = p.extra ? hpRunPages(p.extra).filter((x) => !main.includes(x)) : [];
-  return [...main, ...more].slice(0, 14);
+  return [...main, ...more].slice(0, 300);
 };
 
 /** Which halves of `page` belong to the portion, as [startHalf, endHalf] */
@@ -105,6 +105,10 @@ export const hpUnitsLabel = (units: number) =>
 export const HP_ANKABUT_START = hpUnit(396, 0);
 export const HP_ANKABUT_LAST = hpUnit(404, 0);
 
+/** true  → the weekly review shows EVERYTHING memorized, from the start of Surat al-Ankabut up to the last page memorized.
+ *  false → the older behaviour: one 5-page slice per week, moving round the memorized stretch. */
+export const HP_REVIEW_ALL_MEMORIZED = true;
+
 export interface HifdhReviewRange extends HifdhPortion {
   units: number;
   /** which slice of the cycle this week is (1-based) */
@@ -136,6 +140,9 @@ export const hpWeeklyReview = (
       const end = next - 1;
       const total = end - HP_ANKABUT_START + 1;
       const rounds = Math.max(1, Math.ceil(total / HP_REVIEW_CYCLE));
+      if (HP_REVIEW_ALL_MEMORIZED) {
+        return { ...hpPortionFromUnits(HP_ANKABUT_START, total), units: total, round: 1, rounds: 1, fromAnkabut: true };
+      }
       // everything memorized is one circle; each week reads the next 5 pages round it and carries on from there
       if (total <= HP_REVIEW_CYCLE) {
         return { ...hpPortionFromUnits(HP_ANKABUT_START, total), units: total, round: doneWeeks + 1, rounds, fromAnkabut: true };
@@ -157,5 +164,7 @@ export const hpWeeklyReview = (
 /** One-line description of this week's review slice */
 export const hpReviewNote = (r: HifdhReviewRange) =>
   r.fromAnkabut
-    ? `From Surat al-Ankabut · week ${r.round} · ${hpUnitsLabel(r.units)}`
+    ? (HP_REVIEW_ALL_MEMORIZED
+        ? `From Surat al-Ankabut · everything memorized · ${hpUnitsLabel(r.units)}`
+        : `From Surat al-Ankabut · week ${r.round} · ${hpUnitsLabel(r.units)}`)
     : `Round ${r.round} · ${hpUnitsLabel(r.units)} of 5 pages memorized`;
