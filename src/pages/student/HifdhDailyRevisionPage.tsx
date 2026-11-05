@@ -1692,6 +1692,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [ctcProg, setCtcProg] = useState<CtcCheckProgress | null>(null);
   useEffect(() => ctcEngine.subscribeProgress(setCtcProg), []);
   const [ctcErr, setCtcErr] = useState("");
+  // Second-opinion (Tarteel) stage after CTC finished: lets the loader show real progress instead of sitting at 3 %.
+  const [tarteelProg, setTarteelProg] = useState<{ done: number; total: number } | null>(null);
   const ctcResRef = useRef<CtcCheckResult | null>(null);
   // After a page reload the grades come back from the saved session, but the per-word "what the model heard" text and the
   // test panel live in the check result — put that back too (it was saved with the grading, keyed by the same marker).
@@ -2185,7 +2187,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       // Transcribe in the background AS the student recites (nothing is shown until Finished), so only
       // the last few seconds are left to process at Stop.
       try { bgRef.current?.cancel(); } catch { /* noop */ }
-      if (ctcEnabled() && tarteelScoreMode() && tarteelAssistAllowed()) tarteelEngine.load(true).catch(() => { /* scoring falls back to CTC only */ });   // preload while the student recites
+      if (ctcEnabled() && tarteelScoreMode() && tarteelAssistAllowed()) tarteelEngine.load(true).then(() => tarteelEngine.warmup()).catch(() => { /* scoring falls back to CTC only */ });   // preload + warm up while the student recites
       if (!ctcEnabled() || (tarteelAssistAllowed() && !tarteelScoreMode())) try { const bg = new ChunkTranscriber(stream, mime, 8000, 4000, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(!!info); bgRef.current = bg; } catch { bgRef.current = null; }
       // Silent background processing: tap the same mic stream and let the worker check the audio WHILE the student
       // recites, so the result is ready within seconds of Stop. Nothing is shown on screen. Never blocks or breaks
@@ -2254,7 +2256,17 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         const bg = bgRef.current; bgRef.current = null; try { bg?.cancel(); } catch { /* noop */ }
         if (tarteelAssistAllowed() && blob.size <= 10 * 1048576) {
           try {
-            const sc = await tarteelEngine.scoreRecitation(blob, refWords, graded, res.words.map((w) => w.start), res.words.map((w) => w.end));
+            // Never let the second opinion hold the result hostage: at most TARTEEL_BUDGET_MS of scoring (and a hard stop a
+            // little after that, covering a slow model load / decode); whatever was not scored keeps CTC's verdict.
+            let budget = 8000;
+            try { const b = Number(localStorage.getItem("tarteel_budget_ms")); if (b > 0) budget = b; } catch { /* default */ }
+            setTarteelProg({ done: 0, total: 0 });
+            const empty = { scores: new Map(), ms: budget, windows: 0, error: "hard_timeout" } as Awaited<ReturnType<typeof tarteelEngine.scoreRecitation>>;
+            const sc = await Promise.race([
+              tarteelEngine.scoreRecitation(blob, refWords, graded, res.words.map((w) => w.start), res.words.map((w) => w.end),
+                { budgetMs: budget, maxWindows: 4, onProgress: (done, total) => setTarteelProg({ done, total }) }),
+              new Promise<typeof empty>((r) => setTimeout(() => r(empty), budget + 6000)),
+            ]).finally(() => setTarteelProg(null));
             if (sc.error) console.warn("[HifdhDaily] Tarteel scoring failed, CTC only:", sc.error);
             else if (sc.scores.size) {
               const m = mergeCtcTarteel(graded, res.words.map((w) => w.mean), buildTarteelWords(refWords, sc.scores));
@@ -3748,12 +3760,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           {(checkerState.status==="loading" ? !!checkerState.totalMB : ctcOn) && (()=>{
             const pg = ctcProg;
             const pct = checkerState.status==="loading" ? Math.min(100,((checkerState.loadedMB??0)/(checkerState.totalMB||1))*100)
+              : tarteelProg ? (tarteelProg.total > 0 ? 96 + Math.min(1, tarteelProg.done / tarteelProg.total) * 3 : 96)
               : !pg ? 3
               : pg.stage==="decoding" ? 5
               : pg.stage==="listening" && pg.total>0 ? 8 + Math.min(1,pg.done/pg.total)*84
               : pg.stage==="aligning" ? 96
               : 8;
-            const indeterminate = checkerState.status!=="loading" && (!pg || pg.stage==="decoding" || pg.stage==="finishing");
+            const indeterminate = checkerState.status!=="loading" && !tarteelProg && (!pg || pg.stage==="decoding" || pg.stage==="finishing");
             return (
               <div style={{width:"100%",maxWidth:280}}>
                 <div style={{height:8,borderRadius:99,background:"#ffffff1f",overflow:"hidden",position:"relative"}}>
@@ -3767,6 +3780,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           <p style={{margin:0,color:"#9CA3AF",fontSize:12,textAlign:"center",lineHeight:1.7,maxWidth:280}}>
             {checkerState.status==="loading"
               ? `Getting the Quran checker ready${checkerState.totalMB?` — ${Math.round(checkerState.loadedMB??0)} of ${Math.round(checkerState.totalMB)} MB`:"…"} (first time only)`
+              : ctcOn && tarteelProg
+                ? (tarteelProg.total > 0 ? `Double-checking the unclear words — part ${Math.min(tarteelProg.done + 1, tarteelProg.total)} of ${tarteelProg.total}…` : "Double-checking the unclear words…")
               : ctcOn && ctcProg
                 ? (ctcProg.stage === "decoding" ? "Preparing your recording…"
                   : ctcProg.stage === "listening" && ctcProg.total > 0
