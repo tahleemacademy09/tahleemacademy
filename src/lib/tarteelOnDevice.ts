@@ -189,7 +189,7 @@ async function load(useGpu) {
 
 // Teacher-forced scoring: feed the audio plus the EXPECTED words and read how likely the model finds each expected
 // token, in one forward pass (no token-by-token generation). Returns {mean,min,top1,n} per word (log-probabilities).
-async function scoreWords(audio, words) {
+async function scoreWords(audio, words, only) {
   const tok = asr.tokenizer;
   const wordTok = words.map((w) => tok.encode(" " + w, { add_special_tokens: false }));
   const prompt = [50258, 50272, 50359, 50363]; // <|startoftranscript|> <|ar|> <|transcribe|> <|notimestamps|>
@@ -206,7 +206,10 @@ async function scoreWords(audio, words) {
   const V = lg.dims[lg.dims.length - 1];
   const res = [];
   let j = 0;
-  for (const toks of wordTok) {
+  for (let wi = 0; wi < wordTok.length; wi++) {
+    const toks = wordTok[wi];
+    // Context words only give the model its prefix: skip the 52k-wide softmax for them (it is pure JS and slow on phones).
+    if (only && !only[wi]) { j += toks.length; res.push({ mean: 0, min: 0, top1: 1, n: 0, ctx: 1 }); continue; }
     let sum = 0, mn = 0, hit = 0;
     mn = 0;
     for (let k = 0; k < toks.length; k++, j++) {
@@ -234,7 +237,7 @@ async function handle(ev) {
     } else if (m.type === "score") {
       if (!asr) { self.postMessage({ type: "result", id: m.id, text: "", error: "not_loaded" }); return; }
       const t0 = Date.now();
-      const scores = await scoreWords(m.audio, m.words);
+      const scores = await scoreWords(m.audio, m.words, m.only);
       self.postMessage({ type: "result", id: m.id, text: "", scores, ms: Date.now() - t0 });
     } else if (m.type === "transcribe") {
       if (!asr) { self.postMessage({ type: "result", id: m.id, text: "", error: "not_loaded" }); return; }
@@ -364,12 +367,12 @@ class TarteelEngine {
 
 
   /** Teacher-forced scoring of ONE audio window against its expected words (see tarteelScore.ts). */
-  private scoreWindow(audio: Float32Array, words: string[]): Promise<{ scores?: WordScore[]; error?: string; ms?: number }> {
+  private scoreWindow(audio: Float32Array, words: string[], only?: boolean[]): Promise<{ scores?: WordScore[]; error?: string; ms?: number }> {
     if (!this.worker || this.state.status !== "ready") return Promise.resolve({ error: "not_ready" });
     const id = this.nextId++;
     return new Promise((resolve) => {
       this.pending.set(id, (r) => resolve({ scores: r.scores, error: r.error, ms: r.ms }));
-      this.worker!.postMessage({ type: "score", id, audio, words }, [audio.buffer]);
+      this.worker!.postMessage({ type: "score", id, audio, words, only }, [audio.buffer]);
     });
   }
 
@@ -379,11 +382,30 @@ class TarteelEngine {
    * Returns a score per page-word index, or an error (caller then keeps CTC's result as it is).
    * Nothing to check (CTC accepted everything) returns immediately without touching the model.
    */
+  private warmed = false;
+  /**
+   * The FIRST inference after a model load is much slower (WebGPU shader compilation / wasm warm-up). Run one tiny
+   * dummy pass while the student is still reciting so that cost is paid before Stop, not after it.
+   */
+  async warmup(): Promise<void> {
+    if (this.warmed) return;
+    try {
+      await this.load(true);
+      this.warmed = true;
+      const t0 = Date.now();
+      await this.scoreWindow(new Float32Array(TARGET_SR * 2), ["بسم", "الله"], [true, true]);
+      console.info(`[Tarteel] warm-up ${Date.now() - t0} ms on ${this.state.device ?? "?"}`);
+    } catch { this.warmed = false; }
+  }
+
   async scoreRecitation(
     blob: Blob, refWords: string[], graded: { grade: string }[],
     starts: (number | null | undefined)[], ends: (number | null | undefined)[],
-  ): Promise<{ scores: Map<number, WordScore>; ms: number; windows: number; error?: string }> {
+    opts: { budgetMs?: number; maxWindows?: number; onProgress?: (done: number, total: number) => void } = {},
+  ): Promise<{ scores: Map<number, WordScore>; ms: number; windows: number; error?: string; timedOut?: boolean }> {
     const t0 = Date.now();
+    const budgetMs = opts.budgetMs ?? Infinity;
+    const maxWindows = opts.maxWindows ?? Infinity;
     const scores = new Map<number, WordScore>();
     const fail = (error: string) => ({ scores, ms: Date.now() - t0, windows: 0, error });
     if (!graded.some((g) => g.grade !== "ok")) return { scores, ms: 0, windows: 0 };
@@ -391,15 +413,22 @@ class TarteelEngine {
     let audio: Float32Array;
     try { audio = await decodeBlobTo16k(blob); } catch (e: any) { return fail("decode_failed: " + String(e?.message ?? e)); }
     const totalSecs = audio.length / TARGET_SR;
-    const wins = planWindows(graded as any, starts, ends, totalSecs);
-    let failed = 0;
+    // Cap the work: every window costs one full encoder pass (~1–4 s on a phone). A recitation with lots of unclear
+    // words would otherwise queue up many of them and keep the student staring at the loader.
+    const wins = planWindows(graded as any, starts, ends, totalSecs).slice(0, maxWindows);
+    let failed = 0, done = 0, timedOut = false;
+    opts.onProgress?.(0, wins.length);
     for (const w of wins) {
+      if (Date.now() - t0 > budgetMs) { timedOut = true; break; }   // keep what was scored so far, CTC decides the rest
       const from = Math.floor(w.t0 * TARGET_SR), to = Math.min(audio.length, Math.ceil(w.t1 * TARGET_SR));
       const pad = new Float32Array(Math.round(TARGET_SR * 0.25));
       const clip = new Float32Array(to - from + pad.length * 2);
       clip.set(audio.subarray(from, to), pad.length);
       const words = refWords.slice(w.a, w.b + 1);
-      const r = await this.scoreWindow(clip, words);
+      const only = words.map((_, i) => w.targets.includes(w.a + i));
+      const r = await this.scoreWindow(clip, words, only);
+      done++; opts.onProgress?.(done, wins.length);
+      console.info(`[Tarteel-score] window ${done}/${wins.length} (${(w.t1 - w.t0).toFixed(1)} s audio, ${words.length} words) took ${r.ms ?? "?"} ms on ${this.state.device ?? "?"}`);
       if (r.error || !r.scores) { failed++; console.warn("[Tarteel-score] window failed:", r.error); continue; }
       for (const t of w.targets) {
         const sc = r.scores[t - w.a];
@@ -410,7 +439,8 @@ class TarteelEngine {
       }
     }
     if (wins.length && failed === wins.length) return fail("all_windows_failed");
-    return { scores, ms: Date.now() - t0, windows: wins.length };
+    if (timedOut) console.warn(`[Tarteel-score] time budget ${budgetMs} ms reached after ${done}/${wins.length} windows — remaining words keep CTC's verdict`);
+    return { scores, ms: Date.now() - t0, windows: done, timedOut };
   }
 
   /**
