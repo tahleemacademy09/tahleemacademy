@@ -8,7 +8,7 @@ const RAW_BASE = (import.meta.env.VITE_OTA_BASE_URL as string | undefined)?.trim
 const BASE = RAW_BASE ? (/^https?:\/\//i.test(RAW_BASE) ? RAW_BASE : `https://${RAW_BASE}`).replace(/\/$/, "") : undefined;
 const BUILT_IN = (import.meta.env.VITE_OTA_VERSION as string | undefined) ?? "builtin";
 
-interface Manifest { version: string; url: string; minNativeBuild?: number; notes?: string }
+interface Manifest { version: string; url: string; checksum?: string; minNativeBuild?: number; notes?: string }
 export interface OtaReady { bundleId: string; version: string; notes?: string }
 
 let ready: OtaReady | null = null;
@@ -71,7 +71,7 @@ export async function checkForOta(force = false): Promise<void> {
       let pct = -1; const evts: string[] = [];
       const lh = await (CapacitorUpdater as any).addListener("download", (ev: any) => { pct = ev?.percent ?? pct; });
       const lf = await (CapacitorUpdater as any).addListener("downloadFailed", (ev: any) => { evts.push("downloadFailed " + JSON.stringify(ev)); });
-      try { id = (await CapacitorUpdater.download({ url: m.url, version: m.version })).id; }
+      try { id = (await CapacitorUpdater.download({ url: m.url, version: m.version, checksum: m.checksum })).id; }
       catch (de: any) { throw new Error(`${de?.message ?? de} | pct=${pct} | err=${JSON.stringify(de, Object.getOwnPropertyNames(de ?? {}))} | ${evts.join(";")}`); }
       finally { try { lh.remove(); lf.remove(); } catch {} }
     }

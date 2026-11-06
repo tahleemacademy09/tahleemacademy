@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
-import { writeFileSync, rmSync, statSync } from "node:fs";
+import { writeFileSync, rmSync, statSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 
 const RAW = process.env.OTA_BASE_URL?.trim();
 const BASE = RAW ? (/^https?:\/\//i.test(RAW) ? RAW : `https://${RAW}`).replace(/\/$/, "") : undefined;
@@ -25,7 +26,8 @@ rmSync("ota.zip", { force: true });
 run("cd dist && zip -qrDX ../ota.zip .");
 console.log(`  bundle size: ${(statSync("ota.zip").size / 1024 / 1024).toFixed(1)} MB`);
 
-const manifest = { version, url: `${BASE}/ota/${version}.zip`, minNativeBuild, notes };
+const checksum = createHash("sha256").update(readFileSync("ota.zip")).digest("hex");
+const manifest = { version, url: `${BASE}/ota/${version}.zip`, checksum, minNativeBuild, notes };
 writeFileSync("ota-manifest.json", JSON.stringify(manifest, null, 2));
 
 console.log("\n▶ Uploading bundle");
