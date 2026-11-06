@@ -22,7 +22,7 @@ console.log(`\n▶ Building ${version}`);
 run("npx vite build", { VITE_OTA_VERSION: version, VITE_OTA_BASE_URL: BASE });
 
 rmSync("ota.zip", { force: true });
-run("cd dist && zip -qr ../ota.zip .");
+run("cd dist && zip -qrDX ../ota.zip .");
 console.log(`  bundle size: ${(statSync("ota.zip").size / 1024 / 1024).toFixed(1)} MB`);
 
 const manifest = { version, url: `${BASE}/ota/${version}.zip`, minNativeBuild, notes };
