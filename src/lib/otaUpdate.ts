@@ -18,6 +18,16 @@ let progress: OtaProgress | null = null;
 let busy = false;
 let lastCheck = 0;
 
+/** A newer version exists but has NOT been downloaded yet — the user must tap "Update now" first. */
+export interface OtaAvailable { version: string; notes?: string; totalBytes?: number }
+let available: (OtaAvailable & { url: string; checksum?: string }) | null = null;
+let downloading = false;
+export const getOtaAvailable = (): OtaAvailable | null => available;
+function setAvailable(a: typeof available) {
+  available = a;
+  window.dispatchEvent(new Event("ta:ota-available"));
+}
+
 export const getOtaReady = () => ready;
 export const getOtaProgress = () => progress;
 function setProgress(p: OtaProgress | null) {
@@ -65,10 +75,31 @@ async function fetchManifest(): Promise<Manifest> {
   return m as Manifest;
 }
 
+/** Records WHY something failed (server probe + native log) so it can be read on the phone. */
+async function recordFailure(e: any) {
+  let probe = "";
+  try {
+    const m2 = await fetchManifest();
+    const t0 = Date.now();
+    const r = await CapacitorHttp.get({ url: m2.url, headers: { Range: "bytes=0-99" }, responseType: "blob", connectTimeout: 15000, readTimeout: 30000 });
+    const h = r.headers || {};
+    probe = ` | probe: HTTP ${r.status}, ${Date.now() - t0}ms, type=${h["Content-Type"] ?? h["content-type"]}, len=${h["Content-Length"] ?? h["content-length"]}, range=${h["Content-Range"] ?? h["content-range"]}, enc=${h["Content-Encoding"] ?? h["content-encoding"]}`;
+  } catch (pe: any) {
+    probe = ` | probe failed: ${String(pe?.message ?? pe)}`;
+  }
+  try {
+    const AI = registerPlugin<any>("ApkInstaller");
+    const lg = await AI.readLog();
+    probe += " | NATIVE LOG: " + String(lg?.log ?? "").replace(/\n/g, " ¶ ");
+  } catch (le: any) { probe += " | readLog failed: " + String(le?.message ?? le); }
+  status("failed", { error: String(e?.message ?? e) + probe });
+  console.warn("[OTA] failed", e);
+}
+
 export async function checkForOta(force = false): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
   if (!BASE) { status("no-base-url"); return; }   // APK was built without the OTA_BASE_URL secret
-  if (busy) return;
+  if (busy || downloading) return;
   if (!force && Date.now() - lastCheck < 60_000) return;
   lastCheck = Date.now();
   busy = true;
@@ -77,65 +108,70 @@ export async function checkForOta(force = false): Promise<void> {
     const m = await fetchManifest();
     const [cur, info] = await Promise.all([currentVersion(), App.getInfo()]);
     if (m.version === cur) { status("up-to-date", { cur }); return; }
-    if (ready?.version === m.version) return;
+    if (ready?.version === m.version || available?.version === m.version) return;
     if (m.minNativeBuild && parseInt(info.build, 10) < m.minNativeBuild) {
       status("needs-new-apk", { need: m.minNativeBuild, have: info.build });
       return;
     }
 
-    // Reuse a copy we already downloaded (e.g. banner dismissed, app restarted).
+    // A copy we already downloaded earlier (app restarted before applying): just wait for the tap.
     let id: string | undefined;
     try {
       const { bundles } = await CapacitorUpdater.list();
       id = bundles.find((b) => b.version === m.version && b.status !== "error")?.id;
-    } catch { /* fall through to download */ }
-    if (!id) {
-      status("downloading", { version: m.version });
-      let pct = -1; const evts: string[] = [];
-      const totalBytes = await bundleSize(m);
-      setProgress({ version: m.version, percent: 0, totalBytes, notes: m.notes });
-      const lh = await (CapacitorUpdater as any).addListener("download", (ev: any) => {
-        const p = Number(ev?.percent);
-        if (Number.isFinite(p)) {
-          pct = p;
-          const clamped = Math.max(0, Math.min(100, p));
-          if (!progress || clamped !== progress.percent) setProgress({ version: m.version, percent: clamped, totalBytes, notes: m.notes });
-        }
-      });
-      const lf = await (CapacitorUpdater as any).addListener("downloadFailed", (ev: any) => { evts.push("downloadFailed " + JSON.stringify(ev)); });
-      try { id = (await CapacitorUpdater.download({ url: m.url, version: m.version, checksum: m.checksum })).id; }
-      catch (de: any) { throw new Error(`${de?.message ?? de} | pct=${pct} | err=${JSON.stringify(de, Object.getOwnPropertyNames(de ?? {}))} | ${evts.join(";")}`); }
-      finally { try { lh.remove(); lf.remove(); } catch {} }
+    } catch { /* fall through to "available" */ }
+    if (id) {
+      ready = { bundleId: id, version: m.version, notes: m.notes };
+      status("ready", { version: m.version });
+      window.dispatchEvent(new Event("ta:ota-ready"));
+      return;
     }
 
-    // Also queue it for the next app start, so it lands even if nobody taps the banner.
-    try { await CapacitorUpdater.next({ id }); } catch { /* banner still works */ }
-
-    ready = { bundleId: id, version: m.version, notes: m.notes };
-    status("ready", { version: m.version });
-    window.dispatchEvent(new Event("ta:ota-ready"));
-    if (progress) setProgress(null);
+    // New version: do NOT download yet — show its size and wait for the user to tap "Update now".
+    const totalBytes = await bundleSize(m);
+    setAvailable({ version: m.version, notes: m.notes, totalBytes, url: m.url, checksum: m.checksum });
+    status("available", { version: m.version, totalBytes });
   } catch (e: any) {
-    if (progress) setProgress(null); // download failed — drop the progress screen so the app stays usable
-    let probe = "";
-    try {
-      const m2 = await fetchManifest();
-      const t0 = Date.now();
-      const r = await CapacitorHttp.get({ url: m2.url, headers: { Range: "bytes=0-99" }, responseType: "blob", connectTimeout: 15000, readTimeout: 30000 });
-      const h = r.headers || {};
-      probe = ` | probe: HTTP ${r.status}, ${Date.now() - t0}ms, type=${h["Content-Type"] ?? h["content-type"]}, len=${h["Content-Length"] ?? h["content-length"]}, range=${h["Content-Range"] ?? h["content-range"]}, enc=${h["Content-Encoding"] ?? h["content-encoding"]}`;
-    } catch (pe: any) {
-      probe = ` | probe failed: ${String(pe?.message ?? pe)}`;
-    }
-    try {
-      const AI = registerPlugin<any>("ApkInstaller");
-      const lg = await AI.readLog();
-      probe += " | NATIVE LOG: " + String(lg?.log ?? "").replace(/\n/g, " ¶ ");
-    } catch (le: any) { probe += " | readLog failed: " + String(le?.message ?? le); }
-    status("failed", { error: String(e?.message ?? e) + probe });
-    console.warn("[OTA] check failed", e);
+    await recordFailure(e);
   } finally {
     busy = false;
+  }
+}
+
+/** Called when the user taps "Update now" on the "Update available" screen. Throws if the download fails. */
+export async function downloadOta(): Promise<void> {
+  const a = available;
+  if (!a || downloading) return;
+  downloading = true;
+  try {
+    status("downloading", { version: a.version });
+    let pct = -1; const evts: string[] = [];
+    setProgress({ version: a.version, percent: 0, totalBytes: a.totalBytes, notes: a.notes });
+    const lh = await (CapacitorUpdater as any).addListener("download", (ev: any) => {
+      const p = Number(ev?.percent);
+      if (Number.isFinite(p)) {
+        pct = p;
+        const clamped = Math.max(0, Math.min(100, p));
+        if (!progress || clamped !== progress.percent) setProgress({ version: a.version, percent: clamped, totalBytes: a.totalBytes, notes: a.notes });
+      }
+    });
+    const lf = await (CapacitorUpdater as any).addListener("downloadFailed", (ev: any) => { evts.push("downloadFailed " + JSON.stringify(ev)); });
+    let id: string;
+    try { id = (await CapacitorUpdater.download({ url: a.url, version: a.version, checksum: a.checksum })).id; }
+    catch (de: any) { throw new Error(`${de?.message ?? de} | pct=${pct} | err=${JSON.stringify(de, Object.getOwnPropertyNames(de ?? {}))} | ${evts.join(";")}`); }
+    finally { try { lh.remove(); lf.remove(); } catch {} }
+
+    ready = { bundleId: id, version: a.version, notes: a.notes };
+    status("ready", { version: a.version });
+    window.dispatchEvent(new Event("ta:ota-ready"));
+    setAvailable(null);
+    setProgress(null);
+  } catch (e: any) {
+    setProgress(null); // back to the "Update available" screen, which shows a retry
+    await recordFailure(e);
+    throw e;
+  } finally {
+    downloading = false;
   }
 }
 
