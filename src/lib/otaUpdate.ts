@@ -46,7 +46,7 @@ export async function checkForOta(force = false): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
   if (!BASE) { status("no-base-url"); return; }   // APK was built without the OTA_BASE_URL secret
   if (busy) return;
-  if (!force && Date.now() - lastCheck < 10 * 60_000) return;
+  if (!force && Date.now() - lastCheck < 60_000) return;
   lastCheck = Date.now();
   busy = true;
   try {
