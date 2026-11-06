@@ -8,14 +8,37 @@ const RAW_BASE = (import.meta.env.VITE_OTA_BASE_URL as string | undefined)?.trim
 const BASE = RAW_BASE ? (/^https?:\/\//i.test(RAW_BASE) ? RAW_BASE : `https://${RAW_BASE}`).replace(/\/$/, "") : undefined;
 const BUILT_IN = (import.meta.env.VITE_OTA_VERSION as string | undefined) ?? "builtin";
 
-interface Manifest { version: string; url: string; checksum?: string; minNativeBuild?: number; notes?: string }
+interface Manifest { version: string; url: string; checksum?: string; size?: number; minNativeBuild?: number; notes?: string }
 export interface OtaReady { bundleId: string; version: string; notes?: string }
+/** Live download state, shown by the full-screen update gate while the bundle is coming down. */
+export interface OtaProgress { version: string; percent: number; totalBytes?: number; notes?: string }
 
 let ready: OtaReady | null = null;
+let progress: OtaProgress | null = null;
 let busy = false;
 let lastCheck = 0;
 
 export const getOtaReady = () => ready;
+export const getOtaProgress = () => progress;
+function setProgress(p: OtaProgress | null) {
+  progress = p;
+  window.dispatchEvent(new Event("ta:ota-progress"));
+}
+
+/** Bundle size in bytes: from the manifest, else ask the server (Content-Range of a 1-byte request). */
+async function bundleSize(m: Manifest): Promise<number | undefined> {
+  if (m.size && m.size > 0) return m.size;
+  try {
+    const r = await CapacitorHttp.get({ url: m.url, headers: { Range: "bytes=0-0" }, responseType: "blob", connectTimeout: 10000, readTimeout: 10000 });
+    const h = r.headers || {};
+    const cr = String(h["Content-Range"] ?? h["content-range"] ?? "");
+    const total = parseInt(cr.split("/")[1] ?? "", 10);
+    if (total > 0) return total;
+    const cl = parseInt(String(h["Content-Length"] ?? h["content-length"] ?? ""), 10);
+    if (r.status === 200 && cl > 1) return cl;
+  } catch { /* size is optional — the bar still works from percent */ }
+  return undefined;
+}
 
 /** Last thing the updater did, so "why didn't it update?" can be answered on the phone. */
 const STATUS_KEY = "ta_ota_status";
@@ -69,7 +92,16 @@ export async function checkForOta(force = false): Promise<void> {
     if (!id) {
       status("downloading", { version: m.version });
       let pct = -1; const evts: string[] = [];
-      const lh = await (CapacitorUpdater as any).addListener("download", (ev: any) => { pct = ev?.percent ?? pct; });
+      const totalBytes = await bundleSize(m);
+      setProgress({ version: m.version, percent: 0, totalBytes, notes: m.notes });
+      const lh = await (CapacitorUpdater as any).addListener("download", (ev: any) => {
+        const p = Number(ev?.percent);
+        if (Number.isFinite(p)) {
+          pct = p;
+          const clamped = Math.max(0, Math.min(100, p));
+          if (!progress || clamped !== progress.percent) setProgress({ version: m.version, percent: clamped, totalBytes, notes: m.notes });
+        }
+      });
       const lf = await (CapacitorUpdater as any).addListener("downloadFailed", (ev: any) => { evts.push("downloadFailed " + JSON.stringify(ev)); });
       try { id = (await CapacitorUpdater.download({ url: m.url, version: m.version, checksum: m.checksum })).id; }
       catch (de: any) { throw new Error(`${de?.message ?? de} | pct=${pct} | err=${JSON.stringify(de, Object.getOwnPropertyNames(de ?? {}))} | ${evts.join(";")}`); }
@@ -82,7 +114,9 @@ export async function checkForOta(force = false): Promise<void> {
     ready = { bundleId: id, version: m.version, notes: m.notes };
     status("ready", { version: m.version });
     window.dispatchEvent(new Event("ta:ota-ready"));
+    if (progress) setProgress(null);
   } catch (e: any) {
+    if (progress) setProgress(null); // download failed — drop the progress screen so the app stays usable
     let probe = "";
     try {
       const m2 = await fetchManifest();
