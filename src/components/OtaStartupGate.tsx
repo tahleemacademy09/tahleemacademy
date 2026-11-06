@@ -39,9 +39,7 @@ export default function OtaStartupGate() {
           {busy ? "Updating…" : "Update now"}
         </button>
       )}
-      <button onClick={() => setDismissed(true)} style={{ marginTop: 14, background: "transparent", border: "none", color: "#d8c895", fontSize: 14, padding: 8 }}>
-        Later
-      </button>
+      {/* MANDATORY: no "Later" — students must update before using the app */}
     </div>
   );
 }
