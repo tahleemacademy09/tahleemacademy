@@ -14,7 +14,7 @@
 */
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import {
-  SR, SpEncoder, alignWords, alignWordsPartial, chunkWithContext, trimToCore, greedySpan, greedyText, logMel, modelForm, scorePrefix, stripMarks,
+  SR, SpEncoder, alignWordsSmart, chunkWithContext, trimToCore, greedySpan, greedyText, logMel, modelForm, scorePrefix, stripMarks,
   type CtcWordScore, type SpVocab,
 } from "./ctcAlign";
 import { LiveMistakeTracker, type MistakeTrackerOptions } from "./liveMistake";
@@ -134,13 +134,11 @@ export async function nativeCheck(
     useBasmalah = stripMarks(refWordsIn[0] || "") !== "بسم" && heard.startsWith(BAS_HEARD);
   }
   const refWords = useBasmalah ? [...BASMALAH, ...refWordsIn] : refWordsIn;
-  let scored = alignWords(lp, T, V, refWords, enc, vocab, frameDur);
-  let partial = false, covered = refWords.length;
-  if (!scored) {
-    const p = alignWordsPartial(lp, T, V, refWords, enc, vocab, frameDur);
-    if (!p) throw new Error("audio_too_short_for_text");
-    scored = p.scores; partial = true; covered = Math.max(0, p.covered - (useBasmalah ? BASMALAH.length : 0));
-  }
+  // Full alignment, re-done open-ended when the student stopped early (unrecited tail words are then "not heard").
+  const al = alignWordsSmart(lp, T, V, refWords, enc, vocab, frameDur);
+  if (!al) throw new Error("audio_too_short_for_text");
+  const scored = al.scores;
+  const partial = al.partial, covered = al.partial ? Math.max(0, al.covered - (useBasmalah ? BASMALAH.length : 0)) : refWords.length;
   const heardAll = scored.map((w) => (w.start == null || w.end == null ? "" : greedySpan(lp, T, V, vocab, Math.round(w.start / frameDur), Math.round(w.end / frameDur))));
   const words: CtcWordScore[] = useBasmalah ? scored.slice(BASMALAH.length) : scored;
   const heard = useBasmalah ? heardAll.slice(BASMALAH.length) : heardAll;

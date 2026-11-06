@@ -625,3 +625,36 @@ export function alignWordsPartial(
 ): PartialAlign | null {
   return scoreWordsPartial(logp, T, V, variantWordTokens(words, enc, vocab), vocab.blank, frameDur);
 }
+
+/**
+ * Full alignment that stops where the reciter stopped.
+ * Forced alignment must give every page word some audio, so when the student stops early the unrecited tail words are
+ * squeezed into ~1 frame per token and the frames are taken from the LAST words that really were said (those turn red
+ * although they were recited). When the tail looks squeezed like that, grade again with the open-ended aligner: the path
+ * ends right after the last word that was said, and every word after it is "not heard" (no time span → shown as "—").
+ */
+export function alignWordsSmart(
+  logp: Float32Array, T: number, V: number, words: string[], enc: SpEncoder, vocab: SpVocab, frameDur: number,
+): { scores: CtcWordScore[]; partial: boolean; covered: number } | null {
+  const full = alignWords(logp, T, V, words, enc, vocab, frameDur);
+  if (!full) {
+    const p = alignWordsPartial(logp, T, V, words, enc, vocab, frameDur);
+    return p ? { scores: p.scores, partial: true, covered: p.covered } : null;
+  }
+  // trailing run of words squeezed to (about) one frame per token
+  const plain = variantWordTokens(words, enc, vocab)[0];
+  let squeezed = 0;
+  for (let i = words.length - 1; i >= 0; i--) {
+    const w = full[i], n = plain[i]?.length ?? 0;
+    if (n === 0) { squeezed++; continue; }
+    if (w.start == null || w.end == null) { squeezed++; continue; }
+    const frames = (w.end - w.start) / frameDur;
+    if (frames <= n * 1.6 + 1) squeezed++; else break;
+  }
+  if (squeezed < 3) return { scores: full, partial: false, covered: words.length };
+  const p = alignWordsPartial(logp, T, V, words, enc, vocab, frameDur);
+  if (!p || p.covered >= words.length - 1) return { scores: full, partial: false, covered: words.length };
+  // everything after the last word the path completely covers was not recited
+  const scores = p.scores.map((s, i) => (i < p.covered ? s : { mean: -20, min: -20, start: null, end: null }));
+  return { scores, partial: true, covered: p.covered };
+}

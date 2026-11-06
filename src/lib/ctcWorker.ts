@@ -9,7 +9,7 @@
   Messages out: {type:"progress"|"ready"|"load_error"|"result"|"selftest_result"|"live_progress"}
 */
 import {
-  alignWords, alignWordsPartial, chunkWithContext, trimToCore, CTX, FRAME, greedySpan, greedyText, quietCutPoint, logMel, modelForm, scorePrefix, SpEncoder, SR, stripMarks,
+  alignWordsSmart, chunkWithContext, trimToCore, CTX, FRAME, greedySpan, greedyText, quietCutPoint, logMel, modelForm, scorePrefix, SpEncoder, SR, stripMarks,
   type CtcWordScore, type SpVocab, type Win,
 } from "./ctcAlign";
 
@@ -178,15 +178,11 @@ async function check(m: { id: number; audio: Float32Array; words: string[]; basm
     useBasmalah = stripMarks(m.words[0] || "") !== "بسم" && heard.startsWith("بسماللهالرحمنالرحيم");
   }
   const refWords = useBasmalah ? [...BASMALAH, ...m.words] : m.words;
-  let scored = alignWords(lp, T, V, refWords, enc, vocab, frameDur);
-  // The audio is too short to hold the WHOLE text (student recited only the first part of the assignment):
-  // grade what was recited; every word after it is reported as "not heard" instead of failing the whole check.
-  let partial = false, covered = refWords.length;
-  if (!scored) {
-    const p = alignWordsPartial(lp, T, V, refWords, enc, vocab, frameDur);
-    if (!p) throw new Error("audio_too_short_for_text");
-    scored = p.scores; partial = true; covered = Math.max(0, p.covered - (useBasmalah ? BASMALAH.length : 0));
-  }
+  // Full alignment, re-done open-ended when the student stopped early (unrecited tail words are then "not heard").
+  const al = alignWordsSmart(lp, T, V, refWords, enc, vocab, frameDur);
+  if (!al) throw new Error("audio_too_short_for_text");
+  const scored = al.scores;
+  const partial = al.partial, covered = al.partial ? Math.max(0, al.covered - (useBasmalah ? BASMALAH.length : 0)) : refWords.length;
   // What the model heard for each page word: the greedy text inside that word's own aligned time span.
   const heardAll = scored.map((w) => (w.start == null || w.end == null ? "" : greedySpan(lp, T, V, vocab!, Math.round(w.start / frameDur), Math.round(w.end / frameDur))));
   const words: CtcWordScore[] = useBasmalah ? scored.slice(BASMALAH.length) : scored;
