@@ -1,4 +1,4 @@
-import { Capacitor, CapacitorHttp } from "@capacitor/core";
+import { Capacitor, CapacitorHttp, registerPlugin } from "@capacitor/core";
 import { App } from "@capacitor/app";
 import { CapacitorUpdater } from "@capgo/capacitor-updater";
 import { isReloadSafe, onReloadSafe } from "@/lib/reloadGuard";
@@ -93,6 +93,11 @@ export async function checkForOta(force = false): Promise<void> {
     } catch (pe: any) {
       probe = ` | probe failed: ${String(pe?.message ?? pe)}`;
     }
+    try {
+      const AI = registerPlugin<any>("ApkInstaller");
+      const lg = await AI.readLog();
+      probe += " | NATIVE LOG: " + String(lg?.log ?? "").replace(/\n/g, " ¶ ");
+    } catch (le: any) { probe += " | readLog failed: " + String(le?.message ?? le); }
     status("failed", { error: String(e?.message ?? e) + probe });
     console.warn("[OTA] check failed", e);
   } finally {

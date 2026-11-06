@@ -163,4 +163,29 @@ public class ApkInstallerPlugin extends Plugin {
             call.reject(e.getMessage() != null ? e.getMessage() : "Could not start the installer", "INSTALL", e);
         }
     }
+
+    /** Returns this app's own recent logcat lines about the updater (debug aid). */
+    @PluginMethod
+    public void readLog(final PluginCall call) {
+        exec.execute(() -> {
+            try {
+                Process pr = Runtime.getRuntime().exec(new String[]{"logcat", "-d", "-t", "1500"});
+                java.io.BufferedReader br = new java.io.BufferedReader(new java.io.InputStreamReader(pr.getInputStream()));
+                java.util.ArrayList<String> keep = new java.util.ArrayList<>();
+                String line;
+                while ((line = br.readLine()) != null) {
+                    String l = line.toLowerCase();
+                    if (l.contains("capgo") || l.contains("updater") || l.contains("okhttp") || l.contains("zipexception") || l.contains("ioexception") || l.contains("w system.err")) {
+                        keep.add(line.length() > 220 ? line.substring(0, 220) : line);
+                    }
+                }
+                int from = Math.max(0, keep.size() - 14);
+                JSObject ret = new JSObject();
+                ret.put("log", android.text.TextUtils.join("\n", keep.subList(from, keep.size())));
+                call.resolve(ret);
+            } catch (Exception e) {
+                call.reject("readLog failed: " + e);
+            }
+        });
+    }
 }
