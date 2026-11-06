@@ -78,7 +78,17 @@ export async function checkForOta(force = false): Promise<void> {
     status("ready", { version: m.version });
     window.dispatchEvent(new Event("ta:ota-ready"));
   } catch (e: any) {
-    status("failed", { error: String(e?.message ?? e) });
+    let probe = "";
+    try {
+      const m2 = await fetchManifest();
+      const t0 = Date.now();
+      const r = await CapacitorHttp.get({ url: m2.url, headers: { Range: "bytes=0-99" }, responseType: "blob", connectTimeout: 15000, readTimeout: 30000 });
+      const h = r.headers || {};
+      probe = ` | probe: HTTP ${r.status}, ${Date.now() - t0}ms, type=${h["Content-Type"] ?? h["content-type"]}, len=${h["Content-Length"] ?? h["content-length"]}, range=${h["Content-Range"] ?? h["content-range"]}, enc=${h["Content-Encoding"] ?? h["content-encoding"]}`;
+    } catch (pe: any) {
+      probe = ` | probe failed: ${String(pe?.message ?? pe)}`;
+    }
+    status("failed", { error: String(e?.message ?? e) + probe });
     console.warn("[OTA] check failed", e);
   } finally {
     busy = false;
