@@ -68,7 +68,12 @@ export async function checkForOta(force = false): Promise<void> {
     } catch { /* fall through to download */ }
     if (!id) {
       status("downloading", { version: m.version });
-      id = (await CapacitorUpdater.download({ url: m.url, version: m.version })).id;
+      let pct = -1; const evts: string[] = [];
+      const lh = await (CapacitorUpdater as any).addListener("download", (ev: any) => { pct = ev?.percent ?? pct; });
+      const lf = await (CapacitorUpdater as any).addListener("downloadFailed", (ev: any) => { evts.push("downloadFailed " + JSON.stringify(ev)); });
+      try { id = (await CapacitorUpdater.download({ url: m.url, version: m.version })).id; }
+      catch (de: any) { throw new Error(`${de?.message ?? de} | pct=${pct} | err=${JSON.stringify(de, Object.getOwnPropertyNames(de ?? {}))} | ${evts.join(";")}`); }
+      finally { try { lh.remove(); lf.remove(); } catch {} }
     }
 
     // Also queue it for the next app start, so it lands even if nobody taps the banner.
