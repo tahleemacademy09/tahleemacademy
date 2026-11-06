@@ -236,7 +236,7 @@ const Courses = () => {
               const lvl = LEVEL_CONFIG[course.level] ?? { color: "#374151", bg: "#F3F4F6", label: course.level || "", icon: "📚" };
               return (
                 <motion.div key={course.id} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
-                  style={{ background: "#fff", borderRadius: 18, border: "1px solid #e5e7eb", overflow: "hidden", display: "flex", height: 130, boxShadow: "0 2px 10px rgba(0,0,0,0.06)", transition: "box-shadow .2s, transform .2s" }}
+                  style={{ background: "#fff", borderRadius: 18, border: "1px solid #e5e7eb", overflow: "hidden", display: "flex", minHeight: 130, boxShadow: "0 2px 10px rgba(0,0,0,0.06)", transition: "box-shadow .2s, transform .2s" }}
                   onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = "0 8px 28px rgba(6,78,59,0.13)"; (e.currentTarget as HTMLDivElement).style.transform = "translateY(-2px)"; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = "0 2px 10px rgba(0,0,0,0.06)"; (e.currentTarget as HTMLDivElement).style.transform = "translateY(0)"; }}
                 >
@@ -283,7 +283,7 @@ const Courses = () => {
                         {language === "ar" ? (course.description_ar || course.description || "") : (course.description || "")}
                       </p>
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         <Star style={{ width: 11, height: 11, color: "#D4A843", fill: "#D4A843" }} />
                         <span style={{ fontSize: 10, color: "#9ca3af" }}>All Levels Welcome</span>
@@ -298,8 +298,9 @@ const Courses = () => {
                           </button>
                         </div>
                       ) : (
-                        <a href="/register" style={{ padding: "7px 18px", borderRadius: 8, background: "linear-gradient(135deg,#064E3B,#075E54)", color: "#fff", fontSize: 12, fontWeight: 700, textDecoration: "none" }}>
-                          {t("Enroll", "التسجيل")} →
+                        <a href="/register" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, whiteSpace: "nowrap", flexShrink: 0, padding: "7px 18px", borderRadius: 8, background: "linear-gradient(135deg,#064E3B,#075E54)", color: "#fff", fontSize: 12, fontWeight: 700, textDecoration: "none" }}>
+                          <span>{t("Enroll", "التسجيل")}</span>
+                          <span aria-hidden="true" style={{ lineHeight: 1 }}>{language === "ar" ? "←" : "→"}</span>
                         </a>
                       )}
                     </div>
