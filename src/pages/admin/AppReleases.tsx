@@ -21,6 +21,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { formatBytes, startReleaseDownload, type AppRelease } from "@/hooks/useAppRelease";
 import { useQueryClient } from "@tanstack/react-query";
+import { Capacitor } from "@capacitor/core";
+import { checkForOta, getOtaStatus } from "@/lib/otaUpdate";
 
 const db = supabase as any;
 
@@ -103,28 +105,30 @@ export default function AppReleases() {
   const [progress, setProgress] = useState(0);
   const [stage, setStage] = useState("");
   const [rowBusy, setRowBusy] = useState<string | null>(null);
+  // What the instant-update (OTA) checker did on THIS phone the last time it ran — answers "why no banner?".
+  const [otaStatus, setOtaStatus] = useState<Record<string, unknown> | null>(getOtaStatus());
+  const [otaBusy, setOtaBusy] = useState(false);
+  const runOtaCheck = async () => {
+    setOtaBusy(true);
+    try { await checkForOta(true); } finally { setOtaStatus(getOtaStatus()); setOtaBusy(false); }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [{ data: rel }, { data: dl }] = await Promise.all([
+    const [{ data: rel }, { data: dl, error: dlErr }] = await Promise.all([
       db.from("app_releases").select("*").order("version_code", { ascending: false }),
-      db.from("app_release_downloads").select("release_id, user_id, downloaded_at").order("downloaded_at", { ascending: false }),
+      // Server-side join with profiles (admin only) — does not depend on profile row access from the phone.
+      db.rpc("admin_app_release_downloads"),
     ]);
+    if (dlErr) console.warn("[AppReleases] downloads:", dlErr.message);
     setReleases((rel ?? []) as AppRelease[]);
     const c: Record<string, number> = {};
-    (dl ?? []).forEach((d: any) => { c[d.release_id] = (c[d.release_id] ?? 0) + 1; });
-    setCounts(c);
-    // The downloads table only knows user ids — look the names up in profiles.
-    const ids = [...new Set((dl ?? []).map((d: any) => d.user_id))] as string[];
-    const names = new Map<string, string>();
-    for (let i = 0; i < ids.length; i += 200) {
-      const { data: ps } = await db.from("profiles").select("user_id, full_name").in("user_id", ids.slice(i, i + 200));
-      (ps ?? []).forEach((p: any) => names.set(p.user_id, (p.full_name || "").trim()));
-    }
     const who: Record<string, { name: string; at: string }[]> = {};
     (dl ?? []).forEach((d: any) => {
-      (who[d.release_id] ??= []).push({ name: names.get(d.user_id) || "Unknown user", at: d.downloaded_at });
+      c[d.release_id] = (c[d.release_id] ?? 0) + 1;
+      (who[d.release_id] ??= []).push({ name: (d.full_name || "").trim() || "Unknown user", at: d.downloaded_at });
     });
+    setCounts(c);
     setDownloaders(who);
     setLoading(false);
   }, []);
@@ -239,6 +243,36 @@ export default function AppReleases() {
 
   return (
     <div style={{ maxWidth: 820, margin: "0 auto", padding: "20px 16px 48px", fontFamily: "'Cairo',system-ui,sans-serif" }}>
+      <div style={{ ...card, marginBottom: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: "#111", marginBottom: 6 }}>Instant update (OTA) — this phone</div>
+        {!Capacitor.isNativePlatform() ? (
+          <div style={{ fontSize: 12.5, color: "#6B7280" }}>Open this page inside the Android app to see its update status (the browser never uses OTA).</div>
+        ) : (() => {
+          const st = String(otaStatus?.step ?? "never ran");
+          const why: Record<string, string> = {
+            "no-base-url": "This APK was built WITHOUT the OTA_BASE_URL secret, so it can never update itself. Rebuild + install the APK once.",
+            "needs-new-apk": "The published update needs a newer APK than the one installed (minNativeBuild). Install the latest APK.",
+            "failed": "The phone could not reach/download the update — see the error below (wrong OTA_BASE_URL, worker not deployed, or bad network).",
+            "up-to-date": "This phone already runs the latest published update — the banner only appears when a NEWER one exists.",
+            "ready": "An update is downloaded and waiting: you should see the 'Update ready' banner.",
+            "downloading": "Still downloading the update.",
+            "checking": "Check started but never finished (network cut or app closed mid-check).",
+          };
+          return (
+            <div style={{ fontSize: 12.5, color: "#374151", lineHeight: 1.7 }}>
+              <div><b>Status:</b> {st}{otaStatus?.at ? ` · ${new Date(String(otaStatus.at)).toLocaleString()}` : ""}</div>
+              {why[st] && <div>{why[st]}</div>}
+              {otaStatus?.error ? <div style={{ color: "#DC2626" }}>Error: {String(otaStatus.error)}</div> : null}
+              <div style={{ wordBreak: "break-all" }}><b>Update server:</b> {otaStatus?.base ? String(otaStatus.base) : "not set in this APK"}</div>
+              {otaStatus?.cur ? <div><b>Running version:</b> {String(otaStatus.cur)}</div> : null}
+              <button onClick={runOtaCheck} disabled={otaBusy}
+                style={{ marginTop: 8, padding: "7px 12px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                {otaBusy ? "Checking…" : "Check for update now"}
+              </button>
+            </div>
+          );
+        })()}
+      </div>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
         <div style={{ width: 44, height: 44, borderRadius: 14, background: `linear-gradient(135deg,${G},${G2})`, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <Smartphone size={22} color="#fff" />
