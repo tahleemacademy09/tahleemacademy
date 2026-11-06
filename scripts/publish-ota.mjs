@@ -27,7 +27,8 @@ run("cd dist && zip -qrDX ../ota.zip .");
 console.log(`  bundle size: ${(statSync("ota.zip").size / 1024 / 1024).toFixed(1)} MB`);
 
 const checksum = createHash("sha256").update(readFileSync("ota.zip")).digest("hex");
-const manifest = { version, url: `${BASE}/ota/${version}.zip`, checksum, minNativeBuild, notes };
+const size = statSync("ota.zip").size; // bytes — lets the phone show "12.4 / 38.2 MB" while downloading
+const manifest = { version, url: `${BASE}/ota/${version}.zip`, checksum, size, minNativeBuild, notes };
 writeFileSync("ota-manifest.json", JSON.stringify(manifest, null, 2));
 
 console.log("\n▶ Uploading bundle");
