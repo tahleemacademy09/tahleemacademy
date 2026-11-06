@@ -8,6 +8,12 @@
 
   Unread badges, message previews, and attachment-type previews are kept
   in sync server-side by the sync_ticket_on_new_message DB trigger.
+
+  LIVE: new messages appear instantly, the student's typing indicator and
+  "online" state show in the thread header, and an incoming message is
+  marked read automatically while its thread is open (so the student's
+  ticks turn blue right away). Powered by useSupportLive; if realtime is
+  not enabled the page falls back to its old 8s polling.
 */
 
 import { useState, useRef, useEffect } from "react";
@@ -17,6 +23,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useToast } from "@/hooks/use-toast";
+import { useSupportLive } from "@/hooks/useSupportLive";
 import { LifeBuoy, ChevronLeft, Send, Loader2, MessageSquare, CheckCircle2, Paperclip, X, FileText, Plus, GraduationCap, Shield, CheckCheck, Trash2, Copy, Users, Reply, Pencil, Check } from "lucide-react";
 
 const G      = "#064E3B";
@@ -253,6 +260,15 @@ const SupportTickets = () => {
     refetchInterval: 8000,
   });
 
+  const { otherTyping, otherOnline, live, sendTyping } = useSupportLive({
+    ticketId: activeTicket?.id,
+    userId: user?.id,
+    onMessagesChange: () => {
+      qc.invalidateQueries({ queryKey: ["admin-support-thread", activeTicket?.id] });
+      qc.invalidateQueries({ queryKey: ["admin-support-tickets"] });
+    },
+  });
+
   const { data: thread = [], isLoading: threadLoading } = useQuery({
     queryKey: ["admin-support-thread", activeTicket?.id],
     enabled: !!activeTicket,
@@ -264,12 +280,48 @@ const SupportTickets = () => {
         .order("created_at", { ascending: true });
       return (data || []) as any[];
     },
-    refetchInterval: 8000,
+    // Realtime does the heavy lifting; the poll is only a safety net.
+    refetchInterval: live ? 20000 : 8000,
   });
 
   useEffect(() => {
     if (activeTicket) bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [activeTicket?.id, thread.length]);
+  }, [activeTicket?.id, thread.length, otherTyping]);
+
+  // Inbox updates the moment any ticket changes (RLS scopes what arrives).
+  useEffect(() => {
+    if (!user?.id) return;
+    let ch: any;
+    try {
+      ch = supabase
+        .channel(`admin-support-list-${user.id}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "support_tickets" },
+          () => { qc.invalidateQueries({ queryKey: ["admin-support-tickets"] }); })
+        .subscribe();
+    } catch {}
+    return () => { try { if (ch) supabase.removeChannel(ch); } catch {} };
+  }, [user?.id]);
+
+  // Mark an incoming message read while its thread is open, so the
+  // student's ticks turn blue live. (An admin only *monitoring* a
+  // teacher↔student thread is not the recipient, so that is skipped.)
+  const lastMarkedRef = useRef("");
+  useEffect(() => {
+    if (!activeTicket || !user || thread.length === 0) return;
+    const last = thread[thread.length - 1];
+    if (last.sender_id === user.id) return;
+    if (hasRole("admin") && activeTicket.recipient_type === "teacher" && activeTicket.teacher_id !== user.id) return;
+    if (document.visibilityState !== "visible") return;
+    const lt = tickets.find((tk: any) => tk.id === activeTicket.id) || activeTicket;
+    if (lt.last_read_by_admin_at && new Date(lt.last_read_by_admin_at) >= new Date(last.created_at)) return;
+    const key = `${activeTicket.id}:${last.id}`;
+    if (lastMarkedRef.current === key) return;
+    lastMarkedRef.current = key;
+    (supabase.from("support_tickets" as any) as any)
+      .update({ last_read_by_admin_at: new Date().toISOString() })
+      .eq("id", activeTicket.id)
+      .then(() => qc.invalidateQueries({ queryKey: ["admin-support-tickets"] }));
+  }, [thread, activeTicket?.id]);
 
   const isUnread = (tkt: any) =>
     !!tkt.last_sender_id && tkt.last_sender_id !== user?.id && tkt.last_message_at &&
@@ -394,6 +446,7 @@ const SupportTickets = () => {
       });
       // Notifying the student is handled by the notify_on_support_ticket_message_insert DB trigger.
       setReply(""); setPendingFile(null); setReplyingTo(null);
+      sendTyping(false);
       if (textareaRef.current) textareaRef.current.style.height = "auto";
       qc.invalidateQueries({ queryKey: ["admin-support-thread", activeTicket.id] });
       qc.invalidateQueries({ queryKey: ["admin-support-tickets"] });
@@ -519,6 +572,11 @@ const SupportTickets = () => {
           <h2 style={{ fontSize: 16, fontWeight: 900, color: G, margin: "0 0 2px" }}>{activeTicket.subject}</h2>
           <p style={{ fontSize: 12, color: "#9CA3AF", margin: 0 }}>
             {ownerLabel(activeTicket)} · {activeTicket.recipient_type === "teacher" ? "Direct message" : (CATEGORY_LABEL[activeTicket.category] || activeTicket.category)}
+            {otherTyping
+              ? <span style={{ color: "#16A34A", fontWeight: 700 }}> · typing…</span>
+              : otherOnline
+                ? <span style={{ color: "#16A34A", fontWeight: 700 }}> · ● online now</span>
+                : null}
           </p>
         </div>
 
@@ -677,6 +735,16 @@ const SupportTickets = () => {
               </div>
             );
           })}
+          {otherTyping && (
+            <div style={{ alignSelf: "flex-start" }}>
+              <style>{`@keyframes supportDot{0%,60%,100%{transform:translateY(0);opacity:.35}30%{transform:translateY(-4px);opacity:1}}`}</style>
+              <div style={{ display: "flex", gap: 4, padding: "11px 14px", borderRadius: 14, background: "#fff", border: `1px solid ${BORDER}` }}>
+                {[0, 1, 2].map(i => (
+                  <span key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: "#9CA3AF", display: "block", animation: `supportDot 1.2s ${i * 0.2}s infinite ease-in-out` }} />
+                ))}
+              </div>
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
 
@@ -715,7 +783,7 @@ const SupportTickets = () => {
             <textarea
               ref={textareaRef}
               value={reply}
-              onChange={e => { setReply(e.target.value); autoGrow(e.target as HTMLTextAreaElement); }}
+              onChange={e => { setReply(e.target.value); autoGrow(e.target as HTMLTextAreaElement); sendTyping(e.target.value.length > 0); }}
               onFocus={() => setTimeout(() => composerRef.current?.scrollIntoView({ block: "end", behavior: "smooth" }), 300)}
               onKeyDown={e => {
                 // Enter alone inserts a newline (like WhatsApp's mobile keyboard);
