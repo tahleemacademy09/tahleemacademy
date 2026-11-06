@@ -199,7 +199,8 @@ const Index = () => {
 
       .ta-hero-content { position:relative; z-index:2; text-align:center; padding:clamp(40px,10vh,100px) 24px clamp(60px,10vh,100px); max-width:760px; width:100%; animation:scaleIn 1s ease both; }
 
-      .ta-hero-badge { display:inline-flex; align-items:center; gap:10px; background:rgba(240,192,96,.08); border:1px solid rgba(184,134,43,.4); color:#8a6420; padding:8px 22px; border-radius:40px; font-size:10.5px; letter-spacing:2.5px; text-transform:uppercase; font-weight:800; margin-bottom:32px; animation:fadeUp .7s .1s ease both; }
+      .ta-hero-badge { display:inline-flex; align-items:center; justify-content:center; gap:8px; max-width:100%; white-space:nowrap; background:linear-gradient(135deg,#0f2d1f,#14412d); border:1.5px solid #e0b24a; color:#f6d27a; padding:10px 18px; border-radius:40px; font-size:12px; letter-spacing:1.4px; text-transform:uppercase; font-weight:800; margin-bottom:32px; box-shadow:0 6px 18px rgba(15,45,31,.28), inset 0 0 0 1px rgba(246,210,122,.15); text-shadow:0 1px 2px rgba(0,0,0,.35); animation:fadeUp .7s .1s ease both; }
+      @media (max-width:380px) { .ta-hero-badge { font-size:10.5px; letter-spacing:1px; padding:9px 12px; gap:6px; } }
 
       .ta-hero-bismi { font-family:'Scheherazade New',serif; font-size:clamp(40px,8vw,72px); font-weight:700; color:#0f2d1f; line-height:1.5; direction:rtl; margin-bottom:8px; animation:fadeUp .7s .2s ease both; }
 
