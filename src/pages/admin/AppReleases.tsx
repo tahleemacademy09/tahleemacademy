@@ -89,6 +89,8 @@ export default function AppReleases() {
 
   const [releases, setReleases] = useState<AppRelease[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
+  // Who downloaded each release (newest first) — always shown under the release.
+  const [downloaders, setDownloaders] = useState<Record<string, { name: string; at: string }[]>>({});
   const [loading, setLoading] = useState(true);
 
   const [file, setFile] = useState<File | null>(null);
@@ -106,12 +108,24 @@ export default function AppReleases() {
     setLoading(true);
     const [{ data: rel }, { data: dl }] = await Promise.all([
       db.from("app_releases").select("*").order("version_code", { ascending: false }),
-      db.from("app_release_downloads").select("release_id"),
+      db.from("app_release_downloads").select("release_id, user_id, downloaded_at").order("downloaded_at", { ascending: false }),
     ]);
     setReleases((rel ?? []) as AppRelease[]);
     const c: Record<string, number> = {};
     (dl ?? []).forEach((d: any) => { c[d.release_id] = (c[d.release_id] ?? 0) + 1; });
     setCounts(c);
+    // The downloads table only knows user ids — look the names up in profiles.
+    const ids = [...new Set((dl ?? []).map((d: any) => d.user_id))] as string[];
+    const names = new Map<string, string>();
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data: ps } = await db.from("profiles").select("user_id, full_name").in("user_id", ids.slice(i, i + 200));
+      (ps ?? []).forEach((p: any) => names.set(p.user_id, (p.full_name || "").trim()));
+    }
+    const who: Record<string, { name: string; at: string }[]> = {};
+    (dl ?? []).forEach((d: any) => {
+      (who[d.release_id] ??= []).push({ name: names.get(d.user_id) || "Unknown user", at: d.downloaded_at });
+    });
+    setDownloaders(who);
     setLoading(false);
   }, []);
 
@@ -340,6 +354,17 @@ export default function AppReleases() {
               {formatBytes(r.file_size)} · {new Date(r.created_at).toLocaleDateString()} · {counts[r.id] ?? 0} download{(counts[r.id] ?? 0) === 1 ? "" : "s"}
             </div>
             {r.release_notes && <div style={{ fontSize: 12.5, color: "#374151", marginTop: 6, whiteSpace: "pre-wrap" }}>{r.release_notes}</div>}
+            <div style={{ marginTop: 8, background: "#F9FAFB", border: "1px solid #F3F4F6", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#6B7280", marginBottom: 4 }}>DOWNLOADED BY</div>
+              {(downloaders[r.id] ?? []).length === 0 ? (
+                <div style={{ fontSize: 12, color: "#9CA3AF" }}>No one yet.</div>
+              ) : (downloaders[r.id] ?? []).map((d, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5, color: "#111", padding: "2px 0" }}>
+                  <span style={{ fontWeight: 600 }}>{d.name}</span>
+                  <span style={{ color: "#6B7280", flexShrink: 0 }}>{new Date(d.at).toLocaleDateString()} {new Date(d.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                </div>
+              ))}
+            </div>
             <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
               {[
                 { icon: <Download size={13} />, text: "Test download", on: () => testDownload(r) },
