@@ -50,6 +50,7 @@ import { buzz } from "@/lib/ctcNative";
 import { buzzPattern } from "@/lib/liveMistake";
 import { gradeFromCtc, registerCtcGrading, ctcScoringFor, ctcAnalysisFor } from "@/lib/ctcGrading";
 import { refTokens } from "@/lib/recitationCompare";
+import { KNOWLEDGE } from "@/lib/hifdhKnowledge";
 import { mergeCtcTarteel } from "@/lib/ctcTarteelMerge";
 import { buildTarteelWords } from "@/lib/tarteelScore";
 // Transcription is 100% on-device Tarteel (no Groq / no server upload): the whole recording is transcribed once on Stop.
@@ -196,7 +197,7 @@ interface PageResult {
 interface Question {
   id: number;
   // mcq = multiple choice  |  record = student records answer  |  listen_record = play audio then record
-  type: "mcq_next" | "mcq_blank" | "mcq_continuation" | "record_continue" | "record_complete" | "listen_choose" | "tafsir_verse" | "tafsir_meaning";
+  type: "mcq_next" | "mcq_blank" | "mcq_continuation" | "record_continue" | "record_complete" | "listen_choose" | "listen_record" | "tafsir_verse" | "tafsir_meaning" | "quiz_fact";
   section: "A" | "B";
   isErrorFocused?: boolean;
   // For MCQ
@@ -223,6 +224,11 @@ interface Question {
 }
 type Phase = "intro"|"pre_test_review"|"reading"|"page_result"|"proctor_intro"|"testing"|"test_result"|"complete";
 type MainTab = "today"|"schedule"|"live"|"history";
+
+/** every question the student answers by speaking */
+const isRecType = (q?: { type: string } | null): boolean => !!q && (q.type === "record_continue" || q.type === "record_complete" || q.type === "listen_record");
+/** questions that open with the reciter's audio */
+const isListenType = (q?: { type: string } | null): boolean => !!q && (q.type === "listen_choose" || q.type === "listen_record");
 
 /* ── Day descriptor ─────────────────────────────────────────────── */
 interface ProgramDay {
@@ -310,7 +316,7 @@ function buildProgramDays(
       const log    = logMap.get(date);
       const status: ProgramDay["status"] =
         date < today  ? (log?.completed || log?.session_data?.teacher_override ? "done" : "missed")
-        : date===today ? "today"
+        : date===today ? (log?.completed || log?.session_data?.teacher_override ? "done" : "today")
         : "future";
       days.push({ dayNum: workDayIdx+1, date, isWorkingDay: true, pages, status, log });
       workDayIdx++;
@@ -551,6 +557,116 @@ async function fetchTafsirForPages(pages: number[]): Promise<Record<string, Tafs
   const parts = await Promise.all(pages.map(fetchPageTafsir));
   return Object.assign({}, ...parts);
 }
+/* ── Word-by-word meanings (quran.com) — used for the "meaning of the word" questions. Any failure = no such questions. ── */
+type WordMeaning = { surah: number; verse: number; ar: string; en: string; prev?: boolean };
+const wordPageCache = new Map<number, Promise<WordMeaning[]>>();
+function fetchPageWords(page: number): Promise<WordMeaning[]> {
+  const hit = wordPageCache.get(page);
+  if (hit) return hit;
+  const p = (async () => {
+    const out: WordMeaning[] = [];
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 12000);
+      const r = await fetch(`https://api.quran.com/api/v4/verses/by_page/${page}?language=en&words=true&word_fields=text_uthmani&per_page=300`, { signal: ctrl.signal });
+      clearTimeout(t);
+      if (!r.ok) return out;
+      const j = await r.json();
+      for (const v of j?.verses ?? []) {
+        const [sn, vn] = String(v?.verse_key ?? "").split(":").map(Number);
+        for (const w of v?.words ?? []) {
+          if (w?.char_type_name !== "word") continue;
+          const en = String(w?.translation?.text ?? "").trim();
+          const ar = String(w?.text_uthmani ?? w?.text ?? "").trim();
+          if (sn && vn && en && ar) out.push({ surah: sn, verse: vn, ar, en });
+        }
+      }
+    } catch { /* offline / blocked — skip word questions */ }
+    return out;
+  })();
+  wordPageCache.set(page, p);
+  p.then(o => { if (!o.length) wordPageCache.delete(page); });
+  return p;
+}
+async function fetchWordsForPages(pages: number[]): Promise<WordMeaning[]> {
+  return (await Promise.all(pages.map(fetchPageWords))).flat();
+}
+
+/* ── Tafsir Ibn Kathir (online, quran.com resource 169) → multiple-choice questions written from that text ──
+   Only TODAY's pages are used. The text is fetched per page, the questions are written by the academy's AI function
+   (tahleem-ai) strictly from the fetched passage, validated here, and cached per set of pages so a retry the same day
+   shows the same pool. Any failure just means this block falls back to the simpler tafseer questions. */
+type AiFact = { kind: "reason" | "event" | "word" | "tafseer"; surah: number; verse: number; q: string; qAr?: string; correct: string; wrong: string[] };
+const ikTextCache = new Map<number, Promise<{ key: string; text: string }[]>>();
+const plainText = (h: string) => h.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#?\w+;/g, " ").replace(/\s+/g, " ").trim();
+function fetchIbnKathirPage(page: number): Promise<{ key: string; text: string }[]> {
+  const hit = ikTextCache.get(page);
+  if (hit) return hit;
+  const p = (async () => {
+    const out: { key: string; text: string }[] = [];
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 15000);
+      const r = await fetch(`https://api.quran.com/api/v4/quran/tafsirs/169?page_number=${page}`, { signal: ctrl.signal });
+      clearTimeout(t);
+      if (!r.ok) return out;
+      const j = await r.json();
+      for (const e of j?.tafsirs ?? []) {
+        const text = plainText(String(e?.text ?? ""));
+        if (e?.verse_key && text.length >= 60) out.push({ key: String(e.verse_key), text });
+      }
+    } catch { /* offline / blocked */ }
+    return out;
+  })();
+  ikTextCache.set(page, p);
+  p.then(o => { if (!o.length) ikTextCache.delete(page); });
+  return p;
+}
+async function generateIbnKathirFacts(pages: number[], ayahText: Record<string, string>): Promise<AiFact[]> {
+  const cacheKey = `ik_facts_v1_${[...pages].sort((a, b) => a - b).join("-")}`;
+  try { const c = JSON.parse(localStorage.getItem(cacheKey) || "null"); if (Array.isArray(c) && c.length >= 3) return c; } catch { /* no cache */ }
+  const perPage = await Promise.all(pages.map(fetchIbnKathirPage));
+  const entries = perPage.flat().filter(e => ayahText[e.key]);   // only verses that are on today's pages
+  if (!entries.length) return [];
+  let budget = 12000;
+  const src: string[] = [];
+  const per = Math.max(900, Math.floor(budget / entries.length));
+  for (const e of entries) {
+    const t = e.text.slice(0, Math.min(per, 3000));
+    if (budget - t.length < 0) break;
+    budget -= t.length;
+    src.push(`[${e.key}] ${ayahText[e.key].slice(0, 160)}\nIBN KATHIR: ${t}`);
+  }
+  const system = `You write multiple-choice revision questions for students who are memorising the Qur'an.
+Use ONLY the Tafsir Ibn Kathir passages supplied by the user. Never add facts from your own knowledge. If a passage does not contain something, do not ask about it.
+Write 8 questions, mixing these kinds, using a kind only when the passages really support it:
+- "reason": the reason / occasion of revelation (only when a passage states one)
+- "event": a historical event, story or happening a passage describes
+- "word": the meaning of an Arabic word or phrase as Ibn Kathir explains it
+- "tafseer": the explanation, lesson, ruling or meaning of a verse
+Rules: each question names its verse_key ("surah:verse") from the passages; exactly one option is correct according to the passage; the 3 wrong options are plausible but clearly wrong according to the passage and similar in length to the correct one; the question must not give away the answer; keep questions under 28 words and options under 18 words; plain English.
+Return ONLY a JSON array, no markdown: [{"kind":"reason|event|word|tafseer","verse_key":"2:255","q":"...","q_ar":"optional short Arabic wording or empty","correct":"...","wrong":["...","...","..."]}]`;
+  const prompt = `Passages from Tafsir Ibn Kathir for today's pages:\n\n${src.join("\n\n")}`;
+  const call = supabase.functions.invoke("tahleem-ai", { body: { action: "generate", prompt, context: { systemPrompt: system } } });
+  const res: any = await Promise.race([call, new Promise<null>(r => setTimeout(() => r(null), 40000))]);
+  if (!res || res.error || res.data?.error) return [];
+  let raw = String(res.data?.text ?? "").trim().replace(/^```(json)?/i, "").replace(/```$/, "").trim();
+  let arr: any[] = [];
+  try { arr = JSON.parse(raw); } catch { const m = raw.match(/\[[\s\S]*\]/); try { arr = m ? JSON.parse(m[0]) : []; } catch { arr = []; } }
+  const kinds = new Set(["reason", "event", "word", "tafseer"]);
+  const out: AiFact[] = [];
+  for (const x of Array.isArray(arr) ? arr : []) {
+    const [sn, vn] = String(x?.verse_key ?? "").split(":").map(Number);
+    const q = String(x?.q ?? "").trim(), correct = String(x?.correct ?? "").trim();
+    const wrong = (Array.isArray(x?.wrong) ? x.wrong : []).map((w: any) => String(w ?? "").trim()).filter(Boolean);
+    const opts = new Set([correct.toLowerCase(), ...wrong.map((w: string) => w.toLowerCase())]);
+    if (!kinds.has(x?.kind) || !sn || !vn || !ayahText[`${sn}:${vn}`] || q.length < 10 || !correct || wrong.length < 3 || opts.size < 4) continue;
+    out.push({ kind: x.kind, surah: sn, verse: vn, q: q.slice(0, 300), qAr: x?.q_ar ? String(x.q_ar).slice(0, 200) : undefined, correct: correct.slice(0, 220), wrong: wrong.slice(0, 3).map((w: string) => w.slice(0, 220)) });
+  }
+  if (out.length >= 3) { try { localStorage.setItem(cacheKey, JSON.stringify(out)); } catch { /* storage full */ } }
+  return out;
+}
+
 /** Pages the student revised BEFORE today (same ordering rules as the Section B lookback), up to `max`
     picked at random from the most recent 20, so the 2 "earlier" tafseer questions vary day to day. */
 function earlierPagesForTafsir(a: Assignment, todayPages: number[], max = 5): number[] {
@@ -571,7 +687,7 @@ function earlierPagesForTafsir(a: Assignment, todayPages: number[], max = 5): nu
   return before.slice(0, max);
 }
 
-function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = [], tafsir: Record<string, TafsirEntry> = {}): Question[] {
+function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = [], tafsir: Record<string, TafsirEntry> = {}, words: WordMeaning[] = [], aiFacts: AiFact[] = []): Question[] {
   const allAyahs = results.flatMap(r => r.ayahs ?? []).filter(a => a && a.text);
   const errorWords = results.flatMap(r => r.errorWords);
   const used = new Set<string>(); // dedup: key = type+promptSlice
@@ -675,6 +791,7 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = [], tafsir: Re
     if (i >= pool.length - 1) return null;
     const cur  = pool[i];
     const next = pool[i + 1];
+    if (next.surah.number !== cur.surah.number) return null;   // the next verse must be in the same surah (no basmalah / new-surah jump)
     const curFull  = fullVerse(cur);
     if (used.has(key("rec", curFull))) return null;
     used.add(key("rec", curFull));
@@ -714,76 +831,79 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = [], tafsir: Re
       recordPrompt: undefined };
   };
 
-  // ── SECTION A: TODAY'S PAGES ─────────────────────────────────────
-  // 1. Error-focused blanks (most important — errors from recitation)
+  // ── LISTEN + RECITE ────────────────────────────────────────────────────────
+  // The reciter (Alafasy) plays verse[from]; the student recites the verse that follows (or, for error-focused questions,
+  // the reciter plays the verse BEFORE the verse the student got wrong, so they must recite that very verse).
+  const makeListenRecord = (from: number, pool: Ayah[], sec: "A"|"B", isErr=false): Question | null => {
+    if (from < 0 || from >= pool.length - 1) return null;
+    const cur = pool[from], next = pool[from + 1];
+    if (next.surah.number !== cur.surah.number) return null;
+    const curFull = fullVerse(cur), nextFull = fullVerse(next);
+    if (!nextFull || used.has(key("lrec", curFull))) return null;
+    used.add(key("lrec", curFull));
+    return { id:id++, type:"listen_record", section:sec, isErrorFocused:isErr, snippet:false,
+      listenText: curFull, listenGlobalNum: cur.number, listenAyahNum: cur.numberInSurah, listenSurahNum: cur.surah.number,
+      prompt: curFull,
+      promptLabel: `${sec==="A"?"§A Today":"§B Review"} · ${cur.surah.englishName} ${cur.numberInSurah} → ${next.numberInSurah}`,
+      options: [], correct: -1, correctText: nextFull,
+      recordPrompt: "Listen to the reciter, then recite the next verse from memory" };
+  };
+
+  // ── QUESTION MIX (13 questions) ──────────────────────────────────────────────
+  //   5 listen-and-recite · 2 fill-in-the-gap · 3 "what comes next" · 3 tafseer (Ibn Kathir, below)
+  const spread = <T,>(arr: T[], n: number): T[] => {
+    if (!arr.length || n <= 0) return [];
+    const step = Math.max(1, Math.floor(arr.length / n));
+    const off = Math.floor(Math.random() * Math.min(step, arr.length));
+    const out: T[] = [];
+    for (let i = off; i < arr.length && out.length < n; i += step) out.push(arr[i]);
+    return out;
+  };
   const errorAyahs = allAyahs.filter(a =>
     errorWords.some(ew => normalizeArabic(a.text).includes(normalizeArabic(stripWaqf(ew)).slice(0,3)))
   );
-  for (const a of shuffle(errorAyahs).slice(0, 4)) {
-    const q = makeMcqBlank(a, true, allAyahs, "A");
+  const nLR = () => qs.filter(q=>q.type==="listen_record").length;
+
+  // 1) LISTEN + RECITE ×5 — up to 2 aimed at the student's weak verses (reciter plays the verse before, student recites the weak one),
+  //    the rest spread over today's pages; if today's pages are too short, filled from the review pages.
+  for (const a of shuffle(errorAyahs)) {
+    if (qs.filter(q=>q.type==="listen_record"&&q.isErrorFocused).length >= 2) break;
+    const idx = allAyahs.indexOf(a);
+    if (idx < 0) continue;
+    const q = (idx > 0 ? makeListenRecord(idx - 1, allAyahs, "A", true) : null) ?? makeListenRecord(idx, allAyahs, "A", true);
+    if (q) qs.push(q);
+  }
+  for (const i of spread(allAyahs.map((_,i)=>i), 12)) {
+    if (nLR() >= 5) break;
+    const q = makeListenRecord(i, allAyahs, "A", false);
+    if (q) qs.push(q);
+  }
+  if (nLR() < 5 && juzAyahs.length >= 3) {
+    for (const i of spread(juzAyahs.map((_,i)=>i), 12)) {
+      if (nLR() >= 5) break;
+      const q = makeListenRecord(i, juzAyahs, "B");
+      if (q) qs.push(q);
+    }
+  }
+
+  // 2) FILL IN THE GAP ×2 (error areas first)
+  const blankSrc = errorAyahs.length ? [...shuffle(errorAyahs), ...shuffle(allAyahs)] : shuffle(allAyahs);
+  for (const a of blankSrc) {
+    if (qs.filter(q=>q.type==="mcq_blank").length >= 2) break;
+    const q = makeMcqBlank(a, errorAyahs.includes(a), allAyahs, "A");
     if (q) qs.push(q);
   }
 
-  // 2. Error continuation — what comes after error verses
-  shuffle(errorAyahs).forEach(a => {
-    const idx = allAyahs.indexOf(a);
-    if (idx < 0 || idx >= allAyahs.length-1) return;
-    if (qs.filter(q=>q.section==="A"&&q.type==="mcq_continuation").length >= 2) return;
-    const q = makeMcqContinuation(idx, allAyahs, "A");
-    if (q) qs.push(q);
-  });
-
-  // 3. Record-continue from error areas
-  shuffle(errorAyahs).slice(0,2).forEach(a => {
-    const idx = allAyahs.indexOf(a);
-    if (idx < 0 || idx >= allAyahs.length-2) return;
-    const q = makeRecordContinue(idx, allAyahs, "A", true);
-    if (q) qs.push(q);
-  });
-
-  // 4. MCQ next — across today's pages (spread evenly, random starting offset
-  //    each attempt so repeats don't always test the exact same verses)
-  const stepA = Math.max(1, Math.floor(allAyahs.length / 3));
-  const startA = allAyahs.length > 1 ? Math.floor(Math.random() * Math.min(stepA, allAyahs.length - 1)) : 0;
-  for (let i = startA; i < allAyahs.length-1 && qs.filter(q=>q.section==="A"&&q.type==="mcq_next").length < 3; i += stepA) {
+  // 3) WHAT COMES NEXT ×3 across today's pages
+  for (const i of spread(allAyahs.map((_,i)=>i), 8)) {
+    if (qs.filter(q=>q.type==="mcq_next").length >= 3) break;
     const q = makeMcqNext(i, allAyahs, "A");
     if (q) qs.push(q);
   }
-
-  // 5. Listen+choose from today (1-2 questions)
-  const listenIndices = shuffle(allAyahs.map((_,i)=>i)).slice(0,2);
-  for (const li of listenIndices) {
-    if (qs.filter(q=>q.section==="A"&&q.type==="listen_choose").length >= 1) break;
-    const q = makeListenChoose(li, allAyahs, "A");
-    if (q) qs.push(q);
-  }
-
-  // ── SECTION B: JUZ REVIEW ──────────────────────────────────────
-  if (juzAyahs.length >= 3) {
-    const stepB = Math.max(1, Math.floor(juzAyahs.length / 3));
-    const startB = juzAyahs.length > 1 ? Math.floor(Math.random() * Math.min(stepB, juzAyahs.length - 1)) : 0;
-    // MCQ next
-    for (let i = startB; i < juzAyahs.length-1 && qs.filter(q=>q.section==="B"&&q.type==="mcq_next").length < 3; i += stepB) {
+  if (qs.filter(q=>q.type==="mcq_next").length < 3 && juzAyahs.length >= 3) {
+    for (const i of spread(juzAyahs.map((_,i)=>i), 8)) {
+      if (qs.filter(q=>q.type==="mcq_next").length >= 3) break;
       const q = makeMcqNext(i, juzAyahs, "B");
-      if (q) qs.push(q);
-    }
-    // MCQ blanks
-    const stepB2 = Math.max(1, Math.floor(juzAyahs.length / 3));
-    const startB2 = juzAyahs.length > 1 ? Math.floor(Math.random() * Math.min(stepB2, juzAyahs.length)) : 0;
-    for (let i = startB2; i < juzAyahs.length && qs.filter(q=>q.section==="B"&&q.type==="mcq_blank").length < 2; i += stepB2) {
-      const q = makeMcqBlank(juzAyahs[i], false, juzAyahs, "B");
-      if (q) qs.push(q);
-    }
-    // Record continue from juz — random position each attempt instead of
-    // always the exact midpoint
-    const recIdx = juzAyahs.length > 1 ? Math.floor(Math.random() * (juzAyahs.length - 1)) : 0;
-    const qRec = makeRecordContinue(recIdx, juzAyahs, "B");
-    if (qRec) qs.push(qRec);
-    // Listen+choose from juz
-    const juzListenIdx = shuffle(juzAyahs.map((_,i)=>i)).slice(0,2);
-    for (const li of juzListenIdx) {
-      if (qs.filter(q=>q.section==="B"&&q.type==="listen_choose").length >= 1) break;
-      const q = makeListenChoose(li, juzAyahs, "B");
       if (q) qs.push(q);
     }
   }
@@ -818,14 +938,14 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = [], tafsir: Re
         const k = normalizeArabic(tafsir[keyOf(a)].ar).slice(0, 30);
         if (seen.has(k)) return false; seen.add(k); return true;
       });
-    if (todayPool.length >= 3) {
-      const withPrev = prevPool.length >= 2;
+    if (aiFacts.length < 3 && todayPool.length >= 3) {
+      const withPrev = false;   // today's pages only
+      // 2 verse↔tafseer matching questions (1 today + 1 earlier page when available); the rest of the knowledge block is below
       const picks: { a: Ayah; prev: boolean }[] = [
-        ...shuffle(todayPool).slice(0, withPrev ? 3 : 5).map(a => ({ a, prev: false })),
-        ...(withPrev ? shuffle(prevPool).slice(0, 2).map(a => ({ a, prev: true })) : []),
+        ...shuffle(todayPool).slice(0, 3).map(a => ({ a, prev: false })),
+        ...(withPrev ? shuffle(prevPool).slice(0, 1).map(a => ({ a, prev: true })) : []),
       ];
-      // verse→tafseer vs tafseer→verse: mixed within each group
-      const kinds = withPrev ? ["verse", "verse", "meaning", "verse", "meaning"] : ["verse", "verse", "verse", "meaning", "meaning"];
+      const kinds = ["verse", "meaning", "verse"];
       picks.forEach(({ a, prev }, n) => {
         const t = tafsir[keyOf(a)];
         const group = prev ? prevPool : todayPool;
@@ -858,9 +978,63 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = [], tafsir: Re
     }
   }
 
+  // ── KNOWLEDGE: reason of revelation / major events / tafseer facts, and meanings of words ──
+  const factQs: Question[] = [];
+  if (aiFacts.length >= 3) {
+    // Ibn Kathir questions for today's pages (reason of revelation / events / word meanings / tafseer)
+    const KIND_AI: Record<string, string> = { reason: "Reason of revelation", event: "Major event", word: "Meaning of the word", tafseer: "Tafseer — Ibn Kathir" };
+    // keep a spread of kinds: one of each kind first (reason / event / word / tafseer), then 3 in total
+    const pool = shuffle(aiFacts);
+    const picked: AiFact[] = [];
+    for (const k of ["reason", "event", "word", "tafseer"]) { const f = pool.find(x => x.kind === k && !picked.includes(x)); if (f) picked.push(f); }
+    for (const f of pool) { if (picked.length >= 3) break; if (!picked.includes(f)) picked.push(f); }
+    for (const f of picked.slice(0, 3)) {
+      const opts = shuffle([f.correct, ...f.wrong]);
+      const surahName = SURAHS.find(x => x.num === f.surah)?.name ?? `Surah ${f.surah}`;
+      factQs.push({ id: id++, type: "quiz_fact", section: "A", snippet: false, prompt: "",
+        promptLabel: `§A ${KIND_AI[f.kind]} · ${surahName} ${f.verse}`,
+        promptEn: f.q, promptAr: f.qAr, options: opts, correct: opts.indexOf(f.correct), correctText: f.correct });
+    }
+  } else {
+    const inPages = new Set<string>(allAyahs.map(a => `${a.surah.number}:${a.numberInSurah}`));
+    const inEarlier = new Set<string>(Object.values(tafsir).filter(t => t.prev && t.surahNum && t.verse).map(t => `${t.surahNum}:${t.verse}`));
+    const covers = (set: Set<string>, k: { s: number; from: number; to: number }) => { for (let v = k.from; v <= k.to; v++) if (set.has(`${k.s}:${v}`)) return true; return false; };
+    const KIND_LABEL: Record<string, string> = { reason: "Reason of revelation", event: "Major event", tafseer: "Tafseer" };
+    const todayHits = KNOWLEDGE.filter(k => covers(inPages, k));
+    const earlierHits = KNOWLEDGE.filter(k => !covers(inPages, k) && covers(inEarlier, k));
+    void earlierHits;   // today's pages only
+    const chosen = shuffle(todayHits).slice(0, 2);
+    for (const k of chosen) {
+      const opts = shuffle([k.correct, ...k.wrong]);
+      const surahName = SURAHS.find(x => x.num === k.s)?.name ?? `Surah ${k.s}`;
+      factQs.push({ id: id++, type: "quiz_fact", section: "A", snippet: false, prompt: "",
+        promptLabel: `§A ${KIND_LABEL[k.kind]} · ${surahName} ${k.from}${k.to > k.from ? "–" + k.to : ""}`,
+        promptEn: k.q, promptAr: k.qAr, options: opts, correct: opts.indexOf(k.correct), correctText: k.correct });
+    }
+    // meanings of words, taken word-by-word from today's pages (and earlier pages to fill up to 4 in total)
+    const STOP = new Set(["and","the","in","of","from","that","is","are","he","they","you","we","i","to","on","for","with","not","no","indeed","then","so","who","which","what","this","these","those","his","her","their","your","our","him","them","us","me","a","an","it","but","or","by","if","when","except","upon","over","unto","into"]);
+    const good = (w: WordMeaning) => w.en.length > 2 && !STOP.has(w.en.toLowerCase()) && normalizeArabic(w.ar).length >= 3;
+    const uniq = (arr: WordMeaning[]) => { const seen = new Set<string>(); return arr.filter(w => { const k = normalizeArabic(w.ar); if (seen.has(k) || seen.has("en:" + w.en.toLowerCase())) return false; seen.add(k); seen.add("en:" + w.en.toLowerCase()); return true; }); };
+    const poolAll = uniq(words.filter(good));
+    const needWords = Math.max(0, 3 - factQs.length);
+    const wordPicks = shuffle(poolAll.filter(w => !w.prev)).slice(0, needWords);
+    for (const w of wordPicks) {
+      const wrongs = shuffle(poolAll.filter(x => x.en.toLowerCase() !== w.en.toLowerCase())).slice(0, 3).map(x => x.en);
+      if (wrongs.length < 3) continue;
+      const opts = shuffle([w.en, ...wrongs]);
+      const surahName = SURAHS.find(x => x.num === w.surah)?.name ?? `Surah ${w.surah}`;
+      factQs.push({ id: id++, type: "quiz_fact", section: "A", snippet: false, prompt: w.ar,
+        promptLabel: `§A Meaning of the word · ${surahName} ${w.verse}${w.prev ? " · earlier page" : ""}`,
+        promptEn: "What does this word mean?", promptAr: "ما معنى هذه الكلمة؟",
+        options: opts, correct: opts.indexOf(w.en), correctText: w.en });
+    }
+  }
+
+  factQs.splice(3);   // never more than 3 knowledge questions
+  if (!aiFacts.length || aiFacts.length < 3) tafQs.splice(Math.max(0, 3 - factQs.length));   // fallback pools share the 3 slots
   const sA = shuffle(qs.filter(q=>q.section==="A"));
   const sB = shuffle(qs.filter(q=>q.section==="B"));
-  return [...sA, ...tafQs, ...sB];
+  return [...sA, ...tafQs, ...factQs, ...sB];
 }
 
 
@@ -875,7 +1049,9 @@ function questionTimeLimit(q: Question): number {
     case "mcq_blank":        return 20;                     // single-word recognition
     case "mcq_next":         return 25;                     // recognise the next full verse
     case "mcq_continuation": return 30;                     // harder — error-focused area
+    case "listen_record":    return q.isErrorFocused ? 50 : 40;   // clock starts after the reciter finishes
     case "listen_choose":    return 30;                     // clock only starts AFTER the audio has played once
+    case "quiz_fact":         return 35;                     // short English options
     case "tafsir_verse":
     case "tafsir_meaning":   return 45;                     // read Arabic + English options
     case "record_continue":  return q.isErrorFocused ? 60 : 45; // recall + recite from memory
@@ -905,6 +1081,10 @@ function fmtSecs(s:number): string {
 }
 function fmtDate(d:string): string {
   return new Date(d+"T00:00:00").toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"});
+}
+/** score colours that stay readable on the dark-green cards */
+function onDark(s:number): string {
+  return s>=80?"#86efac":s>=60?"#fde68a":"#fca5a5";
 }
 function scoreColor(s:number): string {
   return s>=80?"#16a34a":s>=60?"#d97706":"#dc2626";
@@ -1573,13 +1753,15 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [questions,    setQuestions]   = useState<Question[]>([]);
   const [juzAyahs,     setJuzAyahs]    = useState<Ayah[]>([]);
   const [tafsirMap,    setTafsirMap]   = useState<Record<string, TafsirEntry>>({});
+  const [wordsList,    setWordsList]   = useState<WordMeaning[]>([]);
+  const [aiFacts,      setAiFacts]     = useState<AiFact[]>([]);
   const [qIdx,         setQIdx]        = useState(0);
   const [answers,      setAnswers]     = useState<(number|null)[]>([]);
   const qIdxRef = useRef(0); qIdxRef.current = qIdx;
   // Questions are built ONCE for the intro screen (counts + the real test use the same list).
   const previewQs = useMemo(
-    () => (phase === "proctor_intro" && questions.length === 0 ? buildQuestions(pageResults, juzAyahs, tafsirMap) : []),
-    [phase, questions.length, pageResults, juzAyahs, tafsirMap],
+    () => (phase === "proctor_intro" && questions.length === 0 ? buildQuestions(pageResults, juzAyahs, tafsirMap, wordsList, aiFacts) : []),
+    [phase, questions.length, pageResults, juzAyahs, tafsirMap, wordsList, aiFacts],
   );
   const [recitationScore, setRecitationScore] = useState<number|null>(
     recitationAlreadyDone ? (todayLog?.session_data?.recitation_score ?? null) : null
@@ -1619,6 +1801,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // TTS / listen state
   const [isSpeaking,   setIsSpeaking]   = useState(false);
   const [listenDone,   setListenDone]   = useState(false);
+  const [showListenText, setShowListenText] = useState(false);
   const [listenError,    setListenError]    = useState(false);
   const [listenErrorUrl, setListenErrorUrl] = useState("");
   // Ref to the currently-playing CDN audio so we can stop it when question changes
@@ -1756,14 +1939,39 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     if (phase !== "pre_test_review" && phase !== "proctor_intro") return;
     let cancelled = false;
     (async () => {
-      const [todayMap, earlierMap] = await Promise.all([
-        fetchTafsirForPages(todayPages),
-        fetchTafsirForPages(earlierPagesForTafsir(assignment, todayPages)).catch(() => ({} as Record<string, TafsirEntry>)),
-      ]);
+      const todayMap = await fetchTafsirForPages(todayPages);   // today's pages only
       if (cancelled || !Object.keys(todayMap).length) return;
-      const earlier: Record<string, TafsirEntry> = {};
-      for (const [k, v] of Object.entries(earlierMap)) if (!(k in todayMap)) earlier[k] = { ...v, prev: true };
-      setTafsirMap({ ...earlier, ...todayMap });
+      setTafsirMap(todayMap);
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
+  // Ibn Kathir (online) → knowledge questions for today's pages. Starts as soon as the recitation is accepted.
+  useEffect(() => {
+    if (phase !== "pre_test_review" && phase !== "proctor_intro") return;
+    if (aiFacts.length) return;
+    let cancelled = false;
+    (async () => {
+      const ayahText: Record<string, string> = {};
+      for (const r of pageResults) for (const a of (r.ayahs ?? []) as Ayah[]) if (a?.text) ayahText[`${a.surah.number}:${a.numberInSurah}`] = stripWaqf(a.text);
+      if (!Object.keys(ayahText).length) return;
+      try {
+        const facts = await generateIbnKathirFacts(todayPages, ayahText);
+        if (!cancelled && facts.length) setAiFacts(facts);
+      } catch (e) { console.warn("[HifdhDaily] Ibn Kathir questions unavailable:", e); }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
+  // Word-by-word meanings for the "meaning of the word" questions (today's pages + a few earlier ones).
+  useEffect(() => {
+    if (phase !== "pre_test_review" && phase !== "proctor_intro") return;
+    let cancelled = false;
+    (async () => {
+      const t = await fetchWordsForPages(todayPages);   // today's pages only
+      if (!cancelled) setWordsList(t);
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2610,7 +2818,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     // Stop any CDN audio or TTS that was playing for the previous question
     stopListenAudio();
     setQRecording(false); setQRecSecs(0); setQRecChunks([]); setQRecResult(null); setQRecDone(false);
-    setListenDone(false);
+    setListenDone(false); setShowListenText(false);
     setListenError(false);
     setListenErrorUrl("");
     clearInterval(qRecTimerRef.current);
@@ -2680,18 +2888,40 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           let res: CtcCheckResult | null = null;
           try {
             res = await Promise.race([
-              ctcEngine.check(blob, refWords, { basmalah: false }),
+              ctcEngine.check(blob, refWords, { basmalah: false, shortClip: true }),
               new Promise<null>(r => setTimeout(() => r(null), 60000)),
             ]);
           } catch (e: any) {
             console.error("[HifdhDaily] CTC answer check failed:", e?.message ?? e);
-            fail("Couldn't check this recording on your device. Tap record to try again, or skip.");
+            if (/no_speech/.test(String(e?.message ?? e))) fail("We couldn't hear your voice. Hold the phone closer, recite right after you tap record, and try again.");
+            else fail("Couldn't check this recording on your device. Tap record to try again, or skip.");
             return;
           }
           if (!res) { fail(TIMEOUT_MSG); return; }
           raw = (res.greedy || "").trim();
           if (!raw) { fail("No recitation was detected. Tap record and try again."); return; }
           sc = scoreOf(gradeFromCtc(refWords, res.words, res.heard));
+          // Second opinion: the model returned (almost) nothing, or a very low match, for a clip that did contain speech.
+          // Ask Tarteel too and keep the better of the two — one stray letter must not fail a student who recited correctly.
+          const tooLittle = normalizeArabic(raw).replace(/\s+/g, "").length < Math.min(6, Math.floor(refWords.join("").length / 3));
+          if ((tooLittle || (sc ?? 0) < 30) && tarteelAssistAllowed() && blob.size <= 10 * 1048576) {
+            try {
+              await Promise.race([tarteelEngine.load(true), new Promise((_, rj) => setTimeout(() => rj(new Error("load_timeout")), 20000))]);
+              const t2 = await Promise.race([
+                tarteelEngine.transcribeBlob(blob),
+                new Promise<{ text?: string; error?: string }>(r => setTimeout(() => r({ error: "timeout" }), 25000)),
+              ]);
+              const tText = (t2.error ? "" : (t2.text ?? "")).trim();
+              if (tText) {
+                const expW = normalizeArabic(q.correctText || "").split(/\s+/).filter(Boolean);
+                const gotW = normalizeArabic(tText).split(/\s+/).filter(Boolean);
+                const usedT = new Set<number>(); let m = 0;
+                for (const ew of expW) for (let i = 0; i < gotW.length; i++) { if (usedT.has(i)) continue; if (wordsMatch(ew, gotW[i])) { m++; usedT.add(i); break; } }
+                const sT = expW.length ? Math.round((m / expW.length) * 100) : 0;
+                if (sT > (sc ?? 0)) { sc = sT; raw = tText; }
+              }
+            } catch (e) { console.warn("[HifdhDaily] Tarteel second opinion unavailable:", e); }
+          }
         } else {
           // Tarteel (web without ?ctc=1). Never wait forever for the model: after 45 s tell the student.
           const t = await Promise.race([
@@ -2849,7 +3079,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   useEffect(() => {
     if (phase !== "proctor_intro" && phase !== "testing") return;
     (questions.length ? questions : previewQs).forEach(q => {
-      if (q.type === "listen_choose" && q.listenSurahNum && q.listenAyahNum) {
+      if (isListenType(q) && q.listenSurahNum && q.listenAyahNum) {
         void loadListenBuffer(q.listenSurahNum, q.listenAyahNum, q.listenGlobalNum);
       }
     });
@@ -2860,7 +3090,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   useEffect(() => {
     if (phase !== "testing" || testScore !== null) return;
     const q = questions[qIdx];
-    if (!q || q.type !== "listen_choose") return;
+    if (!q || !isListenType(q)) return;
     void playListenAudio(q.listenText || q.prompt, q.listenSurahNum, q.listenAyahNum, q.listenGlobalNum, true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qIdx, phase, questions.length]);
@@ -2903,7 +3133,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const nextQ=()=>{
     // For record questions, ensure at least attempted
     const q = questions[qIdx];
-    if (q?.type==="record_continue"||q?.type==="record_complete") {
+    if (isRecType(q)) {
       // Not recorded → counts as not passed (never overwrites an answer that is already set)
       setAnswers(prev=>{ if(prev[qIdx]!==null&&prev[qIdx]!==undefined) return prev; const a=[...prev]; a[qIdx]=1; return a; });
     }
@@ -2922,7 +3152,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // The clock for a LISTEN question only starts once the verse has finished playing once (or the audio
   // failed, so the student is never stuck). It also pauses while a recorded answer is being checked.
   const curQ = questions[qIdx];
-  const listenGateOpen = !curQ || curQ.type !== "listen_choose" || listenDone || listenError;
+  const listenGateOpen = !curQ || !isListenType(curQ) || listenDone || listenError;
   const timerRunning = phase === "testing" && testScore === null && !!curQ && listenGateOpen && !qChecking;
   const qLeftRef = useRef(0);
 
@@ -2962,7 +3192,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       qs.forEach(q=>{
         const ai=questions.indexOf(q);
         const a=answers[ai];
-        const isRec=q.type==="record_continue"||q.type==="record_complete";
+        const isRec=isRecType(q);
         if(isRec){
           // record answer: 0=pass(correct), 1=fail
           pts+=(a===0?1:0); total+=1;
@@ -2978,7 +3208,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     let totalPts=0; let totalQ=0;
     questions.forEach((q,i)=>{
       const a=answers[i];
-      const isRec=q.type==="record_continue"||q.type==="record_complete";
+      const isRec=isRecType(q);
       totalPts+=(isRec?(a===0?1:0):(a===q.correct?1:0)); totalQ+=1;
     });
     const pct=totalQ>0?Math.round((totalPts/totalQ)*100):100;
@@ -3042,7 +3272,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             section: q.section,
             isErrorFocused: q.isErrorFocused || false,
             answer_given: answers[i] ?? null,
-            correct: (q.type==="record_continue"||q.type==="record_complete") ? answers[i] === 0 : answers[i] === q.correct,
+            correct: (isRecType(q)) ? answers[i] === 0 : answers[i] === q.correct,
           })),
           // Preserve teacher override so it isn't wiped on re-completion
           ...(existingTeacherOverride ? { teacher_override: existingTeacherOverride } : {}),
@@ -3970,7 +4200,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             countB={(questions.length>0?questions:previewQs).filter(q=>q.section==="B").length}
             onReady={()=>{
               if(questions.length===0){
-                const qs=previewQs.length?previewQs:buildQuestions(pageResults,juzAyahs,tafsirMap);
+                const qs=previewQs.length?previewQs:buildQuestions(pageResults,juzAyahs,tafsirMap,wordsList,aiFacts);
                 setQuestions(qs);
                 setAnswers(new Array(qs.length).fill(null));
                 setQIdx(0); setTestScore(null);
@@ -4070,8 +4300,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
               {(()=>{
                 const q=questions[qIdx]; const ans=answers[qIdx];
-                const isRecQ = q.type==="record_continue"||q.type==="record_complete";
-                const isListenQ = q.type==="listen_choose";
+                const isRecQ = isRecType(q);
+                const isListenQ = isListenType(q);
+                const isListenRec = q.type==="listen_record";
 
                 // ── Type label ───────────────────────────────────
                 const typeLabel =
@@ -4080,11 +4311,14 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                   :q.type==="mcq_continuation"?"⚠️ Continue from error area"
                   :q.type==="record_continue"?"🎙️ Continue from where the reciter stopped"
                   :q.type==="record_complete"?"🎙️ Record the missing verses"
+                  :q.type==="listen_record" ?"👂 Listen, then recite — the reciter stops, you continue"
                   :q.type==="listen_choose" ?"👂 Listen — what comes after the reciter stops?"
                   :q.type==="tafsir_verse"  ?"📖 Tafseer — التفسير"
                   :q.type==="tafsir_meaning"?"📖 Tafseer — التفسير"
+                  :q.type==="quiz_fact"     ?"📚 Knowledge — المعرفة"
                   :"What comes next?";
                 const isTafsir = q.type==="tafsir_verse"||q.type==="tafsir_meaning";
+                const isFact = q.type==="quiz_fact";
 
                 return(
                   <div style={{background:W,borderRadius:16,border:`1px solid ${BRD}`,
@@ -4102,7 +4336,15 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                           <p style={{...arProse(16,1.8),margin:"2px 0 0",fontWeight:600,color:"#4B5563"}}>{q.promptAr}</p>
                         </div>
                       )}
+                      {isFact&&(
+                        <div style={{margin:"0 0 4px",padding:"10px 12px",borderRadius:12,background:`${G1}0d`,border:`1px solid ${BRD}`}}>
+                          <p style={{margin:0,fontSize:15,fontWeight:800,color:G1,textAlign:"left",direction:"ltr",lineHeight:1.5}}>{q.promptEn}</p>
+                          {q.promptAr&&<p style={{...arProse(16,1.8),margin:"2px 0 0",fontWeight:600,color:"#4B5563"}}>{q.promptAr}</p>}
+                          {q.prompt&&<p style={{...arQuran(28,2.4),margin:"8px 0 0",textAlign:"center"}}>{q.prompt}</p>}
+                        </div>
+                      )}
                       {isListenQ?(
+                        <>
                         <div style={{display:"flex",alignItems:"center",gap:10}}>
                           <button onClick={()=>playListenAudio(q.listenText||q.prompt, q.listenSurahNum, q.listenAyahNum, q.listenGlobalNum)}
                             disabled={isSpeaking||listenLoading}
@@ -4123,17 +4365,27 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                             <p style={{margin:0,fontSize:12,fontWeight:700,color:listenError?FAIL:PURPLE}}>
                               {listenLoading?"Loading the verse…":isSpeaking?"Playing…":listenError
                                 ?`⚠ Audio failed — tap to retry${listenErrorUrl?" ("+listenErrorUrl+")":""}`
-                                :listenDone?"✓ Heard — now choose what comes next":"Tap to hear the verse — your time starts when it ends"}
+                                :listenDone?(isListenRec?"✓ Heard — now recite the next verse":"✓ Heard — now choose what comes next")
+                                :(isListenRec?"Listen to the reciter — recording unlocks when the verse ends":"Tap to hear the verse — your time starts when it ends")}
                             </p>
                             {listenDone&&!listenError&&<p style={{margin:"2px 0 0",fontSize:10,color:"#9CA3AF"}}>You can replay it</p>}
+                            {isListenRec&&(
+                              <button onClick={()=>setShowListenText(v=>!v)}
+                                style={{margin:"6px 0 0",padding:0,border:"none",background:"transparent",cursor:"pointer",
+                                  fontSize:11,fontWeight:700,color:G3,textDecoration:"underline",fontFamily:"inherit"}}>
+                                {showListenText?"Hide the verse text":"Can't hear? Show the verse text"}
+                              </button>
+                            )}
                           </div>
                         </div>
+                        {isListenRec&&showListenText&&<p style={{...arQuran(24,2.5),margin:"10px 0 0"}}>{q.prompt}</p>}
+                        </>
                       ):q.type==="tafsir_meaning"?(
                         <div>
                           {q.promptSubEn&&<p style={{margin:"0 0 6px",fontSize:15,lineHeight:1.6,fontWeight:600,color:"#111827",textAlign:"left",direction:"ltr"}}>{q.promptSubEn}</p>}
                           <p style={{...arProse(18,2.0),margin:0,color:"#4B5563"}}>{q.prompt}</p>
                         </div>
-                      ):(
+                      ):isFact?null:(
                         <p style={{...arQuran(q.snippet?26:24,q.snippet?2.4:2.5),margin:0}}>
                           {q.prompt}
                         </p>
@@ -4147,7 +4399,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                           <button key={oi} onClick={()=>pickAnswer(oi)}
                             style={{
                               width:"100%",padding:"12px 16px",borderRadius:12,cursor:"pointer",
-                              textAlign:"right",direction:"rtl",
+                              textAlign:isFact?"left":"right",direction:isFact?"ltr":"rtl",
                               border:`2px solid ${ans===oi?G2:BRD}`,
                               background:ans===oi?`${G1}12`:WARM,
                               transition:"background .15s,border-color .15s",
@@ -4159,7 +4411,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                                 {q.optionsEn[oi]}
                               </span>
                             )}
-                            <span style={{display:"block",...(isTafsir&&q.type==="tafsir_verse"?{...arProse(16,1.9),color:"#4B5563"}:arQuran(isTafsir?22:22,2.4)),
+                            <span style={{display:"block",...(isFact?{fontSize:14.5,lineHeight:1.55,color:"#111827"}:isTafsir&&q.type==="tafsir_verse"?{...arProse(16,1.9),color:"#4B5563"}:arQuran(isTafsir?22:22,2.4)),
                               fontWeight:ans===oi?700:400}}>{opt}</span>
                             {isTafsir&&q.type!=="tafsir_verse"&&q.optionsEn?.[oi]&&(
                               <span style={{display:"block",marginTop:4,fontSize:12.5,lineHeight:1.5,color:"#4B5563",textAlign:"left",direction:"ltr"}}>
@@ -4199,7 +4451,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                         {!qRecDone&&!qChecking&&(
                           <button
                             onClick={qRecording?stopQRecording:startQRecording}
-                            style={{padding:"14px",borderRadius:12,border:"none",cursor:"pointer",
+                            disabled={!qRecording&&!listenGateOpen}
+                            style={{padding:"14px",borderRadius:12,border:"none",cursor:(!qRecording&&!listenGateOpen)?"not-allowed":"pointer",
+                              opacity:(!qRecording&&!listenGateOpen)?.45:1,
                               background:qRecording
                                 ?`linear-gradient(135deg,${FAIL},#b91c1c)`
                                 :`linear-gradient(135deg,${G2},${G3})`,
@@ -4207,7 +4461,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                               display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
                             {qRecording
                               ?<><MicOff size={16}/> Stop — {Math.floor(qRecSecs/60).toString().padStart(2,"0")}:{(qRecSecs%60).toString().padStart(2,"0")}</>
-                              :<><Mic size={16}/> Start Recording Answer</>}
+                              :<><Mic size={16}/> {listenGateOpen?"Start Recording Answer":"Wait for the reciter…"}</>}
                           </button>
                         )}
                         {qRecDone&&qRecResult&&(
@@ -4239,8 +4493,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
               {(()=>{
                 const q=questions[qIdx];
-                const isRecQ=q?.type==="record_continue"||q?.type==="record_complete";
-                const isListenQ=q?.type==="listen_choose";
+                const isRecQ=isRecType(q);
+                const isListenQ=isListenType(q);
                 const canNext = isRecQ ? qRecDone : isListenQ ? (answers[qIdx]!==null) : answers[qIdx]!==null;
                 const skipAllowed = isRecQ && !qRecDone; // allow skip for record q
                 return(
@@ -4338,7 +4592,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 textTransform:"uppercase",letterSpacing:.5}}>Question Breakdown</p>
               {questions.map((q,i)=>{
                 const ua=answers[i];
-                const isRecQBreak=q.type==="record_continue"||q.type==="record_complete";
+                const isRecQBreak=isRecType(q);
                 const ok=isRecQBreak ? ua===0 : ua===q.correct;
                 return(
                   <div key={q.id} style={{display:"flex",gap:10,padding:"8px 0",
@@ -5255,7 +5509,7 @@ export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?
               {/* Today's hero card */}
               <div style={{borderRadius:20,overflow:"hidden",
                 background:todayDone
-                  ?`linear-gradient(135deg,#14532d,#166534)`
+                  ?`linear-gradient(135deg,#052e16,#14532d)`
                   :`linear-gradient(135deg,${G1},${G2})`,
                 border:todayDone?"1px solid #22c55e33":`1px solid ${GOLD}33`,
                 boxShadow:todayDone?"0 4px 24px rgba(22,163,74,.15)":`0 4px 24px ${G1}44`,
@@ -5265,7 +5519,7 @@ export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?
                     marginBottom:14}}>
                     <div>
                       <p style={{margin:0,fontSize:10,fontWeight:700,
-                        color:todayDone?"rgba(255,255,255,.5)":"rgba(255,255,255,.5)",
+                        color:todayDone?"rgba(255,255,255,.85)":"rgba(255,255,255,.5)",
                         textTransform:"uppercase",letterSpacing:.6}}>TODAY'S REVISION</p>
                       <p style={{margin:"3px 0 0",fontWeight:900,fontSize:22,color:W,letterSpacing:-.5}}>
                         {todayDone?"Session Complete! ✓":`Day ${dayOfProg} of ${totalDays}`}
@@ -5279,9 +5533,9 @@ export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?
                       )}
                     </div>
                     {todayDone
-                      ?<div style={{width:44,height:44,borderRadius:12,background:"rgba(255,255,255,.12)",
+                      ?<div style={{width:44,height:44,borderRadius:12,background:"rgba(255,255,255,.16)",
                           display:"flex",alignItems:"center",justifyContent:"center"}}>
-                        <CheckCircle2 size={24} color="#86efac"/>
+                        <CheckCircle2 size={26} color="#bbf7d0"/>
                        </div>
                       :<div style={{textAlign:"center"}}>
                         <p style={{margin:0,fontWeight:900,fontSize:26,color:GOLD}}>{todayPages[0]}</p>
@@ -5296,7 +5550,7 @@ export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?
                   {/* Program progress bar */}
                   <div style={{marginBottom:14}}>
                     <div style={{display:"flex",justifyContent:"space-between",
-                      marginBottom:5,fontSize:10,color:"rgba(255,255,255,.5)",fontWeight:600}}>
+                      marginBottom:5,fontSize:11,color:todayDone?"rgba(255,255,255,.9)":"rgba(255,255,255,.5)",fontWeight:700}}>
                       <span>Program Progress</span>
                       <span>{pct}%</span>
                     </div>
@@ -5306,7 +5560,7 @@ export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?
                         width:`${pct}%`,transition:"width .5s"}}/>
                     </div>
                     <div style={{marginTop:4,display:"flex",justifyContent:"space-between",
-                      fontSize:9,color:"rgba(255,255,255,.35)",fontWeight:600}}>
+                      fontSize:10,color:todayDone?"rgba(255,255,255,.8)":"rgba(255,255,255,.35)",fontWeight:600}}>
                       <span>{doneDays.length} days done</span>
                       <span>{totalDays-doneDays.length} remaining</span>
                     </div>
@@ -5317,22 +5571,22 @@ export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?
                       {todayLog?.avg_score!=null&&(
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
                           {[
-                            {label:"Recitation", value:`${todayLog.session_data?.recitation_score??todayLog.avg_score}%`, color:scoreColor(todayLog.session_data?.recitation_score??todayLog.avg_score)},
-                            {label:"Test",       value:`${todayLog.session_data?.test_score??0}%`, color:scoreColor(todayLog.session_data?.test_score??0)},
-                            {label:"Overall",    value:`${todayLog.avg_score}%`, color:scoreColor(todayLog.avg_score)},
+                            {label:"Recitation", value:`${todayLog.session_data?.recitation_score??todayLog.avg_score}%`, color:onDark(todayLog.session_data?.recitation_score??todayLog.avg_score)},
+                            {label:"Test",       value:`${todayLog.session_data?.test_score??0}%`, color:onDark(todayLog.session_data?.test_score??0)},
+                            {label:"Overall",    value:`${todayLog.avg_score}%`, color:onDark(todayLog.avg_score)},
                           ].map(s=>(
-                            <div key={s.label} style={{background:"rgba(255,255,255,.1)",borderRadius:10,
-                              padding:"8px",textAlign:"center"}}>
-                              <p style={{margin:0,fontWeight:900,fontSize:15,color:(s as any).color||W}}>{s.value}</p>
-                              <p style={{margin:0,fontSize:8,fontWeight:700,color:"rgba(255,255,255,.4)",
+                            <div key={s.label} style={{background:"rgba(0,0,0,.28)",border:"1px solid rgba(255,255,255,.14)",borderRadius:12,
+                              padding:"10px 6px",textAlign:"center"}}>
+                              <p style={{margin:0,fontWeight:900,fontSize:20,color:(s as any).color||W}}>{s.value}</p>
+                              <p style={{margin:"2px 0 0",fontSize:10,fontWeight:700,color:"rgba(255,255,255,.85)",letterSpacing:.4,
                                 textTransform:"uppercase"}}>{s.label}</p>
                             </div>
                           ))}
                         </div>
                       )}
-                      <div style={{padding:"10px 14px",borderRadius:12,background:"rgba(255,255,255,.08)",
+                      <div style={{padding:"12px 14px",borderRadius:12,background:"rgba(0,0,0,.25)",
                         textAlign:"center"}}>
-                        <p style={{margin:0,fontSize:12,color:"rgba(255,255,255,.6)"}}>
+                        <p style={{margin:0,fontSize:13,fontWeight:600,color:"rgba(255,255,255,.95)"}}>
                           Come back tomorrow for your next page, biiznillah! 🌙
                         </p>
                       </div>
