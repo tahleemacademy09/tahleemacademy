@@ -96,6 +96,7 @@ const AdhkaarPage          = lazy(() => import("./pages/student/AdhkaarPage"));
 // Hub:  inside DashboardLayout → shows Quiz vs Recitation choice cards
 // Page: standalone full-screen route → the actual Qur'an recitation competition
 const MusabaqahHub   = lazy(() => import("./pages/student/MusabaqahHub"));
+const RamadanPrograms = lazy(() => import("./pages/RamadanPrograms"));
 const MustabaqahPage = lazy(() => import("./pages/student/MustabaqahPage"));
 const GeneralMusabaqahAdmin       = lazy(() => import("./pages/admin/GeneralMusabaqahAdmin"));
 const GeneralMusabaqahEventDetail = lazy(() => import("./pages/admin/GeneralMusabaqahEventDetail"));
@@ -316,6 +317,7 @@ const AppMain = () => (
                     <Route path="/student/enrollment-payment"  element={<EnrollmentPayment />} />
                     {/* Hub: choose between Quiz Arena or Recitation Competition */}
                     <Route path="/student/musabaqah"           element={<MusabaqahHub />} />
+                    <Route path="/student/ramadan"             element={<RamadanPrograms />} />
                     <Route path="/student/musabaqah/general"   element={<GeneralMusabaqahRegister />} />
                   </Route>
 
@@ -365,6 +367,7 @@ const AppMain = () => (
                     <Route path="/teacher/majlis"           element={<TeacherMajlis />} />
                     <Route path="/teacher/support"          element={<TeacherSupport />} />
                     <Route path="/teacher/musabaqah"        element={<MusabaqahHub />} />
+                    <Route path="/teacher/ramadan"          element={<RamadanPrograms />} />
                     <Route path="/teacher/settings"         element={<TeacherSettings />} />
                   </Route>
 
@@ -434,6 +437,7 @@ const AppMain = () => (
                     <Route path="/admin/tasjeel"                     element={<RegistrationHub />} />
                     {/* Hub: choose between Quiz Arena or Recitation Competition */}
                     <Route path="/admin/musabaqah"                   element={<MusabaqahHub />} />
+                    <Route path="/admin/ramadan"                     element={<RamadanPrograms />} />
                   </Route>
 
                   <Route path="*" element={<NotFound />} />
