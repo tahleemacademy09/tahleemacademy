@@ -4,6 +4,7 @@
   Opt-in per device:  open the page with ?ctc=1  (back to Tarteel with ?ctc=0).  First use downloads ~132 MB (then cached).
 */
 import { ctcStatus, type CtcWordScore } from "@/lib/ctcAlign";
+import { prepareForAsr } from "@/lib/audioEnhance";
 import { NativeLiveChecker, loadNativeCtc, nativeCheck, nativeCtcAvailable, prepareVocab } from "@/lib/ctcNative";
 
 export { ctcStatus };
@@ -256,7 +257,17 @@ class CtcEngine {
   /** Is each reference word really in the recording?  refWords must be the same words (same order) the grid uses.
    *  The recording is processed silently in the background WHILE the student recites (so only the last few seconds are left at Stop); if that background result is missing or stalls, one full pass on a fresh worker. Every step has a timeout and the whole
    *  thing is retried once on a fresh worker, so it can fail with a clear error but can never hang. */
-  async check(blob: Blob, refWords: string[], opts: { basmalah?: boolean | "auto" } = {}): Promise<CtcCheckResult> {
+  async check(blob: Blob, refWords: string[], opts: { basmalah?: boolean | "auto"; shortClip?: boolean } = {}): Promise<CtcCheckResult> {
+    // Short recorded ANSWERS (one verse after a pause for thinking) go through the same speech gate the Tarteel path uses:
+    // leading/trailing silence and long pauses are cut, a quiet raw-mic clip is brought to a normal level. Without this the
+    // model sees mostly silence + a quiet voice and returns one stray letter. Whole-page recordings are left untouched
+    // (their word timings are used against the original audio).
+    const prep = (a: Float32Array): Float32Array => {
+      if (!opts.shortClip) return a;
+      const g = prepareForAsr(a);
+      if (!g) throw new Error("no_speech");
+      return g;
+    };
     const withTimeout = <T,>(p: Promise<T>, ms: number, label: string) =>
       new Promise<T>((resolve, reject) => {
         const t = setTimeout(() => reject(new Error(label + "_timeout")), ms);
@@ -270,13 +281,13 @@ class CtcEngine {
       try {
         await this.load();
         if (this.useNative) {
-          const audio = await withTimeout(decodeBlobTo16k(blob), 60_000, "decode");
+          const audio = prep(await withTimeout(decodeBlobTo16k(blob), 60_000, "decode"));
           this.setProgress({ stage: "listening", done: 0, total: audio.length / 16000 });
           return await nativeCheck(audio, refWords, opts.basmalah ?? "auto", (done, total) => { if (this.activeCheckId === id) this.setProgress({ stage: "listening", done, total }); });
         }
       } catch (e: any) {
         const msg = String(e?.message ?? e);
-        if (/^audio_too_short/.test(msg) || /decode_timeout/.test(msg)) throw e;   // the recording itself is the problem, WASM would say the same
+        if (/^audio_too_short/.test(msg) || /decode_timeout/.test(msg) || /no_speech/.test(msg)) throw e;   // the recording itself is the problem, WASM would say the same
         this.dropNative(msg);   // plugin / model problem → fall through to the WASM path below
       } finally {
         this.activeCheckId = 0;
@@ -292,7 +303,7 @@ class CtcEngine {
       try {
         await this.loadWatched();
         const td = Date.now();
-        const audio = await withTimeout(decodeBlobTo16k(blob), 60_000, "decode");
+        const audio = prep(await withTimeout(decodeBlobTo16k(blob), 60_000, "decode"));
         const decodeMs = Date.now() - td;
         this.setProgress({ stage: "finishing", done: 0, total: 0 });
         const res = await this.callWatched<CtcCheckResult>(
