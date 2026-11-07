@@ -22,6 +22,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRoomContext } from "@livekit/components-react";
 import { ConnectionQuality, RoomEvent, Track } from "livekit-client";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { isSlowLink, onLinkChange } from "@/lib/slowNetwork";
 
 type Level = "ok" | "poor" | "lost";
 
@@ -55,6 +56,8 @@ export default function NetworkGuard({ isPrivileged, audioOnlyActive, forcedAudi
   const [roomUp, setRoomUp] = useState(true); // false while LiveKit is reconnecting (ConnectionStateBanner owns that message)
   const [weakPeers, setWeakPeers] = useState<{ id: string; name: string; level: Level }[]>([]);
   const [restoredFlash, setRestoredFlash] = useState(false);
+  const [slowLink, setSlowLink] = useState(isSlowLink());
+  const slowRef = useRef(isSlowLink());
 
   const autoSetRef = useRef(false);          // we turned audio-only on
   const backoffUntilRef = useRef(0);
@@ -116,6 +119,7 @@ export default function NetworkGuard({ isPrivileged, audioOnlyActive, forcedAudi
 
   const exitLowData = () => {
     if (!degradedRef.current) return;
+    if (slowRef.current) return; // slow / data-saver link: stay in low-data mode
     degradedRef.current = false;
     unsubscribedRef.current.forEach((pub) => { try { pub.setSubscribed(true); } catch {} });
     unsubscribedRef.current.clear();
@@ -178,6 +182,22 @@ export default function NetworkGuard({ isPrivileged, audioOnlyActive, forcedAudi
       if (poorTimer.current) clearTimeout(poorTimer.current);
       if (okTimer.current) clearTimeout(okTimer.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room]);
+
+  // Slow / data-saver link (2G/3G, Data Saver on, very low downlink): go low-data straight away
+  // instead of waiting for LiveKit's quality score to turn "poor" first.
+  useEffect(() => {
+    if (!room) return;
+    const sync = () => {
+      const slow = isSlowLink();
+      slowRef.current = slow;
+      setSlowLink(slow);
+      if (slow) enterLowData();
+      else if (myLevel === "ok") exitLowData();
+    };
+    sync();
+    return onLinkChange(sync);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room]);
 
@@ -248,6 +268,12 @@ export default function NetworkGuard({ isPrivileged, audioOnlyActive, forcedAudi
     msg = lost
       ? t(`⚠ ${names}: connection lost — they can't hear you.`, `⚠ ${names}: انقطع الاتصال — لا يسمعونك.`)
       : t(`⚠ ${names}: weak network — they may not hear you well.`, `⚠ ${names}: شبكة ضعيفة — قد لا يسمعونك جيدًا.`);
+  } else if (slowLink) {
+    bg = "rgba(37,99,235,.92)";
+    msg = t(
+      "Slow network detected — video is off to save data. Your voice and the class audio keep working.",
+      "تم اكتشاف شبكة بطيئة — تم إيقاف الفيديو لتوفير البيانات. الصوت يعمل بشكل طبيعي."
+    );
   } else if (restoredFlash) {
     bg = "rgba(22,163,74,.94)";
     msg = t("✓ Connection restored", "✓ عاد الاتصال");

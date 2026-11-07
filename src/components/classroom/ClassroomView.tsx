@@ -32,6 +32,7 @@ import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { getSignedUrl } from "../../integrations/supabase/storageClient";
 import { playJoinSound, playLeaveSound, playRecordingStartSound, playRecordingStopSound } from "@/lib/soundUtils";
 import NetworkGuard from "@/components/classroom/NetworkGuard";
+import { isSlowLink } from "@/lib/slowNetwork";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useLiveClass } from "@/contexts/LiveClassContext";
@@ -836,6 +837,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       setSessionSettings(newSettings);
       // "Allow student video" OFF: a student never starts with their camera on, whatever they picked in the lobby.
       if(!newSettings.allow_video&&!isPrivileged)setLobbyCam(false);
+      // Slow / data-saver link: a student starts audio-only (they can still switch the camera on themselves).
+      if(isSlowLink()&&!isPrivileged)setLobbyCam(false);
       // "Mute on entry": force the initial mic publish off for a non-privileged
       // joiner, regardless of what they picked in the lobby — same pattern as
       // camLocked's forced-audio-only further down, just applied once up front
@@ -1460,7 +1463,11 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       {token&&wsUrl&&(
         // key={roomKey} forces a full remount whenever autoReconnect bumps the key,
         // ensuring LiveKit starts with a fresh connection and token.
-        <LiveKitRoom key={roomKey} serverUrl={wsUrl} token={token} connect={phase==="live"} audio={false} video={false} options={{
+        <LiveKitRoom key={roomKey} serverUrl={wsUrl} token={token} connect={phase==="live"} audio={false} video={false}
+          // Weak links need longer than the 15s defaults to finish the websocket + ICE handshake;
+          // timing out early just triggers the heavy full-rebuild reconnect path.
+          connectOptions={{websocketTimeout:30_000,peerConnectionTimeout:45_000}}
+          options={{
             adaptiveStream:{pixelDensity:isMobile?1:"screen"},
             dynacast:true,
             disconnectOnPageLeave:false,
