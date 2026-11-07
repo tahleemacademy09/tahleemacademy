@@ -9,6 +9,7 @@ import PageFallback from "@/components/layout/PageFallback";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useStaffTermId, useStaffTermRow, useIsViewingPastTerm } from "@/hooks/useCurrentTermId";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { Moon as MoonIcon } from "lucide-react";
 import { useAppRelease } from "@/hooks/useAppRelease";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -31,7 +32,7 @@ const groupActive = (pathname: string, paths: string[]) =>
   paths.some(p => pathname === p || pathname.startsWith(p + "/"));
 
 // ── Nav definition ───────────────────────────────────────────────────
-type NavLink  = { to: string; icon: any; label: string; badge?: number };
+type NavLink  = { to: string; icon: any; label: string; badge?: number; soon?: boolean };
 type NavGroup = { key: string; icon: any; label: string; children: NavLink[] };
 type NavItem  = { type: "link"; link: NavLink } | { type: "group"; group: NavGroup };
 
@@ -101,6 +102,12 @@ const buildNav = (t: (a: string, b: string) => string, badges: Record<string, nu
         { to: "/teacher/hifdh",      icon: BookOpen,label: t("Ḥifẓ Review",   "مراجعة الحفظ"), badge: badges.hifdh },
       ],
     },
+  },
+
+  // ── Ramadan Programs (coming soon) ───────────────────────────────
+  {
+    type: "link",
+    link: { to: "/teacher/ramadan", icon: MoonIcon, label: t("Ramadan Programs", "برامج رمضان"), soon: true },
   },
 
   // ── Communication ────────────────────────────────────────────────
@@ -428,6 +435,7 @@ const TeacherLayout = () => {
                 )}>
                 <lnk.icon size={15} className="flex-shrink-0" />
                 <span className="flex-1">{lnk.label}</span>
+                {lnk.soon && <span className="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide" style={{ background: "#fde68a", color: "#422006" }}>{t("Soon", "قريبًا")}</span>}
                 <RedBadge n={lnk.badge || unreadFor(lnk.to)} />
               </Link>
             );

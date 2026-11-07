@@ -8,6 +8,7 @@ import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { Moon as MoonIcon } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRevisionAssignedCount } from "@/hooks/useRevisionAssignedCount";
 import { notifBelongsToRoute, SIDEBAR_ALIASES } from "@/lib/sidebarNotifications";
@@ -235,7 +236,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   // ── Student nav ──────────────────────────────────────────────
   type NavItem =
-    | { type:"link"; to:string; icon:any; label:string; star?: boolean }
+    | { type:"link"; to:string; icon:any; label:string; star?: boolean; soon?: boolean }
     | { type:"group"; key:string; icon:any; label:string; children:{to:string;icon:any;label:string}[] };
 
   const studentNav: NavItem[] = [
@@ -260,6 +261,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       { to:"/student/transcripts",    icon:GraduationCap, label:t("Taqaddumī","تقدّمي"),
         match:["/student/transcripts","/student/report-card","/student/attendance"] },
     ]},
+    { type:"link", to:"/student/ramadan",    icon:MoonIcon,      label:t("Ramadan Programs","برامج رمضان"), soon:true },
     { type:"link", to:"/student/majlis",     icon:MessageCircle, label:t("Al-Majlis","المجلس") },
     { type:"link", to:"/student/support",    icon:LifeBuoy,      label:t("Al-Musā'adah","المساعدة"), badge: supportBadge },
     { type:"link", to:"/student/profile",    icon:UserCircle,    label:t("Al-I'dādāt","الإعدادات") },
@@ -267,7 +269,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   // ── Admin nav — fully organized, every page linked ──────────
   type AdminNavItem =
-    | { type:"link";  to:string; icon:any; label:string; badge?: number }
+    | { type:"link";  to:string; icon:any; label:string; badge?: number; soon?: boolean }
     | { type:"group"; key:string; icon:any; label:string; children:{to:string;icon:any;label:string;badge?:number}[] };
 
   const adminNav: AdminNavItem[] = [
@@ -340,6 +342,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
     // 9 ── Al-Musābaqah (updated route) ─────────────────────────
     { type:"link", to:"/admin/musabaqah", icon:Trophy, label:t("Al-Musābaqah 🏆","المسابقة 🏆") },
+    { type:"link", to:"/admin/ramadan",   icon:MoonIcon, label:t("Ramadan Programs","برامج رمضان"), soon:true },
 
 
     // 10 ── Admin Settings ────────────────────────────────────────
@@ -621,6 +624,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   )}>
                   <item.icon className="h-4 w-4 shrink-0"/>
                   <span className="truncate">{item.label}</span>
+                  {(item as any).soon && <span className="ms-auto shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide" style={{ background:"#fde68a", color:"#422006" }}>{t("Soon","قريبًا")}</span>}
                   <NotifMark explicit={item.badge ?? 0} count={unreadCountFor(item.to)} />
                 </Link>
               );
