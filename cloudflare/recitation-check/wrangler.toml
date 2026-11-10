@@ -1,0 +1,15 @@
+# Recitation checker worker (admin only).
+# Deploy:  cd cloudflare/recitation-check && npx wrangler deploy
+# Then set VITE_RECITATION_CHECK_URL=https://recitation-check.<your-subdomain>.workers.dev in the app env and rebuild.
+name = "recitation-check"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+[ai]
+binding = "AI"
+
+[vars]
+SUPABASE_URL = "https://qasmwzwaorncalximemy.supabase.co"
+# Public anon/publishable key of the same project (safe to commit; it is already shipped in the app bundle).
+SUPABASE_ANON_KEY = "PASTE_SUPABASE_ANON_KEY_HERE"
+MAX_AUDIO_BYTES = "6000000"

@@ -342,7 +342,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
     // 9 ── Al-Musābaqah (updated route) ─────────────────────────
     { type:"link", to:"/admin/musabaqah", icon:Trophy, label:t("Al-Musābaqah 🏆","المسابقة 🏆") },
-    { type:"link", to:"/admin/ramadan",   icon:MoonIcon, label:t("Ramadan Programs","برامج رمضان"), soon:true },
+    { type:"link", to:"/admin/ramadan",   icon:MoonIcon, label:t("Ramadan Programs","برامج رمضان") },
 
 
     // 10 ── Admin Settings ────────────────────────────────────────

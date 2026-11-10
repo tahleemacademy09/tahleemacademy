@@ -1,8 +1,13 @@
-import { Moon, Sparkles, BookOpen, Users, Mic } from "lucide-react";
+import { lazy, Suspense } from "react";
+import { Moon, Sparkles, BookOpen, Users, Mic, Loader2 } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useAuth } from "@/contexts/AuthContext";
 
-/** Shared "coming soon" page for Ramadan Programs — used by the student, teacher and admin sidebars. */
-export default function RamadanPrograms() {
+// Loaded only for admins, so other roles never download the checker.
+const RecitationChecker = lazy(() => import("@/components/ramadan/RecitationChecker"));
+
+/** "Coming soon" screen shown to everyone except admins. */
+function ComingSoon() {
   const { t, dir } = useLanguage();
   const items = [
     { icon: BookOpen, en: "Qur'an recitation & khatm plans", ar: "خطط التلاوة والختمة" },
@@ -40,5 +45,23 @@ export default function RamadanPrograms() {
         </ul>
       </div>
     </div>
+  );
+}
+
+const Spinner = () => (
+  <div className="flex min-h-[40vh] items-center justify-center">
+    <Loader2 className="animate-spin" size={28} color="#064E3B" />
+  </div>
+);
+
+/** Ramadan Programs — admins get the recitation checker; everyone else sees "Coming soon". */
+export default function RamadanPrograms() {
+  const { loading, hasRole } = useAuth();
+  if (loading) return <Spinner />;
+  if (!hasRole("admin")) return <ComingSoon />;
+  return (
+    <Suspense fallback={<Spinner />}>
+      <RecitationChecker />
+    </Suspense>
   );
 }
