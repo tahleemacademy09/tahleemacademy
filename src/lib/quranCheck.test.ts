@@ -47,3 +47,36 @@ describe("helpers", () => {
     expect(buildExpected(ayahs, 2, 2, true).endsWith("ذلك الكتاب")).toBe(true);
   });
 });
+
+describe("weak audio / elongation / huruf muqatta'at", () => {
+  it("ءَايَـٰتٌ = آيات (hamza + long alef written differently)", () => {
+    expect(st(checkRecitation("ءَايَـٰتٌ", H("آيات")))).toEqual(["ok"]);
+  });
+  it("a missing or extra medial alef is the same word", () => {
+    expect(st(checkRecitation("ٱلْكِتَـٰبَ مُحْكَمَـٰتٌ", H("الكتب", "محكمات")))).toEqual(["ok", "ok"]);
+    expect(st(checkRecitation("قَالَ", H("قل")))).toEqual(["ok"]);
+  });
+  it("final ى: هُدًى = هدى / هدا / هدي", () => {
+    for (const h of ["هدى", "هدا", "هدي"]) expect(st(checkRecitation("هُدًى", H(h)))).toEqual(["ok"]);
+  });
+  it("a mis-heard word between two correct words is yellow, a different word stays red", () => {
+    const ref = "مِن قَبْلُ هُدًى لِّلنَّاسِ";
+    expect(st(checkRecitation(ref, H("من", "قبل", "هلا", "للناس")))).toEqual(["ok", "ok", "check", "ok"]);
+    expect(st(checkRecitation("بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ", H("بسم", "الله", "العليم", "الرحيم")))[2]).toBe("wrong");
+  });
+  it("opening letters, any spelling", () => {
+    const ref = "الٓمٓ ٱللَّهُ لَآ إِلَٰهَ";
+    for (const h of ["الم الله لا إله", "ألم الله لا إله", "ا ل م الله لا إله", "الف لام ميم الله لا إله", "الفلاميم الله لا إله"]) {
+      const r = checkRecitation(ref, wordsFromText(h));
+      expect(st(r)).toEqual(["ok", "ok", "ok", "ok"]);
+    }
+  });
+  it("opening letters not written at all → yellow (listen again), never a hard miss", () => {
+    const r = checkRecitation("الٓمٓ ٱللَّهُ لَآ إِلَٰهَ", wordsFromText("الله لا إله"));
+    expect(st(r)).toEqual(["check", "ok", "ok", "ok"]);
+    expect(r.words[0].note).toBe("muqattaat");
+  });
+  it("أَلَمْ (did you not) is NOT treated as opening letters", () => {
+    expect(st(checkRecitation("أَلَمْ تَرَ", wordsFromText("تر")))[0]).toBe("missed");
+  });
+});
