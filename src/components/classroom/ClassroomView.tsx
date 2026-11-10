@@ -655,7 +655,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const prefetch=useRef<{token:string;url:string;fetchedAt:number;mute_on_entry?:boolean;chat_enabled?:boolean;hand_raise_enabled?:boolean;allow_video?:boolean}|null>(null);
   useEffect(()=>{
     // Initial prefetch
-    const doFetch=()=>{supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}}).then(({data})=>{if(data?.token&&data?.url)prefetch.current={token:data.token,url:data.url,fetchedAt:Date.now(),mute_on_entry:data.mute_on_entry,chat_enabled:data.chat_enabled,hand_raise_enabled:data.hand_raise_enabled,allow_video:data.allow_video};}).catch(()=>{});};
+    // prefetch:true tells livekit-token this is only a background warm-up, so a blocked
+    // student sitting on the lobby doesn't file a "wants to rejoin" request until they press Join.
+    const doFetch=()=>{supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join",prefetch:true}}).then(({data})=>{if(data?.token&&data?.url)prefetch.current={token:data.token,url:data.url,fetchedAt:Date.now(),mute_on_entry:data.mute_on_entry,chat_enabled:data.chat_enabled,hand_raise_enabled:data.hand_raise_enabled,allow_video:data.allow_video};}).catch(()=>{});};
     doFetch();
     // Feature 8: Re-fetch every 2.5 min so lobby users never have a stale token
     const iv=setInterval(()=>{if(phase==="lobby")doFetch();},2.5*60_000);
@@ -1049,6 +1051,27 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     // No finally{setReconnecting(false)} — success path is cleared by onReconnected
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[subject.id,isPrivileged]); // stable — refs handle mutable values
+
+  /* ══ REMOVED BY THE HOST ══
+     Fired by ReconnectMonitor when LiveKit reports PARTICIPANT_REMOVED (the host
+     used "Remove from call" / "Remove & block"). That is a deliberate removal, not
+     a network drop, so we must NOT run autoReconnect (it would fetch a new token
+     and put the student straight back in, leaving them on "Disconnected —
+     reconnecting…"). Instead: end the live call and return the student to the
+     lobby — the screen they saw before joining. From there, a plain removal lets
+     them press Join again; a block sends them to the "waiting for the host"
+     screen (livekit-token), and the host gets an Admit / Deny prompt. */
+  const handleRemovedByHost=useCallback(()=>{
+    isReconnectingRef.current=false;
+    autoReconnectCountRef.current=0;
+    prefetch.current=null;       // never reuse a token minted before the removal
+    setReconnecting(false);
+    setHasConnected(false);
+    setToken(null);
+    setPhase("lobby");
+    toast({title:"You were removed from the class by the host",variant:"destructive"});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
 
   useEffect(()=>()=>{
     if(attendanceId){const d=attPriorDurationRef.current+Math.floor((Date.now()-joinedAt)/1000);supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId);}
@@ -1628,6 +1651,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               setReconnecting(false);
             }}
             onDisconnected={autoReconnect}
+            onRemoved={handleRemovedByHost}
           />
           {/* Feature 2: audio-only bridge — applies camera/bitrate changes from outside LiveKitRoom */}
           <AudioOnlyBridge active={audioOnlyActive}/>

@@ -13,7 +13,7 @@ import {
 } from "@livekit/components-react";
 // @ts-ignore
 import "@livekit/components-styles";
-import { Track, RoomEvent, ConnectionState, ConnectionQuality, RemoteTrackPublication, RemoteParticipant } from "livekit-client";
+import { Track, RoomEvent, ConnectionState, ConnectionQuality, RemoteTrackPublication, RemoteParticipant, DisconnectReason } from "livekit-client";
 import { canNativeScreenShare, startNativeScreenShare, stopNativeScreenShare, onNativeScreenShareStopped, isScreenBot } from "@/lib/nativeScreenShare";
 import { createPortal } from "react-dom";
 import { RotateCw as RotateCwIcon, ZoomIn as ZoomInIcon } from "lucide-react";
@@ -672,13 +672,18 @@ export function useScreenWakeLock(active: boolean) {
 // deliberate user action.
 export const cameraAutoDisabledByNetwork = { current: false };
 
-export const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
+export const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected, onRemoved }: {
   onReconnecting: () => void;
   onReconnected:  () => void;
   onDisconnected: () => void;
+  // Called instead of any reconnect attempt when the HOST removed this
+  // participant (LiveKit reason PARTICIPANT_REMOVED). A removal is deliberate,
+  // not a network drop — retrying would just put the student straight back in.
+  onRemoved?: () => void;
 }) => {
   const room = useRoomContext();
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const removedRef = useRef(false);
 
   useEffect(() => {
     const clearDebounce = () => {
@@ -691,7 +696,17 @@ export const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected
     // should start as soon as we know it's needed, not only once someone is
     // looking at the screen. autoReconnect's own backoff (and its separate,
     // more patient budget while backgrounded) takes it from here.
-    const handleDisconnect = () => {
+    const handleDisconnect = (reason?: DisconnectReason) => {
+      // FIX ("Remove from call just shows 'Disconnected — reconnecting…'"):
+      // a host removal arrives as a normal Disconnected event, so it used to
+      // fall into the network-drop path below and the app tried to reconnect.
+      // Hand it to onRemoved instead so the student is taken out of the call.
+      if (reason === DisconnectReason.PARTICIPANT_REMOVED && onRemoved) {
+        removedRef.current = true;
+        clearDebounce();
+        onRemoved();
+        return;
+      }
       clearDebounce();
       debounceTimer.current = setTimeout(() => {
         debounceTimer.current = null;
@@ -705,6 +720,7 @@ export const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected
 
     const onVis = () => {
       if (document.visibilityState !== "visible") return;
+      if (removedRef.current) return; // removed by the host — never reconnect on tab focus
       // Tab coming back to foreground.
       if (room.state === ConnectionState.Disconnected) {
         clearDebounce();
@@ -727,7 +743,7 @@ export const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected
       room.off(RoomEvent.Disconnected, handleDisconnect);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [room, onReconnecting, onReconnected, onDisconnected]);
+  }, [room, onReconnecting, onReconnected, onDisconnected, onRemoved]);
   return null;
 };
 
