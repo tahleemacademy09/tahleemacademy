@@ -318,6 +318,12 @@ export default function RecitationChecker() {
                 <div><div className="text-[10px] text-gray-500" dir={dir}>{t("Expected", "المطلوب")}</div><div style={{ fontSize: 20 }}>{selected.expected ?? "—"}</div></div>
                 <div><div className="text-[10px] text-gray-500" dir={dir}>{t("Heard", "المسموع")}</div><div style={{ fontSize: 20 }}>{selected.heard ?? "—"}</div></div>
               </div>
+              {selected.note === "muqattaat" && (
+                <div className="mt-1 text-[11px] text-amber-800">
+                  {t("Opening letters (الٓمٓ …) — the transcriber often can't write these. Listen again to confirm.",
+                     "الحروف المقطّعة — كثيرًا ما لا يكتبها المفرِّغ. استمع مرة أخرى للتأكد.")}
+                </div>
+              )}
               {selected.start !== null && (
                 <div className="mt-1 text-[11px] text-gray-500">{t("At", "عند")} {selected.start.toFixed(1)}s</div>
               )}
