@@ -65,7 +65,7 @@ export const usePaymentAccess = (): PaymentAccessResult => {
     try {
       const { data } = await supabase
         .from("profiles")
-        .select("payment_status, subscription_end_date, is_payment_exempt, created_at")
+        .select("payment_status, subscription_end_date, is_payment_exempt, created_at, payment_grace_end")
         .eq("user_id", userId)
         .maybeSingle();
 
@@ -97,7 +97,18 @@ export const usePaymentAccess = (): PaymentAccessResult => {
           setIsLoading(false);
           return;
         }
-        // Expired → locked immediately (no automatic grace window)
+        // Expired → locked immediately (no automatic grace window), UNLESS an
+        // admin granted an explicit grace (payment_status = 'grace' with a
+        // future payment_grace_end). Grace runs through the end of that day.
+        if (p.payment_status === "grace" && p.payment_grace_end) {
+          const graceUntil = new Date(`${p.payment_grace_end}T23:59:59`);
+          if (graceUntil > now) {
+            setGraceEnd(graceUntil.toISOString());
+            setStatus("grace");
+            setIsLoading(false);
+            return;
+          }
+        }
         setStatus("locked");
         setIsLoading(false);
         return;
