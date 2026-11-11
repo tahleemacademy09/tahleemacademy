@@ -20,6 +20,9 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { playbackGainFor, decodeForPlayback, freshPlaybackContext, preferSpeaker } from "@/lib/audioEnhance";
 import { tarteelEngine, ChunkTranscriber, type TarteelProgress } from "@/lib/tarteelOnDevice";
+// Admin-controlled model switches + Whisper-large-v3-turbo (Cloudflare) — runs FIRST when switched on; the on-device engines are the fallback.
+import { useAsrSettings, asrEnabled, whisperCloudAvailable, refreshAsrSettings } from "@/lib/asrSettings";
+import { whisperTranscribe } from "@/lib/whisperCloud";
 import { logRecitationMisses } from "@/lib/recitationMissLog";
 import { stripWaqf, normalizeArabic, wordsMatch, compareWords, analyzeRecitation, scoreOf, encodeGrades, scoreAgainstAyahs, type WordResult, type AyahScoring } from "@/lib/recitationCompare";
 import { saveHifdhRecording, resolveHifdhSessionAudio } from "@/lib/hifdhAudio";
@@ -1868,7 +1871,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [tarteelState, setTarteelState] = useState<TarteelProgress>(tarteelEngine.state);
   useEffect(() => tarteelEngine.subscribe(setTarteelState), []);
   // CTC-only test mode: the CTC model is loaded (and shown in the status line) INSTEAD of Tarteel.
-  const ctcOn = ctcEnabled();
+  useAsrSettings();   // loads the admin's model switches and re-renders when they change
+  // Cloud Whisper first: the page then behaves like the plain (non-CTC) flow — nothing heavy is downloaded or run on the phone
+  // unless Whisper fails, in which case the on-device engines below take over.
+  const ctcOn = ctcEnabled() && !whisperCloudAvailable();
   const [ctcEng, setCtcEng] = useState<CtcStatusState>(ctcEngine.state);
   useEffect(() => ctcEngine.subscribe(setCtcEng), []);
   const [ctcRes, setCtcRes] = useState<CtcCheckResult | null>(null);
@@ -1918,10 +1924,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // localStorage hifdh_live_show = "all" keeps the whole page visible instead.
   const liveVisible = ctcOn && ctcEng.status === "ready" && ctcEngine.useNative;
   const liveCover = (() => { try { return localStorage.getItem("hifdh_live_show") !== "all"; } catch { return true; } })();
-  const checkerState: TarteelProgress = ctcOn ? (ctcEng as TarteelProgress) : tarteelState;
+  const checkerState: TarteelProgress = whisperCloudAvailable() ? { status: "ready" } : ctcOn ? (ctcEng as TarteelProgress) : tarteelState;
   useEffect(() => {
     if (phase !== "reading") return;
+    if (whisperCloudAvailable()) return;   // cloud Whisper is first — the on-device models load only if it fails
     if (ctcOn) { ctcEngine.load().catch(() => { /* status is shown under the Start button */ }); return; }
+    if (!asrEnabled("tarteel")) return;    // switched off by the admin
     tarteelEngine.load(true).catch(() => { /* status is shown under the Start button */ });
   }, [phase]);
 
@@ -1930,8 +1938,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   useEffect(() => {
     if (phase === "pre_test_review" || phase === "proctor_intro" || phase === "testing") {
       // Same checker as the recitation phase: the CTC model on the app / ?ctc=1, otherwise Tarteel.
-      if (ctcEnabled()) ctcEngine.load().catch(() => { /* retried when the first recorded answer is scored */ });
-      else tarteelEngine.load(true).catch(() => { /* retried when the first recorded answer is scored */ });
+      if (whisperCloudAvailable()) { /* cloud Whisper first — on-device models load only if it fails */ }
+      else if (ctcEnabled()) ctcEngine.load().catch(() => { /* retried when the first recorded answer is scored */ });
+      else if (asrEnabled("tarteel")) tarteelEngine.load(true).catch(() => { /* retried when the first recorded answer is scored */ });
     }
   }, [phase]);
   // Tafseer text for today's pages (used for the tafseer questions).
@@ -2395,12 +2404,14 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       // Transcribe in the background AS the student recites (nothing is shown until Finished), so only
       // the last few seconds are left to process at Stop.
       try { bgRef.current?.cancel(); } catch { /* noop */ }
-      if (ctcEnabled() && tarteelScoreMode() && tarteelAssistAllowed()) tarteelEngine.load(true).then(() => tarteelEngine.warmup()).catch(() => { /* scoring falls back to CTC only */ });   // preload + warm up while the student recites
-      if (!ctcEnabled() || (tarteelAssistAllowed() && !tarteelScoreMode())) try { const bg = new ChunkTranscriber(stream, mime, 8000, 4000, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(!!info); bgRef.current = bg; } catch { bgRef.current = null; }
+      void refreshAsrSettings();   // pick up an admin switch change made since the page was opened (applies from the next recording)
+      const cloudFirst = whisperCloudAvailable();   // cloud Whisper transcribes the whole recording on Stop — no on-device work while reciting
+      if (!cloudFirst && ctcEnabled() && tarteelScoreMode() && tarteelAssistAllowed()) tarteelEngine.load(true).then(() => tarteelEngine.warmup()).catch(() => { /* scoring falls back to CTC only */ });   // preload + warm up while the student recites
+      if (!cloudFirst && asrEnabled("tarteel") && (!ctcEnabled() || (tarteelAssistAllowed() && !tarteelScoreMode()))) try { const bg = new ChunkTranscriber(stream, mime, 8000, 4000, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(!!info); bgRef.current = bg; } catch { bgRef.current = null; }
       // Silent background processing: tap the same mic stream and let the worker check the audio WHILE the student
       // recites, so the result is ready within seconds of Stop. Nothing is shown on screen. Never blocks or breaks
       // recording — if anything here fails, the full check on Stop still runs.
-      if (ctcEnabled()) {
+      if (!cloudFirst && ctcEnabled()) {
         try {
           const bgWords = refTokens(pageAyahsRef.current.map((a: any) => a.text).join(" "));
           if (!carry) { setLiveMiss(0); setLiveShown(0); setLiveNote(null); }
@@ -2433,9 +2444,35 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // Tarteel on-device transcription of one audio blob. Returns "__NO_API__" if the model could not
   // load/run (unsupported browser, download failed, audio could not be decoded) — callers show a
   // soft "couldn't score this" message instead of a silent 0%.
-  const transcribeAudio = async (blob: Blob): Promise<string> => {
+  // Whisper-large-v3-turbo on Cloudflare — the FIRST engine when the admin has it switched on. Returns the transcript
+  // (may legitimately be "" for silence) or null when it is off / failed, so the caller falls back to the on-device engines.
+  const whisperTry = async (blob: Blob): Promise<string | null> => {
+    if (!whisperCloudAvailable()) return null;
+    const w = await whisperTranscribe(blob);
+    if (w.error) {
+      lastTranscribeErrorRef.current = `whisper_${w.error}`;
+      console.warn("[HifdhDaily] cloud Whisper failed, using the on-device engines:", w.error);
+      return null;
+    }
+    lastTranscribeErrorRef.current = "";
+    transcribeMsRef.current = null;   // "transcribe time" = the real wait after Stop
+    console.info(`[HifdhDaily] Whisper-large-v3-turbo transcript (${w.ms} ms):`, w.text);
+    return w.text;
+  };
+
+  // `cloudTried` = the caller already asked cloud Whisper (and it failed), so don't ask it a second time.
+  const transcribeAudio = async (blob: Blob, cloudTried = false): Promise<string> => {
+    const priorErr = lastTranscribeErrorRef.current;
     lastTranscribeErrorRef.current = "";
     transcribeMsRef.current = null;
+    if (!cloudTried) {
+      const cloud = await whisperTry(blob);
+      if (cloud !== null) return cloud;
+    } else lastTranscribeErrorRef.current = priorErr;   // keep the Whisper failure reason for the log
+    if (!asrEnabled("tarteel")) {   // switched off by the admin and nothing else answered
+      if (!lastTranscribeErrorRef.current) lastTranscribeErrorRef.current = "tarteel_disabled";
+      return "__NO_API__";
+    }
     const res = await tarteelEngine.transcribeBlob(blob);
     if (res.error) {
       lastTranscribeErrorRef.current = `tarteel_${res.error}`;
@@ -2510,6 +2547,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // Tarteel is skipped on low-memory phones or with localStorage ctc_assist = "0"; if it fails, CTC alone is used.
   const tarteelAssistAllowed = (): boolean => {
     try {
+      if (!asrEnabled("tarteel")) return false;   // switched off by the admin
       if (localStorage.getItem("ctc_assist") === "0") return false;
       const mem = (navigator as any).deviceMemory;
       return !(typeof mem === "number" && mem <= 3);
@@ -2540,6 +2578,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
   const bgRef = useRef<ChunkTranscriber | null>(null);
   const finalizeTranscript = async (fullBlob: Blob): Promise<string> => {
+    // Cloud Whisper first. Any failure (offline, worker error, switched off) falls through to the original engines below.
+    const cloud = await whisperTry(fullBlob);
+    if (cloud !== null) { try { bgRef.current?.cancel(); } catch { /* noop */ } bgRef.current = null; return cloud; }
     if (ctcEnabled()) return ctcGrade(fullBlob);
     const bg = bgRef.current;
     bgRef.current = null;
@@ -2547,7 +2588,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     // score the whole joined recording instead (unless it is too long to decode in one piece on a phone).
     if (bg && forceWholeRef.current && fullBlob.size <= 30 * 1048576) {
       try { bg.cancel(); } catch { /* noop */ }
-      return transcribeAudio(fullBlob);
+      return transcribeAudio(fullBlob, true);
     }
     if (bg) {
       try {
@@ -2567,7 +2608,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         console.warn(`[HifdhDaily] live transcript not used → whole-recording fallback (ok=${r.ok}, looped=${looped}, empty=${!r.text.trim()}, bytes=${fullBlob.size})`);
       } catch (e) { console.warn("[HifdhDaily] background transcription failed, falling back:", e); }
     }
-    return transcribeAudio(fullBlob);
+    return transcribeAudio(fullBlob, true);
   };
 
   const lastResultRef = useRef<{ tx: string; ayahCorrectness: boolean[] } | null>(null);
@@ -2592,10 +2633,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // Re-run scoring from the saved recording (page reloaded while "analysing").
   const reanalyse = async (blob: Blob) => {
     stopTsRef.current = performance.now();
-    if (!ctcEnabled()) { try { await tarteelEngine.load(true); } catch { /* transcribeAudio reports it */ } }
+    const cloud = await whisperTry(blob);   // cloud Whisper first; null → the original engines below
+    if (cloud === null && !ctcEnabled() && asrEnabled("tarteel")) { try { await tarteelEngine.load(true); } catch { /* transcribeAudio reports it */ } }
     const ayahs = pageAyahsRef.current;
-    const savedChunks = ctcEnabled() ? null : ChunkTranscriber.saved(`hifdh_chunks_${userId}_${todayISO()}`);
-    const tx = ctcEnabled() ? await ctcGrade(blob) : savedChunks?.complete && savedChunks.text.trim() ? (transcribeMsRef.current = null, savedChunks.text.trim()) : await transcribeAudio(blob);
+    const savedChunks = cloud !== null || ctcEnabled() ? null : ChunkTranscriber.saved(`hifdh_chunks_${userId}_${todayISO()}`);
+    const tx = cloud !== null ? cloud : ctcEnabled() ? await ctcGrade(blob) : savedChunks?.complete && savedChunks.text.trim() ? (transcribeMsRef.current = null, savedChunks.text.trim()) : await transcribeAudio(blob, true);
     if (tx === "__NO_API__") { softFailTranscript(); return; }
     const sc   = alignAyahs(tx, ayahs).score;   // same alignment as the grid + red words + ayah colours
     const errs = getErrorWords(tx, ayahs);
@@ -2881,7 +2923,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         const TIMEOUT_MSG = "Checking took too long. Tap record to try again, or skip this one.";
         let raw = "";
         let sc: number | null = null;
-        if (ctcEnabled()) {
+        if (ctcEnabled() && !whisperCloudAvailable()) {
           // CTC model: every word of the expected verse is checked against the recording.
           const refWords = refTokens(q.correctText || "");
           if (!refWords.length) { fail("Couldn't check this question. Skip to continue."); return; }
