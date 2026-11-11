@@ -6,6 +6,7 @@
 import { ctcStatus, type CtcWordScore } from "@/lib/ctcAlign";
 import { prepareForAsr } from "@/lib/audioEnhance";
 import { NativeLiveChecker, loadNativeCtc, nativeCheck, nativeCtcAvailable, prepareVocab } from "@/lib/ctcNative";
+import { asrEnabled } from "@/lib/asrSettings";
 
 export { ctcStatus };
 export type { CtcWordScore };
@@ -34,6 +35,7 @@ export interface CtcCheckProgress { stage: "decoding" | "finishing" | "listening
 export type CtcStatusState = { status: "idle" | "loading" | "ready" | "error"; loadedMB?: number; totalMB?: number; error?: string };
 
 export function ctcEnabled(): boolean {
+  if (!asrEnabled("ctc")) return false;   // admin switch (Admin Settings → Hifdh → Quran transcription models)
   try {
     const q = new URLSearchParams(window.location.search).get("ctc");
     if (q === "1" || q === "0") localStorage.setItem("ctc_shadow", q);
