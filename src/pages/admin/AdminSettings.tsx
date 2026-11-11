@@ -21,6 +21,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "@/integrations/supabase/storageClient";
 import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { useHifdhSettings } from "@/hooks/useHifdhSettings";
+import { useAsrSettings, saveAsrSetting, type AsrModel } from "@/lib/asrSettings";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -124,6 +125,13 @@ export default function AdminSettings() {
   const [notifyStudents, setNotifyStudents] = useState(true);
   const [prevAcademyStatus, setPrevAcademyStatus] = useState<string | null>(null);
   const { settings: hifdhSettings, loading: hifdhLoading, save: saveHifdh } = useHifdhSettings();
+  // Quran transcription models used on the Hifdh daily revision page — each switch saves immediately.
+  const asr = useAsrSettings();
+  const toggleAsr = async (model: AsrModel, on: boolean) => {
+    const { error } = await saveAsrSetting(model, on, user?.id);
+    if (error) toast({ title: "Couldn't save the model switch", description: error, variant: "destructive" });
+    else toast({ title: on ? "✅ Model switched on" : "Model switched off" });
+  };
 
   const [searchParams]             = useSearchParams();
   const [tab,             setTab]             = useState(() => searchParams.get("tab") || "profile");
@@ -927,6 +935,33 @@ export default function AdminSettings() {
 
         {/* ════════ HIFDH TAB ════════ */}
         {tab === "hifdh" && <>
+          <Sec title="Hifdh Daily — Quran Transcription Models">
+            <p style={{ fontSize: 11, color: "#9CA3AF", margin: "0 0 6px", lineHeight: 1.6 }}>
+              Switch each model on or off. Each switch saves straight away and reaches students the next time they open or return to the page.
+              Order used: Whisper first; if it is off or fails, the on-device models take over.
+            </p>
+            <Tog
+              label="☁️ Whisper-large-v3-turbo (cloud)"
+              sub={asr.whisperConfigured
+                ? "Cloudflare Workers AI · runs first · no recording-length limit · daily free quota applies"
+                : "Not configured in this build — set VITE_RECITATION_CHECK_URL and rebuild"}
+              checked={asr.whisper_cf}
+              onChange={(v) => toggleAsr("whisper_cf", v)}
+            />
+            <Tog
+              label="📱 Tarteel Whisper-base (on the student's device)"
+              sub="About 100 MB first download · no server cost · fallback when Whisper is off or fails"
+              checked={asr.tarteel}
+              onChange={(v) => toggleAsr("tarteel", v)}
+            />
+            <Tog
+              label="⚡ CTC skipped-word check (on the student's device)"
+              sub="Android app by default (web with ?ctc=1) · about 132 MB first download"
+              checked={asr.ctc}
+              onChange={(v) => toggleAsr("ctc", v)}
+            />
+          </Sec>
+
           <Sec title="Hifdh Daily — General Settings">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 0", borderBottom: "1px solid #F3F4F6" }}>
               <div style={{ flex: 1 }}>
