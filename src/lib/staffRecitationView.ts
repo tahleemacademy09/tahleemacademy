@@ -20,6 +20,8 @@ export interface StaffPage {
   grades?: string;
   extras?: string[];
   grouped_recording?: boolean;
+  /** what the model heard for each page word (saved by the student screen when the CTC model ran) */
+  heard_words?: string[];
 }
 
 export interface PageGrid {
@@ -31,6 +33,8 @@ export interface PageGrid {
   ayahEnds: { index: number; label: number }[];
   /** false when there is nothing to grade against (no transcript saved) */
   graded: boolean;
+  /** what the model heard under each word — only when it was saved and lines up with `words` */
+  heardWords?: string[];
 }
 
 const cache = new WeakMap<object, PageGrid[]>();
@@ -76,7 +80,8 @@ export function buildPageGrids(pages: StaffPage[]): PageGrid[] {
     const ayahEnds = ayahEndsOf(ayahs);
 
     const saved = decodeGrades(refWords, p.grades);
-    if (saved) return { words: saved, extras: p.extras || (grouped && i === 0 ? groupedExtras : []), transcript: tx, ayahEnds, graded: true };
+    const heardOk = (n: number) => (p.heard_words && p.heard_words.length === n ? p.heard_words : undefined);
+    if (saved) return { words: saved, extras: p.extras || (grouped && i === 0 ? groupedExtras : []), transcript: tx, ayahEnds, graded: true, heardWords: heardOk(saved.length) };
 
     if (groupedWords) {
       return { words: groupedWords[i], extras: i === 0 ? groupedExtras : [], transcript: tx, ayahEnds, graded: true };

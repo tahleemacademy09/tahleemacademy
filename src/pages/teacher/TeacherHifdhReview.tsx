@@ -414,7 +414,7 @@ export default function TeacherHifdhReview() {
                       Word-by-Word Analysis — exactly as the student sees it
                     </p>
                     <RecitationResultGrid words={grid.words} extras={grid.extras} heardText={grid.transcript}
-                      ayahEnds={grid.ayahEnds} engineDiagnostics={false}/>
+                      ayahEnds={grid.ayahEnds} heardWords={grid.heardWords} engineDiagnostics={false}/>
                   </div>
                 );
                 if(pr.transcript) return(

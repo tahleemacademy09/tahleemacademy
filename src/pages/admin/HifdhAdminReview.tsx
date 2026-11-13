@@ -28,7 +28,7 @@ type FilterStatus = "all" | "pending" | "reviewed";
 interface AyahSnap { text:string; numberInSurah:number; surahName?:string; }
 interface PageResult {
   pageNum:number; score:number; errorWords:string[];
-  ayahCorrectness?:boolean[]; transcript?:string; ayahs?:AyahSnap[];
+  ayahCorrectness?:boolean[]; transcript?:string; ayahs?:AyahSnap[]; heard_words?:string[];
 }
 interface SessionData {
   recitation_score?:number; test_score?:number; pages_done?:number[];
@@ -269,7 +269,7 @@ function SessionDetail({log,ov,saving,onOvChange,onSave,onClose}:{
                       Word-by-Word Analysis — exactly as the student sees it
                     </p>
                     <RecitationResultGrid words={grid.words} extras={grid.extras} heardText={grid.transcript}
-                      ayahEnds={grid.ayahEnds} engineDiagnostics={false}/>
+                      ayahEnds={grid.ayahEnds} heardWords={grid.heardWords} engineDiagnostics={false}/>
                   </div>
                 );
                 if(pr.transcript) return(

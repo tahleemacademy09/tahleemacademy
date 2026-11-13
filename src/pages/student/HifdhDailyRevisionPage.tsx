@@ -196,6 +196,8 @@ interface PageResult {
   ayahCorrectness?: boolean[]; transcript?: string;
   /** snapshot of the green/yellow/red grading (encodeGrades) + extra words heard — read by the admin / teacher review */
   grades?: string; extras?: string[]; grouped_recording?: boolean;
+  /** what the CTC model heard for each page word (same order as the grid) — shown under each word on the admin / teacher review */
+  heard_words?: string[];
 }
 interface Question {
   id: number;
@@ -2050,14 +2052,19 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     const groups = pageGroupsRef.current;
     const all = alignAyahs(tx, groups.flat());   // ONE grading of the whole recording, sliced per page
     let off = 0;
+    let wAt = 0;
+    const heardAll = ctcResRef.current?.heard;
+    const totalWords = all.perAyah.reduce((n, a) => n + a.words.length, 0);
     return todayPages.map((pn, i) => {
       const ay = groups[i] ?? [];
       const c = corr.slice(off, off + ay.length);
       const pageWords = all.perAyah.slice(off, off + ay.length).flatMap(a => a.words);
       off += ay.length;
+      const heard_words = heardAll && heardAll.length === totalWords ? heardAll.slice(wAt, wAt + pageWords.length) : undefined;
+      wAt += pageWords.length;
       return { pageNum: pn, score: sc, errorWords: getErrorWords(tx, ay), ayahs: ay,
                ayahCorrectness: c, transcript: i === 0 ? tx : "",
-               grades: encodeGrades(pageWords), extras: i === 0 ? all.extras : [], grouped_recording: true };
+               grades: encodeGrades(pageWords), extras: i === 0 ? all.extras : [], grouped_recording: true, heard_words };
     });
   };
 
@@ -2119,6 +2126,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                   grades: r.grades, extras: r.extras,
                   ayahCorrectness: r.ayahCorrectness, errorWords: r.errorWords,
                   grouped_recording: true,
+                  ...(r.heard_words ? { heard_words: r.heard_words } : {}),
                 }))
               : [
               ...pageResults,
@@ -2129,6 +2137,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 word_results:    wordRes.map(w => ({ word: w.word, status: w.status })),
                 ayahs:           snapAyahs(pageAyahsRef.current),
                 grades:          encodeGrades(wordRes),   // green / yellow / red, read back by the admin + teacher screens
+                ...(ctcResRef.current?.heard && ctcResRef.current.heard.length === wordRes.length ? { heard_words: ctcResRef.current.heard } : {}),
                 extras:          analysisAll.extras,
                 ayahCorrectness: last?.ayahCorrectness ?? [],
                 errorWords,
@@ -3153,6 +3162,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       ayahCorrectness: last.ayahCorrectness,
       transcript: last.tx,
       grades: encodeGrades(an.words), extras: an.extras,
+      heard_words: ctcResRef.current?.heard && ctcResRef.current.heard.length === an.words.length ? ctcResRef.current.heard : undefined,
     };
     const newResults=[...pageResults,r];
     setPageResults(newResults); setRetryCount(0); setScore(null);
@@ -3297,6 +3307,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             ayahCorrectness: r.ayahCorrectness,
             transcript: r.transcript,
             grades: r.grades, extras: r.extras, grouped_recording: r.grouped_recording,
+            ...(r.heard_words ? { heard_words: r.heard_words } : {}),
             ayahs: r.ayahs.map(a=>({
               text:a.text, numberInSurah:a.numberInSurah,
               surahName:a.surah?.englishName, surahNum:a.surah?.number,
