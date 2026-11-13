@@ -16,6 +16,7 @@ import { whisperTranscribe } from "@/lib/whisperCloud";
 import { tarteelEngine, type TarteelProgress } from "@/lib/tarteelOnDevice";
 import { ctcEngine, type CtcStatusState, type CtcCheckProgress } from "@/lib/ctcEngine";
 import { gradeFromCtc } from "@/lib/ctcGrading";
+import type { CtcWordScore } from "@/lib/ctcAlign";
 import { analyzeRecitation, refTokens, scoreOf, type WordResult, type Grade } from "@/lib/recitationCompare";
 import { getPageText } from "@/lib/quranTextApi";
 import { resolveStaffAudioUrl } from "@/lib/hifdhAudio";
@@ -130,6 +131,11 @@ export default function HifdhModelTest() {
   const [resumeIds, setResumeIds] = useState<AsrModel[] | null>(null);
   const [restored, setRestored] = useState<string | null>(null);
   const startedAt = useRef<Record<string, number>>({});
+  /* CTC strictness: the last raw CTC scores are kept so the cut-offs can be moved and the grid re-graded instantly */
+  const [ctcRaw, setCtcRaw] = useState<{ words: CtcWordScore[]; heard?: string[]; ref: string[] } | null>(null);
+  const [thr, setThr] = useState({ ok: -1, bad: -3 });
+  const thrRef = useRef(thr);
+  thrRef.current = thr;
   const [, setTick] = useState(0);
   /* student recordings */
   const [sessions, setSessions] = useState<SessionOpt[]>([]);
@@ -277,7 +283,8 @@ export default function HifdhModelTest() {
       } else {
         if (!refWordsArr.length) { patch(id, { status: "skipped", note: "CTC checks each reference word, so it needs a reference — load a Quran page or paste the text." }); return; }
         const r = await ctcEngine.check(input, refWordsArr, { basmalah: "auto" });
-        const words = gradeFromCtc(refWordsArr, r.words, r.heard);
+        setCtcRaw({ words: r.words, heard: r.heard, ref: refWordsArr });
+        const words = gradeFromCtc(refWordsArr, r.words, r.heard, thrRef.current.ok, thrRef.current.bad);
         patch(id, { status: "done", text: r.greedy || "", ms: r.ms ?? Math.round(performance.now() - t0), words, score: scoreOf(words),
           note: r.partial ? `Audio shorter than the text — only the first ${r.covered} words were graded.` : undefined });
       }
@@ -308,6 +315,13 @@ export default function HifdhModelTest() {
     await Promise.all([cloud, local]);
     setRunning(false);
   };
+
+  // moving the CTC cut-offs re-grades the last CTC result on the spot
+  useEffect(() => {
+    if (!ctcRaw) return;
+    const words = gradeFromCtc(ctcRaw.ref, ctcRaw.words, ctcRaw.heard, thr.ok, thr.bad);
+    setRuns((r) => (r.ctc.status === "done" ? { ...r, ctc: { ...r.ctc, words, score: scoreOf(words) } } : r));
+  }, [thr, ctcRaw]);
 
   // resume after a refresh
   useEffect(() => {
@@ -464,7 +478,24 @@ export default function HifdhModelTest() {
                   style={{ width: 64, padding: "6px 8px", borderRadius: 8, border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none" }} />
                 <span style={{ fontSize: 11.5, color: "#6B7280" }}>minutes (faster — leave empty for the whole recording)</span>
               </div>
-              <button onClick={async () => { await clearTestState(); if (audioUrl) URL.revokeObjectURL(audioUrl); setBlob(null); setAudioUrl(null); setAudioName(""); setRuns(emptyRuns()); setRefText(""); setPageInput(""); setLimitMin(0); setRestored(null); }}
+              {ctcRaw && (
+                <div style={{ marginTop: 10, padding: 10, borderRadius: 10, background: "#fff", border: "1px solid #E5E7EB" }}>
+                  <p style={{ margin: "0 0 6px", fontSize: 11.5, fontWeight: 700, color: "#374151" }}>CTC strictness (this test only)</p>
+                  <label style={{ display: "block", fontSize: 11, color: "#6B7280" }}>Green from {thr.ok.toFixed(1)} and above
+                    <input type="range" min={-4} max={0} step={0.1} value={thr.ok}
+                      onChange={(e) => { const v = Number(e.target.value); setThr((t) => ({ ok: v, bad: Math.min(t.bad, v - 0.1) })); }}
+                      style={{ width: "100%" }} />
+                  </label>
+                  <label style={{ display: "block", fontSize: 11, color: "#6B7280", marginTop: 4 }}>Red below {thr.bad.toFixed(1)}
+                    <input type="range" min={-10} max={-1} step={0.1} value={thr.bad}
+                      onChange={(e) => { const v = Number(e.target.value); setThr((t) => ({ ok: Math.max(t.ok, v + 0.1), bad: v })); }}
+                      style={{ width: "100%" }} />
+                  </label>
+                  <p style={{ margin: "4px 0 0", fontSize: 10.5, color: "#9CA3AF" }}>Yellow sits between the two. Lower values are more forgiving. The app uses green ≥ -1.0 and red < -3.0. Lost on refresh: run CTC again.</p>
+                  <button onClick={() => setThr({ ok: -1, bad: -3 })} style={{ ...btn(false), marginTop: 6, padding: "5px 10px", fontSize: 10.5 }}>Reset to app values</button>
+                </div>
+              )}
+              <button onClick={async () => { await clearTestState(); if (audioUrl) URL.revokeObjectURL(audioUrl); setBlob(null); setAudioUrl(null); setAudioName(""); setRuns(emptyRuns()); setCtcRaw(null); setRefText(""); setPageInput(""); setLimitMin(0); setRestored(null); }}
                 style={{ ...btn(false), marginTop: 8, padding: "7px 12px", fontSize: 11, color: FAIL, borderColor: "#FECACA" }}>Clear saved test</button>
             </div>
           )}
