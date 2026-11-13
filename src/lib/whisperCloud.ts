@@ -63,14 +63,15 @@ async function postChunk(wav: Blob, token: string): Promise<{ text: string } | {
   }
 }
 
-export async function whisperTranscribe(blob: Blob): Promise<WhisperResult> {
+/** Transcribe 16 kHz mono PCM that is already decoded (used for the live pieces cut while the student recites). */
+export async function whisperTranscribePcm(pcm: Float32Array): Promise<WhisperResult> {
   const t0 = performance.now();
   const ms = () => Math.round(performance.now() - t0);
   if (!WHISPER_ENDPOINT) return { text: "", ms: 0, error: "not_configured" };
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return { text: "", ms: ms(), error: "auth" };
-    const chunks = chunkPcm(await decodeToPcm16k(blob));
+    const chunks = chunkPcm(pcm);
     const texts: string[] = new Array(chunks.length).fill("");
     let next = 0;
     let failure = "";
@@ -88,5 +89,16 @@ export async function whisperTranscribe(blob: Blob): Promise<WhisperResult> {
     return { text: texts.filter(Boolean).join(" ").trim(), ms: ms() };
   } catch (e: any) {
     return { text: "", ms: ms(), error: String(e?.message ?? e).slice(0, 80) };
+  }
+}
+
+export async function whisperTranscribe(blob: Blob): Promise<WhisperResult> {
+  const t0 = performance.now();
+  if (!WHISPER_ENDPOINT) return { text: "", ms: 0, error: "not_configured" };
+  try {
+    const r = await whisperTranscribePcm(await decodeToPcm16k(blob));
+    return { ...r, ms: Math.round(performance.now() - t0) };
+  } catch (e: any) {
+    return { text: "", ms: Math.round(performance.now() - t0), error: String(e?.message ?? e).slice(0, 80) };
   }
 }
