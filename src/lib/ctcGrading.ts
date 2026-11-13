@@ -38,9 +38,9 @@ function heardMatches(word: string, heard: string | undefined, nextWord?: string
  * a low confidence number alone (fast or soft recitation, a different spelling) is not a mistake.
  * Yellow stays for words where the model wrote something different.
  */
-export function gradeFromCtc(refWords: string[], scores: CtcWordScore[], heard?: string[]): WordResult[] {
+export function gradeFromCtc(refWords: string[], scores: CtcWordScore[], heard?: string[], okAt = -1, badAt = -3): WordResult[] {
   return refWords.map((word, i) => {
-    const st = ctcStatus(scores[i]?.mean ?? null);
+    const st = ctcStatus(scores[i]?.mean ?? null, okAt, badAt);
     // the model wrote exactly this word's letters in this word's time span → it was said, whatever the confidence number says
     const said = (st === "unsure" || st === "bad") && heardMatches(word, heard?.[i], refWords[i + 1]);
     if (!said && st === "unsure") return { word, status: "missing" as const, grade: "close" as const, credit: 0.5 };
