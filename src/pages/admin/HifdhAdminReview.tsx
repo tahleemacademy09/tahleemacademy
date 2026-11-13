@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { resolveStaffAudioUrl } from "@/lib/hifdhAudio";
+import { downloadAudio } from "@/lib/downloadAudio";
 import RecitationResultGrid from "@/components/hifdh/RecitationResultGrid";
 import { buildPageGrids } from "@/lib/staffRecitationView";
 
@@ -67,7 +68,7 @@ function ScoreRing({pct,size=48}:{pct:number;size?:number}){
 }
 
 /* ── Per-session Audio Player ─────────────────────────────────────── */
-function SessionAudioPlayer({url,logDate}:{url:string;logDate:string}){
+function SessionAudioPlayer({url,logDate,fileName,fallbackSecs}:{url:string;logDate:string;fileName?:string;fallbackSecs?:number|null}){
   const audioRef=useRef<HTMLAudioElement>(null);
   const [playing,setPlaying]=useState(false);
   const [progress,setProgress]=useState(0);
@@ -76,13 +77,20 @@ function SessionAudioPlayer({url,logDate}:{url:string;logDate:string}){
 
   useEffect(()=>{
     const el=audioRef.current; if(!el) return;
-    const onMeta=()=>{setDuration(el.duration);setLoaded(true);};
-    const onTime=()=>setProgress(el.currentTime/(el.duration||1));
+    // Browser-made .webm recordings report duration = Infinity until the end is reached; seeking far forward makes the browser compute it.
+    const onDur=()=>{ if(Number.isFinite(el.duration)){ setDuration(el.duration); setLoaded(true); if(el.currentTime>1e6) el.currentTime=0; } };
+    const onMeta=()=>{
+      if(Number.isFinite(el.duration)){ setDuration(el.duration); setLoaded(true); return; }
+      if(fallbackSecs){ setDuration(fallbackSecs); setLoaded(true); }
+      try{ el.currentTime=1e101; }catch{ /* noop */ }
+    };
+    el.addEventListener("durationchange",onDur);
+    const onTime=()=>{ if(el.currentTime>1e6) return; setProgress(el.currentTime/((Number.isFinite(el.duration)?el.duration:fallbackSecs)||1)); };
     const onEnded=()=>{setPlaying(false);setProgress(0);el.currentTime=0;};
     el.addEventListener("loadedmetadata",onMeta);
     el.addEventListener("timeupdate",onTime);
     el.addEventListener("ended",onEnded);
-    return()=>{el.removeEventListener("loadedmetadata",onMeta);
+    return()=>{el.removeEventListener("durationchange",onDur);el.removeEventListener("loadedmetadata",onMeta);
                el.removeEventListener("timeupdate",onTime);
                el.removeEventListener("ended",onEnded);};
   },[url]);
@@ -96,9 +104,12 @@ function SessionAudioPlayer({url,logDate}:{url:string;logDate:string}){
     const el=audioRef.current; if(!el) return;
     const rect=e.currentTarget.getBoundingClientRect();
     const ratio=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
-    el.currentTime=ratio*el.duration; setProgress(ratio);
+    const total=Number.isFinite(el.duration)?el.duration:(fallbackSecs||0);
+    el.currentTime=ratio*total; setProgress(ratio);
   };
-  const fmt=(s:number)=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+  const fmt=(s:number)=>Number.isFinite(s)?`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`:"--:--";
+  const [dl,setDl]=useState(false);
+  const doDownload=async()=>{ setDl(true); await downloadAudio(url,fileName||`recitation-${logDate}`); setDl(false); };
 
   return(
     <div style={{background:`linear-gradient(135deg,${G}10,${GM}18)`,
@@ -140,17 +151,18 @@ function SessionAudioPlayer({url,logDate}:{url:string;logDate:string}){
         <span>{loaded?fmt(duration):"--:--"}</span>
       </div>
       {/* Download */}
-      <a href={url} download style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5,
-        padding:"7px",borderRadius:8,background:W,border:"1.5px solid #E5E7EB",
-        fontSize:10,fontWeight:700,color:G,textDecoration:"none"}}>
-        <Download size={11}/>Download Recording
-      </a>
+      <button onClick={doDownload} disabled={dl} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5,
+        padding:"9px",borderRadius:8,background:W,border:"1.5px solid #E5E7EB",width:"100%",cursor:"pointer",
+        fontSize:11,fontWeight:700,color:G}}>
+        {dl?<Loader2 size={12} style={{animation:"spin .8s linear infinite"}}/>:<Download size={12}/>}
+        {dl?"Downloading…":"Download Recording"}
+      </button>
     </div>
   );
 }
 
 /* ── Resolves audio_path (R2 / bucket) or audio_url into a playable URL ── */
-function ResolvedSessionAudio({sd,logDate}:{sd:any;logDate:string}){
+function ResolvedSessionAudio({sd,logDate,fileName,fallbackSecs}:{sd:any;logDate:string;fileName?:string;fallbackSecs?:number|null}){
   const [url,setUrl]=useState<string|null>(null);
   const [state,setState]=useState<"loading"|"ready"|"none">("loading");
   useEffect(()=>{
@@ -159,7 +171,7 @@ function ResolvedSessionAudio({sd,logDate}:{sd:any;logDate:string}){
     resolveStaffAudioUrl(sd).then(u=>{ if(!alive) return; setUrl(u); setState(u?"ready":"none"); });
     return()=>{alive=false;};
   },[sd?.audio_path,sd?.audio_url]);
-  if(state==="ready"&&url) return <SessionAudioPlayer url={url} logDate={logDate}/>;
+  if(state==="ready"&&url) return <SessionAudioPlayer url={url} logDate={logDate} fileName={fileName} fallbackSecs={fallbackSecs}/>;
   return(
     <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderRadius:12,
         background:"#F3F4F6",border:"1.5px dashed #D1D5DB"}}>
@@ -218,7 +230,8 @@ function SessionDetail({log,ov,saving,onOvChange,onSave,onClose}:{
       )}
 
       {/* Audio player */}
-      <ResolvedSessionAudio sd={sd} logDate={log.log_date}/>
+      <ResolvedSessionAudio sd={sd} logDate={log.log_date} fallbackSecs={log.duration_secs}
+        fileName={`${log.student_name||"student"}-${log.log_date}`}/>
 
       {/* Page tabs */}
       {pages.length>0&&(

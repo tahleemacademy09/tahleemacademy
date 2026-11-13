@@ -6,6 +6,7 @@
 //   o Sessions & Grading   -- hold read-along, assign portions, mark, grade (all groups)
 //   o Daily Tracker        -- was /admin/hifdh-tracker
 //   o Recitation Review    -- was /admin/recitation-review
+//   o Model Testing        -- NEW: test / compare / choose the transcription models (admin only)
 //
 // (Recitation Settings belongs to new-student registration, so it now lives
 // in the Registration hub, not here.)
@@ -14,7 +15,7 @@
 // exists in App.tsx and opens this hub on the matching tab.
 // -------------------------------------------------------------------------
 import { lazy, Suspense } from "react";
-import { Loader2, BookOpen, ClipboardCheck, Mic, Video } from "lucide-react";
+import { Loader2, BookOpen, ClipboardCheck, Mic, Video, FlaskConical } from "lucide-react";
 import TabbedHub, { HubTab } from "@/components/admin/TabbedHub";
 import { useLanguage } from "@/contexts/LanguageContext";
 
@@ -24,6 +25,7 @@ const HifdhProgramAdmin = lazy(() => import("./HifdhProgramAdmin"));
 const TeacherHifdhProgram = lazy(() => import("../teacher/TeacherHifdhProgram"));
 const HifdhRevisionTracker = lazy(() => import("./HifdhRevisionTracker"));
 const HifdhAdminReview = lazy(() => import("./HifdhAdminReview"));
+const HifdhModelTest = lazy(() => import("./HifdhModelTest"));
 
 const HubLoading = () => (
   <div className="flex items-center justify-center min-h-[40vh]">
@@ -53,6 +55,12 @@ const ReviewTab = () => (
   </Suspense>
 );
 
+const ModelTestTab = () => (
+  <Suspense fallback={<HubLoading />}>
+    <HifdhModelTest />
+  </Suspense>
+);
+
 export default function HifdhHub() {
   const { t } = useLanguage();
 
@@ -61,6 +69,7 @@ export default function HifdhHub() {
     { key: "sessions", path: "/admin/hifdh-sessions", label: t("Sessions & Grading", "الحصص والتقييم"), icon: Video, color: "#D97706", component: SessionsTab },
     { key: "tracker", path: "/admin/hifdh-tracker", label: t("Daily Tracker", "المتابعة اليومية"), icon: ClipboardCheck, color: "#2563EB", component: TrackerTab },
     { key: "review", path: "/admin/recitation-review", label: t("Recitation Review", "مراجعة التلاوة"), icon: Mic, color: "#7C3AED", component: ReviewTab },
+    { key: "model-test", path: "/admin/hifdh-model-test", label: t("Model Testing", "اختبار النماذج"), icon: FlaskConical, color: "#DB2777", component: ModelTestTab },
   ];
 
   return (

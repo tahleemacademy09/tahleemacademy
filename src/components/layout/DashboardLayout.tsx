@@ -227,7 +227,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   const toggle = (key: string) => setExpanded(p => ({ ...p, [key]: !p[key] }));
   // The Hifdh hub owns four routes; keep its sidebar entry highlighted on all of them.
-  const HIFDH_HUB_PATHS = ["/admin/hifdh-program","/admin/hifdh-tracker","/admin/recitation-review"];
+  const HIFDH_HUB_PATHS = ["/admin/hifdh-program","/admin/hifdh-tracker","/admin/recitation-review","/admin/hifdh-model-test"];
   const pathMatches = (p: string) =>
     p === "/admin/hifdh-program"
       ? HIFDH_HUB_PATHS.some(h => location.pathname.startsWith(h))

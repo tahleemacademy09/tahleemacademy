@@ -406,6 +406,7 @@ const AppMain = () => (
                     <Route path="/admin/notifications"               element={<NotificationManagement />} />
                     <Route path="/admin/entrance-exam"               element={<EntranceExamAdmin />} />
                     <Route path="/admin/recitation-review"           element={<HifdhHub />} />
+                    <Route path="/admin/hifdh-model-test"              element={<HifdhHub />} />
                     <Route path="/admin/hifdh-tracker"               element={<HifdhHub />} />
                     <Route path="/admin/hifdh-program"               element={<HifdhHub />} />
                     <Route path="/admin/hifdh"                       element={<Navigate to="/admin/hifdh-program" replace />} />
