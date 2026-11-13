@@ -14,11 +14,12 @@ import {
 import { useAsrSettings, saveAsrSetting, type AsrModel } from "@/lib/asrSettings";
 import { whisperTranscribe } from "@/lib/whisperCloud";
 import { tarteelEngine, type TarteelProgress } from "@/lib/tarteelOnDevice";
-import { ctcEngine } from "@/lib/ctcEngine";
+import { ctcEngine, type CtcStatusState, type CtcCheckProgress } from "@/lib/ctcEngine";
 import { gradeFromCtc } from "@/lib/ctcGrading";
 import { analyzeRecitation, refTokens, scoreOf, type WordResult, type Grade } from "@/lib/recitationCompare";
 import { getPageText } from "@/lib/quranTextApi";
 import { resolveStaffAudioUrl } from "@/lib/hifdhAudio";
+import { loadTestState, saveTestAudio, saveTestMeta, clearTestState, trimToMinutes } from "@/lib/modelTestStore";
 import { downloadAudio, fetchAudioBlob, saveBlob } from "@/lib/downloadAudio";
 
 const G = "#064E3B", GM = "#075E54", GOLD = "#C9A84C", W = "#fff";
@@ -119,6 +120,17 @@ export default function HifdhModelTest() {
   const [running, setRunning] = useState(false);
   const [tProg, setTProg] = useState<TarteelProgress>({ status: "idle" });
   useEffect(() => tarteelEngine.subscribe(setTProg), []);
+  const [ctcState, setCtcState] = useState<CtcStatusState>(ctcEngine.state);
+  const [ctcProg, setCtcProg] = useState<CtcCheckProgress | null>(null);
+  useEffect(() => ctcEngine.subscribe(setCtcState), []);
+  useEffect(() => ctcEngine.subscribeProgress(setCtcProg), []);
+  /* speed + persistence */
+  const [limitMin, setLimitMin] = useState(0);            // 0 = whole recording
+  const [ready, setReady] = useState(false);              // saved test loaded from the browser
+  const [resumeIds, setResumeIds] = useState<AsrModel[] | null>(null);
+  const [restored, setRestored] = useState<string | null>(null);
+  const startedAt = useRef<Record<string, number>>({});
+  const [, setTick] = useState(0);
   /* student recordings */
   const [sessions, setSessions] = useState<SessionOpt[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(false);
@@ -127,6 +139,46 @@ export default function HifdhModelTest() {
   const [loadingAudio, setLoadingAudio] = useState<string | null>(null);
 
   useEffect(() => () => { if (audioUrl) URL.revokeObjectURL(audioUrl); }, [audioUrl]);
+
+  /* ── restore the last test after a refresh ── */
+  useEffect(() => {
+    let alive = true;
+    loadTestState().then(({ meta, audio }) => {
+      if (!alive) return;
+      if (meta) {
+        setPageInput(meta.pageInput || ""); setRefText(meta.refText || "");
+        if (meta.use) setUse((u) => ({ ...u, ...meta.use }));
+        setLimitMin(meta.limitMin || 0);
+        setRuns({ ...emptyRuns(), ...meta.runs });
+        if (audio) {
+          setBlob(audio); setAudioName(meta.audioName || "saved-audio"); setAudioUrl(URL.createObjectURL(audio));
+          const interrupted = (Object.keys(meta.runs || {}) as AsrModel[]).filter((id) => meta.use?.[id] && meta.runs[id]?.status === "running");
+          if (meta.pending && interrupted.length) { setResumeIds(interrupted); setRestored("Your test was interrupted by the refresh — resuming the unfinished models. Finished results were kept."); }
+          else setRestored("Your last test was restored.");
+        }
+      }
+      setReady(true);
+    });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {   // the audio file itself is stored once, when it changes
+    if (ready) void saveTestAudio(blob);
+  }, [ready, blob]);
+
+  useEffect(() => {   // everything else, saved as it changes (so every finished model is kept at once)
+    if (!ready) return;
+    const t = setTimeout(() => {
+      void saveTestMeta({ audioName, pageInput, refText, use, runs, limitMin, pending: running, savedAt: Date.now() });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [ready, audioName, pageInput, refText, use, runs, limitMin, running]);
+
+  useEffect(() => {   // live "elapsed" counter while models work
+    if (!running) return;
+    const i = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(i);
+  }, [running]);
 
   const setAudio = (b: Blob, name: string) => {
     if (audioUrl) URL.revokeObjectURL(audioUrl);
@@ -210,36 +262,60 @@ export default function HifdhModelTest() {
     patch(id, { status: "done", text, ms, words, score: scoreOf(words) });
   };
 
-  const run = async () => {
-    if (!blob) { toast({ title: "Add an audio file first", variant: "destructive" }); return; }
-    if (!selected.length) { toast({ title: "Select at least one model", variant: "destructive" }); return; }
-    setRunning(true);
-    setRuns(() => { const r = emptyRuns(); selected.forEach((id) => { r[id].status = "running"; }); return r; });
-
-    for (const id of selected) {
-      const t0 = performance.now();
-      try {
-        if (id === "whisper_cf") {
-          const r = await whisperTranscribe(blob);
-          if (r.error) patch(id, { status: "error", ms: r.ms, note: errText(r.error) });
-          else gradeText(id, r.text, r.ms);
-        } else if (id === "tarteel") {
-          const r = await tarteelEngine.transcribeBlob(blob);
-          if (r.error) patch(id, { status: "error", ms: Math.round(performance.now() - t0), note: errText(r.error) });
-          else gradeText(id, r.text, r.ms ?? Math.round(performance.now() - t0));
-        } else {
-          if (!refWordsArr.length) { patch(id, { status: "skipped", note: "CTC checks each reference word, so it needs a reference — load a Quran page or paste the text." }); continue; }
-          const r = await ctcEngine.check(blob, refWordsArr, { basmalah: "auto" });
-          const words = gradeFromCtc(refWordsArr, r.words, r.heard);
-          patch(id, { status: "done", text: r.greedy || "", ms: r.ms ?? Math.round(performance.now() - t0), words, score: scoreOf(words),
-            note: r.partial ? `Audio shorter than the text — only the first ${r.covered} words were graded.` : undefined });
-        }
-      } catch (e: any) {
-        patch(id, { status: "error", ms: Math.round(performance.now() - t0), note: String(e?.message ?? e).slice(0, 160) });
+  const runOne = async (id: AsrModel, input: Blob) => {
+    const t0 = performance.now();
+    startedAt.current[id] = t0;
+    try {
+      if (id === "whisper_cf") {
+        const r = await whisperTranscribe(input);
+        if (r.error) patch(id, { status: "error", ms: r.ms, note: errText(r.error) });
+        else gradeText(id, r.text, r.ms);
+      } else if (id === "tarteel") {
+        const r = await tarteelEngine.transcribeBlob(input);
+        if (r.error) patch(id, { status: "error", ms: Math.round(performance.now() - t0), note: errText(r.error) });
+        else gradeText(id, r.text, r.ms ?? Math.round(performance.now() - t0));
+      } else {
+        if (!refWordsArr.length) { patch(id, { status: "skipped", note: "CTC checks each reference word, so it needs a reference — load a Quran page or paste the text." }); return; }
+        const r = await ctcEngine.check(input, refWordsArr, { basmalah: "auto" });
+        const words = gradeFromCtc(refWordsArr, r.words, r.heard);
+        patch(id, { status: "done", text: r.greedy || "", ms: r.ms ?? Math.round(performance.now() - t0), words, score: scoreOf(words),
+          note: r.partial ? `Audio shorter than the text — only the first ${r.covered} words were graded.` : undefined });
       }
+    } catch (e: any) {
+      patch(id, { status: "error", ms: Math.round(performance.now() - t0), note: String(e?.message ?? e).slice(0, 160) });
     }
+  };
+
+  /** Run the chosen models. Cloud Whisper runs AT THE SAME TIME as the on-device models (they use different hardware);
+   *  the two on-device models run one after the other so a phone is not overloaded. `only` = resume just those. */
+  const run = async (only?: AsrModel[]) => {
+    if (!blob) { toast({ title: "Add an audio file first", variant: "destructive" }); return; }
+    const ids = only ?? selected;
+    if (!ids.length) { toast({ title: "Select at least one model", variant: "destructive" }); return; }
+    setRunning(true);
+    setRestored(only ? restored : null);
+    setRuns((r) => {
+      const n = only ? { ...r } : emptyRuns();
+      ids.forEach((id) => { n[id] = { status: "running", text: "", ms: 0 }; });
+      return n;
+    });
+    let input: Blob = blob;
+    if (limitMin > 0) {
+      try { input = await trimToMinutes(blob, limitMin); } catch { input = blob; }
+    }
+    const cloud = ids.includes("whisper_cf") ? runOne("whisper_cf", input) : Promise.resolve();
+    const local = (async () => { for (const id of ids.filter((i) => i !== "whisper_cf")) await runOne(id, input); })();
+    await Promise.all([cloud, local]);
     setRunning(false);
   };
+
+  // resume after a refresh
+  useEffect(() => {
+    if (!ready || !resumeIds || !blob) return;
+    const ids = resumeIds; setResumeIds(null);
+    void run(ids);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, resumeIds, blob]);
 
   /* ── combine ── */
   const doneWithWords = selected.filter((id) => runs[id].status === "done" && runs[id].words?.length === refWordsArr.length && refWordsArr.length > 0);
@@ -307,6 +383,17 @@ export default function HifdhModelTest() {
   const liveCount = (Object.values(liveFlags) as boolean[]).filter(Boolean).length;
 
   const filteredSessions = sessions.filter((s) => !sessSearch || s.label.toLowerCase().includes(sessSearch.toLowerCase()));
+  const liveNote = (id: AsrModel): string => {
+    const el = startedAt.current[id] ? Math.round((performance.now() - startedAt.current[id]) / 1000) : 0;
+    const t = `${el}s`;
+    if (id === "whisper_cf") return `Converting + uploading audio, then the cloud model transcribes… ${t}`;
+    if (id === "tarteel") return tProg.status === "loading"
+      ? `Downloading the model (first time only, then it is cached)… ${tProg.loadedMB?.toFixed(0) ?? 0}/${tProg.totalMB?.toFixed(0) || "?"} MB · ${t}`
+      : `Listening on this device… ${t}`;
+    if (ctcState.status === "loading") return `Downloading the model (first time only, then it is cached)… ${ctcState.loadedMB?.toFixed(0) ?? 0}/${ctcState.totalMB?.toFixed(0) || "?"} MB · ${t}`;
+    if (ctcProg) return `${ctcProg.stage}… ${ctcProg.total ? Math.round((ctcProg.done / ctcProg.total) * 100) + "% · " : ""}${t}`;
+    return `Working on this device… ${t}`;
+  };
   const tarteelStatus = tProg.status === "loading" ? `Loading Tarteel… ${tProg.loadedMB?.toFixed(0) ?? 0}/${tProg.totalMB?.toFixed(0) || "?"} MB` : null;
 
   return (
@@ -323,6 +410,13 @@ export default function HifdhModelTest() {
       </div>
 
       <div style={{ maxWidth: 920, margin: "14px auto", padding: "0 14px 48px", display: "flex", flexDirection: "column", gap: 12 }}>
+
+        {restored && (
+          <div style={{ padding: "10px 14px", borderRadius: 12, background: "#ECFDF5", border: "1.5px solid #6EE7B7", fontSize: 12, fontWeight: 600, color: G, display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ flex: 1 }}>💾 {restored}</span>
+            <button onClick={() => setRestored(null)} style={{ ...iconBtn, width: 26, height: 26 }} aria-label="Dismiss">✕</button>
+          </div>
+        )}
 
         {/* 1 — AUDIO */}
         <Card title="1 · Audio">
@@ -363,6 +457,15 @@ export default function HifdhModelTest() {
               <p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 700, color: G, wordBreak: "break-all" }}>🎙 {audioName} <span style={{ color: "#9CA3AF", fontWeight: 500 }}>· {(blob.size / 1048576).toFixed(1)} MB</span></p>
               <audio src={audioUrl} controls style={{ width: "100%", height: 38 }} />
               <button onClick={() => saveBlob(blob, audioName.replace(/\.[^.]+$/, ""))} style={{ ...btn(false), marginTop: 8, padding: "7px 12px", fontSize: 11 }}><Download size={12} />Download this audio</button>
+              <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <label style={{ fontSize: 11.5, fontWeight: 700, color: "#374151" }}>Test only the first</label>
+                <input type="number" min={0} step={1} value={limitMin || ""} placeholder="all"
+                  onChange={(e) => setLimitMin(Math.max(0, Number(e.target.value) || 0))}
+                  style={{ width: 64, padding: "6px 8px", borderRadius: 8, border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none" }} />
+                <span style={{ fontSize: 11.5, color: "#6B7280" }}>minutes (faster — leave empty for the whole recording)</span>
+              </div>
+              <button onClick={async () => { await clearTestState(); if (audioUrl) URL.revokeObjectURL(audioUrl); setBlob(null); setAudioUrl(null); setAudioName(""); setRuns(emptyRuns()); setRefText(""); setPageInput(""); setLimitMin(0); setRestored(null); }}
+                style={{ ...btn(false), marginTop: 8, padding: "7px 12px", fontSize: 11, color: FAIL, borderColor: "#FECACA" }}>Clear saved test</button>
             </div>
           )}
         </Card>
@@ -402,7 +505,7 @@ export default function HifdhModelTest() {
               </label>
             );
           })}
-          <button onClick={run} disabled={running || !blob || !selected.length} style={{ ...btn(true), width: "100%", justifyContent: "center", marginTop: 12, padding: "12px", fontSize: 13,
+          <button onClick={() => run()} disabled={running || !blob || !selected.length} style={{ ...btn(true), width: "100%", justifyContent: "center", marginTop: 12, padding: "12px", fontSize: 13,
             opacity: running || !blob || !selected.length ? .55 : 1 }}>
             {running ? <><Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} />Running…</> : <><Play size={15} />Run test ({selected.length} model{selected.length !== 1 ? "s" : ""})</>}
           </button>
@@ -430,7 +533,7 @@ export default function HifdhModelTest() {
                       {r.score != null && <span style={{ fontWeight: 900, fontSize: 15, color: r.score >= 70 ? PASS : r.score >= 50 ? AMBER : FAIL }}>{r.score}%</span>}
                     </div>
                     <div style={{ padding: "10px 12px" }}>
-                      {r.status === "running" && <p style={{ margin: 0, fontSize: 12, color: "#9CA3AF" }}>Working…</p>}
+                      {r.status === "running" && <p style={{ margin: 0, fontSize: 12, color: "#9CA3AF" }}>{liveNote(id)}</p>}
                       {r.status === "error" && <p style={{ margin: 0, fontSize: 12, color: FAIL, fontWeight: 600 }}>⚠️ {r.note}</p>}
                       {r.status === "skipped" && <p style={{ margin: 0, fontSize: 12, color: AMBER, fontWeight: 600 }}>{r.note}</p>}
                       {r.status === "done" && (
