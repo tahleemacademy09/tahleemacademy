@@ -23,6 +23,7 @@ import { tarteelEngine, ChunkTranscriber, type TarteelProgress } from "@/lib/tar
 // Admin-controlled model switches + Whisper-large-v3-turbo (Cloudflare) — runs FIRST when switched on; the on-device engines are the fallback.
 import { useAsrSettings, asrEnabled, whisperCloudAvailable, refreshAsrSettings } from "@/lib/asrSettings";
 import { whisperTranscribe } from "@/lib/whisperCloud";
+import { LiveWhisper } from "@/lib/whisperLive";
 import { logRecitationMisses } from "@/lib/recitationMissLog";
 import { stripWaqf, normalizeArabic, wordsMatch, compareWords, analyzeRecitation, scoreOf, encodeGrades, scoreAgainstAyahs, type WordResult, type AyahScoring } from "@/lib/recitationCompare";
 import { saveHifdhRecording, resolveHifdhSessionAudio } from "@/lib/hifdhAudio";
@@ -55,6 +56,7 @@ import { gradeFromCtc, registerCtcGrading, ctcScoringFor, ctcAnalysisFor } from 
 import { refTokens } from "@/lib/recitationCompare";
 import { KNOWLEDGE } from "@/lib/hifdhKnowledge";
 import { mergeCtcTarteel } from "@/lib/ctcTarteelMerge";
+import { voteWord, type VoteModel } from "@/lib/modelVote";
 import { buildTarteelWords } from "@/lib/tarteelScore";
 // Transcription is 100% on-device Tarteel (no Groq / no server upload): the whole recording is transcribed once on Stop.
 
@@ -1919,6 +1921,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [liveNote, setLiveNote] = useState<string | null>(null);
   const liveAyahStartsRef = useRef<number[]>([]);
   const liveMicRef = useRef<LiveMic | null>(null);
+  const lwRef = useRef<LiveWhisper | null>(null);   // cloud Whisper working on the pieces of the recitation while it is being recited
   const stopLive = () => { try { liveMicRef.current?.stop(); } catch { /* noop */ } liveMicRef.current = null; try { ctcEngine.liveEnd(); } catch { /* noop */ } };
   useEffect(() => () => { stopLive(); }, []);
   const liveProg = useMemo(() => revealFor(pageAyahs as any, liveShown), [pageAyahs, liveShown]);
@@ -2414,9 +2417,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       // the last few seconds are left to process at Stop.
       try { bgRef.current?.cancel(); } catch { /* noop */ }
       void refreshAsrSettings();   // pick up an admin switch change made since the page was opened (applies from the next recording)
-      const cloudFirst = whisperCloudAvailable();   // cloud Whisper transcribes the whole recording on Stop — no on-device work while reciting
+      const cloudFirst = whisperCloudAvailable() && !ctcEnabled();   // with CTC on, all three models work WHILE the student recites (see below)   // cloud Whisper transcribes the whole recording on Stop — no on-device work while reciting
       if (!cloudFirst && ctcEnabled() && tarteelScoreMode() && tarteelAssistAllowed()) tarteelEngine.load(true).then(() => tarteelEngine.warmup()).catch(() => { /* scoring falls back to CTC only */ });   // preload + warm up while the student recites
-      if (!cloudFirst && asrEnabled("tarteel") && (!ctcEnabled() || (tarteelAssistAllowed() && !tarteelScoreMode()))) try { const bg = new ChunkTranscriber(stream, mime, 8000, 4000, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(!!info); bgRef.current = bg; } catch { bgRef.current = null; }
+      if (!cloudFirst && asrEnabled("tarteel") && (!ctcEnabled() || tarteelAssistAllowed())) try { const bg = new ChunkTranscriber(stream, mime, 8000, 4000, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(!!info); bgRef.current = bg; } catch { bgRef.current = null; }
       // Silent background processing: tap the same mic stream and let the worker check the audio WHILE the student
       // recites, so the result is ready within seconds of Stop. Nothing is shown on screen. Never blocks or breaks
       // recording — if anything here fails, the full check on Stop still runs.
@@ -2429,7 +2432,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           liveAyahStartsRef.current = starts;
           ctcEngine.liveBegin(bgWords, (shown) => setLiveShown(shown), { onMistake: onLiveMistake });
           const lm = new LiveMic(); liveMicRef.current = lm;
-          lm.start(stream, (x) => { if (!isPausedRef.current) ctcEngine.liveFeed(x); }).catch((e) => console.warn("[HifdhDaily] background mic tap failed:", e));
+          try { lwRef.current?.cancel(); } catch { /* noop */ }
+          lwRef.current = whisperCloudAvailable() ? new LiveWhisper() : null;
+          if (lwRef.current && (carry > 0 || forceWholeRef.current)) lwRef.current.incomplete = true;   // not the whole recording → Whisper uses the full file instead
+          lm.start(stream, (x) => { if (!isPausedRef.current) { ctcEngine.liveFeed(x); lwRef.current?.feed(x); } }).catch((e) => console.warn("[HifdhDaily] background mic tap failed:", e));
         } catch (e) { console.warn("[HifdhDaily] background check unavailable:", e); }
       }
       setIsRecording(true);
@@ -2492,6 +2498,63 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     return (res.text ?? "").trim(); // may legitimately be "" (silence) — caller decides what to do
   };
 
+  // ONE result, shown once. CTC, Tarteel and cloud Whisper all work on the recording at the same time; at a short deadline
+  // after Stop (default 4 s, localStorage "final_deadline_ms") whatever has finished is combined into the final grading
+  // and shown. A model that is not done by then is simply left out — nobody waits for it, and nothing changes afterwards.
+  // Combining: Tarteel by the existing merge rules, then a weighted vote (CTC x2); a word CTC accepted is never lowered.
+  const combineWithinDeadline = async (
+    blob: Blob, refWords: string[], res: CtcCheckResult, ctcWords: WordResult[],
+    tPromise: Promise<string | null> | null, wPromise: Promise<string | null> | null, stopAt: number,
+  ): Promise<WordResult[]> => {
+    if (ctcWords.every((w) => w.grade === "ok")) return ctcWords;   // nothing to rescue → no waiting at all
+    let deadlineMs = 4000;
+    try { const d = Number(localStorage.getItem("final_deadline_ms")); if (d > 0) deadlineMs = d; } catch { /* default */ }
+    const remaining = Math.max(1000, deadlineMs - (performance.now() - stopAt));
+    const RANK = ["missed", "wrong", "close", "ok"];
+    const means = res.words.map((w) => w.mean);
+    let tW: WordResult[] | null = null;
+    let tScored: (i: number) => boolean = () => true;
+    let wW: WordResult[] | null = null;
+    let closed = false;
+
+    const tarteelPart = async () => {
+      try {
+        if (tPromise) {
+          const tText = await tPromise;
+          if (!closed && tText) tW = analyzeRecitation(refWords.join(" "), tText).words;
+        } else if (tarteelAssistAllowed() && blob.size <= 10 * 1048576) {
+          const sc = await tarteelEngine.scoreRecitation(blob, refWords, ctcWords, res.words.map((w) => w.start), res.words.map((w) => w.end),
+            { budgetMs: Math.max(1000, remaining - 400), maxWindows: 4 });
+          if (!closed && !sc.error && sc.scores.size) { const scores = sc.scores; tW = buildTarteelWords(refWords, scores); tScored = (i) => scores.has(i); }
+        }
+      } catch (e) { console.warn("[HifdhDaily] Tarteel part unavailable:", e); }
+    };
+    const whisperPart = async () => {
+      try {
+        const t = wPromise ? await wPromise : null;
+        if (!closed && t && t.trim()) wW = analyzeRecitation(refWords.join(" "), t).words;
+      } catch (e) { console.warn("[HifdhDaily] Whisper part unavailable:", e); }
+    };
+    await Promise.race([Promise.all([tarteelPart(), whisperPart()]), new Promise((r) => setTimeout(r, remaining))]);
+    closed = true;
+    const tw = tW as WordResult[] | null, ww = wW as WordResult[] | null;
+    console.info(`[HifdhDaily] final = CTC${tw ? " + Tarteel" : ""}${ww ? " + Whisper" : ""} (waited ≤ ${Math.round(remaining)} ms)`);
+
+    let graded = ctcWords;
+    if (tw && tw.length === ctcWords.length) graded = mergeCtcTarteel(graded, means, tw).words;
+    if (ww && ww.length === ctcWords.length) {
+      const base = graded;
+      graded = base.map((g, i) => {
+        const entries: { model: VoteModel; word: WordResult }[] = [{ model: "ctc", word: ctcWords[i] }];
+        if (tw && tw.length === ctcWords.length && tScored(i)) entries.push({ model: "tarteel", word: tw[i] });
+        entries.push({ model: "whisper_cf", word: ww[i] });
+        const v = voteWord(entries);
+        return RANK.indexOf(v.grade) > RANK.indexOf(g.grade) ? v : g;
+      });
+    }
+    return graded;
+  };
+
   // CTC-only test mode: no transcript exists. The CTC model checks every reference word of THIS page against the
   // recording; the verdicts are registered as the grading and a key-"transcript" is returned so the rest of the
   // page (score, grid, red words, ayah colours, saving) works unchanged.
@@ -2501,42 +2564,21 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       const refWords = refTokens(pageAyahsRef.current.map((a: any) => a.text).join(" "));
       if (!refWords.length) return "__NO_API__";
       const scoreMode = tarteelScoreMode();
-      const [res, tText] = await Promise.all([ctcEngine.check(blob, refWords, { basmalah: "auto" }), scoreMode ? Promise.resolve(null) : tarteelTranscript(blob)]);
+      // All three models start together on the recording; ONE final result is shown at a short deadline after Stop.
+      if (scoreMode) { const bg = bgRef.current; bgRef.current = null; try { bg?.cancel(); } catch { /* noop */ } }
+      const stopAt = stopTsRef.current ?? performance.now();
+      const tPromise = scoreMode ? null : tarteelTranscript(blob).catch(() => null);   // started now (reads the live chunks)
+      const lw = lwRef.current; lwRef.current = null;
+      const wholeWhisper = () => whisperTranscribe(blob).then((w) => (w.error ? null : (w.text ?? ""))).catch(() => null);
+      // live pieces were sent while the student recited → only the last piece is left; anything wrong → whole recording
+      const wPromise = whisperCloudAvailable()
+        ? (lw ? lw.finish().then((r) => (r.ok && r.text ? r.text : wholeWhisper())).catch(() => wholeWhisper()) : wholeWhisper())
+        : null;
+      const res = await ctcEngine.check(blob, refWords, { basmalah: "auto" });
       ctcResRef.current = res; setCtcRes(res);
-      let graded = gradeFromCtc(refWords, res.words, res.heard);
-      if (scoreMode) {
-        // Second opinion only where CTC was not sure; skipped entirely when every word is green, on low-memory
-        // phones, with ctc_assist = "0", or for very long recordings (decoding them whole needs too much memory).
-        const bg = bgRef.current; bgRef.current = null; try { bg?.cancel(); } catch { /* noop */ }
-        if (tarteelAssistAllowed() && blob.size <= 10 * 1048576) {
-          try {
-            // Never let the second opinion hold the result hostage: at most TARTEEL_BUDGET_MS of scoring (and a hard stop a
-            // little after that, covering a slow model load / decode); whatever was not scored keeps CTC's verdict.
-            let budget = 8000;
-            try { const b = Number(localStorage.getItem("tarteel_budget_ms")); if (b > 0) budget = b; } catch { /* default */ }
-            setTarteelProg({ done: 0, total: 0 });
-            const empty = { scores: new Map(), ms: budget, windows: 0, error: "hard_timeout" } as Awaited<ReturnType<typeof tarteelEngine.scoreRecitation>>;
-            const sc = await Promise.race([
-              tarteelEngine.scoreRecitation(blob, refWords, graded, res.words.map((w) => w.start), res.words.map((w) => w.end),
-                { budgetMs: budget, maxWindows: 4, onProgress: (done, total) => setTarteelProg({ done, total }) }),
-              new Promise<typeof empty>((r) => setTimeout(() => r(empty), budget + 6000)),
-            ]).finally(() => setTarteelProg(null));
-            if (sc.error) console.warn("[HifdhDaily] Tarteel scoring failed, CTC only:", sc.error);
-            else if (sc.scores.size) {
-              const m = mergeCtcTarteel(graded, res.words.map((w) => w.mean), buildTarteelWords(refWords, sc.scores));
-              console.info(`[HifdhDaily] CTC+Tarteel(score) ${sc.ms} ms, ${sc.windows} window(s):`, m.stats, "rescued words:", m.rescuedIdx);
-              graded = m.words;
-            }
-            transcribeMsRef.current = null;   // show the real wait after Stop
-          } catch (e) { console.warn("[HifdhDaily] Tarteel scoring unavailable, CTC only:", e); transcribeMsRef.current = res.ms; }
-        } else transcribeMsRef.current = res.ms;
-      } else if (tText) {   // both engines ran → merge into the single final grading
-        const tWords = analyzeRecitation(refWords.join(" "), tText).words;
-        const m = mergeCtcTarteel(graded, res.words.map((w) => w.mean), tWords);
-        console.info("[HifdhDaily] CTC+Tarteel merge:", m.stats, "rescued words:", m.rescuedIdx);
-        graded = m.words;
-        transcribeMsRef.current = null;   // show the real wait after Stop
-      } else transcribeMsRef.current = res.ms;
+      const ctcWords = gradeFromCtc(refWords, res.words, res.heard);
+      const graded = await combineWithinDeadline(blob, refWords, res, ctcWords, tPromise, wPromise, stopAt);
+      transcribeMsRef.current = null;   // show the real wait after Stop
       const tx = registerCtcGrading(res.greedy, graded);
       try {   // keep the heard text + timing so a reload shows the same detailed result
         const r2 = (n: number | null) => (n == null ? null : Math.round(n * 100) / 100);
@@ -2562,9 +2604,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       return !(typeof mem === "number" && mem <= 3);
     } catch { return true; }
   };
-  // Default: Tarteel only RATES the words CTC did not accept (one quick pass, no text generation). Set localStorage
-  // tarteel_mode = "generate" to get the old behaviour (full transcription while the student recites).
-  const tarteelScoreMode = (): boolean => { try { return localStorage.getItem("tarteel_mode") !== "generate"; } catch { return true; } };
+  // Default: Tarteel transcribes in 8 s chunks WHILE the student recites (so only the last piece is left at Stop). Set
+  // localStorage tarteel_mode = "score" to get the old behaviour (a rating pass over the words CTC did not accept, after Stop).
+  const tarteelScoreMode = (): boolean => { try { return localStorage.getItem("tarteel_mode") === "score"; } catch { return false; } };
   // Tarteel transcribes the recording in 8 s chunks WHILE the student recites (same as CTC's live run), so at Stop only the
   // tail is left and both results are ready almost together. Falls back to the whole recording if the chunks failed.
   const tarteelTranscript = async (blob: Blob): Promise<string | null> => {
@@ -2587,6 +2629,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
   const bgRef = useRef<ChunkTranscriber | null>(null);
   const finalizeTranscript = async (fullBlob: Blob): Promise<string> => {
+    // CTC available → it answers at once; Tarteel and cloud Whisper refine in the background (see ctcGrade). If CTC fails, fall through.
+    if (ctcEnabled()) { const ctcTx = await ctcGrade(fullBlob); if (ctcTx !== "__NO_API__") return ctcTx; }
     // Cloud Whisper first. Any failure (offline, worker error, switched off) falls through to the original engines below.
     const cloud = await whisperTry(fullBlob);
     if (cloud !== null) { try { bgRef.current?.cancel(); } catch { /* noop */ } bgRef.current = null; return cloud; }
