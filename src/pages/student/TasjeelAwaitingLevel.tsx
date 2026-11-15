@@ -15,21 +15,26 @@ const G    = "#064E3B";
 const GM   = "#075E54";
 const GOLD = "#C9973A";
 
+// Session date/time are stored as plain wall-clock strings (no timezone).
+// They are always Africa/Lagos time (fixed UTC+1, no DST) — NOT the viewer's
+// device timezone — so every device sees the same unlock moment.
+const sessionStartMs = (date?: string, time?: string): number => {
+  if (!date || !time) return NaN;
+  const hhmm = time.slice(0, 5); // tolerate "HH:MM:SS" from a Postgres time column
+  return new Date(`${date}T${hhmm}:00+01:00`).getTime();
+};
+
 const sessionActive = (date?: string, time?: string): boolean => {
-  if (!date || !time) return false;
-  try {
-    const dt   = new Date(`${date}T${time}:00`);
-    const diff = (dt.getTime() - Date.now()) / 60000;
-    return diff <= 15 && diff >= -120;
-  } catch { return false; }
+  const start = sessionStartMs(date, time);
+  if (isNaN(start)) return false;
+  const diff = (start - Date.now()) / 60000;
+  return diff <= 15 && diff >= -120;
 };
 
 const sessionPast = (date?: string, time?: string): boolean => {
-  if (!date || !time) return false;
-  try {
-    const dt = new Date(`${date}T${time}:00`);
-    return (Date.now() - dt.getTime()) / 60000 > 120;
-  } catch { return false; }
+  const start = sessionStartMs(date, time);
+  if (isNaN(start)) return false;
+  return (Date.now() - start) / 60000 > 120;
 };
 
 const TasjeelAwaitingLevel = () => {
