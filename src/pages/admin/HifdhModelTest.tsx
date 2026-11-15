@@ -491,7 +491,7 @@ export default function HifdhModelTest() {
                       onChange={(e) => { const v = Number(e.target.value); setThr((t) => ({ ok: Math.max(t.ok, v + 0.1), bad: v })); }}
                       style={{ width: "100%" }} />
                   </label>
-                  <p style={{ margin: "4px 0 0", fontSize: 10.5, color: "#9CA3AF" }}>Yellow sits between the two. Lower values are more forgiving. The app uses green ≥ -1.0 and red < -3.0. Lost on refresh: run CTC again.</p>
+                  <p style={{ margin: "4px 0 0", fontSize: 10.5, color: "#9CA3AF" }}>Yellow sits between the two. Lower values are more forgiving. The app uses green ≥ -1.0 and red &lt; -3.0. Lost on refresh: run CTC again.</p>
                   <button onClick={() => setThr({ ok: -1, bad: -3 })} style={{ ...btn(false), marginTop: 6, padding: "5px 10px", fontSize: 10.5 }}>Reset to app values</button>
                 </div>
               )}
