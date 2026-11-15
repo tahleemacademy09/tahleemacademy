@@ -1,6 +1,6 @@
 /*  src/pages/student/RecitationTest.tsx
     3-Stage Recitation Proficiency Test
-    Stage 1: Record audio (scored on-device by Tarteel — same engine + scoring as Daily Hifdh Revision)
+    Stage 1: Record audio (scored by CTC on-device + Whisper in the cloud, merged like Daily Hifdh Revision)
     Stage 2: Scoring — score shown as PREVIEW only (not saved)
              User must press "Submit Score" to confirm and advance.
              Refreshing before submit = back to Stage 1 (re-record).
@@ -11,9 +11,13 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { resolveRecitationAudioUrl, uploadExamAudioToR2 } from "@/lib/examAudioUpload";
-import { tarteelEngine, ChunkTranscriber, type TarteelProgress } from "@/lib/tarteelOnDevice";
+import { ctcEngine, type CtcStatusState } from "@/lib/ctcEngine";
+import { gradeFromCtc } from "@/lib/ctcGrading";
+import { whisperTranscribe } from "@/lib/whisperCloud";
+import { whisperCloudAvailable, asrEnabled } from "@/lib/asrSettings";
+import { voteWord } from "@/lib/modelVote";
 import { playbackGainFor } from "@/lib/audioEnhance";
-import { compareWords, normalizeArabic, scoreOf } from "@/lib/recitationCompare";
+import { compareWords, analyzeRecitation, refTokens, scoreOf, type WordResult } from "@/lib/recitationCompare";
 import { useToast } from "@/hooks/use-toast";
 import { useRecitationSettings } from "@/hooks/useRecitationSettings";
 import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
@@ -28,10 +32,13 @@ const G    = "#064E3B";
 const GM   = "#075E54";
 const GOLD = "#D4A843";
 // Recitation recordings are stored in Cloudflare R2 (via the exam-audio-url edge function).
-// Transcription is 100% on-device Tarteel (the same Quran model + the same word comparison the
-// Daily Hifdh Revision uses) — nothing is uploaded for scoring, no API key, no server round-trip.
-const TRANSCRIBE_TIMEOUT_MS = 5 * 60_000;   // first visit also downloads the ~100 MB model
-const UPLOAD_TIMEOUT_MS     = 30_000;
+// Scoring = CTC (on-device, checks every page word against the audio) + Whisper (cloud, Cloudflare Workers AI),
+// merged word by word with the same vote the Daily Hifdh Revision uses. If one of the two fails or times out the
+// other one scores alone; if both fail the student gets the "skip — instructor scores live" option. No endless spinner.
+const CTC_TIMEOUT_MS     = 150_000;   // first visit also downloads the ~132 MB CTC model
+const WHISPER_TIMEOUT_MS = 75_000;
+const UPLOAD_TIMEOUT_MS  = 30_000;
+const GRADE_RANK = ["missed", "wrong", "close", "ok"];
 
 const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =>
   new Promise<T>((resolve, reject) => {
@@ -39,45 +46,51 @@ const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =
     p.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
   });
 
-/** Transcribes one recording with on-device Tarteel. Returns "" for silence, null if the model failed. */
-async function transcribeRecitation(blob: Blob): Promise<string | null> {
-  try {
-    const res = await withTimeout(tarteelEngine.transcribeBlob(blob), TRANSCRIBE_TIMEOUT_MS, "Tarteel transcription");
-    if (res.error) {
-      console.error("[RecitationTest] tarteel transcription failed:", res.error);
-      return null;
-    }
-    return (res.text ?? "").trim();
-  } catch (e) {
-    console.error("[RecitationTest] tarteel transcription failed:", e);
-    return null;
-  }
-}
+interface RecitationVerdict { words: WordResult[]; transcript: string; models: string[] }
 
 /**
- * Same strategy as Daily Hifdh Revision: the recording was already being transcribed in ~15 s chunks
- * WHILE the student recited, so on Stop only the last chunk is left. If anything went wrong (a chunk
- * failed, nothing heard, or the model looped) the whole recording is transcribed instead.
+ * Runs CTC and Whisper together on one recording and returns ONE graded word list for the page.
+ * null = neither model could produce a result. transcript "" = nothing was heard.
  */
-async function finalizeTranscript(blob: Blob, bg: ChunkTranscriber | null, refText = ""): Promise<string | null> {
-  if (bg) {
-    try {
-      const r = await withTimeout(bg.finish(), TRANSCRIBE_TIMEOUT_MS, "Background transcription");
-      const looped = /(\S+\s+\S+)(\s+\1){2,}/.test(normalizeArabic(r.text));
-      if (r.ok && r.text.trim() && !looped) {
-        const bgText = r.text.trim();
-        // Safety net: short chunks are decoded independently and a chunk cut mid-word can make the model hear
-        // the wrong words. If the chunk transcript scores poorly, also transcribe the whole recording in one
-        // go and keep whichever matches the page better.
-        if (refText && scoreRecitation(bgText, refText).total < 60) {
-          const full = await transcribeRecitation(blob);
-          if (full && scoreRecitation(full, refText).total > scoreRecitation(bgText, refText).total) return full;
-        }
-        return bgText;
-      }
-    } catch (e) { console.warn("[RecitationTest] background transcription failed, falling back:", e); }
-  }
-  return transcribeRecitation(blob);
+async function checkRecitation(blob: Blob, refText: string): Promise<RecitationVerdict | null> {
+  const refWords = refTokens(refText);
+  if (!refWords.length) return null;
+
+  // string = what Whisper heard ("" = silence), null = Whisper unavailable / failed
+  const whisperP: Promise<string | null> = whisperCloudAvailable()
+    ? withTimeout(whisperTranscribe(blob), WHISPER_TIMEOUT_MS, "Whisper")
+        .then(r => (r.error ? null : (r.text ?? "").trim()))
+        .catch(e => { console.warn("[RecitationTest] Whisper failed:", e); return null; })
+    : Promise.resolve(null);
+
+  const ctcP = asrEnabled("ctc")
+    ? withTimeout(ctcEngine.check(blob, refWords, { basmalah: "auto" }), CTC_TIMEOUT_MS, "CTC")
+        .catch(e => { console.warn("[RecitationTest] CTC failed:", e); return null; })
+    : Promise.resolve(null);
+
+  const [wText, ctcRes] = await Promise.all([whisperP, ctcP]);
+  if (wText === null && !ctcRes) return null;
+
+  const ctcWords = ctcRes ? gradeFromCtc(refWords, ctcRes.words, ctcRes.heard) : null;
+  const whisperWords = wText ? analyzeRecitation(refWords.join(" "), wText).words : null;
+  const okC = !!ctcWords && ctcWords.length === refWords.length;
+  const okW = !!whisperWords && whisperWords.length === refWords.length;
+
+  let words: WordResult[];
+  const models: string[] = [];
+  if (okC && okW) {
+    // Same rule as Daily Hifdh Revision: CTC (weight 2) + Whisper (weight 1) vote; a word is never graded worse than CTC alone.
+    words = ctcWords!.map((c, i) => {
+      const v = voteWord([{ model: "ctc", word: c }, { model: "whisper_cf", word: whisperWords![i] }]);
+      return GRADE_RANK.indexOf(v.grade) > GRADE_RANK.indexOf(c.grade) ? v : c;
+    });
+    models.push("ctc", "whisper");
+  } else if (okC) { words = ctcWords!; models.push("ctc"); }
+  else if (okW) { words = whisperWords!; models.push("whisper"); }
+  else return null;
+
+  console.info(`[RecitationTest] scored by ${models.join(" + ")}`);
+  return { words, transcript: wText || ctcRes?.greedy || "", models };
 }
 
 // ── Local playback ──────────────────────────────────────────────────────────
@@ -222,8 +235,7 @@ function LocalAudioPlayer({ blob, fallbackSecs }: { blob: Blob; fallbackSecs: nu
 const WAVE_H = [4,8,14,10,18,12,6,16,9,13,7,15,11,5,17,8,12,6,14,10];
 
 // ── Scoring ──────────────────────────────────────────────────────────────────
-// Same rule as the Daily Hifdh Revision: the score is the % of the page's words that Tarteel heard
-// correctly, using the shared global-alignment comparison in @/lib/recitationCompare.
+// Same rule as the Daily Hifdh Revision: the score is the % of the page's words heard correctly (CTC + Whisper merged).
 interface ScoreBreakdown {
   total: number;        // % of the page's words recited correctly — this is the saved score
   correct: number;      // words heard correctly
@@ -443,16 +455,18 @@ const RecitationTest = () => {
   // Rebuild the breakdown tiles for a score restored from the database
   useEffect(() => {
     if (scoreBreakdown || aiScore === null || !aiTranscript || quranAyahs.length === 0) return;
-    const b = scoreRecitation(aiTranscript, quranAyahs.map(a => a.text).join(" "));
-    setScoreBreakdown(b);
+    // The saved score came from CTC + Whisper; only the word count is rebuilt from the page text.
+    const total = scoreRecitation(aiTranscript, quranAyahs.map(a => a.text).join(" ")).totalWords;
+    const correct = Math.min(total, Math.round((aiScore / 100) * total));
+    setScoreBreakdown({ total: aiScore, correct, missing: total - correct, totalWords: total });
   }, [aiScore, aiTranscript, scoreBreakdown, quranAyahs]);
 
-  // ── On-device Tarteel: start loading the model as soon as the page opens ───
-  const bgRef = useRef<ChunkTranscriber | null>(null);
-  useEffect(() => () => { try { bgRef.current?.cancel(); } catch { /* noop */ } }, []);   // leaving the page stops background work
-  const [tarteelState, setTarteelState] = useState<TarteelProgress>(tarteelEngine.state);
-  useEffect(() => tarteelEngine.subscribe(setTarteelState), []);
-  useEffect(() => { tarteelEngine.load(true).catch(() => { /* status is shown under the Start button */ }); }, []);
+  // ── CTC: start loading the on-device model as soon as the page opens (Whisper runs in the cloud, nothing to load) ───
+  const [ctcState, setCtcState] = useState<CtcStatusState>(ctcEngine.state);
+  useEffect(() => ctcEngine.subscribe(setCtcState), []);
+  useEffect(() => { if (asrEnabled("ctc")) ctcEngine.load().catch(() => { /* status is shown under the Start button; Whisper still scores */ }); }, []);
+  const ctcOn = asrEnabled("ctc");
+  const cloudOn = whisperCloudAvailable();
 
   // ── Recording ────────────────────────────────────────────────────────────
   const startRec = async () => {
@@ -469,26 +483,22 @@ const RecitationTest = () => {
       chunksRef.current = [];
       mr.ondataavailable = e => { if (e.data?.size > 0) chunksRef.current.push(e.data); };
       mr.onstop = () => {
-        const bg = bgRef.current; bgRef.current = null;
         stream.getTracks().forEach(t => t.stop());
         clearInterval(timerRef.current);
         const secs = recSecsRef.current;
         setRecTime(0);
-        if (cancelRef.current) { try { bg?.cancel(); } catch { /* noop */ } return; }
+        if (cancelRef.current) return;
         const blob = new Blob(chunksRef.current, { type: mime || "audio/webm" });
-        if (blob.size < 1000) { toast({ title: "Recording too short", description: "Please recite the page and try again.", variant: "destructive" }); setSubstage("idle"); try { bg?.cancel(); } catch { /* noop */ } return; }
+        if (blob.size < 1000) { toast({ title: "Recording too short", description: "Please recite the page and try again.", variant: "destructive" }); setSubstage("idle"); return; }
         setRecSecs(secs);
         setAudioBlob(blob);
         setAudioUrl(URL.createObjectURL(blob));
         setSubstage("recorded");
         // Start scoring + saving the instant recording stops — the student can
         // listen back while this runs, so the result is ready when they tap "See My Score".
-        beginBackgroundWork(blob, bg);
+        beginBackgroundWork(blob);
       };
       mr.start(200); mediaRef.current = mr;
-      // Transcribe in the background AS the student recites, so only the last few seconds are left at Stop.
-      try { bgRef.current?.cancel(); } catch { /* noop */ }
-      try { const bg = new ChunkTranscriber(stream, mime); bg.start(); bgRef.current = bg; } catch { bgRef.current = null; }
       recSecsRef.current = 0;
       setSubstage("recording");
       timerRef.current = setInterval(() => { recSecsRef.current += 1; setRecTime(t => t + 1); }, 1000);
@@ -508,8 +518,6 @@ const RecitationTest = () => {
   };
   const cancelRec = () => {
     cancelRef.current = true;
-    try { bgRef.current?.cancel(); } catch { /* noop */ }
-    bgRef.current = null;
     mediaRef.current?.stop();
     clearInterval(timerRef.current);
     discardWork();
@@ -533,11 +541,11 @@ const RecitationTest = () => {
   };
 
   // ── Background work: score + save, started the moment recording stops ─────
-  const beginBackgroundWork = (blob: Blob, bg: ChunkTranscriber | null = null) => {
+  const beginBackgroundWork = (blob: Blob) => {
     const runId = ++runIdRef.current;
     submittedRef.current = false;
     setAiScore(null); setAiTranscript(null); setScoreBreakdown(null); setScoreIssue(null);
-    runScoring(blob, runId, bg);
+    runScoring(blob, runId);
     uploadRef.current = saveRecording(blob, runId);
   };
 
@@ -597,31 +605,34 @@ const RecitationTest = () => {
   const goToScore = () => setStage(2);
 
   // ── Scoring ───────────────────────────────────────────────────────────────
-  // Transcribes on-device with Tarteel and scores against the
+  // CTC (on-device) + Whisper (cloud) check the recording against the
   // mushaf page shown to the student. This is a PREVIEW: nothing is written to
   // the database until the student presses "Submit Score" (handleSubmitScore).
-  const runScoring = async (blob: Blob, runId: number, bg: ChunkTranscriber | null = null) => {
+  const runScoring = async (blob: Blob, runId: number) => {
     setScoring(true);
-    const transcript = await finalizeTranscript(blob, bg, quranRef.current.map(a => a.text).join(" "));
+    const refText = quranRef.current.map(a => a.text).join(" ");
+    const verdict = await checkRecitation(blob, refText);
     if (runId !== runIdRef.current) return;          // discarded — ignore result
 
-    if (transcript === null) {
+    if (verdict === null) {
       setScoreIssue("failed"); setScoring(false); return;
     }
-    if (transcript.replace(/[^\u0600-\u06FF]/g, "").length < 3) {
+    if (verdict.transcript.replace(/[^\u0600-\u06FF]/g, "").length < 3) {
       setScoreIssue("silent"); setScoring(false); return;
     }
 
-    const refText = quranRef.current.map(a => a.text).join(" ");
-    const breakdown: ScoreBreakdown = refText
-      ? scoreRecitation(transcript, refText)
-      : { total: 0, correct: 0, missing: 0, totalWords: 0 };
+    const totalWords = verdict.words.length;
+    const correct = verdict.words.filter(w => w.status === "correct").length;
+    const breakdown: ScoreBreakdown = {
+      total: Math.min(100, Math.max(0, scoreOf(verdict.words))),   // one letter off counts half
+      correct, missing: totalWords - correct, totalWords,
+    };
 
-    setAiTranscript(transcript);
+    setAiTranscript(verdict.transcript);
     setScoreBreakdown(breakdown);
     setAiScore(breakdown.total);
     setScoring(false);
-    previewRef.current = persistPreview(runId, breakdown.total, transcript);
+    previewRef.current = persistPreview(runId, breakdown.total, verdict.transcript);
   };
 
   // Saves the (unsubmitted) score next to the stored audio so the result screen
@@ -975,12 +986,12 @@ const RecitationTest = () => {
         {/* Bottom recorder bar */}
         <div style={{ flexShrink:0, background:"#fff", borderTop:"1px solid #E8D5A3", boxShadow:"0 -6px 24px rgba(0,0,0,.08)", padding:"12px 16px calc(env(safe-area-inset-bottom,0px) + 14px)" }}>
           <div style={{ maxWidth:560, margin:"0 auto" }}>
-            {substage === "idle" && (tarteelState.status === "loading" || tarteelState.status === "idle") && (
+            {substage === "idle" && ctcOn && (ctcState.status === "loading" || ctcState.status === "idle") && (
               <p style={{ margin:"0 0 8px", fontSize:11, color:"#9CA3AF", textAlign:"center" }}>
-                Preparing the Quran checker{tarteelState.totalMB ? ` — ${Math.round(tarteelState.loadedMB ?? 0)} of ${Math.round(tarteelState.totalMB)} MB` : "…"} (first time only — you can start reciting now)
+                Preparing the Quran checker{ctcState.totalMB ? ` — ${Math.round(ctcState.loadedMB ?? 0)} of ${Math.round(ctcState.totalMB)} MB` : "…"} (first time only — you can start reciting now)
               </p>
             )}
-            {substage === "idle" && (tarteelState.status === "error" || tarteelState.status === "unsupported") && (
+            {substage === "idle" && ctcState.status === "error" && !cloudOn && (
               <p style={{ margin:"0 0 8px", fontSize:11, color:"#B45309", textAlign:"center" }}>
                 The Quran checker couldn't load on this device. You can still record — if it can't score you, an instructor will evaluate you live.
               </p>
@@ -1093,8 +1104,8 @@ const RecitationTest = () => {
                     <Loader2 style={{ width:48, height:48, color:GM, animation:"spin .8s linear infinite", margin:"0 auto 16px" }} />
                     <div style={{ fontSize:15, fontWeight:700, color:G, marginBottom:6 }}>Checking your recitation…</div>
                     <div style={{ fontSize:13, color:"#9ca3af" }}>
-                      {tarteelState.status === "loading"
-                        ? `Getting the Quran checker ready${tarteelState.totalMB ? ` — ${Math.round(tarteelState.loadedMB ?? 0)} of ${Math.round(tarteelState.totalMB)} MB` : "…"} (first time only)`
+                      {ctcOn && !cloudOn && ctcState.status === "loading"
+                        ? `Getting the Quran checker ready${ctcState.totalMB ? ` — ${Math.round(ctcState.loadedMB ?? 0)} of ${Math.round(ctcState.totalMB)} MB` : "…"} (first time only)`
                         : "Just a few seconds"}
                     </div>
                   </div>
