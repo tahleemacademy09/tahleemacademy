@@ -1878,7 +1878,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   useAsrSettings();   // loads the admin's model switches and re-renders when they change
   // Cloud Whisper first: the page then behaves like the plain (non-CTC) flow — nothing heavy is downloaded or run on the phone
   // unless Whisper fails, in which case the on-device engines below take over.
-  const ctcOn = ctcEnabled() && !whisperCloudAvailable();
+  const ctcOn = ctcEnabled();   // admin switch decides — CTC runs together with cloud Whisper and Tarteel
   const [ctcEng, setCtcEng] = useState<CtcStatusState>(ctcEngine.state);
   useEffect(() => ctcEngine.subscribe(setCtcEng), []);
   const [ctcRes, setCtcRes] = useState<CtcCheckResult | null>(null);
@@ -1929,11 +1929,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // localStorage hifdh_live_show = "all" keeps the whole page visible instead.
   const liveVisible = ctcOn && ctcEng.status === "ready" && ctcEngine.useNative;
   const liveCover = (() => { try { return localStorage.getItem("hifdh_live_show") !== "all"; } catch { return true; } })();
-  const checkerState: TarteelProgress = whisperCloudAvailable() ? { status: "ready" } : ctcOn ? (ctcEng as TarteelProgress) : tarteelState;
+  const checkerState: TarteelProgress = ctcOn ? (ctcEng as TarteelProgress) : whisperCloudAvailable() ? { status: "ready" } : tarteelState;
   useEffect(() => {
     if (phase !== "reading") return;
-    if (whisperCloudAvailable()) return;   // cloud Whisper is first — the on-device models load only if it fails
-    if (ctcOn) { ctcEngine.load().catch(() => { /* status is shown under the Start button */ }); return; }
+    if (ctcOn) {
+      ctcEngine.load().catch(() => { /* status is shown under the Start button */ });
+      // Load + warm up Tarteel too, while the student is still reading, so nothing heavy loads during or after the recitation.
+      if (tarteelAssistAllowed()) tarteelEngine.load(true).then(() => tarteelEngine.warmup()).catch(() => { /* CTC + Whisper still score */ });
+      return;
+    }
+    if (whisperCloudAvailable()) return;   // CTC off → cloud Whisper is first; Tarteel loads only if it fails
     if (!asrEnabled("tarteel")) return;    // switched off by the admin
     tarteelEngine.load(true).catch(() => { /* status is shown under the Start button */ });
   }, [phase]);
@@ -1943,8 +1948,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   useEffect(() => {
     if (phase === "pre_test_review" || phase === "proctor_intro" || phase === "testing") {
       // Same checker as the recitation phase: the CTC model on the app / ?ctc=1, otherwise Tarteel.
-      if (whisperCloudAvailable()) { /* cloud Whisper first — on-device models load only if it fails */ }
-      else if (ctcEnabled()) ctcEngine.load().catch(() => { /* retried when the first recorded answer is scored */ });
+      if (ctcEnabled()) {
+        ctcEngine.load().catch(() => { /* retried when the first recorded answer is scored */ });
+        if (tarteelAssistAllowed()) tarteelEngine.load(true).catch(() => { /* retried when needed */ });
+      }
+      else if (whisperCloudAvailable()) { /* CTC off → cloud Whisper first; Tarteel loads only if it fails */ }
       else if (asrEnabled("tarteel")) tarteelEngine.load(true).catch(() => { /* retried when the first recorded answer is scored */ });
     }
   }, [phase]);
@@ -2506,8 +2514,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     blob: Blob, refWords: string[], res: CtcCheckResult, ctcWords: WordResult[],
     tPromise: Promise<string | null> | null, wPromise: Promise<string | null> | null, stopAt: number,
   ): Promise<WordResult[]> => {
-    if (ctcWords.every((w) => w.grade === "ok")) return ctcWords;   // nothing to rescue → no waiting at all
-    let deadlineMs = 4000;
+    // Every model finishes (or fails) before ONE merged result is released. No early return and no short deadline any more;
+    // only a safety cap (default 90 s, localStorage final_deadline_ms) so a hung request can never block the result forever.
+    let deadlineMs = 90000;
     try { const d = Number(localStorage.getItem("final_deadline_ms")); if (d > 0) deadlineMs = d; } catch { /* default */ }
     const remaining = Math.max(1000, deadlineMs - (performance.now() - stopAt));
     const RANK = ["missed", "wrong", "close", "ok"];
