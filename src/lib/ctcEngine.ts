@@ -41,7 +41,8 @@ export function ctcEnabled(): boolean {
     if (q === "1" || q === "0") localStorage.setItem("ctc_shadow", q);
     const v = localStorage.getItem("ctc_shadow");
     // The Capacitor app has no URL bar, so it can never pass ?ctc=1: on native it is ON unless explicitly set to "0".
-    return v === "1" || (v !== "0" && isNative());
+    // Follows the admin switch on web AND native; only an explicit "0" (?ctc=0) opts a device out.
+    return v !== "0";
   } catch { return false; }
 }
 
