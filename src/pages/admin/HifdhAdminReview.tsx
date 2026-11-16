@@ -62,7 +62,7 @@ function incompleteBadge(log:DailyLog):{text:string;hint:string}|null{
   if(log.completed) return null;
   const sd=log.session_data;
   if(sd?.analysing){
-    const ageMin=log.updated_at?(Date.now()-new Date(log.updated_at).getTime())/60000:0;
+    const ts=log.updated_at||log.log_date; const ageMin=ts?(Date.now()-new Date(ts).getTime())/60000:Infinity;
     return ageMin>15
       ?{text:"🎙 Analysis incomplete",hint:"The recording was saved but the student left before the result came back"}
       :{text:"🎙 Analysing",hint:"The recording is being analysed right now"};
