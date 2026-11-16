@@ -39,6 +39,21 @@ export interface PageGrid {
 
 const cache = new WeakMap<object, PageGrid[]>();
 
+/**
+ * What was heard under each reference word, for logs saved without `heard_words` (only the CTC model saved them).
+ * Taken from a fresh alignment of the saved transcript: close / wrong words show what the model wrote instead,
+ * green words show the word as heard, a word that was not heard shows "—". The saved grade stays the one displayed.
+ */
+function deriveHeard(words: WordResult[], fresh?: WordResult[] | null): string[] {
+  const f = fresh && fresh.length === words.length ? fresh : null;
+  return words.map((w, i) => {
+    const x = f?.[i];
+    if (x && x.grade !== "missed") return x.heard ?? x.heardAs ?? (w.grade === "ok" ? w.word : "");
+    if (w.grade === "ok") return w.heardAs ?? w.word;
+    return "";
+  });
+}
+
 const countWords = (a: StaffAyah[]) => a.reduce((n, x) => n + refTokens(x.text).length, 0);
 
 function ayahEndsOf(ayahs: StaffAyah[]) {
@@ -81,14 +96,20 @@ export function buildPageGrids(pages: StaffPage[]): PageGrid[] {
 
     const saved = decodeGrades(refWords, p.grades);
     const heardOk = (n: number) => (p.heard_words && p.heard_words.length === n ? p.heard_words : undefined);
-    if (saved) return { words: saved, extras: p.extras || (grouped && i === 0 ? groupedExtras : []), transcript: tx, ayahEnds, graded: true, heardWords: heardOk(saved.length) };
+    if (saved) {
+      const fresh = groupedWords ? groupedWords[i] : (tx.trim() && ayahs.length ? scoreAgainstAyahs(ayahs.map((a) => a.text), tx).words : null);
+      return {
+        words: saved, extras: p.extras || (grouped && i === 0 ? groupedExtras : []), transcript: tx, ayahEnds, graded: true,
+        heardWords: heardOk(saved.length) ?? (tx.trim() ? deriveHeard(saved, fresh) : undefined),
+      };
+    }
 
     if (groupedWords) {
-      return { words: groupedWords[i], extras: i === 0 ? groupedExtras : [], transcript: tx, ayahEnds, graded: true };
+      return { words: groupedWords[i], extras: i === 0 ? groupedExtras : [], transcript: tx, ayahEnds, graded: true, heardWords: heardOk(groupedWords[i].length) ?? deriveHeard(groupedWords[i], groupedWords[i]) };
     }
     if (!tx.trim() || !ayahs.length) return { words: [], extras: [], transcript: tx, ayahEnds, graded: false };
     const res = scoreAgainstAyahs(ayahs.map((a) => a.text), tx);
-    return { words: res.words, extras: res.extras, transcript: tx, ayahEnds, graded: true };
+    return { words: res.words, extras: res.extras, transcript: tx, ayahEnds, graded: true, heardWords: heardOk(res.words.length) ?? deriveHeard(res.words, res.words) };
   });
   cache.set(pages, grids);
   return grids;

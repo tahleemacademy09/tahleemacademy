@@ -12,6 +12,7 @@ import { resolveStaffAudioUrl } from "@/lib/hifdhAudio";
 import { downloadAudio } from "@/lib/downloadAudio";
 import RecitationResultGrid from "@/components/hifdh/RecitationResultGrid";
 import { buildPageGrids } from "@/lib/staffRecitationView";
+import HifdhTestQuestions, { type LoggedQuestion } from "@/components/hifdh/HifdhTestQuestions";
 
 /* ── palette ── */
 const G    = "#064E3B";
@@ -32,6 +33,8 @@ interface PageResult {
 }
 interface SessionData {
   recitation_score?:number; test_score?:number; pages_done?:number[];
+  section_a_score?:number|null; section_b_score?:number|null;
+  question_log?:LoggedQuestion[]; test_attempt_score?:number|null; test_attempt_section_a?:number|null; test_attempt_section_b?:number|null;
   audio_url?:string|null; audio_path?:string|null; analysing?:boolean; audio_pending_upload?:boolean; page_results?:PageResult[]; errors?:{word:string;page:number}[];
   review?:{ teacher_score:number; teacher_feedback:string; reviewed_by:string; reviewed_at:string; };
   teacher_override?:{ score:number; teacher_feedback:string; reviewed_by:string; reviewed_at:string; };
@@ -51,6 +54,22 @@ const scoreColor=(s:number)=>s>=70?PASS:s>=50?AMBER:FAIL;
 const scoreLabel=(s:number)=>s>=70?"Excellent":s>=50?"Good":"Needs Work";
 const fmtDate=(d:string)=>new Date(d).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"});
 const fmtDur=(s?:number|null)=>!s?"—":`${Math.floor(s/60)}m ${s%60}s`;
+const PAGE_SIZE=300;       // sessions fetched per batch
+const RECENT_PER_STUDENT=5; // sessions shown per student until "See all"
+
+/** Why a session is not completed: the student recorded, but the test was not passed / not taken / analysis never finished. */
+function incompleteBadge(log:DailyLog):{text:string;hint:string}|null{
+  if(log.completed) return null;
+  const sd=log.session_data;
+  if(sd?.analysing){
+    const ageMin=log.updated_at?(Date.now()-new Date(log.updated_at).getTime())/60000:0;
+    return ageMin>15
+      ?{text:"🎙 Analysis incomplete",hint:"The recording was saved but the student left before the result came back"}
+      :{text:"🎙 Analysing",hint:"The recording is being analysed right now"};
+  }
+  if(sd?.test_attempt_score!=null) return {text:`📝 Test not passed (${sd.test_attempt_score}%)`,hint:"The student recited but did not pass the test, so the session is not completed"};
+  return {text:"📝 Test not taken",hint:"The student recorded the recitation but has not taken / finished the test, so the session is not completed"};
+}
 
 
 function ScoreRing({pct,size=48}:{pct:number;size?:number}){
@@ -205,7 +224,7 @@ function SessionDetail({log,ov,saving,onOvChange,onSave,onClose}:{
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
         {[
           {icon:<Star size={13} color={GOLD}/>,label:"Recitation",value:`${sd?.recitation_score??displayScore}%`},
-          {icon:<FileText size={13} color={G}/>,label:"Test",value:`${sd?.test_score??0}%`},
+          {icon:<FileText size={13} color={G}/>,label:log.completed?"Test":"Test (not passed)",value:sd?.test_score!=null?`${sd.test_score}%`:sd?.test_attempt_score!=null?`${sd.test_attempt_score}%`:"—"},
           {icon:<Mic size={13} color={FAIL}/>,label:"Duration",value:fmtDur(log.duration_secs)},
         ].map((item,i)=>(
           <div key={i} style={{background:W,borderRadius:10,padding:"8px 10px",
@@ -288,6 +307,12 @@ function SessionDetail({log,ov,saving,onOvChange,onSave,onClose}:{
         </>
       )}
 
+      {/* Test questions the student answered */}
+      <HifdhTestQuestions log={sd?.question_log} attempt={!log.completed}
+        score={sd?.test_score??sd?.test_attempt_score??null}
+        sectionA={sd?.section_a_score??sd?.test_attempt_section_a??null}
+        sectionB={sd?.section_b_score??sd?.test_attempt_section_b??null}/>
+
       {/* Existing review badge */}
       {reviewed&&(()=>{const rov=log.session_data?.teacher_override??log.session_data?.review;if(!rov)return null;const rovScore=(rov as any).score??(rov as any).teacher_score??log.avg_score??0;return(
         <div style={{padding:"10px 14px",borderRadius:10,background:"#F0FDF4",border:"1px solid #86EFAC"}}>
@@ -360,22 +385,33 @@ export default function HifdhAdminReview(){
   const [expandedSession,setExpandedSession]=useState<string|null>(null);
   const [overrides,setOverrides]=useState<Record<string,{score:string;feedback:string}>>({});
   const [saving,setSaving]=useState<string|null>(null);
+  const [loadingMore,setLoadingMore]=useState(false);
+  const [hasMore,setHasMore]=useState(false);
+  const [showAll,setShowAll]=useState<Set<string>>(new Set());   // students whose full history is shown
+  const [nameMap,setNameMap]=useState<Record<string,{name:string;email:string}>>({});
 
-  useEffect(()=>{loadLogs();},[]);
+  useEffect(()=>{loadLogs(true);},[]);
 
-  const loadLogs=async()=>{
-    setLoading(true);
+  /** Loads one batch of logs (newest first). `reset` starts from the newest; otherwise it appends the next older batch. */
+  const loadLogs=async(reset:boolean)=>{
+    if(reset) setLoading(true); else setLoadingMore(true);
     try{
+      const from=reset?0:logs.length;
       const {data:rawLogs}=await (supabase as any)
         .from("hifdh_daily_logs").select("*")
-        .order("log_date",{ascending:false}).limit(300);
-      if(!rawLogs){setLoading(false);return;}
+        .order("log_date",{ascending:false}).order("id",{ascending:false})
+        .range(from,from+PAGE_SIZE-1);
+      if(!rawLogs){setLoading(false);setLoadingMore(false);return;}
+      setHasMore(rawLogs.length===PAGE_SIZE);
 
-      const ids=[...new Set(rawLogs.map((l:any)=>l.student_id))];
-      const {data:profiles}=await (supabase as any).from("profiles")
-        .select("user_id,full_name,email").in("user_id",ids);
-      const pmap:Record<string,{name:string;email:string}>={};
-      (profiles||[]).forEach((p:any)=>{pmap[p.user_id]={name:p.full_name??"Student",email:p.email??""};});
+      const ids=[...new Set(rawLogs.map((l:any)=>l.student_id))].filter((id:any)=>reset||!nameMap[id]);
+      const pmap:Record<string,{name:string;email:string}>=reset?{}:{...nameMap};
+      if(ids.length){
+        const {data:profiles}=await (supabase as any).from("profiles")
+          .select("user_id,full_name,email").in("user_id",ids);
+        (profiles||[]).forEach((p:any)=>{pmap[p.user_id]={name:p.full_name??"Student",email:p.email??""};});
+      }
+      setNameMap(pmap);
 
       const enriched:DailyLog[]=rawLogs.map((l:any)=>({
         ...l,
@@ -383,7 +419,7 @@ export default function HifdhAdminReview(){
         student_name:pmap[l.student_id]?.name??"Student",
         student_email:pmap[l.student_id]?.email??"",
       }));
-      setLogs(enriched);
+      setLogs(prev=>reset?enriched:[...prev,...enriched.filter(e=>!prev.some(x=>x.id===e.id))]);
 
       const init:Record<string,{score:string;feedback:string}>={};
       enriched.forEach(l=>{
@@ -391,9 +427,9 @@ export default function HifdhAdminReview(){
         const revScore=rev ? ((rev as any).score ?? (rev as any).teacher_score ?? l.avg_score ?? 0) : (l.avg_score??0);
         init[l.id]={score:String(revScore),feedback:rev?.teacher_feedback??""};
       });
-      setOverrides(init);
+      setOverrides(prev=>reset?init:{...prev,...init});
     }catch(e){console.error(e);}
-    setLoading(false);
+    setLoading(false); setLoadingMore(false);
   };
 
   const saveReview=async(log:DailyLog)=>{
@@ -467,6 +503,8 @@ export default function HifdhAdminReview(){
     });
   };
 
+  const toggleShowAll=(id:string)=>setShowAll(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
+
   if(loading) return(
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:400,gap:12}}>
       <Loader2 size={28} color={GOLD} style={{animation:"spin .8s linear infinite"}}/>
@@ -518,6 +556,10 @@ export default function HifdhAdminReview(){
               borderRadius:10,border:"1.5px solid #E5E7EB",fontSize:12,outline:"none",
               background:"#FAFAFA",boxSizing:"border-box" as const}}/>
         </div>
+      </div>
+
+      <div style={{padding:"8px 16px",background:"#FFFBEB",borderBottom:"1px solid #FDE68A",fontSize:11,color:"#92400E",lineHeight:1.6}}>
+        <b>⏳ Pending</b> = waiting for your review. <b>📝 Test not taken / not passed</b> = the student recorded the recitation (you can listen and review it) but has not passed the test, so the session is not marked completed.
       </div>
 
       {/* Student groups */}
@@ -573,7 +615,11 @@ export default function HifdhAdminReview(){
               {/* Sessions list */}
               {isOpen&&(
                 <div style={{borderTop:`1px solid ${G}18`,background:"#F8FAF9"}}>
-                  {group.sessions.map((log,idx)=>{
+                  {(()=>{
+                    const all=showAll.has(group.student_id);
+                    const visible=all?group.sessions:group.sessions.slice(0,RECENT_PER_STUDENT);
+                    return visible;
+                  })().map((log,idx,visibleArr)=>{
                     const isSessionOpen=expandedSession===log.id;
                     const reviewed=isReviewed(log);
                     const ov=overrides[log.id]||{score:String(log.avg_score??0),feedback:""};
@@ -581,7 +627,7 @@ export default function HifdhAdminReview(){
 
                     return(
                       <div key={log.id} style={{
-                        borderBottom:idx<group.sessions.length-1?`1px solid ${G}12`:"none",
+                        borderBottom:idx<visibleArr.length-1?`1px solid ${G}12`:"none",
                         background:isSessionOpen?W:"transparent"}}>
 
                         {/* Session row */}
@@ -610,12 +656,10 @@ export default function HifdhAdminReview(){
                             color:reviewed?PASS:"#854D0E"}}>
                             {reviewed?"✓ Reviewed":"⏳ Pending"}
                           </span>
-                          {!log.completed&&!reviewed&&(
-                            <span style={{padding:"3px 8px",borderRadius:20,fontSize:10,fontWeight:700,flexShrink:0,
-                              background:"#EFF6FF",color:"#1D4ED8"}}>
-                              {log.session_data?.analysing?"🎙 Analysing":"🎙 Not submitted"}
-                            </span>
-                          )}
+                          {(()=>{const b=incompleteBadge(log); return b&&!reviewed?(
+                            <span title={b.hint} style={{padding:"3px 8px",borderRadius:20,fontSize:10,fontWeight:700,flexShrink:0,
+                              background:"#EFF6FF",color:"#1D4ED8"}}>{b.text}</span>
+                          ):null;})()}
                           {isSessionOpen?<ChevronUp size={14} color="#9CA3AF"/>:<ChevronDown size={14} color="#9CA3AF"/>}
                         </div>
 
@@ -631,11 +675,28 @@ export default function HifdhAdminReview(){
                       </div>
                     );
                   })}
+                  {group.sessions.length>RECENT_PER_STUDENT&&(
+                    <button onClick={()=>toggleShowAll(group.student_id)} style={{
+                      width:"100%",padding:"11px",border:"none",borderTop:`1px solid ${G}12`,cursor:"pointer",
+                      background:"#F0FDF4",color:G,fontSize:12,fontWeight:800,fontFamily:"inherit"}}>
+                      {showAll.has(group.student_id)
+                        ?`Show recent only (${RECENT_PER_STUDENT})`
+                        :`See all ${group.sessions.length} sessions · older ${group.sessions.length-RECENT_PER_STUDENT} more`}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
           );
         })}
+
+        {hasMore&&(
+          <button onClick={()=>loadLogs(false)} disabled={loadingMore} style={{
+            padding:"12px",borderRadius:12,border:`1.5px solid ${G}`,background:W,color:G,
+            fontSize:12,fontWeight:800,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+            {loadingMore?<><Loader2 size={13} style={{animation:"spin .8s linear infinite"}}/>Loading…</>:"Load older sessions"}
+          </button>
+        )}
       </div>
     </div>
   );

@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { resolveStaffAudioUrl } from "@/lib/hifdhAudio";
 import RecitationResultGrid from "@/components/hifdh/RecitationResultGrid";
 import { buildPageGrids } from "@/lib/staffRecitationView";
+import HifdhTestQuestions, { type LoggedQuestion } from "@/components/hifdh/HifdhTestQuestions";
 
 /* ── palette ── */
 const G    = "#064E3B";
@@ -33,6 +34,8 @@ interface PageResult {
 }
 interface SessionData {
   recitation_score?:number; test_score?:number; pages_done?:number[];
+  section_a_score?:number|null; section_b_score?:number|null;
+  question_log?:LoggedQuestion[]; test_attempt_score?:number|null; test_attempt_section_a?:number|null; test_attempt_section_b?:number|null;
   audio_url?:string|null; audio_path?:string|null; page_results?:PageResult[]; errors?:{word:string;page:number}[];
   review?:{ teacher_score:number; teacher_feedback:string; reviewed_by:string; reviewed_at:string; };
   teacher_override?:{ score:number; teacher_feedback:string; reviewed_by:string; reviewed_at:string; };
@@ -130,7 +133,7 @@ export default function TeacherHifdhReview() {
         .select("*")
         .in("student_id", studentIds)
         .order("log_date", { ascending: false })
-        .limit(200);
+        .limit(1000);
 
       if (!rawLogs) { setLoading(false); return; }
 
@@ -331,6 +334,12 @@ export default function TeacherHifdhReview() {
                   background:reviewed?"#F0FDF4":"#FEF9C3",color:reviewed?PASS:"#854D0E"}}>
                   {reviewed?"✓ Reviewed":"⏳ Pending"}
                 </span>
+                {!log.completed&&!reviewed&&(
+                  <span title="The student recorded the recitation but has not passed the test, so the session is not completed"
+                    style={{padding:"3px 8px",borderRadius:20,fontSize:10,fontWeight:700,flexShrink:0,background:"#EFF6FF",color:"#1D4ED8"}}>
+                    {log.session_data?.test_attempt_score!=null?"📝 Test not passed":"📝 Test not taken"}
+                  </span>
+                )}
 
                 {isExp?<ChevronUp size={15} color="#9CA3AF"/>:<ChevronDown size={15} color="#9CA3AF"/>}
               </div>
@@ -344,7 +353,7 @@ export default function TeacherHifdhReview() {
                   <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
                     {[
                       {icon:<Star size={13} color={GOLD}/>,label:"Recitation",value:`${sd?.recitation_score??displayScore}%`},
-                      {icon:<FileText size={13} color={G}/>,  label:"Test Score", value:`${sd?.test_score??0}%`},
+                      {icon:<FileText size={13} color={G}/>,  label:log.completed?"Test Score":"Test (not passed)", value:sd?.test_score!=null?`${sd.test_score}%`:sd?.test_attempt_score!=null?`${sd.test_attempt_score}%`:"—"},
                       {icon:<Mic size={13} color={FAIL}/>,    label:"Duration",  value:fmtDur(log.duration_secs)},
                     ].map((item,i)=>(
                       <div key={i} style={{background:W,borderRadius:10,padding:"8px 10px",
@@ -432,6 +441,12 @@ export default function TeacherHifdhReview() {
                       )}
                     </>
                   )}
+
+                  {/* Test questions the student answered */}
+                  <HifdhTestQuestions log={sd?.question_log} attempt={!log.completed}
+                    score={sd?.test_score??sd?.test_attempt_score??null}
+                    sectionA={sd?.section_a_score??sd?.test_attempt_section_a??null}
+                    sectionB={sd?.section_b_score??sd?.test_attempt_section_b??null}/>
 
                   {/* Existing review badge */}
                   {reviewed&&(()=>{const rov=log.session_data?.teacher_override??log.session_data?.review;if(!rov)return null;const rovScore=(rov as any).score??(rov as any).teacher_score??log.avg_score??0;return(

@@ -280,7 +280,8 @@ export interface WordResult {
   grade: Grade;
   credit: number;
   tag?: "uthmani";                    // pronounced correctly, written differently in the Uthmani mushaf
-  heard?: string;                     // for grade "wrong": what was heard instead
+  heard?: string;                     // for grade "wrong" / "close": what was heard instead
+  heardAs?: string;                   // for grade "ok": the heard word as the model wrote it (shown under the word on staff screens)
 }
 
 export interface RecitationAnalysis { words: WordResult[]; extras: string[]; }
@@ -408,7 +409,7 @@ export function analyzeRecitation(refText: string, gotText: string): RecitationA
       && (heard[gi].virtual || origRef[ri].includes("\u0670") || medialAlefs(plainKey(origRef[ri])) === medialAlefs(plainKey(heard[gi].text.replace(/\s+/g, ""))));
     if (exact) {
       const tag = heard[gi].virtual || plainKey(origRef[ri]) !== plainKey(heard[gi].text.replace(/\s+/g, "")) ? { tag: "uthmani" as const } : {};
-      words[ri] = mk(origRef[ri], "ok", tag);
+      words[ri] = mk(origRef[ri], "ok", { ...tag, ...(heard[gi].text ? { heardAs: heard[gi].text } : {}) });
     } else words[ri] = mk(origRef[ri], "close", { heard: heard[gi].text });
     r = ri + 1; g = gi + 1;
   }

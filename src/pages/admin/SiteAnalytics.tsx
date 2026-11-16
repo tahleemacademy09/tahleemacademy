@@ -61,6 +61,7 @@ const SiteAnalytics = () => {
   const [tab, setTab]   = useState<"public" | "loggedin">("public");
   const [range, setRange] = useState(7);
   const [selectedIdentity, setSelectedIdentity] = useState<Identity | null>(null);
+  const [showAllRecent, setShowAllRecent] = useState(false);
 
   const since = useMemo(() => {
     const d = new Date();
@@ -129,7 +130,9 @@ const SiteAnalytics = () => {
     return Object.entries(counts).map(([name, views]) => ({ name, views })).reverse();
   }, [activeRows]);
 
-  const recent = activeRows.slice(0, 40);
+  const RECENT_LIMIT = 40;
+  // "See all" shows every row in the selected range (not just the latest 40)
+  const recent = showAllRecent ? activeRows : activeRows.slice(0, RECENT_LIMIT);
 
   // ── Full log for one identity — a click used to do nothing here, so there
   // was no way to see everything a given visitor/user did, only whatever
@@ -237,9 +240,12 @@ const SiteAnalytics = () => {
               log (see the drawer below); rows were previously inert. */}
           <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: 14 }}>
             <p style={{ fontSize: 12, fontWeight: 800, color: G, margin: "0 0 10px" }}>
-              Recent {tab === "public" ? "visits" : "activity"}
+              {showAllRecent ? "All" : "Recent"} {tab === "public" ? "visits" : "activity"}
+              <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, color: "#9CA3AF" }}>
+                {recent.length}{showAllRecent || activeRows.length <= RECENT_LIMIT ? "" : ` of ${activeRows.length}`}
+              </span>
             </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 420, overflowY: "auto" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: showAllRecent ? "70vh" : 420, overflowY: "auto" }}>
               {recent.length === 0 && <p style={{ fontSize: 12, color: "#9CA3AF" }}>Nothing yet.</p>}
               {recent.map(r => (
                 <button
@@ -263,6 +269,18 @@ const SiteAnalytics = () => {
                 </button>
               ))}
             </div>
+            {activeRows.length > RECENT_LIMIT && (
+              <button
+                onClick={() => setShowAllRecent(v => !v)}
+                style={{
+                  marginTop: 10, width: "100%", padding: "10px", borderRadius: 10, cursor: "pointer",
+                  border: `1.5px solid ${G}`, background: showAllRecent ? "#fff" : G,
+                  color: showAllRecent ? G : "#fff", fontSize: 12, fontWeight: 800,
+                }}
+              >
+                {showAllRecent ? "Show recent only" : `See all (${activeRows.length})`}
+              </button>
+            )}
           </div>
         </>
       )}

@@ -3319,6 +3319,43 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     const pct=totalQ>0?Math.round((totalPts/totalQ)*100):100;
     setTestScore(pct); setPhase("test_result");
     if(pct>=TEST_PASS_THRESHOLD) submitSession(pct, sa, sb);
+    else void saveFailedTestAttempt(pct, sa, sb);
+  };
+
+  /** Every question with its full wording, the options, the right answer and what the student chose — read by the admin / teacher review. */
+  const buildQuestionLog=()=>questions.map((q,i)=>({
+    id: q.id,
+    type: q.type,
+    section: q.section,
+    isErrorFocused: q.isErrorFocused || false,
+    answer_given: answers[i] ?? null,
+    correct: (isRecType(q)) ? answers[i] === 0 : answers[i] === q.correct,
+    prompt: q.prompt, promptLabel: q.promptLabel,
+    options: q.options, correct_index: q.correct, correct_text: q.correctText,
+    ...(q.listenText ? { listen_text: q.listenText } : {}),
+    ...(q.recordPrompt ? { record_prompt: q.recordPrompt } : {}),
+    ...(q.promptAr ? { prompt_ar: q.promptAr } : {}),
+    ...(q.promptEn ? { prompt_en: q.promptEn } : {}),
+    ...(q.promptSubEn ? { prompt_sub_en: q.promptSubEn } : {}),
+    ...(q.optionsEn ? { options_en: q.optionsEn } : {}),
+  }));
+
+  /** A test the student did not pass is not a completed session, but staff still see the questions and answers. */
+  const saveFailedTestAttempt=async(pct:number, sA:number|null, sB:number|null)=>{
+    try{
+      const today=todayISO();
+      let q=(supabase as any).from("hifdh_daily_logs").select("id,completed,session_data")
+        .eq("student_id",userId).eq("log_date",today);
+      if(assignment?.id) q=q.eq("assignment_id",assignment.id);
+      const {data:cur}=await q.maybeSingle();
+      if(!cur||cur.completed) return;
+      const base=typeof cur.session_data==="string"?JSON.parse(cur.session_data):(cur.session_data||{});
+      const {error}=await (supabase as any).from("hifdh_daily_logs").update({
+        session_data:{...base, test_attempt_score:pct, test_attempt_section_a:sA, test_attempt_section_b:sB,
+          test_attempt_at:new Date().toISOString(), question_log:buildQuestionLog()},
+      }).eq("id",cur.id);
+      if(error) console.warn("[HifdhDaily] test attempt save error:",error);
+    }catch(e){ console.warn("[HifdhDaily] test attempt save exception:",e); }
   };
   const retryTest=()=>{
     skippedQRef.current = new Set();
@@ -3372,14 +3409,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             flagged: tabSwitchCount > 0,
             test_started_at: new Date().toISOString(),
           },
-          question_log: questions.map((q,i)=>({
-            id: q.id,
-            type: q.type,
-            section: q.section,
-            isErrorFocused: q.isErrorFocused || false,
-            answer_given: answers[i] ?? null,
-            correct: (isRecType(q)) ? answers[i] === 0 : answers[i] === q.correct,
-          })),
+          question_log: buildQuestionLog(),
           // Preserve teacher override so it isn't wiped on re-completion
           ...(existingTeacherOverride ? { teacher_override: existingTeacherOverride } : {}),
         },
