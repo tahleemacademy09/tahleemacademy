@@ -21,7 +21,7 @@ import { Switch } from "@/components/ui/switch";
 import SubjectMaterials from "@/components/classroom/SubjectMaterials";
 import SubjectRecordings from "@/components/classroom/SubjectRecordings";
 import {
-  Plus, BookOpen, Trash2, Edit2, ChevronRight, ChevronLeft,
+  Plus, BookOpen, Trash2, Edit2, Eye, ChevronRight, ChevronLeft,
   Loader2, EyeOff, Save, Image, Search, Layers, FolderOpen,
   FileText, Video, Music, ExternalLink, Type, FileSpreadsheet,
   Upload, Download, File, Check, Calendar, ChevronDown, ChevronUp, X, AlertCircle, Lock, Copy,
@@ -1758,6 +1758,7 @@ export default function CourseManagement() {
                               {l.title_ar && <p style={{ fontSize: 12, color: GOLD, margin: "2px 0 0", direction: "rtl", textAlign: "right", fontFamily: "'Amiri',serif" }}>{l.title_ar}</p>}
                             </div>
                             <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                              <button type="button" aria-label="View as student" title="View as student" onClick={() => navigate(`/student/courses?subject=${selSubject?.id}&lesson=${l.id}`)} style={{ width: 34, height: 34, borderRadius: 9, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Eye size={14} color={G} /></button>
                               <button type="button" aria-label="Edit session" onClick={() => { setEdLesson(l); setShowLesson(true); }} style={{ height: 34, padding: "0 12px", borderRadius: 9, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: G }}><Edit2 size={13} color={G} /> Edit</button>
                               <button type="button" aria-label="Delete session" onClick={() => delLesson(l.id)} style={{ width: 34, height: 34, borderRadius: 9, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Trash2 size={13} color="#DC2626" /></button>
                             </div>
