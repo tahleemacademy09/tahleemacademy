@@ -3435,7 +3435,7 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
 
   const renderContent=()=>{
     // Text-only material (e.g. a note shared from the live class) — no file to load.
-    if(!rawUrl&&material.content)return(
+    if(!rawUrl&&material.content&&!inlineLesson.isInline)return(
       <div style={{flex:1,overflowY:"auto",background:"#0f1117",padding:"22px 18px"}}>
         <div style={{maxWidth:560,margin:"0 auto",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,padding:"20px 22px"}}>
           <p style={{whiteSpace:"pre-wrap" as const,fontSize:14,lineHeight:1.7,color:"#e8eaf0",margin:0,fontFamily:"'Google Sans',sans-serif"}}>{material.content}</p>
@@ -4578,6 +4578,15 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   const{user}=useAuth();
   const[mats,setMats]=useState<any[]>([]);
   const[busy,setBusy]=useState(true);
+  // Lessons of this subject, shown right in the class — open straight from the lessons table (no upload, no copy).
+  const[classLessons,setClassLessons]=useState<any[]>([]);
+  useEffect(()=>{
+    if(!subjectId)return;
+    let off=false;
+    (supabase.from("lessons" as any) as any).select("id,title,title_ar,sort_order,interactive_html").eq("subject_id",subjectId).order("sort_order")
+      .then(({data}:any)=>{if(!off)setClassLessons((data||[]).filter((l:any)=>!!l.interactive_html).map(({interactive_html:_h,...rest}:any)=>rest));});
+    return()=>{off=true;};
+  },[subjectId]);
   // Locked (sync_allowed=false) materials are invisible to students — only
   // admin/teacher (isPrivileged) ever see the full list, so they can review
   // and unlock what's ready to share.
@@ -5358,6 +5367,23 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
             can review and unlock it. Unlocking (🔗) is what makes a
             material appear in a student's own list at all. */}
         <div style={{flex:1,overflowY:"auto",padding:"8px 10px"}}>
+          {classLessons.length>0&&(
+            <div style={{marginBottom:10}}>
+              <div style={{fontSize:10,color:"rgba(255,255,255,.3)",fontWeight:600,letterSpacing:.6,padding:"8px 2px 6px",fontFamily:"'Google Sans',sans-serif"}}>LESSONS</div>
+              {classLessons.map((l:any)=>(
+                <button key={l.id} onClick={()=>openMaterial({
+                  id:`lesson-${l.id}`,title:l.title,title_ar:l.title_ar,subject_id:subjectId,
+                  material_type:"Document",file_type:"text/html",visibility:"all",
+                  sync_allowed:true,is_downloadable:false,
+                  inline_lesson:true,lesson_source_id:l.id,
+                })} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 12px",marginBottom:6,borderRadius:10,border:"1px solid rgba(255,255,255,.08)",background:"rgba(255,255,255,.04)",cursor:"pointer",textAlign:"left" as const,color:"#e8eaed",fontFamily:"'Google Sans',sans-serif"}}>
+                  <span style={{fontSize:18,flexShrink:0}}>📖</span>
+                  <span style={{flex:1,minWidth:0,fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" as const}}>{l.title}</span>
+                  <ChevronRight style={{width:13,height:13,color:"rgba(255,255,255,.4)",flexShrink:0}}/>
+                </button>
+              ))}
+            </div>
+          )}
           {visibleMats.filter(m=>m.visibility!=="staff").length>0&&<div style={{fontSize:10,color:"rgba(255,255,255,.3)",fontWeight:600,letterSpacing:.6,padding:"8px 2px 6px",fontFamily:"'Google Sans',sans-serif"}}>UPLOADED MATERIALS</div>}
           {busy&&<div style={{display:"flex",justifyContent:"center",padding:32}}><div style={{width:22,height:22,border:`2px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/></div>}
           {!busy&&visibleMats.length===0&&<div style={{textAlign:"center" as const,padding:"24px 16px",color:"rgba(255,255,255,.3)"}}>

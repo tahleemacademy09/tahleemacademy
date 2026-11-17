@@ -21,6 +21,17 @@ export function useInlineLesson(mat: any): { isInline: boolean; html: string | n
       return;
     }
     setHtml(null);
+    // A lesson opened straight from the lessons table (live-class "Lessons" list): its page is lessons.interactive_html.
+    const lessonSrc: string | undefined = mat?.lesson_source_id;
+    if (lessonSrc) {
+      (supabase.from("lessons" as any) as any).select("interactive_html, content").eq("id", lessonSrc).maybeSingle()
+        .then(({ data }: any) => {
+          if (off) return;
+          const h = (data?.interactive_html as string | null) || inlineLessonHtml(data?.content || "");
+          setHtml(h || null); setErr(!h);
+        });
+      return () => { off = true; };
+    }
     if (!id) { setErr(true); return; }
     (supabase.from("subject_materials" as any) as any).select("content").eq("id", id).maybeSingle()
       .then(({ data }: any) => {
@@ -29,7 +40,7 @@ export function useInlineLesson(mat: any): { isInline: boolean; html: string | n
         setHtml(h); setErr(!h);
       });
     return () => { off = true; };
-  }, [isInline, id, content]);
+  }, [isInline, id, content, mat?.lesson_source_id]);
 
   return { isInline, html, err };
 }
