@@ -20,6 +20,7 @@ import { toast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
 import SubjectMaterials from "@/components/classroom/SubjectMaterials";
 import SubjectRecordings from "@/components/classroom/SubjectRecordings";
+import LessonClassResources from "@/components/classroom/LessonClassResources";
 import {
   Plus, BookOpen, Trash2, Edit2, Eye, ChevronRight, ChevronLeft,
   Loader2, EyeOff, Save, Image, Search, Layers, FolderOpen,
@@ -1163,6 +1164,7 @@ export default function CourseManagement() {
   const [selCourse,  setSelCourseState] = useState<any>(null);
   const [selSubject, setSelSubjectState]= useState<any>(null);
   const [tab,        setTabState]       = useState<ContentTab>(tabParam);
+  const [viewLessonId, setViewLessonId] = useState<string | null>(null);
 
   // Helpers that update both React state AND the URL atomically
   const setView = (v: View) => {
@@ -1576,7 +1578,7 @@ export default function CourseManagement() {
         </div>
       )}
 
-      <div style={{ padding: "16px 16px 32px", maxWidth: 960, margin: "0 auto" }}>
+      <div style={{ padding: "16px 16px 32px", maxWidth: view === "content" ? 1400 : 960, margin: "0 auto" }}>
 
         {/* ═══ COURSES ═══════════════════════════════════════ */}
         {view === "courses" && (
@@ -1647,7 +1649,7 @@ export default function CourseManagement() {
 
         {/* ═══ CONTENT (Syllabus / Materials / Lessons) ══════ */}
         {view === "content" && selSubject && (
-          <div style={{ maxWidth: 1200, width: "100%", margin: "0 auto" }}>
+          <div style={{ maxWidth: 1400, width: "100%", margin: "0 auto" }}>
             {/* Subject banner */}
             <div style={{ background: "#fff", borderRadius: 16, border: `1px solid ${safeLvl(selSubject.level).border}`, padding: "16px 20px", marginBottom: 20, display: "flex", alignItems: "center", gap: 14 }}>
               {selSubject.image_url && <img src={selSubject.image_url} alt="" style={{ width: 52, height: 52, borderRadius: 12, objectFit: "cover", flexShrink: 0 }} onError={e => { (e.target as any).style.display = "none"; }} />}
@@ -1748,33 +1750,25 @@ export default function CourseManagement() {
                 </div>
                 {lLoad ? <div style={{ textAlign: "center", padding: 40 }}><Loader2 size={24} style={{ animation: "spin .8s linear infinite", color: G }} /></div>
                   : (lessons as any[]).length === 0 ? <div style={{ textAlign: "center", padding: 48, color: "#9CA3AF" }}><BookOpen size={44} style={{ margin: "0 auto 14px", display: "block", opacity: .3 }} /><p style={{ fontWeight: 600, margin: "0 0 4px" }}>No sessions yet</p><p style={{ fontSize: 13, margin: 0 }}>Describe what each live session will cover</p></div>
-                    : <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    : <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", overflow: "hidden", width: "100%" }}>
+                      <div style={{ padding: "14px 18px", borderBottom: "1px solid #F0F4F0", fontSize: 13, fontWeight: 700, color: G }}>Sessions ({(lessons as any[]).length})</div>
                       {(lessons as any[]).map((l: any, i: number) => (
-                        <div key={l.id} style={{ background: "#F9FAFB", borderRadius: 14, border: "1px solid #E5E7EB", padding: "14px 16px" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                            <div style={{ width: 34, height: 34, borderRadius: 10, background: "#F0FDF4", border: "1.5px solid #86EFAC", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: G, flexShrink: 0 }}>{i + 1}</div>
+                        <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 18px", borderBottom: "1px solid #F0F4F0", background: "#fff" }}>
+                          <button type="button" onClick={() => setViewLessonId(l.id)} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 12, background: "none", border: "none", cursor: "pointer", textAlign: "left", padding: 0, fontFamily: "inherit" }}>
+                            <div style={{ width: 30, height: 30, borderRadius: 9, background: "#F0FDF4", border: "1.5px solid #86EFAC", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: G, flexShrink: 0 }}>{i + 1}</div>
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <p style={{ fontWeight: 700, fontSize: 14, color: "#111", margin: 0, overflowWrap: "anywhere" }}>{l.title}</p>
-                              {l.title_ar && <p style={{ fontSize: 12, color: GOLD, margin: "2px 0 0", direction: "rtl", textAlign: "right", fontFamily: "'Amiri',serif" }}>{l.title_ar}</p>}
+                              <div style={{ fontSize: 13, fontWeight: 600, color: G, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.title}</div>
+                              <div style={{ display: "flex", gap: 8, fontSize: 11, color: "#9CA3AF", marginTop: 2, flexWrap: "wrap" }}>
+                                {l.title_ar && <span dir="rtl" style={{ color: GOLD, fontFamily: "'Amiri',serif", fontSize: 12 }}>{l.title_ar}</span>}
+                                {l.duration_minutes > 0 && <span>⏱ {l.duration_minutes} min</span>}
+                                {l.is_free && <span style={{ color: "#16a34a", fontWeight: 700 }}>FREE</span>}
+                              </div>
                             </div>
-                            <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                              <button type="button" aria-label="View as student" title="View as student" onClick={() => navigate(`/student/courses?subject=${selSubject?.id}&lesson=${l.id}`)} style={{ width: 34, height: 34, borderRadius: 9, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Eye size={14} color={G} /></button>
-                              <button type="button" aria-label="Edit session" onClick={() => { setEdLesson(l); setShowLesson(true); }} style={{ height: 34, padding: "0 12px", borderRadius: 9, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: G }}><Edit2 size={13} color={G} /> Edit</button>
-                              <button type="button" aria-label="Delete session" onClick={() => delLesson(l.id)} style={{ width: 34, height: 34, borderRadius: 9, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Trash2 size={13} color="#DC2626" /></button>
-                            </div>
-                          </div>
-                          {l.content && (
-                            <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, background: "#fff", border: "1px solid #E5E7EB", width: "100%", boxSizing: "border-box" }}>
-                              {l.content.split("\n").filter(Boolean).map((line: string, j: number) => (
-                                <p key={j} style={{ fontSize: 13, color: "#374151", margin: "3px 0", display: "flex", alignItems: "flex-start", gap: 6, overflowWrap: "anywhere" }}>
-                                  <span style={{ color: G, fontWeight: 700, flexShrink: 0 }}>•</span><span style={{ unicodeBidi: "plaintext" }}>{line.replace(/^•\s*/, "")}</span>
-                                </p>
-                              ))}
-                            </div>
-                          )}
-                          <div style={{ display: "flex", gap: 8, fontSize: 11, color: "#9CA3AF", marginTop: 8, flexWrap: "wrap" }}>
-                            {l.duration_minutes > 0 && <span>⏱ {l.duration_minutes} min</span>}
-                            {l.is_free && <span style={{ color: "#16a34a", fontWeight: 700 }}>FREE</span>}
+                            <ChevronRight size={14} color="#D1D5DB" style={{ flexShrink: 0 }} />
+                          </button>
+                          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                            <button type="button" aria-label="Edit session" onClick={() => { setEdLesson(l); setShowLesson(true); }} style={{ width: 34, height: 34, borderRadius: 9, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Edit2 size={13} color={G} /></button>
+                            <button type="button" aria-label="Delete session" onClick={() => delLesson(l.id)} style={{ width: 34, height: 34, borderRadius: 9, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Trash2 size={13} color="#DC2626" /></button>
                           </div>
                         </div>
                       ))}
@@ -1784,6 +1778,46 @@ export default function CourseManagement() {
           </div>
         )}
       </div>
+
+      {/* Full-screen session viewer — same as what students see */}
+      {(() => {
+        const vl = viewLessonId ? (lessons as any[]).find((x: any) => x.id === viewLessonId) : null;
+        if (!vl) return null;
+        return (
+          <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "#fff", display: "flex", flexDirection: "column" }}>
+            <div style={{ background: `linear-gradient(135deg,${G},${GM})`, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+              <button type="button" onClick={() => setViewLessonId(null)} style={{ display: "flex", alignItems: "center", gap: 6, color: "#fff", background: "rgba(255,255,255,.14)", border: "none", borderRadius: 20, padding: "7px 14px", cursor: "pointer", fontSize: 12, flexShrink: 0, fontFamily: "inherit" }}>
+                <ArrowLeft size={13} /> Back
+              </button>
+              <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 800, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{vl.title}</div>
+              <button type="button" aria-label="Edit session" onClick={() => { setViewLessonId(null); setEdLesson(vl); setShowLesson(true); }} style={{ display: "flex", alignItems: "center", gap: 6, color: "#fff", background: "rgba(255,255,255,.14)", border: "none", borderRadius: 20, padding: "7px 12px", cursor: "pointer", fontSize: 12, flexShrink: 0, fontFamily: "inherit" }}>
+                <Edit2 size={13} /> Edit
+              </button>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", background: "#FBFDFC" }}>
+              {vl.interactive_html ? (
+                <iframe key={vl.id + (vl.updated_at || "")} srcDoc={vl.interactive_html} sandbox="allow-scripts allow-same-origin" allow="microphone; autoplay"
+                  style={{ width: "100%", height: "100%", minHeight: "100%", border: "none", display: "block" }} title={vl.title} />
+              ) : vl.video_url ? (
+                <div style={{ aspectRatio: "16/9", background: "#000", maxHeight: "100%", margin: "0 auto" }}>
+                  <iframe src={vl.video_url} style={{ width: "100%", height: "100%", border: "none" }} allowFullScreen title={vl.title} />
+                </div>
+              ) : vl.content ? (
+                <div style={{ padding: "18px 20px", maxWidth: 1100, margin: "0 auto" }}>
+                  {vl.content.split("\n").filter(Boolean).map((line: string, j: number) => (
+                    <p key={j} style={{ fontSize: 14, lineHeight: 1.7, color: "#374151", margin: "0 0 10px", display: "flex", gap: 8, overflowWrap: "anywhere" }}>
+                      <span style={{ color: G, fontWeight: 700, flexShrink: 0 }}>•</span><span style={{ unicodeBidi: "plaintext" }}>{line.replace(/^•\s*/, "")}</span>
+                    </p>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#9CA3AF", fontSize: 13 }}>No content for this session</div>
+              )}
+            </div>
+            <LessonClassResources lessonId={vl.id} />
+          </div>
+        );
+      })()}
 
       {/* Modals */}
       {showCourse && <CourseModal ed={edCourse} onClose={() => { setShowCourse(false); setEdCourse(null); }} onSave={saveCourse} busy={busy} privateStudents={privateStudents} />}
