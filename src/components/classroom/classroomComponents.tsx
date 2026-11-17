@@ -409,14 +409,6 @@ export const CSS = `
   }
   .gm-emoji-btn:hover { transform:scale(1.3); background:rgba(255,255,255,.08); }
 
-  /* While a material is open: slim class header + control bar so the lesson gets the room.
-     (SubjectMaterialsPanel sets body[data-mat-open] and the --mat-top / --mat-bottom insets.) */
-  body[data-mat-open="1"] [data-class-header] { height:34px !important; background:#14161b !important; border-bottom:1px solid rgba(255,255,255,.1) !important; }
-  body[data-mat-open="1"] .cx-control-bar { background:#14161b !important; border-top:1px solid rgba(255,255,255,.1) !important; }
-  body[data-mat-open="1"] [data-class-header] > * { zoom:.8; }
-  body[data-mat-open="1"] .cx-control-bar > div { padding:6px 12px !important; }
-  body[data-mat-open="1"] .cx-control-bar button { height:34px !important; border-radius:11px !important; }
-  body[data-mat-open="1"] .cx-control-bar svg { width:17px !important; height:17px !important; }
 `;
 
 /* ══ RECONNECT MONITOR ══
@@ -3444,8 +3436,8 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
   };
   const bodyInsets: React.CSSProperties = {
     position: "absolute", left: 0, right: 0,
-    top: `var(--mat-top, ${headerH}px)`,
-    bottom: `calc(var(--mat-bottom, ${BAR_H}px) + env(safe-area-inset-bottom, 0px))`,
+    top: 0,
+    bottom: 0,
     display: "flex", flexDirection: "column", background: "#0f1117",
   };
   // Tap in the middle of the material → show/hide header + footer (ignores buttons/links/inputs)
@@ -3559,9 +3551,6 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
 
   return(
     <div style={{...overlayStyle,background:"#ffffff"}}>
-      {/* Edge strips: tapping where the header/footer were (while hidden) brings them back */}
-      <div onClick={toggleChrome} style={{position:"absolute",top:0,left:0,right:0,height:`var(--mat-top, ${headerH}px)`,zIndex:1}}/>
-      <div onClick={toggleChrome} style={{position:"absolute",bottom:0,left:0,right:0,height:`calc(var(--mat-bottom, ${BAR_H}px) + env(safe-area-inset-bottom, 0px))`,zIndex:1}}/>
       <div style={{...bodyInsets,zIndex:2}}>
       {/* Viewer header */}
       <div style={{height:38,background:"#ffffff",display:"flex",alignItems:"center",padding:"0 8px",gap:8,flexShrink:0,borderBottom:"1px solid #e5e7eb"}}>
@@ -4680,7 +4669,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   // ── Assignments section (teacher/admin manage, students view/submit) ────
   const[assignmentsOpen,setAssignmentsOpen]=useState(false);
   // Collapsible sections of the materials list — keeps the panel tidy instead of one long jam-packed stack.
-  const[secOpen,setSecOpen]=useState<Record<string,boolean>>({tools:true,lessons:true,uploads:false,staff:false});
+  const[secOpen,setSecOpen]=useState<Record<string,boolean>>({tools:true,lessons:false,uploads:false,staff:false});
   const[cError,setCError]=useState("");
   const fileInputRef=useRef<HTMLInputElement>(null);
   const editFileRef=useRef<HTMLInputElement>(null);
@@ -5177,7 +5166,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
      never remounts them when the panel switches view. */
   const viewersShown=!quranOpen&&openMats.length>0&&!forceList&&listVisible;
   // Tell the class chrome a material is on screen: slim header/footer + give the lesson those pixels.
-  const matCompact=viewersShown&&!!activeMatId;
+  const matCompact=false; // header/footer keep their own fixed strips — no more shrinking
   useEffect(()=>{
     const root=document.documentElement;
     if(matCompact){
@@ -5511,7 +5500,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
         an assignment created here — or a student's submission made here —
         shows up there instantly too, and vice versa. */}
     {assignmentsOpen && (
-      <div style={{position:"fixed",inset:0,zIndex:80,background:"#f5f2ea",display:"flex",flexDirection:"column"}}>
+      <div style={{position:"fixed",top:"var(--cls-top, 60px)",bottom:"var(--cls-bottom, 76px)",left:0,right:0,zIndex:56,background:"#f5f2ea",display:"flex",flexDirection:"column"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",borderBottom:"1px solid rgba(15,45,31,.1)",flexShrink:0,background:"#fff"}}>
           <ClipboardList style={{width:16,height:16,color:"#0f2d1f",flexShrink:0}}/>
           <span style={{flex:1,fontSize:15,fontWeight:800,color:"#0f2d1f"}}>Assignments</span>

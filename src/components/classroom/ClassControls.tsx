@@ -907,7 +907,7 @@ const ClassControls = ({
 
       {/* ══ MAIN CONTROL BAR ══════════════════════════════════════════════ */}
       <style>{`.lk-control-bar-btn,.lk-button,[class*="btnBase"]{color:#fff!important;} `}</style>
-      <div className="cx-control-bar" style={{position:"fixed",bottom:0,left:0,right:0,zIndex:60,display:"block",padding:0,border:"none",background:"linear-gradient(to top, rgba(0,0,0,.85) 0%, rgba(0,0,0,.55) 65%, rgba(0,0,0,0) 100%)",transform:collapsed?"translateY(100%)":"translateY(0)",opacity:collapsed?0:1,pointerEvents:collapsed?"none":"auto",transition:"transform .28s cubic-bezier(.4,0,.2,1), opacity .22s ease",willChange:"transform",paddingBottom:"env(safe-area-inset-bottom, 0px)"}}>
+      <div className="cx-control-bar" style={{position:"fixed",bottom:0,left:0,right:0,zIndex:60,display:"block",padding:0,background:"#14161b",borderTop:"1px solid rgba(255,255,255,.1)",transform:"translateY(0)",opacity:1,pointerEvents:"auto",transition:"transform .28s cubic-bezier(.4,0,.2,1), opacity .22s ease",willChange:"transform",paddingBottom:"env(safe-area-inset-bottom, 0px)"}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"12px 12px",width:"100%",maxWidth:560,margin:"0 auto",boxSizing:"border-box"}}>
 
         {/* Mic — tap toggles mute, long-press opens the mic/speaker device picker */}

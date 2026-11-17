@@ -7003,6 +7003,7 @@ export type Database = {
           question_ar: string | null
           status: string | null
           subject_id: string
+          submissions_open: boolean
           title: string
           title_ar: string | null
         }
@@ -7022,6 +7023,7 @@ export type Database = {
           question_ar?: string | null
           status?: string | null
           subject_id: string
+          submissions_open?: boolean
           title: string
           title_ar?: string | null
         }
@@ -7041,6 +7043,7 @@ export type Database = {
           question_ar?: string | null
           status?: string | null
           subject_id?: string
+          submissions_open?: boolean
           title?: string
           title_ar?: string | null
         }

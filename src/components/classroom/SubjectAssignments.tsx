@@ -136,6 +136,10 @@ function AssignmentManager({ subjectId }: { subjectId?: string }) {
   const [grading, setGrading]         = useState<any | null>(null);
   const [deleting, setDeleting]       = useState<any | null>(null);
   const [deleteBusy, setDeleteBusy]   = useState(false);
+  const [tab, setTab]                 = useState<"list" | "classwork">("list");
+  const [gradeStudent, setGradeStudent] = useState<string | null>(null);
+  const [allSubs, setAllSubs]         = useState<any[]>([]);
+  const [names, setNames]             = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     if (!subjectId) { setLoading(false); return; }
@@ -155,7 +159,15 @@ function AssignmentManager({ subjectId }: { subjectId?: string }) {
       if (asgn && asgn.length > 0) {
         const ids = asgn.map((a: any) => a.id);
         const { data: subs } = await supabase
-          .from("assignment_submissions").select("assignment_id, status").in("assignment_id", ids);
+          .from("assignment_submissions").select("*").in("assignment_id", ids).order("updated_at", { ascending: false });
+        setAllSubs(subs || []);
+        const uids = Array.from(new Set((subs || []).map((x: any) => x.user_id)));
+        if (uids.length) {
+          const { data: profs } = await supabase.from("profiles").select("user_id, full_name").in("user_id", uids as string[]);
+          const nm: Record<string, string> = {};
+          (profs || []).forEach((p: any) => { nm[p.user_id] = p.full_name; });
+          setNames(nm);
+        }
         const s: Record<string, { submitted: number; graded: number }> = {};
         (subs || []).forEach((row: any) => {
           if (!s[row.assignment_id]) s[row.assignment_id] = { submitted: 0, graded: 0 };
@@ -173,6 +185,20 @@ function AssignmentManager({ subjectId }: { subjectId?: string }) {
   }, [subjectId, liveTermId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Live sync: a student's upload shows up here the moment it lands.
+  useEffect(() => {
+    if (!subjectId) return;
+    const ch = supabase.channel(`mgr-asg-${subjectId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "assignment_submissions" }, () => { load(); })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [subjectId, load]);
+
+  const setUploads = async (id: string, open: boolean) => {
+    setAssignments(prev => prev.map(x => x.id === id ? { ...x, submissions_open: open } : x));
+    await supabase.from("subject_assignments").update({ submissions_open: open } as any).eq("id", id);
+  };
 
   // Draft tasks are hidden from students until published here.
   const setStatus = async (id: string, status: "draft" | "open") => {
@@ -225,8 +251,40 @@ function AssignmentManager({ subjectId }: { subjectId?: string }) {
         </button>
       </div>
 
-      {/* List */}
-      {loading ? (
+      {/* Tabs: assignments / all student classwork */}
+      <div style={{ display: "flex", gap: 6 }}>
+        {([["list", t("Assignments", "الواجبات")], ["classwork", t(`Classwork (${allSubs.length})`, `إجابات الطلاب (${allSubs.length})`)]] as const).map(([k, lb]) => (
+          <button key={k} onClick={() => setTab(k)} className="asm-btn"
+            style={{ flex: 1, padding: "9px 0", borderRadius: 10, border: `1px solid ${tab === k ? G : BORDER}`, background: tab === k ? G : "#fff", color: tab === k ? "#fff" : TXT, fontSize: 13, fontWeight: 800, cursor: "pointer" }}>{lb}</button>
+        ))}
+      </div>
+
+      {tab === "classwork" ? (
+        allSubs.length === 0 ? (
+          <div style={{ ...card, padding: "32px 20px", textAlign: "center", color: TLIT, fontSize: 13 }}>{t("No student classwork yet. Uploads appear here live.", "لا توجد إجابات بعد. تظهر هنا مباشرة.")}</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {allSubs.map((sb: any) => {
+              const a = assignments.find(x => x.id === sb.assignment_id);
+              if (!a) return null;
+              const gradedRow = sb.grade != null;
+              return (
+                <div key={sb.id} onClick={() => { setGradeStudent(sb.user_id); setGrading(a); }} className="asm-card"
+                  style={{ ...card, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: TXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{names[sb.user_id] || t("Student", "طالب")}</div>
+                    <div style={{ fontSize: 11, color: TLIT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{language === "ar" ? (a.title_ar || a.title) : a.title}{sb.is_late ? ` · ${t("late", "متأخر")}` : ""}</div>
+                  </div>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: gradedRow ? "#276749" : "#1d4ed8", background: gradedRow ? "#f0fdf4" : "#eff6ff", borderRadius: 20, padding: "3px 9px", whiteSpace: "nowrap" }}>
+                    {gradedRow ? `${sb.grade}/${a.max_score ?? 100}` : t("Needs grading", "بانتظار التصحيح")}
+                  </span>
+                  <ChevronRight style={{ width: 14, height: 14, color: TLIT }} />
+                </div>
+              );
+            })}
+          </div>
+        )
+      ) : loading ? (
         <div style={{ display: "flex", justifyContent: "center", padding: 50 }}>
           <div style={{ width: 32, height: 32, borderRadius: "50%", border: `3px solid ${G}`, borderTopColor: "transparent", animation: "spin .7s linear infinite" }} />
         </div>
@@ -272,6 +330,11 @@ function AssignmentManager({ subjectId }: { subjectId?: string }) {
                       </div>
                     </div>
                     <div style={{ display: "flex", gap: 4, flexShrink: 0, alignItems: "center" }} onClick={e => e.stopPropagation()}>
+                      <button onClick={() => setUploads(a.id, a.submissions_open === false)} className="asm-btn"
+                        title={a.submissions_open === false ? t("Student uploads are OFF. Tap to allow.", "رفع الطلاب متوقف. اضغط للسماح.") : t("Students can upload. Tap to stop.", "يمكن للطلاب الرفع. اضغط للإيقاف.")}
+                        style={{ height: 32, padding: "0 10px", borderRadius: 9, border: `1px solid ${BORDER}`, background: a.submissions_open === false ? "#fee2e2" : "#dcfce7", color: a.submissions_open === false ? "#b91c1c" : "#166534", cursor: "pointer", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", gap: 4 }}>
+                        <Upload style={{ width: 12, height: 12 }} />{a.submissions_open === false ? t("Uploads off", "الرفع متوقف") : t("Uploads on", "الرفع مفعّل")}
+                      </button>
                       <button onClick={() => setStatus(a.id, a.status === "draft" ? "open" : "draft")} className="asm-btn"
                         title={a.status === "draft" ? t("Hidden from students. Tap to publish.", "مخفي عن الطلاب. اضغط للنشر.") : t("Visible to students. Tap to hide.", "ظاهر للطلاب. اضغط للإخفاء.")}
                         style={{ height: 32, padding: "0 10px", borderRadius: 9, border: `1px solid ${BORDER}`, background: a.status === "draft" ? "#fef3c7" : "#dcfce7", color: a.status === "draft" ? "#92400e" : "#276749", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
@@ -307,10 +370,11 @@ function AssignmentManager({ subjectId }: { subjectId?: string }) {
       {grading && (
         <GradingModal
           assignment={grading}
+          initialStudent={gradeStudent}
           subjectId={subjectId}
           language={language}
           t={t}
-          onClose={() => setGrading(null)}
+          onClose={() => { setGrading(null); setGradeStudent(null); }}
           onGraded={load}
         />
       )}
@@ -359,6 +423,7 @@ export function AssignmentFormModal({
   const [allowText, setAllowText]   = useState(assignment?.allow_text !== false);
   const [allowFile, setAllowFile]   = useState(assignment?.allow_file !== false);
   const [allowAudio, setAllowAudio] = useState(assignment?.allow_audio !== false);
+  const [submissionsOpen, setSubmissionsOpen] = useState(assignment?.submissions_open !== false);
   const [file, setFile]             = useState<File | null>(null);
   const [saving, setSaving]         = useState(false);
   const [error, setError]           = useState<string | null>(null);
@@ -399,6 +464,7 @@ export function AssignmentFormModal({
         allow_text: allowText,
         allow_file: allowFile,
         allow_audio: allowAudio,
+        submissions_open: submissionsOpen,
         file_url,
       };
 
@@ -490,6 +556,11 @@ export function AssignmentFormModal({
             </div>
           </div>
 
+          <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, border: `1.5px solid ${submissionsOpen ? "#86efac" : BORDER}`, background: submissionsOpen ? "#f0fdf4" : "#f8fafb", cursor: "pointer" }}>
+            <input type="checkbox" checked={submissionsOpen} onChange={e => setSubmissionsOpen(e.target.checked)} />
+            <span style={{ fontSize: 13, fontWeight: 700, color: TXT }}>{t("Students can upload their classwork", "يمكن للطلاب رفع إجاباتهم")}</span>
+          </label>
+
           <Field label={t("Attachment (optional)", "مرفق (اختياري)")}>
             <input type="file" ref={fileRef} onChange={e => setFile(e.target.files?.[0] || null)} style={{ display: "none" }} />
             <button onClick={() => fileRef.current?.click()} type="button"
@@ -534,14 +605,23 @@ const inputStyle: React.CSSProperties = {
 
 /* ── Grading modal — roster of students + their submissions ─────── */
 function GradingModal({
-  assignment: a, subjectId, language, t, onClose, onGraded,
-}: { assignment: any; subjectId: string; language: string; t: (en: string, ar: string) => string; onClose: () => void; onGraded: () => void }) {
+  assignment: a, subjectId, language, t, onClose, onGraded, initialStudent,
+}: { initialStudent?: string | null; assignment: any; subjectId: string; language: string; t: (en: string, ar: string) => string; onClose: () => void; onGraded: () => void }) {
   const [roster, setRoster]   = useState<any[]>([]);
   const [subs, setSubs]       = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
-  const [openStudent, setOpenStudent] = useState<string | null>(null);
+  const [openStudent, setOpenStudent] = useState<string | null>(initialStudent || null);
 
   const title = language === "ar" ? (a.title_ar || a.title) : a.title;
+
+  // Live: new uploads / re-uploads appear without reopening.
+  useEffect(() => {
+    const ch = supabase.channel(`grading-${a.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "assignment_submissions", filter: `assignment_id=eq.${a.id}` }, () => { load(); })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [a.id]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -809,6 +889,16 @@ function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Live sync: scores, corrections and the teacher's uploads on/off switch appear instantly.
+  useEffect(() => {
+    if (!user) return;
+    const ch = supabase.channel(`stu-asg-${user.id}-${subjectId || "all"}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "assignment_submissions", filter: `user_id=eq.${user.id}` }, () => { load(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "subject_assignments" }, () => { load(); })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [user, subjectId, load]);
+
   /* ── Derived filtered list ─────────────────────────── */
   const filtered = assignments.filter(a => {
     const sub = submissions[a.id];
@@ -1022,7 +1112,7 @@ function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
           userId={user!.id}
           language={language}
           t={t}
-          readOnly={isOverdue(selected.deadline)}
+          readOnly={isOverdue(selected.deadline) || selected.submissions_open === false}
           onClose={() => setSelected(null)}
           onSubmitted={async () => { await load(); setSelected(null); }}
         />
@@ -1136,7 +1226,11 @@ function AssignmentModal({
   const [keptExistingUrls, setKeptExistingUrls] = useState<string[]>(existingFileUrls);
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = Array.from(e.target.files || []);
-    if (picked.length) { setFiles(prev => [...prev, ...picked]); setError(null); }
+    const tooBig = picked.filter(f => f.size > CLASSWORK_MAX_MB * 1024 * 1024);
+    const ok = picked.filter(f => f.size <= CLASSWORK_MAX_MB * 1024 * 1024);
+    if (ok.length) setFiles(prev => [...prev, ...ok]);
+    if (tooBig.length) setError(t(`${tooBig.map(f => f.name).join(", ")} is larger than ${CLASSWORK_MAX_MB} MB. Please send a smaller file.`, `الملف أكبر من ${CLASSWORK_MAX_MB} ميجابايت. يرجى إرسال ملف أصغر.`));
+    else if (ok.length) setError(null);
     e.target.value = "";
   };
   const removeNewFile = (idx: number) => setFiles(prev => prev.filter((_, i) => i !== idx));
@@ -1144,6 +1238,10 @@ function AssignmentModal({
 
   /* ── Submit ────────────────────────────────────────── */
   const handleSubmit = async () => {
+    if (a.submissions_open === false) {
+      setError(t("Your teacher has switched uploads off for this assignment.", "أوقف المعلم رفع الإجابات لهذا الواجب."));
+      return;
+    }
     if (isOverdue(a.deadline)) {
       setError(t("The deadline for this assignment has passed. Submissions are no longer accepted.", "لقد انتهى الموعد النهائي لهذا الواجب. لم يعد التسليم مقبولاً."));
       return;
@@ -1164,7 +1262,7 @@ function AssignmentModal({
         for (const f of files) {
           const ext  = f.name.split(".").pop();
           const path = `${userId}/${a.id}/file_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-          const res  = await uploadStorageFile("subject-materials" as any, path, f, { upsert: true });
+          const res  = await uploadStorageFile("subject-materials" as any, path, f, { upsert: true, contentType: contentTypeForClasswork(f) });
           if (!res.success) { setError(res.error || "Upload failed"); setSubmitting(false); setUploading(false); return; }
           uploadedFileUrls.push(res.path!);
         }
@@ -1380,7 +1478,7 @@ function AssignmentModal({
                   <label style={{ fontSize: 12, fontWeight: 700, color: TLIT, display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
                     <Paperclip style={{ width: 13, height: 13 }} />{t("Attach Files", "إرفاق ملفات")}
                   </label>
-                  <input type="file" multiple ref={fileRef} onChange={handleFileChange} style={{ display: "none" }} accept="*/*" />
+                  <input type="file" multiple ref={fileRef} onChange={handleFileChange} style={{ display: "none" }} accept={CLASSWORK_ACCEPT} />
                   {keptExistingUrls.map((url, i) => (
                     <div key={url} style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
                       <div style={{ flex: 1 }}>
@@ -1578,6 +1676,29 @@ function AssignmentModal({
    sending the person to another browser tab. Other file types (docx, etc.)
    can't be previewed by the browser either way, so those fall back to a
    direct download — still no new tab. */
+/* Every format a student may upload as classwork (the storage bucket itself accepts any type, 50 MB max). */
+export const CLASSWORK_ACCEPT = [
+  "image/*", "video/*", "audio/*", ".pdf",
+  ".doc", ".docx", ".odt", ".rtf", ".txt", ".md",
+  ".xls", ".xlsx", ".ods", ".csv", ".ppt", ".pptx", ".odp",
+  ".zip", ".rar", ".7z", ".json", ".html", ".htm", ".epub",
+  ".heic", ".heif", ".webp", ".svg", ".m4a", ".mp3", ".wav", ".ogg", ".opus", ".aac", ".mp4", ".mov", ".webm", ".mkv",
+  "application/*", "text/*",
+].join(",");
+export const CLASSWORK_MAX_MB = 50;
+const contentTypeForClasswork = (f: File): string => {
+  const ext = (f.name.split(".").pop() || "").toLowerCase();
+  const m: Record<string, string> = {
+    pdf: "application/pdf", doc: "application/msword",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xls: "application/vnd.ms-excel", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ppt: "application/vnd.ms-powerpoint", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    csv: "text/csv", txt: "text/plain", md: "text/markdown", json: "application/json", zip: "application/zip",
+    heic: "image/heic", heif: "image/heif", m4a: "audio/mp4", opus: "audio/ogg",
+  };
+  return f.type || m[ext] || "application/octet-stream";
+};
+
 function getExt(url: string) {
   return (url.split("?")[0].split(".").pop() || "").toLowerCase();
 }

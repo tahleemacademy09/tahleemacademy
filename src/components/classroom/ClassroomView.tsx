@@ -367,7 +367,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     };
   },[]);
   const[chatOpen,setChatOpen]=useState(false);const[partOpen,setPartOpen]=useState(false);const[chatUnread,setChatUnread]=useState(0);
-  const[uiHidden,setUiHidden]=useState(false);
+  // Header + footer now own their own reserved strips and are always visible, so nothing is ever covered.
+  const uiHidden=false;const setUiHidden=(_v?:any)=>{};
   const privChat=usePrivateChat();
   const privateUnread=Object.values(privChat.threads).reduce((n,th)=>n+th.unread,0);
   useEffect(()=>()=>{chatStore.reset();},[]);
@@ -384,6 +385,21 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     try{document.body.dataset.classUi=uiHidden?"hidden":"shown";}catch{}
     window.dispatchEvent(new CustomEvent("classroom:ui-state",{detail:{hidden:uiHidden}}));
   },[uiHidden]);
+  // Measure the real header + control bar so the stage/panels sit exactly between them.
+  useEffect(()=>{
+    const root=document.documentElement;
+    const apply=()=>{
+      const h=document.querySelector("[data-class-header]") as HTMLElement|null;
+      const f=document.querySelector(".cx-control-bar") as HTMLElement|null;
+      if(h&&h.offsetHeight)root.style.setProperty("--cls-top",h.offsetHeight+"px");
+      if(f&&f.offsetHeight)root.style.setProperty("--cls-bottom",f.offsetHeight+"px");
+    };
+    apply();
+    const iv=window.setInterval(apply,600);
+    window.addEventListener("resize",apply);
+    window.addEventListener("orientationchange",apply);
+    return()=>{window.clearInterval(iv);window.removeEventListener("resize",apply);window.removeEventListener("orientationchange",apply);root.style.removeProperty("--cls-top");root.style.removeProperty("--cls-bottom");};
+  },[]);
   const openChatFrom=(peer?:{id:string;name:string})=>{
     setChatOpen(true);setSideTab("chat");setChatUnread(0);
     if(peer)chatStore.requestOpen(peer);
@@ -1725,7 +1741,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             pointerEvents:uiHidden?"none":"auto",
             transition:"transform .28s cubic-bezier(.4,0,.2,1), opacity .22s ease",
             willChange:"transform",
-            background:"linear-gradient(to bottom, rgba(0,0,0,.78) 0%, rgba(0,0,0,.45) 70%, rgba(0,0,0,0) 100%)",
+            background:"#14161b",borderBottom:"1px solid rgba(255,255,255,.1)",
             display:"flex",alignItems:"center",justifyContent:"space-between",
             padding:"env(safe-area-inset-top, 0px) 14px 0 16px",
             gap:8,
@@ -1799,7 +1815,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             </div>
           </div>
           {/* Content — material panels render here so footer always stays visible */}
-          <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden"}}>
+          <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden",marginTop:"var(--cls-top, calc(56px + env(safe-area-inset-top, 0px)))",marginBottom:"var(--cls-bottom, calc(76px + env(safe-area-inset-bottom, 0px)))"}}>
             <div style={{flex:1,position:"relative",minWidth:0}}>
               <ClassroomAdminContext.Provider value={{isPrivileged,sessionId}}>
                 {/* Full-bleed stage: the header (top) and control bar (bottom)
