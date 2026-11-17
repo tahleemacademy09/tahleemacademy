@@ -3179,8 +3179,14 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
         trailing=null;
         const target=findScrollTarget(doc,win);
         const scrollPct=readScrollPct(target,win);
-        const dotStep=detectDotStep(doc);
-        const revealCount=detectRevealCount(doc);
+        let dotStep:{step:number;total:number}|null=detectDotStep(doc);
+        let revealCount=detectRevealCount(doc);
+        // Lessons that expose window.__tahleemSync (e.g. everything made in the Lesson Builder) report their
+        // exact slide + revealed-item count themselves — no guessing from the page's markup.
+        const syncApi=(win as any).__tahleemSync;
+        if(syncApi&&typeof syncApi.get==="function"){
+          try{const c=syncApi.get();dotStep={step:c.step,total:c.total};revealCount=c.reveal;}catch{}
+        }
         const key=`${dotStep?.step??"-"}|${revealCount}|${Math.round(scrollPct*500)}`;
         if(!force&&key===lastKey)return;
         lastKey=key;
@@ -3254,6 +3260,22 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
     const win=frame?.contentWindow;
     const doc=frame?.contentDocument;
     if(!win||!doc||!doc.body)return;
+    // Lesson speaks the sync contract → go straight to the teacher's slide + item count. Exact and instant:
+    // no clicking through slides, no hidden catch-up, so no "Joining…" loop.
+    const syncApi=(win as any).__tahleemSync;
+    if(syncApi&&typeof syncApi.goTo==="function"&&typeof syncApi.get==="function"){
+      try{
+        const a=remoteActivity;
+        if(a.step!=null){
+          const c=syncApi.get();
+          const wantReveal=a.revealCount??0;
+          if(c.step!==a.step||c.reveal!==wantReveal)syncApi.goTo(a.step,wantReveal);
+        }
+      }catch{}
+      firstApplyRef.current=false;catchUpRef.current=false;drivingRef.current=null;
+      setJoined(true);
+      return;
+    }
     // First position since this lesson loaded → hidden, instant catch-up instead of a visible replay.
     if(firstApplyRef.current){
       firstApplyRef.current=false;

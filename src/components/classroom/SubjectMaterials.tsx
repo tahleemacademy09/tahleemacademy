@@ -26,11 +26,13 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import MaterialsViewer from "./MaterialsViewer";
 import LessonPicker from "./LessonPicker";
 import HtmlMaterialEditor from "./HtmlMaterialEditor";
+import LessonBuilder from "./LessonBuilder";
+import { isBuilderLessonFile } from "./lessonBuilder";
 import { useStaffTermId, useViewingTermId } from "@/hooks/useCurrentTermId";
 import {
   FileText, Video, Music, Image as ImageIcon, File as FileIcon,
   Upload, Plus, X, Trash2, Pencil,
-  Loader2, FolderOpen, Search, Lock, LockOpen, Code2, FilePlus2,
+  Loader2, FolderOpen, Search, Lock, LockOpen, Code2, FilePlus2, BookOpen,
 } from "lucide-react";
 
 /* ── Design tokens (match SubjectAssignments / TeacherDashboard) ─────── */
@@ -121,6 +123,7 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [htmlEditing, setHtmlEditing] = useState<any | null | false>(false); // false=closed, null=new page, row=edit
+  const [lessonEditing, setLessonEditing] = useState<any | null | false>(false); // Lesson Builder: false=closed, null=new lesson, row=edit
   const [feedback, setFeedback]   = useState<{ type: "success" | "error" | ""; message: string }>({ type: "", message: "" });
   const [form, setForm]           = useState({ ...emptyForm });
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -348,6 +351,11 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
           style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 11, border: `1px solid ${GOLD}`, background: "#FBF6E6", color: G, fontWeight: 700, fontSize: 13, cursor: "pointer", flexShrink: 0 }}>
           <FilePlus2 size={15} /> {t("New HTML Page", "صفحة HTML جديدة")}
         </button>
+        <button
+          onClick={() => setLessonEditing(null)}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 11, border: `1px solid ${GOLD}`, background: GOLD, color: G, fontWeight: 800, fontSize: 13, cursor: "pointer", flexShrink: 0 }}>
+          <BookOpen size={15} /> {t("New Lesson", "درس جديد")}
+        </button>
       </div>
 
       {/* Lock status banner — reminds staff the tab is currently hidden from students */}
@@ -387,7 +395,11 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
                 </div>
               </div>
               <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                {isHtmlMaterial(m) && (
+                {isBuilderLessonFile(m.file_url) ? (
+                  <IconBtn onClick={() => setLessonEditing(m)} title={t("Edit lesson", "تحرير الدرس")}>
+                    <BookOpen size={15} color={GOLD} />
+                  </IconBtn>
+                ) : isHtmlMaterial(m) && (
                   <IconBtn onClick={() => setHtmlEditing(m)} title={t("Edit page content", "تحرير محتوى الصفحة")}>
                     <Code2 size={15} color={GOLD} />
                   </IconBtn>
@@ -522,6 +534,17 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
           termId={currentTermId}
           onClose={() => setHtmlEditing(false)}
           onSaved={() => { setHtmlEditing(false); load(); }}
+        />
+      )}
+
+      {/* Lesson Builder (write a lesson directly — no upload) */}
+      {lessonEditing !== false && subjectId && (
+        <LessonBuilder
+          material={lessonEditing}
+          subjectId={subjectId}
+          termId={currentTermId}
+          onClose={() => setLessonEditing(false)}
+          onSaved={() => { setLessonEditing(false); load(); }}
         />
       )}
 
