@@ -28,9 +28,10 @@ export const getLiveKitRoomOptions = (mobile: boolean = isMobileDevice()) => ({
     noiseSuppression: true,
     autoGainControl: true,
     channelCount: 1,
+    ...({ voiceIsolation: true } as any),
   },
   publishDefaults: {
-    audioPreset: { maxBitrate: 64_000 },
+    audioPreset: { maxBitrate: 64_000, priority: "high" as const },
     // DTX off on purpose: it can clip the first syllable after a pause,
     // which matters for tajweed correction.
     dtx: false,

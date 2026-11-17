@@ -22,6 +22,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Capacitor } from "@capacitor/core";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { queueMediaOp } from "./classroomComponents";
+import { micTail } from "@/lib/micTail";
 import { playJoinSound, playLeaveSound } from "@/lib/soundUtils";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
@@ -578,6 +579,9 @@ const ClassControls = ({
     micBusy.current = true;
     try {
       const next = !room.localParticipant.isMicrophoneEnabled;
+      // Flip the button instantly, but keep the mic open briefly so the last word is sent.
+      if (!next) { setMicEnabled(false); setCtxMicEnabled(false); }
+      await micTail(room, next);
       await queueMediaOp(room, () => room.localParticipant.setMicrophoneEnabled(next));
       setMicEnabled(next);
       setCtxMicEnabled(next);

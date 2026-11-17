@@ -102,9 +102,25 @@ export default function NetworkGuard({ isPrivileged, audioOnlyActive, forcedAudi
     } catch { /* browser doesn't support priority hints — harmless */ }
   };
 
+  // Weak link: let the receiver buffer a little more audio (200-400 ms) so packet loss / jitter
+  // turns into a tiny delay instead of choppy, robotic or dropped words. null = browser default.
+  const JITTER_POOR_MS = 300;
+  const setAudioJitter = (ms: number | null) => {
+    try {
+      room.remoteParticipants.forEach((p: any) => {
+        p.getTrackPublications?.().forEach((pub: any) => {
+          if (pub.kind !== "audio") return;
+          const rx = (pub.track as any)?.receiver as any;
+          if (rx && "jitterBufferTarget" in rx) { try { rx.jitterBufferTarget = ms; } catch {} }
+        });
+      });
+    } catch { /* room torn down */ }
+  };
+
   const enterLowData = () => {
     if (degradedRef.current) return;
     degradedRef.current = true;
+    setAudioJitter(JITTER_POOR_MS);
     // 1) free the download for audio: drop other people's camera video
     eachRemoteCamera((pub) => {
       try { if (pub.isSubscribed) { pub.setSubscribed(false); unsubscribedRef.current.add(pub); } } catch {}
@@ -121,6 +137,7 @@ export default function NetworkGuard({ isPrivileged, audioOnlyActive, forcedAudi
     if (!degradedRef.current) return;
     if (slowRef.current) return; // slow / data-saver link: stay in low-data mode
     degradedRef.current = false;
+    setAudioJitter(null);
     unsubscribedRef.current.forEach((pub) => { try { pub.setSubscribed(true); } catch {} });
     unsubscribedRef.current.clear();
     if (autoSetRef.current && !forcedRef.current) {
@@ -209,8 +226,15 @@ export default function NetworkGuard({ isPrivileged, audioOnlyActive, forcedAudi
         try { pub.setSubscribed(false); unsubscribedRef.current.add(pub); } catch {}
       }
     };
+    // Audio tracks that start while we're degraded also get the larger jitter buffer.
+    const onSubscribed = (track: any) => {
+      if (degradedRef.current && track?.kind === "audio") {
+        try { if ("jitterBufferTarget" in (track.receiver || {})) track.receiver.jitterBufferTarget = JITTER_POOR_MS; } catch {}
+      }
+    };
     room.on(RoomEvent.TrackPublished, onPublished);
-    return () => { room.off(RoomEvent.TrackPublished, onPublished); };
+    room.on(RoomEvent.TrackSubscribed, onSubscribed);
+    return () => { room.off(RoomEvent.TrackPublished, onPublished); room.off(RoomEvent.TrackSubscribed, onSubscribed); };
   }, [room]);
 
   /* ── other people's connection (teachers/admins need to know who can't hear them) ── */

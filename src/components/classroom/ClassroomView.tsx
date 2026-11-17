@@ -34,6 +34,7 @@ import { isInlineLessonRow } from "./lessonBuilder";
 import { playJoinSound, playLeaveSound, playRecordingStartSound, playRecordingStopSound } from "@/lib/soundUtils";
 import NetworkGuard from "@/components/classroom/NetworkGuard";
 import { isSlowLink } from "@/lib/slowNetwork";
+import { getActiveRecorder } from "@/lib/directRecorder";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useLiveClass } from "@/contexts/LiveClassContext";
@@ -468,6 +469,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // joins, etc.) are added/removed from the mix live.
   const stuAudioCtxRef=useRef<AudioContext|null>(null);
   const stuDestRef=useRef<MediaStreamAudioDestinationNode|null>(null);
+  const stuBusRef=useRef<AudioNode|null>(null); // start of the speech-cleanup chain; every source plugs in here
   const stuLocalMicStreamRef=useRef<MediaStream|null>(null);
   const stuSourceNodesRef=useRef<Map<string,MediaStreamAudioSourceNode>>(new Map());
   const stuRoomListenersRef=useRef<{onSub:(...a:any[])=>void;onUnsub:(...a:any[])=>void}|null>(null);
@@ -531,7 +533,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       if(stuSourceNodesRef.current.has(pub.trackSid))return; // already mixed in
       const ms=new MediaStream([track.mediaStreamTrack]);
       const node=ac.createMediaStreamSource(ms);
-      node.connect(dest);
+      node.connect(stuBusRef.current||dest);
       stuSourceNodesRef.current.set(pub.trackSid,node);
     }catch{}
   };
@@ -555,6 +557,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     try{stuAudioCtxRef.current?.close();}catch{}
     stuAudioCtxRef.current=null;
     stuDestRef.current=null;
+    stuBusRef.current=null;
   };
   const toggleStuRecordTop=async()=>{
     if(stuRec){
@@ -572,11 +575,21 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         const ac:AudioContext=new AC();
         const dest=ac.createMediaStreamDestination();
         stuAudioCtxRef.current=ac;stuDestRef.current=dest;
+        // Speech-cleanup chain (same idea as the teacher's class recording): everyone sums into
+        // one bus -> cut rumble -> lift consonants -> even out loud/quiet voices -> limiter -> recorder.
+        const bus=ac.createGain();
+        const hp=ac.createBiquadFilter();hp.type="highpass";hp.frequency.value=100;
+        const presence=ac.createBiquadFilter();presence.type="peaking";presence.frequency.value=3000;presence.Q.value=0.8;presence.gain.value=2;
+        const comp=ac.createDynamicsCompressor();comp.threshold.value=-26;comp.knee.value=24;comp.ratio.value=4;comp.attack.value=0.005;comp.release.value=0.25;
+        const makeup=ac.createGain();makeup.gain.value=1.6;
+        const limiter=ac.createDynamicsCompressor();limiter.threshold.value=-3;limiter.knee.value=0;limiter.ratio.value=20;limiter.attack.value=0.001;limiter.release.value=0.1;
+        bus.connect(hp);hp.connect(presence);presence.connect(comp);comp.connect(makeup);makeup.connect(limiter);limiter.connect(dest);
+        stuBusRef.current=bus;
 
-        // Own mic
-        const localStream=await navigator.mediaDevices.getUserMedia({audio:true});
+        // Own mic — explicit echo/noise cleanup (the other voices are mixed in separately below)
+        const localStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,channelCount:1}});
         stuLocalMicStreamRef.current=localStream;
-        ac.createMediaStreamSource(localStream).connect(dest);
+        ac.createMediaStreamSource(localStream).connect(bus);
 
         // Everyone else already in the room — teacher + other students —
         // whose audio is currently subscribed (i.e. audible to this student).
@@ -594,8 +607,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           stuRoomListenersRef.current={onSub,onUnsub};
         }
 
-        const mime=["audio/webm","audio/mp4","audio/ogg"].find(t2=>{try{return MediaRecorder.isTypeSupported(t2);}catch{return false;}})||"";
-        const mr=new MediaRecorder(dest.stream,mime?{mimeType:mime}:undefined);
+        const mime=["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t2=>{try{return MediaRecorder.isTypeSupported(t2);}catch{return false;}})||"";
+        const mr=new MediaRecorder(dest.stream,mime?{mimeType:mime,audioBitsPerSecond:64000}:{audioBitsPerSecond:64000});
         stuChunksTop.current=[];mr.ondataavailable=e=>{if(e.data.size>0)stuChunksTop.current.push(e.data);};
         mr.start(1000);stuMrRefTop.current=mr;setStuRec(true);
       }catch{
@@ -1128,7 +1141,11 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     // Stop the recorder now but DON'T wait for the upload (up to ~21s) before closing —
     // that wait is why Leave/End felt frozen. DirectRecorder keeps the file on-device and
     // finishes uploading in the background, so nothing is lost.
-    try{void Promise.resolve(recStopRef.current?.()).catch(()=>{});}catch{}
+    // Leave (not End): KEEP the recording open — it pauses now and continues in the same file when
+    // the teacher rejoins. Only if there's nothing to keep do we stop it the old way.
+    let recKept=false;
+    try{recKept=!!(sessionId&&getActiveRecorder(sessionId)?.suspendForLeave());}catch{}
+    if(!recKept){try{void Promise.resolve(recStopRef.current?.()).catch(()=>{});}catch{}}
     try{playLeaveSound();}catch{}
     if(attendanceId){const d=attPriorDurationRef.current+Math.floor((Date.now()-joinedAt)/1000);supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId);}
     if(sessionId&&user)supabase.from("class_participants").update({left_at:new Date().toISOString(),duration_minutes:Math.floor((Date.now()-joinedAt)/60000)}).eq("session_id",sessionId).eq("student_id",user.id);
@@ -1209,7 +1226,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         setScreenSharing(false);
         toast({title:"Screen share stopped"});
       }else{
-        await room.localParticipant.setScreenShareEnabled(true,{audio:true,resolution:{width:1920,height:1080,frameRate:15},contentHint:"detail"} as any);
+        await room.localParticipant.setScreenShareEnabled(true,{audio:true,systemAudio:"exclude",resolution:{width:1920,height:1080,frameRate:15},contentHint:"detail"} as any);
         setScreenSharing(true);
         toast({title:"📺 Screen sharing started"});
       }
@@ -1525,6 +1542,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             audioCaptureDefaults:{
               echoCancellation:true,noiseSuppression:true,autoGainControl:true,
               sampleRate:48000,channelCount:1,
+              // Chrome/Android: stronger voice-only isolation (cuts speaker bleed + room noise).
+              ...({voiceIsolation:true} as any),
             },
             publishDefaults:{
               // BUG FIX — "students can't hear well" / dropped word-beginnings:
@@ -1536,7 +1555,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               // Qur'an class where teachers deliberately pause between words
               // for tajweed correction, it can eat exactly the sound a
               // student needs to hear. Bandwidth savings aren't worth it here.
-              audioPreset:{maxBitrate:64000}, // mono voice at 64kbps has real headroom for the pronunciation detail (madd, ghunnah, makharij) that matters in recitation, still light on data
+              audioPreset:{maxBitrate:isSlowLink()?32000:64000,priority:"high" as const}, // voice always wins the uplink over video; leaner on slow links. // mono voice at 64kbps has real headroom for the pronunciation detail (madd, ghunnah, makharij) that matters in recitation, still light on data
               dtx:false,  // was true — see note above
               red:true,   // redundant audio encoding — recovers from packet loss
               stopMicTrackOnMute:false,
@@ -2114,7 +2133,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               <Phone style={{width:22,height:22,color:"#ea4335",transform:"rotate(135deg)"}}/>
             </div>
             <h2 style={{textAlign:"center",fontSize:18,fontWeight:500,color:"#e8eaed",marginBottom:8,fontFamily:"'Google Sans Display',sans-serif"}}>{t("Leave the class?","مغادرة الحصة؟")}</h2>
-            <p style={{textAlign:"center",fontSize:14,color:"rgba(255,255,255,.45)",marginBottom:28,lineHeight:1.6,fontFamily:"'Google Sans',sans-serif"}}>{t("You can rejoin later while the class is still live.","يمكنك الانضمام مرة أخرى لاحقًا ما دامت الحصة مباشرة.")}</p>
+            <p style={{textAlign:"center",fontSize:14,color:"rgba(255,255,255,.45)",marginBottom:28,lineHeight:1.6,fontFamily:"'Google Sans',sans-serif"}}>{t("You can rejoin later while the class is still live.","يمكنك الانضمام مرة أخرى لاحقًا ما دامت الحصة مباشرة.")}{isPrivileged&&isRecordingRef.current?" "+t("Your recording will pause and continue when you rejoin.","سيتوقف التسجيل مؤقتًا ويستمر عند عودتك."):""}</p>
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
               <button onClick={()=>{setShowLeaveConfirm(false);leaveSession();}} style={{width:"100%",padding:"13px",borderRadius:24,border:"none",background:"#ea4335",color:"#fff",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"'Google Sans',sans-serif",boxShadow:"0 2px 12px rgba(234,67,53,.4)"}}>{t("Leave class","مغادرة الحصة")}</button>
               <button onClick={()=>setShowLeaveConfirm(false)} style={{width:"100%",padding:"12px",borderRadius:24,border:"1px solid rgba(255,255,255,.15)",background:"rgba(255,255,255,.06)",color:"rgba(255,255,255,.8)",fontSize:14,fontWeight:400,cursor:"pointer",fontFamily:"'Google Sans',sans-serif"}}>{t("Cancel","إلغاء")}</button>

@@ -81,6 +81,7 @@ import ClassParticipants from "./ClassParticipants";
 // enable/disable negotiation at a time no matter which component triggered
 // it. This doesn't change what any of them does — it just guarantees they
 // can no longer step on each other.
+import { micTail } from "@/lib/micTail";
 const mediaOpChains = new WeakMap<object, Promise<any>>();
 export function queueMediaOp<T>(room: any, op: () => Promise<T>): Promise<T> {
   if (!room) return op();
@@ -5608,8 +5609,12 @@ export const RecController=({sessionId,subjectId,getRoom,onSavingChange,stopRecR
     const existing=getActiveRecorder(sessionId);
     if(existing){
       recRef.current=existing;
-      existing.setHandlers({onState});
+      // Teacher left (Leave, not End) and is back: point the recorder at the NEW room and carry on.
+      existing.setHandlers({onState,getRoom:()=>getRoom?.()});
       setMode(existing.state==="paused"?"paused":"recording");
+      existing.resumeAfterRejoin().then((resumed:boolean)=>{
+        if(resumed)toast({title:t("Recording continued ⏺","استؤنف التسجيل ⏺"),description:t("Picked up where you left off — same recording.","تابع التسجيل من حيث توقفت — نفس التسجيل.")});
+      }).catch(()=>{});
       setDisplayTime(existing.elapsedSeconds());
       return;
     }
@@ -6703,7 +6708,7 @@ export const ScreenShareTile = ({ participant, isLocal, strip }: { participant: 
       {strip && (
         <div style={{
           position: "absolute", left: 0, right: 0, bottom: 0, display: "flex", gap: 6, overflowX: "auto",
-          padding: "8px 10px max(env(safe-area-inset-bottom), 8px)", background: "linear-gradient(transparent, rgba(0,0,0,.6))",
+          padding: "8px 10px max(env(safe-area-inset-bottom), 8px)", background: "#0f1117", borderTop: "1px solid rgba(255,255,255,.08)",
           opacity: ui ? 1 : 0, pointerEvents: ui ? "auto" : "none", transition: "opacity .2s",
         }} onPointerDown={e => e.stopPropagation()}>{strip}</div>
       )}
@@ -6748,7 +6753,7 @@ export const VideoGrid=({layout="grid",isMobile=false,spotlightId=null}:{layout?
             strip={isMobile&&others.length>0?others.map(p=>(<div key={p.identity} style={{width:64,height:84,flexShrink:0,borderRadius:10,overflow:"hidden",border:"1px solid rgba(255,255,255,.25)"}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/></div>)):undefined}/>
         </div>
         {showStrip&&(
-          <div style={{position:"absolute",bottom:0,left:0,right:0,height:100,display:"flex",gap:4,padding:"4px 8px",background:"rgba(0,0,0,.4)",overflowX:"auto"}}>
+          <div style={{position:"absolute",bottom:0,left:0,right:0,height:100,display:"flex",gap:4,padding:"4px 8px",background:"#0f1117",borderTop:"1px solid rgba(255,255,255,.08)",overflowX:"auto"}}>
             {others.map(p=>(<div key={p.identity} style={{width:72,flexShrink:0,height:92,borderRadius:10,overflow:"hidden"}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/></div>))}
           </div>
         )}
@@ -6769,7 +6774,7 @@ export const VideoGrid=({layout="grid",isMobile=false,spotlightId=null}:{layout?
           </div>
         </div>
         {stripParticipants.length>0&&(
-          <div style={{position:"absolute",bottom:0,left:0,right:0,height:96,display:"flex",gap:4,padding:"4px 8px",background:"rgba(0,0,0,.5)",overflowX:"auto"}}>
+          <div style={{position:"absolute",bottom:0,left:0,right:0,height:96,display:"flex",gap:4,padding:"4px 8px",background:"#0f1117",borderTop:"1px solid rgba(255,255,255,.08)",overflowX:"auto"}}>
             {stripParticipants.map(p=>(<div key={p.identity} style={{width:68,flexShrink:0,height:88,borderRadius:10,overflow:"hidden"}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/></div>))}
           </div>
         )}
@@ -6848,7 +6853,7 @@ export const DuoPipLayout=({participants,localIdentity}:{participants:any[];loca
 
 // 3×3 = 9 tiles is the largest a single page will hold before spilling to the next page.
 export const GRID_PAGE_SIZE=9;
-export const GRID_MOBILE_PAGE_SIZE=4;
+export const GRID_MOBILE_PAGE_SIZE=9; // phones now show the same 3×3 as PC (was 4 = 2×2). Tiles are tiny, so LiveKit sends each one its lowest video layer.
 
 /* ══ PAGED GRID — 3+ participants ══
    3 → 2 up / 1 down (centered)     4 → 2×2
@@ -6856,7 +6861,7 @@ export const GRID_MOBILE_PAGE_SIZE=4;
    >9 → split into pages of 9, swipeable left/right with a page-dot indicator */
 export const PagedGrid=({participants,localIdentity,isMobile}:{participants:any[];localIdentity?:string;isMobile:boolean})=>{
   const n=participants.length;
-  // HEAT FIX: a phone decodes at most 4 video tiles at once (swipe for the rest); PC keeps 9.
+  // 3×3 = 9 tiles per screen on phones and PC alike; more than 9 people → swipe to the next page.
   const PAGE_SIZE=isMobile?GRID_MOBILE_PAGE_SIZE:GRID_PAGE_SIZE;
   const pageCount=Math.max(1,Math.ceil(n/PAGE_SIZE));
   const[page,setPage]=useState(0);
@@ -6897,7 +6902,7 @@ export const PagedGrid=({participants,localIdentity,isMobile}:{participants:any[
     );
   }
 
-  const cols=(isFirstPage&&n===4)?2:Math.min(isMobile?2:3,pn);
+  const cols=(isFirstPage&&n===4)?2:Math.min(3,pn);
   const rows = Math.ceil(pn/cols);
 
   return(
@@ -7064,7 +7069,7 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
   const toggleMic=async()=>{
     if(!room?.localParticipant||micBusy.current)return;
     micBusy.current=true;
-    try{await queueMediaOp(room, () => room.localParticipant.setMicrophoneEnabled(!room.localParticipant.isMicrophoneEnabled));}
+    try{const next=!room.localParticipant.isMicrophoneEnabled;await micTail(room,next);await queueMediaOp(room, () => room.localParticipant.setMicrophoneEnabled(next));}
     catch(e){console.error("toggleMic:",e);}finally{micBusy.current=false;}
   };
   const toggleCam=async()=>{
@@ -7368,6 +7373,8 @@ export const RoomToContextBridge = () => {
     toggleMicFnRef.current = async () => {
       try {
         const next = !room.localParticipant.isMicrophoneEnabled;
+        if (!next) setMicEnabled(false);
+        await micTail(room, next);
         await queueMediaOp(room, () => room.localParticipant.setMicrophoneEnabled(next));
         setMicEnabled(next);
       } catch {}

@@ -3,6 +3,7 @@ import { useParticipants, useLocalParticipant, useRoomContext } from "@livekit/c
 import { Track } from "livekit-client";
 import { ChevronRight, ChevronLeft, Mic, MicOff, Video, VideoOff } from "lucide-react";
 import { ParticipantTile, ClassroomAdminContext, queueMediaOp } from "./classroomComponents";
+import { micTail } from "@/lib/micTail";
 import { toast } from "@/hooks/use-toast";
 
 // Name + mic/camera controls shown under each participant in the side list.
@@ -39,7 +40,7 @@ const ParticipantControlRow = ({ participant, isLocal }: { participant: any; isL
   const toggleMic = async (e: any) => {
     e.stopPropagation();
     if (isLocal) {
-      try { await queueMediaOp(room, () => room.localParticipant.setMicrophoneEnabled(!room.localParticipant.isMicrophoneEnabled)); } catch {}
+      try { const next = !room.localParticipant.isMicrophoneEnabled; await micTail(room, next); await queueMediaOp(room, () => room.localParticipant.setMicrophoneEnabled(next)); } catch {}
       return;
     }
     send(micOn ? "force_mute" : "force_unmute");

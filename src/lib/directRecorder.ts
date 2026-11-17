@@ -30,11 +30,12 @@ export const RECORD_VIDEO = false;
 // ── size vs quality knobs ──────────────────────────────────────────────
 // A class is mostly a talking head or slides, so video can be small; speech
 // is what matters, so audio is tuned for clarity at a tiny size.
-// Audio ≈ 9 MB/hour, whole file ≈ 145 MB/hour (was ≈ 430 MB).
+// Audio ≈ 18 MB/hour (was ≈ 9 MB at 20 kbps / 24 kHz, which sounded thin and lost the detail of
+// makharij / ghunnah). Still small, and uploads in the background.
 const W = 854, H = 480, FPS = 10;
 const VIDEO_BPS = 300_000;
-const AUDIO_BPS = 20_000;   // mono speech: 20 kbps ≈ 9 MB/hour (raise to 24_000 ≈ 11 MB/hr if it ever sounds thin)
-const AUDIO_RATE = 24_000;  // 24 kHz = full speech range (up to 12 kHz); the encoder spends its few bits on voice, not on unused highs
+const AUDIO_BPS = 40_000;   // mono voice: 40 kbps ≈ 18 MB/hour — clear, natural voice with the fine pronunciation detail kept
+const AUDIO_RATE = 48_000;  // 48 kHz = same rate WebRTC delivers, so no resampling of anyone's voice (resampling at 24 kHz softened consonants)
 
 // mp4 first (plays on iPhones/iPads too); webm only if the device can't do mp4.
 const AUDIO_MIME_CANDIDATES = [
@@ -61,6 +62,14 @@ export const directRecordingSupported = (): boolean =>
   !!pickMime() &&
   (!RECORD_VIDEO || typeof (HTMLCanvasElement.prototype as any).captureStream === "function") &&
   !!((window as any).AudioContext || (window as any).webkitAudioContext);
+
+// Every room event that can change which audio tracks exist (used to keep the mix in step).
+const ROOM_EVENTS = [
+  RoomEvent.TrackSubscribed, RoomEvent.TrackUnsubscribed, RoomEvent.LocalTrackPublished,
+  RoomEvent.LocalTrackUnpublished, RoomEvent.TrackMuted, RoomEvent.TrackUnmuted,
+  RoomEvent.ParticipantConnected, RoomEvent.ParticipantDisconnected,
+  RoomEvent.Reconnecting, RoomEvent.Reconnected, RoomEvent.Disconnected,
+];
 
 export type RecState = "idle" | "starting" | "recording" | "paused" | "stopping";
 type Handlers = { onState?: (s: RecState) => void; onError?: (m: string) => void };
@@ -105,10 +114,14 @@ export class DirectRecorder {
   private releaseLock: (() => void) | null = null;
   private accMs = 0;
   private resumedAt = 0;
+  private roomTimer: any = null;   // notices when the class gets a NEW room object (rejoin / full reconnect)
+  private awayTimer: any = null;   // finishes the recording if the teacher never comes back
+  private away = false;           // teacher left the class view but the recording is being kept open
+  private autoPaused = false;     // WE paused it for the leave (so we also resume it on return)
 
   constructor(private opts: { sessionId: string; subjectId: string; getRoom: () => any } & Handlers) {}
 
-  setHandlers(h: Handlers) { this.opts = { ...this.opts, ...h }; }
+  setHandlers(h: Handlers & { getRoom?: () => any }) { this.opts = { ...this.opts, ...h }; }
   private set(s: RecState) { this.state = s; this.opts.onState?.(s); }
   elapsedSeconds() { return Math.floor((this.accMs + (this.state === "recording" ? performance.now() - this.resumedAt : 0)) / 1000); }
 
@@ -174,6 +187,49 @@ export class DirectRecorder {
     this.set("recording");
   }
 
+  /** Teacher pressed "Leave" (NOT "End class"): keep the recording open instead of saving it.
+   *  It pauses (the time away is not recorded) and carries on in the SAME file when the teacher rejoins.
+   *  If nobody comes back within maxAwayMs the recording is finished and saved normally.
+   *  Returns false when there is nothing to keep (not recording) — the caller should stop as before. */
+  suspendForLeave(maxAwayMs = 30 * 60_000): boolean {
+    if (this.state !== "recording" && this.state !== "paused") return false;
+    const wasRecording = this.state === "recording";
+    if (wasRecording) { this.pause(); if (this.state !== "paused") return false; }
+    this.autoPaused = wasRecording; // if the teacher had paused it by hand, it stays paused on return
+    this.away = true;
+    try { this.wake?.release?.(); } catch {}
+    this.wake = null;
+    try { void this.ctx?.suspend(); } catch {}
+    clearTimeout(this.awayTimer);
+    this.awayTimer = setTimeout(() => {
+      if (!this.away) return;
+      this.away = false; this.autoPaused = false;
+      void this.stop().catch(() => {});
+    }, maxAwayMs);
+    return true;
+  }
+
+  /** Teacher is back in the class: re-attach to the new room and continue the same recording.
+   *  Resolves true if it picked the recording back up. */
+  async resumeAfterRejoin(): Promise<boolean> {
+    if (!this.away) return false;
+    this.away = false;
+    clearTimeout(this.awayTimer); this.awayTimer = null;
+    try { await this.ctx?.resume(); } catch {}
+    // Wait (briefly) for the new room to be connected so the first seconds aren't silence.
+    for (let i = 0; i < 30; i++) {
+      let r: any = null; try { r = this.opts.getRoom?.(); } catch {}
+      if (r && r !== this.room && r.state === "connected") break;
+      await sleep(500);
+    }
+    try { this.ensureRoom(); } catch {}
+    void this.requestWake();
+    if (!this.autoPaused) return false;
+    this.autoPaused = false;
+    this.resume();
+    return this.state === "recording";
+  }
+
   /** Stops capturing. Resolves "uploaded" if the file is already complete on the
    *  server, or "on-device" if it's safely stored here and will upload in the
    *  background as soon as the connection allows. */
@@ -211,12 +267,14 @@ export class DirectRecorder {
 
   private async buildAudio() {
     const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
-    this.ctx = new Ctx({ sampleRate: AUDIO_RATE });
+    this.ctx = new Ctx({ sampleRate: AUDIO_RATE, latencyHint: "playback" }); // "playback" = bigger buffer, no crackles/dropouts in the recording when the phone is busy
     await this.ctx!.resume().catch(() => {});
     // Speech chain: mix → cut rumble → even out loud/quiet speakers → mono.
     const bus = this.ctx!.createGain();                      // everyone's audio sums here
     const hp = this.ctx!.createBiquadFilter();               // remove low rumble / handling noise
-    hp.type = "highpass"; hp.frequency.value = 90;
+    hp.type = "highpass"; hp.frequency.value = 100;
+    const presence = this.ctx!.createBiquadFilter();         // gentle lift around 3 kHz so consonants stay crisp through the compression
+    presence.type = "peaking"; presence.frequency.value = 3000; presence.Q.value = 0.8; presence.gain.value = 2;
     const comp = this.ctx!.createDynamicsCompressor();       // far/quiet students come up, shouting won't clip
     comp.threshold.value = -26; comp.knee.value = 24; comp.ratio.value = 4;
     comp.attack.value = 0.005; comp.release.value = 0.25;
@@ -226,15 +284,30 @@ export class DirectRecorder {
     limiter.attack.value = 0.001; limiter.release.value = 0.1;
     this.dest = this.ctx!.createMediaStreamDestination();
     this.dest.channelCount = 1; this.dest.channelCountMode = "explicit"; // mono: half the audio data, same clarity for speech
-    bus.connect(hp); hp.connect(comp); comp.connect(makeup); makeup.connect(limiter); limiter.connect(this.dest);
+    bus.connect(hp); hp.connect(presence); presence.connect(comp); comp.connect(makeup); makeup.connect(limiter); limiter.connect(this.dest);
     this.bus = bus;
-    this.syncAudio();
     this.onRoom = () => this.syncAudio();
-    [RoomEvent.TrackSubscribed, RoomEvent.TrackUnsubscribed, RoomEvent.LocalTrackPublished,
-     RoomEvent.LocalTrackUnpublished, RoomEvent.TrackMuted, RoomEvent.TrackUnmuted,
-     RoomEvent.ParticipantConnected, RoomEvent.ParticipantDisconnected,
-     RoomEvent.Reconnecting, RoomEvent.Reconnected, RoomEvent.Disconnected,
-    ].forEach(e => this.room.on(e, this.onRoom!));
+    this.bindRoom(this.room);
+    // After a rejoin / full reconnect the class has a brand-new room object. Follow it, otherwise the
+    // recording would keep listening to the old, dead room and capture silence.
+    this.roomTimer = setInterval(() => this.ensureRoom(), 2000);
+  }
+
+  private bindRoom(room: any) {
+    try { if (this.onRoom) ROOM_EVENTS.forEach(e => this.room?.off(e, this.onRoom!)); } catch {}
+    this.room = room;
+    try { ROOM_EVENTS.forEach(e => room.on(e, this.onRoom!)); } catch {}
+    this.srcs.forEach(n => { try { n.disconnect(); } catch {} }); // sources of the old room
+    this.srcs.clear();
+    this.syncAudio();
+  }
+
+  private ensureRoom() {
+    if (this.state === "idle" || this.state === "stopping") return;
+    let r: any = null;
+    try { r = this.opts.getRoom?.(); } catch {}
+    if (r && r !== this.room) this.bindRoom(r);
+    else if (this.state === "recording") this.syncAudio();
   }
 
   // NOTE: Chrome only feeds remote WebRTC audio into WebAudio while the
@@ -328,17 +401,21 @@ export class DirectRecorder {
   }
 
   // ── housekeeping ─────────────────────────────────────────────────────
-  private async lockScreen() {
+  private async requestWake() {
     try { this.wake = await (navigator as any).wakeLock?.request("screen"); } catch {}
-    this.onVis = () => { if (document.visibilityState === "visible" && this.state !== "idle") this.lockScreen(); };
+  }
+  private async lockScreen() {
+    await this.requestWake();
+    if (this.onVis) return; // listener already installed
+    this.onVis = () => { if (document.visibilityState === "visible" && this.state !== "idle" && !this.away) void this.requestWake(); };
     document.addEventListener("visibilitychange", this.onVis);
   }
 
   private teardown() {
-    try { if (this.onRoom) [RoomEvent.TrackSubscribed, RoomEvent.TrackUnsubscribed, RoomEvent.LocalTrackPublished,
-      RoomEvent.LocalTrackUnpublished, RoomEvent.TrackMuted, RoomEvent.TrackUnmuted,
-      RoomEvent.ParticipantConnected, RoomEvent.ParticipantDisconnected,
-      RoomEvent.Reconnecting, RoomEvent.Reconnected, RoomEvent.Disconnected].forEach(e => this.room?.off(e, this.onRoom!)); } catch {}
+    try { if (this.onRoom) ROOM_EVENTS.forEach(e => this.room?.off(e, this.onRoom!)); } catch {}
+    if (this.roomTimer) { clearInterval(this.roomTimer); this.roomTimer = null; }
+    if (this.awayTimer) { clearTimeout(this.awayTimer); this.awayTimer = null; }
+    this.away = false; this.autoPaused = false;
     if (this.onVis) document.removeEventListener("visibilitychange", this.onVis);
     try { this.wake?.release?.(); } catch {}
     try { this.worker?.terminate(); } catch {}
