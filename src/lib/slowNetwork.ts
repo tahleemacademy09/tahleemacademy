@@ -18,9 +18,11 @@ export const isSlowLink = (): boolean => {
   const c = getConn();
   if (!c) return false;
   if (c.saveData) return true;
-  if (c.effectiveType && /(^|-)(2g|3g)$/.test(c.effectiveType)) return true;
-  if (typeof c.downlink === "number" && c.downlink > 0 && c.downlink < 1.0) return true;
-  if (typeof c.rtt === "number" && c.rtt > 800) return true;
+  // Only clearly slow links count. Chrome often labels a perfectly good phone connection "3g",
+  // or reports rtt 800ms+, so those no longer trigger low-data mode / the slow-network banner.
+  if (c.effectiveType && /(^|-)2g$/.test(c.effectiveType)) return true;
+  if (typeof c.downlink === "number" && c.downlink > 0 && c.downlink < 0.4) return true;
+  if (typeof c.rtt === "number" && c.rtt > 1500) return true;
   return false;
 };
 
