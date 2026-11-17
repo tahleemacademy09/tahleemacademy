@@ -497,6 +497,19 @@ const LearningHub = ({ defaultTab = "courses", scope }: Props) => {
 
   useEffect(() => { setEditingLesson(false); }, [activeLesson]);
 
+  // Deep link from the admin Sessions list: ?subject=<id>&lesson=<id> opens that lesson in the
+  // same viewer students see (admins/teachers get the pencil to edit it in place). Runs once.
+  const deepLinkedLesson = useRef(false);
+  useEffect(() => {
+    const lid = searchParams.get("lesson");
+    if (!lid || deepLinkedLesson.current || !selectedSubject || !subjectLessons?.length) return;
+    if ((subjectLessons as any[]).some((l: any) => l.id === lid)) {
+      deepLinkedLesson.current = true;
+      setSubjectTab("lessons");
+      setActiveLesson(lid);
+    }
+  }, [selectedSubject, subjectLessons, searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const startLessonEdit = () => {
     const doc = lessonFrameRef.current?.contentDocument;
     if (!doc) return;
