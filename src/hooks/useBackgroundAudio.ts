@@ -244,6 +244,15 @@ export function startBackgroundAudio(title = "Live Class"): void {
     audioEl.setAttribute("webkit-playsinline", "");
     audioEl.style.display = "none";
     document.body.appendChild(audioEl);
+    // If the phone/Chrome pauses our quiet audio (audio-focus steal, minimize, call),
+    // start it again straight away — while it plays, Chrome treats the tab as active media
+    // and keeps the class audio running in the background.
+    audioEl.addEventListener("pause", () => {
+      const el = audioEl;
+      if (!el) return;
+      setTimeout(() => { if (audioEl === el && el.paused) el.play().catch(() => {}); }, 150);
+    });
+    audioEl.addEventListener("ended", () => { audioEl?.play().catch(() => {}); });
   }
   audioEl.play().catch(() => {
     // Autoplay blocked (browser requires a user gesture). The element stays
@@ -299,6 +308,7 @@ export function startBackgroundAudio(title = "Live Class"): void {
     document.addEventListener("resume",         resumeFn as EventListener); // Capacitor
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") resumeFn?.();
+      else if (audioEl?.paused) audioEl.play().catch(() => {}); // going to background: make sure the quiet audio is running
     });
   }
 

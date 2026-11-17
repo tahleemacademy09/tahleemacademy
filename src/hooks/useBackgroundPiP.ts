@@ -145,7 +145,12 @@ export function setPiPSource(cameraTrack: MediaStreamTrack | null) {
 
 /** MUST be called synchronously from within a real user-gesture handler
  *  (e.g. the Minimize button's onClick). Returns true if PiP was entered. */
+// MASTER SWITCH — floating Picture-in-Picture overlay is OFF. Background keep-alive is
+// done with the quiet looping audio in useBackgroundAudio.ts instead. Set to true to bring PiP back.
+const PIP_ENABLED = false;
+
 export async function enterPiPKeepAlive(cameraTrack: MediaStreamTrack | null): Promise<boolean> {
+  if (!PIP_ENABLED) return false;
   if (typeof document === "undefined") return false;
   if (!("pictureInPictureEnabled" in document) || !document.pictureInPictureEnabled) return false;
 
