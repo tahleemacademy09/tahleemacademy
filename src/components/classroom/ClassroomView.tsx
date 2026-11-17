@@ -30,6 +30,7 @@ import { canNativeScreenShare, startNativeScreenShare, stopNativeScreenShare, on
 import { StatusBar } from "@capacitor/status-bar";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { getSignedUrl } from "../../integrations/supabase/storageClient";
+import { isInlineLessonRow } from "./lessonBuilder";
 import { playJoinSound, playLeaveSound, playRecordingStartSound, playRecordingStopSound } from "@/lib/soundUtils";
 import NetworkGuard from "@/components/classroom/NetworkGuard";
 import { isSlowLink } from "@/lib/slowNetwork";
@@ -2085,6 +2086,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             }
           }
         }catch{}
+        // A lesson stored in the database: send only its id — students load the content themselves, so the live message stays small.
+        if(isInlineLessonRow(mat))broadcastMat={...mat,content:null,inline_lesson:true};
         try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_open",material:broadcastMat})),{reliable:true});}catch{}
       }} onClose={()=>setMatPicker(false)}/>}
       {showEnd&&!minimized&&createPortal(

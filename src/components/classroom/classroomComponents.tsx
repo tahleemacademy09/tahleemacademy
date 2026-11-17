@@ -23,6 +23,8 @@ import { DirectRecorder, getActiveRecorder, recoverStaleRecording, directRecordi
 import { subscribePending } from "@/lib/recordingOutbox";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { getSignedUrl } from "../../integrations/supabase/storageClient";
+import { isInlineLessonRow } from "./lessonBuilder";
+import { useInlineLesson } from "./useInlineLesson";
 import { playJoinSound, playLeaveSound } from "@/lib/soundUtils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -3009,6 +3011,7 @@ function driveToReveal(doc:Document,targetCount:number,expectedStep:number,onDon
 export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize,fromPanel=false,syncActive=false,onSyncActivity,canSync=false,syncOn=false,onToggleSync,following=false,remoteActivity=null}:any)=>{
   const rawUrl=material.file_url||material.url||"";
   const matId=material.id||rawUrl;
+  const inlineLesson=useInlineLesson(material);
 
   // Keep the material BETWEEN the class header (top) and the control bar (bottom) so neither is covered.
   // The insets are constant — the header/footer fade in and out over their own reserved strips — so the
@@ -3032,6 +3035,7 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
   const [urlLoading, setUrlLoading] = useState(!rawUrl.startsWith("http"));
 
   useEffect(()=>{
+    if(inlineLesson.isInline){setUrlLoading(false);return;}
     if(rawUrl.startsWith("http")){
       setResolvedUrl(rawUrl);
       setUrlLoading(false);
@@ -3084,10 +3088,10 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
       setUrlLoading(false);
       prewarmPDF(u);
     }).catch(()=>{ setResolvedUrl(rawUrl); setUrlLoading(false); });
-  },[rawUrl]);
+  },[rawUrl,inlineLesson.isInline]);
 
   const url=resolvedUrl;
-  const {embedUrl,kind}=toMaterialEmbedUrl(url);
+  const {embedUrl,kind}=inlineLesson.isInline?{embedUrl:"inline-lesson",kind:"html" as const}:toMaterialEmbedUrl(url);
 
   // ── resume position ──────────────────────────────────────────────────────
   const resume=loadResume(matId);
@@ -3143,13 +3147,14 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
   const[htmlErr,setHtmlErr]=useState(false);
   useEffect(()=>{
     if(kind!=="html"||!embedUrl)return;
+    if(inlineLesson.isInline){setHtmlDoc(inlineLesson.html);setHtmlErr(inlineLesson.err);return;}
     let cancelled=false;
     setHtmlDoc(null);setHtmlErr(false);
     fetch(embedUrl).then(r=>{if(!r.ok)throw new Error(String(r.status));return r.text();})
       .then(t=>{if(!cancelled)setHtmlDoc(t);})
       .catch(()=>{if(!cancelled)setHtmlErr(true);});
     return()=>{cancelled=true;};
-  },[kind,embedUrl]);
+  },[kind,embedUrl,inlineLesson.isInline,inlineLesson.html,inlineLesson.err]);
 
   // ── Teacher: capture cursor position + scroll fraction from inside the
   //    lesson's own document (srcDoc + allow-same-origin makes this
@@ -3438,7 +3443,7 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
       </div>
     );
     // Wait for URL resolution before rendering any media
-    if(urlLoading||!url)return(
+    if(!inlineLesson.isInline&&(urlLoading||!url))return(
       <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#0f1117",gap:14}}>
         <div style={{width:40,height:40,borderRadius:"50%",border:"3px solid rgba(255,255,255,.1)",borderTopColor:TEAL,animation:"cv-spin .7s linear infinite"}}/>
         <p style={{color:"#9ca3af",fontSize:13,margin:0}}>Preparing material...</p>
@@ -4900,7 +4905,8 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
     setEditSaving(true);setEditError("");
     try{
       const mat=mats.find(m=>m.id===editingId);
-      let updates:any={title:editTitle.trim()||mat?.title,content:editBody.trim()||null};
+      let updates:any={title:editTitle.trim()||mat?.title};
+      if(!isInlineLessonRow(mat))updates.content=editBody.trim()||null;
       if(editReplaceFile){
         const ext=editReplaceFile.name.split(".").pop()||"bin";
         const path=`materials/${subjectId}/${Date.now()}-edit.${ext}`;
@@ -5389,7 +5395,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
                       style={{width:"100%",boxSizing:"border-box" as const,padding:"8px 10px",borderRadius:7,border:"1px solid rgba(255,255,255,.12)",background:"rgba(255,255,255,.05)",color:"#fff",fontSize:12,marginBottom:8,fontFamily:"inherit"}}
                     />
                     {/* Show text body editor only for text-type materials */}
-                    {(m.material_type==="Text"||m.material_type==="text"||!m.file_url)&&(
+                    {!isInlineLessonRow(m)&&(m.material_type==="Text"||m.material_type==="text"||!m.file_url)&&(
                       <textarea
                         value={editBody} onChange={e=>setEditBody(e.target.value)}
                         rows={4} placeholder="Content / note text…"

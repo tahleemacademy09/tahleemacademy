@@ -1,6 +1,7 @@
 // src/pages/student/CourseView.tsx
 // Virtual-only: shows Syllabus, Materials, and Session highlights — no video player
 import { useState } from "react";
+import { isInlineLessonRow, inlineLessonHtml } from "@/components/classroom/lessonBuilder";
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -40,6 +41,12 @@ const matCfg: Record<MatType,{icon:React.ElementType;bg:string;text:string;borde
   Document: {icon:FileSpreadsheet, bg:"#EFF6FF",text:"#1D4ED8",border:"#BFDBFE"},
 };
 const fmtSize=(b?:number)=>!b?"":b<1024?`${b}B`:b<1048576?`${(b/1024).toFixed(0)}KB`:`${(b/1048576).toFixed(1)}MB`;
+
+function openInlineLesson(content?:string|null){
+  const html=inlineLessonHtml(content);
+  if(!html)return;
+  window.open(URL.createObjectURL(new Blob([html],{type:"text/html;charset=utf-8"})),"_blank");
+}
 
 async function openMaterial(fileUrl:string) {
   if (!fileUrl) return;
@@ -259,7 +266,7 @@ export default function CourseView() {
                   const canOpen=!!mat.file_url||!!mat.content;
                   return(
                     <div key={mat.id} style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",borderRadius:14,border:`1.5px solid ${c.border}`,background:c.bg,cursor:canOpen?"pointer":"default"}}
-                      onClick={()=>canOpen&&(mat.content?alert(mat.content):openMaterial(mat.file_url))}>
+                      onClick={()=>canOpen&&(isInlineLessonRow(mat)?openInlineLesson(mat.content):mat.content?alert(mat.content):openMaterial(mat.file_url))}>
                       <div style={{width:44,height:44,borderRadius:12,background:`${c.text}18`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Icon size={20} style={{color:c.text}}/></div>
                       <div style={{flex:1,minWidth:0}}>
                         <p style={{fontWeight:700,fontSize:13,color:"#111",margin:"0 0 4px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{mat.title}</p>

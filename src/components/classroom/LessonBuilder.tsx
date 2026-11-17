@@ -2,7 +2,7 @@
     Full-screen "Lesson Builder" for admins & teachers (opened from Subject → Materials).
 
     Write the lesson directly here — slide by slide, one item per line — and it is turned into the
-    same interactive lesson format the students already know (tap to reveal, tap again for English,
+    same interactive lesson format the students already know (tap right for the next step: Arabic first, then English; tap left to go back,
     phase tabs, numbered slides). Nothing is uploaded by hand: Save stores the finished page and adds
     (or updates) the row in subject_materials, exactly like the HTML page editor does.
 
@@ -18,7 +18,7 @@ import { toast } from "@/hooks/use-toast";
 import { X, Save, Loader2, Eye, PenLine, Plus, Trash2, ChevronUp, ChevronDown, Copy, Info, Upload } from "lucide-react";
 import {
   LessonDoc, LessonSlide, SlideKind, KIND_LABEL, KIND_HELP, DEFAULT_PHASES,
-  defaultLesson, newSlide, buildLessonHtml, extractLessonSource, LESSON_FILE_SUFFIX,
+  defaultLesson, newSlide, buildLessonHtml, extractLessonSource, parseInlineLesson, serializeLesson,
 } from "./lessonBuilder";
 
 const G = "#0f2d1f";
@@ -104,6 +104,9 @@ export default function LessonBuilder({ material, subjectId, termId, onClose, on
   useEffect(() => {
     if (!material) return;
     let off = false;
+    // A lesson stored in the database carries its document in `content` — nothing to download.
+    const inlineSrc = parseInlineLesson(material.content);
+    if (inlineSrc) { setDoc(inlineSrc); setTitle(material.title || inlineSrc.title || ""); setLoading(false); return; }
     (async () => {
       try {
         const url = await resolveMaterialUrl(material.file_url || "");
@@ -164,30 +167,26 @@ export default function LessonBuilder({ material, subjectId, termId, onClose, on
     setSaving(true);
     try {
       const finalDoc: LessonDoc = { ...doc, title: title.trim() };
-      const html = buildLessonHtml(finalDoc, logo);
-      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-      const safe = title.trim().replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "lesson";
-      const path = `materials/${subjectId}/${Date.now()}_${safe}${LESSON_FILE_SUFFIX}`;
-      const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, blob, {
-        contentType: "text/html;charset=utf-8", cacheControl: "60", upsert: false,
-      });
-      if (upErr) throw upErr;
+      // The lesson is saved straight into the database (its source document), no file upload.
+      const content = serializeLesson(finalDoc);
+      const size = new Blob([content]).size;
 
       if (material) {
         const { error } = await supabase.from("subject_materials")
-          .update({ title: title.trim(), file_url: path, file_size: blob.size })
+          .update({ title: title.trim(), content, file_url: null, file_size: size })
           .eq("id", material.id);
-        if (error) { await supabase.storage.from(BUCKET).remove([path]); throw error; }
+        if (error) throw error;
+        // A lesson that used to be a stored file: tidy the old file away now that the content is in the database.
         if (material.file_url && !material.file_url.startsWith("http")) {
           await supabase.storage.from(BUCKET).remove([material.file_url]);
         }
       } else {
         const { error } = await supabase.from("subject_materials").insert([{
           subject_id: subjectId, title: title.trim(), title_ar: null, description: null,
-          material_type: "Document", file_url: path, file_size: blob.size,
+          material_type: "Document", content, file_url: null, file_size: size,
           is_downloadable: false, uploaded_by: user.id, sort_order: 999, term_id: termId ?? null,
         }]);
-        if (error) { await supabase.storage.from(BUCKET).remove([path]); throw error; }
+        if (error) throw error;
       }
       setDirty(false);
       toast({ title: "✅ Lesson saved" });
@@ -370,7 +369,7 @@ export default function LessonBuilder({ material, subjectId, termId, onClose, on
                     <pre dir="auto" style={{ margin: "4px 0 0", whiteSpace: "pre-wrap", fontFamily: "inherit", background: "#fff", borderRadius: 8, padding: "6px 8px", fontSize: 13 }}>{KIND_HELP[k].example}</pre>
                   </div>
                 ))}
-                Write each item the way a student should read it. Tap a card or line in class to reveal its English.
+                Write each item the way a student should read it. In class, tap the right side to go forward — the Arabic appears first, its English on the next tap — and tap the left side to go back.
               </div>
             )}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>

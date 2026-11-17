@@ -17,6 +17,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { getSignedUrl } from "../../integrations/supabase/storageClient";
+import { isInlineLessonRow } from "./lessonBuilder";
+import { useInlineLesson } from "./useInlineLesson";
 import { Button } from "@/components/ui/button";
 import {
   FileText, Video, Music, Link as LinkIcon, Image, Download,
@@ -44,6 +46,7 @@ function savePos(id: string, patch: { page?: number; time?: number; recordingId?
 
 /* ── Detect kind ─────────────────────────────────────────────── */
 function detectKind(mat: any): FileKind {
+  if (isInlineLessonRow(mat)) return "html";
   const url: string = mat.file_url || "";
   const type: string = (mat.material_type || mat.file_type || "").toLowerCase();
   const rawExt = url.split("?")[0].split(".").pop()?.toLowerCase() || "";
@@ -319,15 +322,18 @@ function FileViewer({
   // classroom's own file viewer, just missing here.
   const [htmlDoc, setHtmlDoc] = useState<string | null>(null);
   const [htmlErr, setHtmlErr] = useState(false);
+  const inline = useInlineLesson(mat);
   useEffect(() => {
-    if (kind !== "html" || !url) return;
+    if (kind !== "html") return;
+    if (inline.isInline) { setHtmlDoc(inline.html); setHtmlErr(inline.err); return; }
+    if (!url) return;
     let cancelled = false;
     setHtmlDoc(null); setHtmlErr(false);
     fetch(url).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.text(); })
       .then(t => { if (!cancelled) setHtmlDoc(t); })
       .catch(() => { if (!cancelled) setHtmlErr(true); });
     return () => { cancelled = true; };
-  }, [kind, url]);
+  }, [kind, url, inline.isInline, inline.html, inline.err]);
 
   useEffect(() => {
     // Already have a good URL — nothing to do
@@ -438,7 +444,7 @@ function FileViewer({
             {mat.file_url && <a href={url||mat.file_url} target="_blank" rel="noopener noreferrer"><Button variant="outline"><ExternalLink size={12} style={{ marginRight:4 }}/> Open in new tab</Button></a>}
           </div>
         )}
-        {!loading && !error && url && (
+        {!loading && !error && (url || inline.isInline) && (
           <>
             {kind==="pdf" && <PDFJsViewer url={url} materialId={materialId}/>}
             {kind==="image" && <div style={{ display:"flex",alignItems:"center",justifyContent:"center",padding:16,flex:1 }}><img src={url} alt={mat.title} style={{ maxWidth:"100%",maxHeight:"70vh",borderRadius:12,objectFit:"contain",boxShadow:"0 4px 24px rgba(0,0,0,.12)" }}/></div>}

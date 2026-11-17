@@ -2,8 +2,8 @@
     Pure helpers for the in-app Lesson Builder (no React, no network).
 
     A lesson is written as a small structured document (LessonDoc). buildLessonHtml() turns it into ONE
-    self-contained HTML page in the same format as the existing interactive lessons (tap to reveal,
-    tap again for English, phase tabs, numbered slides) — and that page already speaks the
+    self-contained HTML page in the same format as the existing interactive lessons (tap right = next step, the Arabic first and
+    its English on the next tap, tap left = back, EN button = hide/show English, phase tabs, numbered slides) — and that page already speaks the
     "follow the teacher" sync contract (window.__tahleemSync), so a lesson written here syncs with
     students with no extra work. The source document is embedded in the page (#tl-src) so the builder
     can re-open and keep editing it later.
@@ -40,7 +40,7 @@ export const KIND_LABEL: Record<SlideKind, string> = {
 /* What the teacher types for each kind (shown as the placeholder + help). One item per line. */
 export const KIND_HELP: Record<SlideKind, { how: string; example: string }> = {
   words: {
-    how: "One word per line:  Arabic | English.  Shown as cards; tap a card to reveal the English.",
+    how: "One word per line:  Arabic | English.  Shown as cards; one tap shows the Arabic, the next tap shows its English.",
     example: "مَطْعَمٌ | restaurant\nطَاوِلَةٌ | table\nكُرْسِيٌّ | chair",
   },
   reading: {
@@ -149,7 +149,7 @@ function compile(doc: LessonDoc, logoDataUri: string | null) {
     const mark = logoDataUri
       ? `<img class="logo" alt="Tahleem Academy" src="${logoDataUri}">`
       : `<div class="brand">أكاديمية التعليم</div>`;
-    slides.push({ p: -1, g: "تعليم", k: "أكاديمية التعليم", cover: `${mark}<div class="sub">${SLOGAN}</div><div class="hint">انْقُرْ لِنَبْدَأَ ←</div>`, i: [] });
+    slides.push({ p: -1, g: "تعليم", k: "أكاديمية التعليم", cover: `${mark}<div class="sub">${SLOGAN}</div><div class="hint">انْقُرْ لِنَبْدَأَ ←</div>`, i: [], st: [] });
   }
   doc.slides.forEach(s => {
     const p = s.phase >= 0 && s.phase < doc.phases.length ? s.phase : -1;
@@ -157,13 +157,17 @@ function compile(doc: LessonDoc, logoDataUri: string | null) {
       slides.push({
         p: -1, g: esc(s.ghost || ""), k: esc(s.kicker || ""),
         cover: `${s.emoji ? `<div class="em">${esc(s.emoji)}</div>` : ""}<h1>${rich(s.title || doc.title)}</h1>${s.sub ? `<div class="sub">${rich(s.sub)}</div>` : ""}${s.hint ? `<div class="hint">${rich(s.hint)}</div>` : ""}`,
-        i: [],
+        i: [], st: [],
       });
     } else {
-      slides.push({ p, g: esc(s.ghost || ""), k: esc(s.kicker || ""), t: rich(s.title || ""), grid: s.kind === "words" ? 1 : 0, i: itemsFor(s) });
+      const items = itemsFor(s);
+      // Steps in click order: item n → its Arabic (2n), then, if it has English, its meaning (2n+1).
+      const st: number[] = [];
+      items.forEach((x, n) => { st.push(n * 2); if (/^<div class="item[^"]*\bhasen\b/.test(x)) st.push(n * 2 + 1); });
+      slides.push({ p, g: esc(s.ghost || ""), k: esc(s.kicker || ""), t: rich(s.title || ""), grid: s.kind === "words" ? 1 : 0, i: items, st });
     }
   });
-  if (!slides.length) slides.push({ p: -1, g: "", k: "", t: "", i: [] });
+  if (!slides.length) slides.push({ p: -1, g: "", k: "", t: "", i: [], st: [] });
   return { phases: doc.phases.map(p => ({ n: esc(p.n), c: /^#[0-9a-fA-F]{3,8}$/.test(p.c) ? p.c : "#0f6b4f" })), slides };
 }
 
@@ -200,10 +204,16 @@ h1{font:700 clamp(32px,9vw,56px)/1.5 'Amiri',serif;color:var(--gold);margin:0;te
 .rd p,.bb p{font:700 clamp(21px,5vw,27px)/2 'Amiri',serif;margin:0}
 mark{background:rgba(169,121,30,.18);color:var(--ph);border-radius:5px;padding:0 5px;font-weight:700}
 .en{direction:ltr;text-align:left;color:var(--dim);font-size:clamp(14px,3.6vw,16px);line-height:1.7}
-/* English is hidden until the item is tapped */
+/* The meaning stays hidden until its own click: first click = Arabic, next click = English */
 .hasen .en,.vc.hasen i{display:none}
 .hasen.rv .en{display:block}
 .vc.hasen.rv i{display:block}
+.item.cur{outline:2px solid rgba(169,121,30,.5);outline-offset:3px}
+.hasen.cur.rv .en,.vc.hasen.cur.rv i{animation:fi .35s ease}
+@keyframes fi{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+#bar #all{font:700 12px 'Cairo',sans-serif;min-width:40px;direction:ltr}#bar #all.m1{background:#182b1d;color:#fff;border-color:#182b1d;text-decoration:line-through}#bar #all.m2{background:var(--gold);color:#fff;border-color:var(--gold)}
+body.hen .en,body.hen .vc.hasen i{display:none!important}body.hen .item.hasen::after{display:none!important}
+#toast{position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:rgba(24,43,29,.92);color:#fff;font:600 13px 'Cairo',sans-serif;padding:7px 14px;border-radius:99px;opacity:0;pointer-events:none;transition:opacity .25s;z-index:9;direction:ltr;white-space:nowrap}#toast.on{opacity:1}
 .item.hasen:not(.rv)::after{content:'EN';display:inline-block;align-self:center;margin-top:4px;padding:0 9px;font:700 11px/18px 'Cairo',sans-serif;color:var(--gold);border:1px solid var(--gold);border-radius:99px;opacity:.85;direction:ltr}
 .bb{max-width:88%;border-radius:16px;padding:8px 16px;background:var(--wash);border:1px solid var(--line);align-self:flex-start;border-top-right-radius:4px}
 .bb.me{align-self:flex-end;background:rgba(169,121,30,.12);border-top-right-radius:16px;border-top-left-radius:4px}
@@ -225,45 +235,56 @@ mark{background:rgba(169,121,30,.18);color:var(--ph);border-radius:5px;padding:0
 /* The page's own script. Plain strings only (no template literals) because it is embedded in a TS string. */
 const RUNTIME = [
 "var DATA=JSON.parse(document.getElementById('tl-data').textContent);",
-"var PH=DATA.phases,S=DATA.slides,si=0,ii=0,RV=new Set();",
+"var PH=DATA.phases,S=DATA.slides,si=0,ii=0,EM=0;/* EM = English mode: 0 step by step, 1 hidden, 2 all shown */",
 "function $(id){return document.getElementById(id)}",
 "var stage=$('stage');",
 "function col(p){return p<0?'#0f6b4f':(PH[p]?PH[p].c:'#0f6b4f')}",
+"function steps(s){return s.st||[]}",
 "$('tabs').innerHTML=PH.map(function(p,i){return '<button data-p=\"'+i+'\">'+p.n+'</button>'}).join('');",
 "$('nums').innerHTML=S.map(function(s,i){return '<button data-n=\"'+i+'\" style=\"--c:'+col(s.p)+'\">'+(i+1)+'</button>'}).join('');",
 "function render(){",
-" var s=S[si],c=col(s.p);document.documentElement.style.setProperty('--ph',c);",
+" var s=S[si],c=col(s.p),st=steps(s);document.documentElement.style.setProperty('--ph',c);",
 " $('gh').textContent=s.g||'';",
+" /* each click is one step: an item's Arabic first, then (if it has one) its English */",
+" var seen={};for(var k=0;k<ii&&k<st.length;k++)seen[st[k]]=1;",
+" var cur=ii>0&&ii<=st.length?Math.floor(st[ii-1]/2):-1;",
 " var h='<div class=\"kick\">'+(s.k||'')+'</div>';",
 " if(s.cover)h+='<div class=\"cover\">'+s.cover+'</div>';",
-" else h+='<h2>'+(s.t||'')+'</h2><div class=\"content'+(s.grid?' g':'')+'\">'+s.i.map(function(x,i){return x.replace('class=\"item','class=\"item'+(i<ii?' shown':'')+(RV.has(si+'-'+i)?' rv':''))}).join('')+'</div>';",
+" else h+='<h2>'+(s.t||'')+'</h2><div class=\"content'+(s.grid?' g':'')+'\">'+s.i.map(function(x,i){return x.replace('class=\"item','class=\"item'+(seen[i*2]?' shown':'')+((EM!==1&&(EM===2?seen[i*2]:seen[i*2+1]))?' rv':'')+(i===cur?' cur':''))}).join('')+'</div>';",
 " stage.innerHTML=h;",
-" var sh=stage.querySelectorAll('.item.shown');if(sh.length)sh[sh.length-1].scrollIntoView({behavior:'smooth',block:'nearest'});",
+" var sh=stage.querySelector('.item.cur');if(sh)sh.scrollIntoView({behavior:'smooth',block:'nearest'});",
 " document.querySelectorAll('#tabs button').forEach(function(b,i){var on=i===s.p;b.classList.toggle('on',on);b.style.background=on?PH[i].c:''});",
 " document.querySelectorAll('#nums button').forEach(function(b,i){b.classList.toggle('on',i===si)});",
 " var ab=document.querySelector('#nums button.on');if(ab)ab.scrollIntoView({inline:'center',block:'nearest'});",
-" document.querySelector('#prog i').style.width=((si+(s.i.length?ii/s.i.length:1))/S.length*100)+'%';",
-" $('cnt').textContent=s.i.length?ii+'/'+s.i.length:'';",
+" document.querySelector('#prog i').style.width=((si+(st.length?ii/st.length:1))/S.length*100)+'%';",
+" var tot=st.length,done=ii;if(EM===1){tot=0;done=0;for(var q=0;q<st.length;q++){if(st[q]%2===0){tot++;if(q<ii)done++}}}",
+" $('cnt').textContent=tot?done+'/'+tot:'';",
+" document.body.classList.toggle('hen',EM===1);$('all').className=EM?'m'+EM:'';",
 " var dots=document.querySelectorAll('#syncdots .dot');for(var d=0;d<dots.length;d++)dots[d].classList.toggle('active',d===si);",
 "}",
-"function adv(){var s=S[si];if(ii<s.i.length){ii++;render()}else if(si<S.length-1){si++;ii=0;render()}}",
-"function back(){if(ii>0){ii--;render()}else if(si>0){si--;ii=S[si].i.length;render()}}",
+"function isEn(s,k){return (steps(s)[k-1]||0)%2===1}",
+"/* with English hidden, English steps are stepped over (the step numbers stay the same, so live-sync still lines up) */",
+"function adv(){var s=S[si],n=steps(s).length,k=ii+1;if(EM===1)while(k<=n&&isEn(s,k))k++;",
+" if(k<=n){ii=k;render()}else if(si<S.length-1){si++;ii=0;render()}else if(ii<n){ii=n;render()}}",
+"function back(){var s=S[si],k=ii-1;if(EM===1)while(k>0&&isEn(s,k))k--;",
+" if(ii>0){ii=Math.max(0,k);render()}else if(si>0){si--;ii=steps(S[si]).length;render()}}",
 "function go(n){si=n;ii=0;render()}",
+"/* tap the right half = next step, tap the left half = back one step */",
 "stage.onclick=function(e){",
-" /* taps sent by the live-sync (not a real finger): only reveal the next item on THIS slide, never change slide */",
-" if(!e.isTrusted){var s0=S[si];if(ii<s0.i.length){ii++;render()}return}",
-" var it=e.target.closest('.item.hasen.shown');",
-" if(it&&!it.classList.contains('rv')){it.classList.add('rv');RV.add(si+'-'+[].indexOf.call(stage.querySelectorAll('.item'),it));return}",
+" /* taps sent by the live-sync (not a real finger): only take the next step on THIS slide, never change slide */",
+" if(!e.isTrusted){if(ii<steps(S[si]).length){ii++;render()}return}",
 " var r=stage.getBoundingClientRect();(e.clientX-r.left>r.width/2)?adv():back();",
 "};",
 "$('nx').onclick=adv;$('pv').onclick=back;",
+"var tt;function toast(m){var t=$('toast');t.textContent=m;t.classList.add('on');clearTimeout(tt);tt=setTimeout(function(){t.classList.remove('on')},1600)}",
+"$('all').onclick=function(){EM=(EM+1)%3;toast(['English: shown step by step','English: hidden','English: all shown'][EM]);render()};",
 "$('nums').onclick=function(e){var b=e.target.closest('button');if(b)go(+b.dataset.n)};",
 "$('tabs').onclick=function(e){var b=e.target.closest('button');if(b){var k=S.findIndex(function(s){return s.p===+b.dataset.p});if(k>=0)go(k)}};",
 "document.addEventListener('keydown',function(e){if(['Space','ArrowLeft','Enter'].indexOf(e.code)>=0){e.preventDefault();adv()}else if(e.code==='ArrowRight'){e.preventDefault();back()}});",
 "/* ── live-sync (Tahleem Academy \"follow the teacher\") ── */",
 "window.__tahleemSync={",
-" get:function(){return {step:si,total:S.length,reveal:ii}},",
-" goTo:function(n,k){n=Math.max(0,Math.min(S.length-1,n|0));k=Math.max(0,Math.min(S[n].i.length,k|0));if(n!==si||k!==ii){si=n;ii=k;render()}}",
+" get:function(){return {step:si,total:S.length,reveal:ii+EM*1000}},",
+" goTo:function(n,k){k=k|0;var m=Math.floor(k/1000);k=k%1000;n=Math.max(0,Math.min(S.length-1,n|0));k=Math.max(0,Math.min(steps(S[n]).length,k));m=m>2?0:m;if(n!==si||k!==ii||m!==EM){si=n;ii=k;EM=m;render()}}",
 "};",
 "/* fallback for older app versions: hidden slide markers + hidden Next/Previous that move one whole slide */",
 "var sd=document.createElement('div');sd.id='syncdots';sd.style.display='none';",
@@ -286,7 +307,8 @@ ${CSS}
 <div id="top"><div id="tabs"></div><div id="prog"><i></i></div></div>
 <div id="ghost"><span id="gh"></span></div>
 <div id="wrap"><div id="stage"></div></div>
-<div id="bar"><button id="pv" aria-label="Previous">›</button><div id="nums"></div><span id="cnt"></span><button id="nx" aria-label="Next">‹</button></div>
+<div id="toast"></div>
+<div id="bar"><button id="pv" aria-label="Previous">›</button><div id="nums"></div><span id="cnt"></span><button id="all" aria-label="English: step by step / hidden / all shown" title="English: step by step → hidden → all shown">EN</button><button id="nx" aria-label="Next">‹</button></div>
 <script type="application/json" id="tl-data">${safeJson(data)}</script>
 <script type="application/json" id="tl-src">${safeJson(doc)}</script>
 <script>
@@ -308,3 +330,29 @@ export function extractLessonSource(html: string): LessonDoc | null {
 export const LESSON_FILE_SUFFIX = ".tlesson.html";
 export const isBuilderLessonFile = (fileUrl?: string | null) =>
   String(fileUrl || "").split("?")[0].toLowerCase().endsWith(LESSON_FILE_SUFFIX);
+
+
+/* ── Lessons stored directly in the database ───────────────────────────────────────────────
+   A lesson can live in subject_materials.content as its source document (JSON) — no file in storage,
+   no upload. Every viewer builds the same interactive page from it on the fly. */
+export function parseInlineLesson(content?: string | null): LessonDoc | null {
+  if (typeof content !== "string" || !content.startsWith('{"v":1')) return null;
+  try {
+    const d = JSON.parse(content);
+    return d && d.v === 1 && Array.isArray(d.slides) ? (d as LessonDoc) : null;
+  } catch { return null; }
+}
+/* True for a database-stored lesson row — or for the copy broadcast to students in a live class (content is
+   left out of the broadcast and fetched by id, so the message stays small). */
+export const isInlineLessonRow = (m: any): boolean =>
+  !!m && (m.inline_lesson === true || (typeof m.content === "string" && m.content.startsWith('{"v":1')));
+export function inlineLessonHtml(content?: string | null): string | null {
+  const d = parseInlineLesson(content);
+  if (!d) return null;
+  const logo = typeof window !== "undefined" ? `${window.location.origin}/brand-logo.png` : null;
+  return buildLessonHtml(d, logo);
+}
+export function serializeLesson(doc: LessonDoc): string {
+  const { v: _v, ...rest } = doc;
+  return JSON.stringify({ v: 1, ...rest });
+}

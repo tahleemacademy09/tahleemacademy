@@ -27,7 +27,7 @@ import MaterialsViewer from "./MaterialsViewer";
 import LessonPicker from "./LessonPicker";
 import HtmlMaterialEditor from "./HtmlMaterialEditor";
 import LessonBuilder from "./LessonBuilder";
-import { isBuilderLessonFile } from "./lessonBuilder";
+import { isBuilderLessonFile, isInlineLessonRow } from "./lessonBuilder";
 import { useStaffTermId, useViewingTermId } from "@/hooks/useCurrentTermId";
 import {
   FileText, Video, Music, Image as ImageIcon, File as FileIcon,
@@ -395,7 +395,7 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
                 </div>
               </div>
               <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                {isBuilderLessonFile(m.file_url) ? (
+                {(isBuilderLessonFile(m.file_url) || isInlineLessonRow(m)) ? (
                   <IconBtn onClick={() => setLessonEditing(m)} title={t("Edit lesson", "تحرير الدرس")}>
                     <BookOpen size={15} color={GOLD} />
                   </IconBtn>
