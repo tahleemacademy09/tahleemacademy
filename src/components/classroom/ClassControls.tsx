@@ -1141,18 +1141,26 @@ const ClassControls = ({
    "click outside" listener never fires when the tap lands on an <iframe> (lesson
    / material content lives in one), so the menu used to stay stuck open. This
    sits above everything except the menu itself, swallows the tap and closes it. */
-const MenuBackdrop = ({ open, onClose }: { open: boolean; onClose: () => void }) =>
-  open
-    ? createPortal(
-        <div
-          aria-hidden
-          onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }}
-          onClick={(e) => { e.stopPropagation(); onClose(); }}
-          onTouchStart={(e) => { e.stopPropagation(); onClose(); }}
-          style={{ position: "fixed", inset: 0, zIndex: 9998, background: "transparent", pointerEvents: "auto", touchAction: "none" }}
-        />,
-        document.body
-      )
-    : null;
+const MenuBackdrop = ({ open, onClose }: { open: boolean; onClose: () => void }) => {
+  // The menu opens on touch-DOWN, so the same tap's touch-UP / click lands on this
+  // backdrop a moment later. Stay inert briefly and react only to a NEW press
+  // (pointerdown) — never click/touchstart — otherwise the menu closes instantly
+  // and only a long-press appears to open it.
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!open) { setArmed(false); return; }
+    const t = setTimeout(() => setArmed(true), 250);
+    return () => clearTimeout(t);
+  }, [open]);
+  if (!open) return null;
+  return createPortal(
+    <div
+      aria-hidden
+      onPointerDown={(e) => { if (!armed) return; e.preventDefault(); e.stopPropagation(); onClose(); }}
+      style={{ position: "fixed", inset: 0, zIndex: 9998, background: "transparent", pointerEvents: armed ? "auto" : "none", touchAction: "none" }}
+    />,
+    document.body
+  );
+};
 
 export default ClassControls;

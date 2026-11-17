@@ -1546,8 +1546,15 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                 // 2 minutes here is what left users staring at "Checking
                 // connection…" for ages. After 4s we let Disconnected fire so
                 // autoReconnect rebuilds the room with a fresh token right away.
-                if(context.elapsedMs>4_000)return -1; // negative = give up, let Disconnected fire
-                // Quick, cheap retries: 0, .3s, .6s, .9s, then 1s.
+                // BUT only while the tab is visible. A minimized/hidden browser tab
+                // has its network frozen by the phone; giving up after 4s there forces
+                // a full room rebuild that tries to grab the mic while hidden (which
+                // Chrome forbids) — that is what made "everything stop" on minimize.
+                // While hidden, keep the old patient in-place resume (2 min).
+                const hidden=typeof document!=="undefined"&&document.visibilityState!=="visible";
+                if(context.elapsedMs>(hidden?120_000:4_000))return -1; // negative = give up, let Disconnected fire
+                // Quick, cheap retries: 0, .3s, .6s, .9s, then 1s (gentler 1.5s→8s while hidden).
+                if(hidden)return Math.min(500*Math.pow(1.5,context.retryCount),8_000);
                 return Math.min(300*context.retryCount,1_000);
               },
             },
