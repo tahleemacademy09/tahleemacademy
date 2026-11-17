@@ -427,7 +427,7 @@ export const CSS = `
    or not. Background reconnection is allowed to be far more patient before
    giving up (see BACKGROUND_MAX_ATTEMPTS in autoReconnect below) instead of
    relying on a silent multi-minute wait to do that job.                    */
-export const WS_DROP_DEBOUNCE_MS = 1_000; // 1s — enough to ignore a single flicker, fast enough that reconnect starts almost immediately
+export const WS_DROP_DEBOUNCE_MS = 300; // 0.3s — still ignores a single flicker, but reconnect now starts almost instantly (was 1s)
 
 /* ══════════════════════════════════════════════════════════════════════
    FEATURE 1: RECONNECTING OVERLAY
@@ -437,8 +437,9 @@ export const WS_DROP_DEBOUNCE_MS = 1_000; // 1s — enough to ignore a single fl
 export const ReconnectingOverlay = ({ attempt }: { attempt: number }) => {
   const [secs, setSecs] = useState(0);
   useEffect(() => {
-    // Show countdown matching the backoff: 0.4s, 0.8s, 1.6s, 3.2s... 15s cap
-    const wait = Math.min(0.4 * Math.pow(2, attempt), 15);
+    // Show countdown matching autoReconnect's foreground backoff: instant first
+    // retry, then 0.6s, 0.9s, 1.4s ... capped at 2s.
+    const wait = attempt === 0 ? 0 : Math.min(0.4 * Math.pow(1.5, attempt), 2);
     setSecs(wait);
     const iv = setInterval(() => setSecs(s => Math.max(0, s - 1)), 1000);
     return () => clearInterval(iv);
@@ -738,9 +739,21 @@ export const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected
       }
     };
 
+    // The moment the device gets internet back, don't wait for the next backoff
+    // tick: if the room is already dead, rebuild it right now.
+    const onOnline = () => {
+      if (removedRef.current) return;
+      if (room.state === ConnectionState.Disconnected) {
+        clearDebounce();
+        onDisconnected();
+      }
+    };
+
     document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("online", onOnline);
     return () => {
       clearDebounce();
+      window.removeEventListener("online", onOnline);
       room.off(RoomEvent.Reconnecting, onReconnecting);
       room.off(RoomEvent.Reconnected,  onReconnected);
       room.off(RoomEvent.Disconnected, handleDisconnect);
@@ -3536,29 +3549,29 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
   const resumeBadge=resume?.time||resume?.page;
 
   return(
-    <div style={{...overlayStyle,background:"#0f1117"}}>
+    <div style={{...overlayStyle,background:"#ffffff"}}>
       {/* Edge strips: tapping where the header/footer were (while hidden) brings them back */}
       <div onClick={toggleChrome} style={{position:"absolute",top:0,left:0,right:0,height:headerH,zIndex:1}}/>
       <div onClick={toggleChrome} style={{position:"absolute",bottom:0,left:0,right:0,height:`calc(${BAR_H}px + env(safe-area-inset-bottom, 0px))`,zIndex:1}}/>
       <div style={{...bodyInsets,zIndex:2}}>
       {/* Viewer header */}
-      <div style={{height:46,background:"#2d2e30",display:"flex",alignItems:"center",padding:"0 10px",gap:8,flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.08)"}}>
+      <div style={{height:52,background:"#ffffff",display:"flex",alignItems:"center",padding:"0 12px",gap:10,flexShrink:0,borderBottom:"1px solid #e5e7eb",boxShadow:"0 1px 3px rgba(15,23,42,.06)"}}>
         {/* Minimize to pip */}
         {onMinimize&&<button onClick={onMinimize} title="Minimize"
-          style={{width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <ChevronDown style={{width:13,height:13}}/>
+          style={{width:34,height:34,borderRadius:10,background:"#f1f5f9",border:"none",color:"#0f172a",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <ChevronDown style={{width:16,height:16}}/>
         </button>}
         <span style={{fontSize:15,flexShrink:0}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
-        <span style={{flex:1,fontSize:13,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{material.title||"Material"}</span>
+        <span style={{flex:1,fontSize:15,fontWeight:800,color:"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{material.title||"Material"}</span>
         {resumeBadge&&(
-          <span style={{fontSize:10,color:"rgba(255,255,255,.5)",background:"rgba(255,255,255,.1)",borderRadius:8,padding:"2px 7px",flexShrink:0}}>
+          <span style={{fontSize:10,color:"#475569",background:"#f1f5f9",borderRadius:8,padding:"2px 7px",flexShrink:0}}>
             {resume?.time?`▶ ${Math.floor((resume.time||0)/60)}m${Math.floor((resume.time||0)%60)}s`:`p.${resume?.page}`} resumed
           </span>
         )}
-        {!isTeacher&&!fromPanel&&<span style={{fontSize:10,color:"rgba(255,255,255,.4)",flexShrink:0}}>Shared by teacher</span>}
+        {!isTeacher&&!fromPanel&&<span style={{fontSize:10,color:"#64748b",flexShrink:0}}>Shared by teacher</span>}
         {/* Following badge — student's copy is fully teacher-driven right now */}
         {!isTeacher&&following&&(
-          <span style={{fontSize:10,fontWeight:700,color:"#34d399",background:"rgba(52,211,153,.14)",border:"1px solid rgba(52,211,153,.3)",borderRadius:8,padding:"3px 8px",flexShrink:0,display:"flex",alignItems:"center",gap:4}}>
+          <span style={{fontSize:10,fontWeight:700,color:"#047857",background:"#d1fae5",border:"1px solid #6ee7b7",borderRadius:8,padding:"3px 8px",flexShrink:0,display:"flex",alignItems:"center",gap:4}}>
             🔗 Following teacher
           </span>
         )}
@@ -3574,8 +3587,8 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
             style={{
               display:"flex",alignItems:"center",gap:5,padding:"5px 10px",borderRadius:8,border:"none",
               cursor:canSync?"pointer":"not-allowed",flexShrink:0,fontSize:11,fontWeight:700,
-              background:syncOn?"rgba(52,211,153,.22)":canSync?"rgba(255,255,255,.1)":"rgba(255,255,255,.05)",
-              color:syncOn?"#34d399":canSync?"#e8eaf0":"rgba(255,255,255,.3)",
+              background:syncOn?"#d1fae5":canSync?"#f1f5f9":"#f8fafc",
+              color:syncOn?"#047857":canSync?"#0f172a":"#94a3b8",
             }}
           >
             <span style={{fontSize:12}}>{syncOn?"🔗":"🔒"}</span>
@@ -3583,10 +3596,10 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
           </button>
         )}
         {rawUrl&&<a href={url} target="_blank" rel="noopener noreferrer"
-          style={{fontSize:11,color:"#d1d5db",background:"rgba(255,255,255,.1)",borderRadius:8,padding:"4px 10px",textDecoration:"none",fontWeight:600,flexShrink:0}}>↗</a>}
+          style={{fontSize:13,color:"#0f172a",background:"#f1f5f9",borderRadius:10,padding:"6px 11px",textDecoration:"none",fontWeight:700,flexShrink:0}}>↗</a>}
         <button onClick={onClose} title="Close material"
-          style={{width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.12)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <X style={{width:13,height:13}}/>
+          style={{width:34,height:34,borderRadius:10,background:"#f1f5f9",border:"none",color:"#0f172a",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <X style={{width:16,height:16}}/>
         </button>
       </div>
       {renderContent()}
@@ -4657,6 +4670,8 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   const[cSyncAllowed,setCSyncAllowed]=useState(true); // admin-only: authorize this material for live sync at upload time (default ON)
   // ── Assignments section (teacher/admin manage, students view/submit) ────
   const[assignmentsOpen,setAssignmentsOpen]=useState(false);
+  // Collapsible sections of the materials list — keeps the panel tidy instead of one long jam-packed stack.
+  const[secOpen,setSecOpen]=useState<Record<string,boolean>>({tools:true,lessons:true,uploads:false,staff:false});
   const[cError,setCError]=useState("");
   const fileInputRef=useRef<HTMLInputElement>(null);
   const editFileRef=useRef<HTMLInputElement>(null);
@@ -5155,7 +5170,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   const viewersLayer=openMats.map(m=>{
     const visible=viewersShown&&m.id===activeMatId;
     return(
-      <div key={m.id} style={{position:"absolute",inset:0,zIndex:visible?55:-1,background:"#202124",display:"flex",flexDirection:"column",...(visible?{}:{visibility:"hidden" as const,pointerEvents:"none" as const})}}>
+      <div key={m.id} style={{position:"absolute",inset:0,zIndex:visible?55:-1,background:"#ffffff",display:"flex",flexDirection:"column",...(visible?{}:{visibility:"hidden" as const,pointerEvents:"none" as const})}}>
         <InClassMaterialViewer
           material={m}
           onMinimize={minimizeActive}
@@ -5211,320 +5226,256 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
     // List is hidden but PiP may still be floating — just render PiP
     return <>{viewersLayer}{renderPip()}</>;
   }
+  /* ── Light-theme helpers for the materials list ── */
+  const matSectionHeader=(key:string,label:string,count?:number,icon?:string)=>(
+    <button onClick={()=>setSecOpen(p=>({...p,[key]:!p[key]}))} aria-expanded={!!secOpen[key]} style={{
+      width:"100%",display:"flex",alignItems:"center",gap:8,padding:"10px 4px",background:"none",border:"none",
+      borderBottom:"2px solid #e5e7eb",cursor:"pointer",textAlign:"left" as const,fontFamily:"inherit",marginTop:4,
+    }}>
+      {icon&&<span style={{fontSize:15}}>{icon}</span>}
+      <span style={{flex:1,fontSize:13,fontWeight:800,color:"#0f172a",letterSpacing:.5,textTransform:"uppercase" as const}}>{label}</span>
+      {count!==undefined&&<span style={{fontSize:12,fontWeight:700,color:"#334155",background:"#f1f5f9",borderRadius:20,padding:"2px 9px"}}>{count}</span>}
+      <span style={{width:26,height:26,borderRadius:8,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+        <ChevronDown style={{width:15,height:15,color:"#334155",transform:secOpen[key]?"rotate(180deg)":"none",transition:"transform .18s"}}/>
+      </span>
+    </button>
+  );
+  const matToolTile=(bg:string,border:string):React.CSSProperties=>({
+    display:"flex",flexDirection:"column",alignItems:"flex-start",gap:4,padding:"12px",borderRadius:12,
+    border:`1px solid ${border}`,background:bg,cursor:"pointer",textAlign:"left",fontFamily:"inherit",minWidth:0,
+  });
+  const matLightInput:React.CSSProperties={
+    width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,border:"1px solid #d1d5db",
+    background:"#fff",color:"#0f172a",fontSize:13,marginBottom:8,fontFamily:"inherit",
+  };
+  const renderMatRow=(m:any)=>{
+    const icon=MAT_TYPE_ICON[m.material_type||"document"]||"📄";
+    const resume=loadResume(m.id||"");
+    const isDeleting=deletingId===m.id;
+    const isEditing=editingId===m.id;
+    const smallBtn=(active:boolean,activeBg:string,activeFg:string):React.CSSProperties=>({width:32,height:32,borderRadius:8,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:active?activeBg:"#f1f5f9",color:active?activeFg:"#475569",fontSize:14,transition:"all .12s"});
+    return(
+      <div key={m.id} style={{marginBottom:8}}>
+        {isEditing&&isPrivileged&&(
+          <div style={{background:"#fffbeb",border:"1px solid #fde68a",borderRadius:12,padding:"12px",marginBottom:6}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+              <span style={{fontSize:12,fontWeight:800,color:"#92400e",letterSpacing:.4}}>✏️ EDITING</span>
+              <button onClick={()=>setEditingId(null)} style={{background:"none",border:"none",color:"#64748b",cursor:"pointer",fontSize:16,padding:"0 2px"}}>✕</button>
+            </div>
+            <input value={editTitle} onChange={e=>setEditTitle(e.target.value)} placeholder="Title" style={matLightInput}/>
+            {!isInlineLessonRow(m)&&(m.material_type==="Text"||m.material_type==="text"||!m.file_url)&&(
+              <textarea value={editBody} onChange={e=>setEditBody(e.target.value)} rows={4} placeholder="Content / note text…" style={{...matLightInput,resize:"vertical" as const}}/>
+            )}
+            {m.file_url&&(
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:12,color:"#475569",marginBottom:4}}>Replace file (optional):</div>
+                <input ref={editFileRef} type="file" onChange={e=>setEditReplaceFile(e.target.files?.[0]||null)} style={{fontSize:12,color:"#334155",width:"100%"}}/>
+                {editReplaceFile&&<div style={{fontSize:11,color:"#047857",marginTop:3}}>Ready: {editReplaceFile.name}</div>}
+                <div style={{fontSize:11,color:"#64748b",marginTop:3}}>Current: {m.file_url?.split("/").pop()?.split("?")[0]||"file"}</div>
+              </div>
+            )}
+            {editError&&<div style={{fontSize:12,color:"#dc2626",marginBottom:7}}>{editError}</div>}
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={handleEditSave} disabled={editSaving} style={{flex:1,padding:"9px 0",borderRadius:8,border:"none",background:editSaving?"#fcd34d":"#d97706",color:"#fff",fontWeight:700,fontSize:13,cursor:editSaving?"default":"pointer"}}>{editSaving?"Saving…":"💾 Save changes"}</button>
+              <button onClick={()=>setEditingId(null)} style={{padding:"9px 14px",borderRadius:8,border:"1px solid #d1d5db",background:"#fff",color:"#475569",fontSize:13,cursor:"pointer"}}>Cancel</button>
+            </div>
+          </div>
+        )}
+        {confirmDeleteId===m.id&&isPrivileged&&(
+          <div style={{background:"#fef2f2",border:"1px solid #fecaca",borderRadius:12,padding:"10px 12px",marginBottom:6,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap" as const}}>
+            <span style={{fontSize:13,color:"#991b1b",flex:1,minWidth:120}}>Delete "<strong>{m.title||"Untitled"}</strong>"? This cannot be undone.</span>
+            <button onClick={()=>handleDelete(m)} style={{padding:"7px 14px",borderRadius:8,border:"none",background:"#dc2626",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}>{isDeleting?"Deleting…":"Yes, delete"}</button>
+            <button onClick={()=>setConfirmDeleteId(null)} style={{padding:"7px 12px",borderRadius:8,border:"1px solid #d1d5db",background:"#fff",color:"#475569",fontSize:12,cursor:"pointer"}}>Cancel</button>
+          </div>
+        )}
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 10px 10px 12px",background:isEditing?"#fffbeb":"#fff",border:`1px solid ${isEditing?"#fde68a":"#e5e7eb"}`,borderRadius:12,boxShadow:"0 1px 2px rgba(15,23,42,.04)"}}>
+          <button onClick={()=>openMaterial(m)} style={{display:"flex",alignItems:"center",gap:10,flex:1,background:"none",border:"none",cursor:"pointer",textAlign:"left" as const,minWidth:0,fontFamily:"inherit",padding:0}}>
+            <div style={{width:38,height:38,borderRadius:10,background:"#e6f4f1",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{icon}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <p style={{margin:0,fontSize:14,fontWeight:700,color:"#0f172a",lineHeight:1.3,wordBreak:"break-word" as const}}>{m.visibility==="staff"&&"🔒 "}{m.title||m.name||"Untitled"}</p>
+              <p style={{margin:"3px 0 0",fontSize:11,color:"#64748b",textTransform:"capitalize" as const}}>
+                {m.material_type||"file"}
+                {resume?.time&&<span style={{marginLeft:6,color:TEAL,fontWeight:700}}>▶ {Math.floor((resume.time||0)/60)}m</span>}
+                {resume?.page&&!resume?.time&&<span style={{marginLeft:6,color:TEAL,fontWeight:700}}>p.{resume.page}</span>}
+              </p>
+            </div>
+            <ChevronRight style={{width:16,height:16,color:"#94a3b8",flexShrink:0}}/>
+          </button>
+          {isPrivileged&&(
+            <div style={{display:"flex",gap:4,flexShrink:0}}>
+              <button onClick={()=>toggleSyncAllowed(m)} disabled={syncTogglingIds.has(m.id)}
+                title={m.sync_allowed?"Visible to students — tap to lock/hide it":"Hidden from students — tap to unlock so they can see it"}
+                style={smallBtn(!!m.sync_allowed,"#d1fae5","#047857")}
+              >{syncTogglingIds.has(m.id)?"⌛":m.sync_allowed?"🔗":"🔒"}</button>
+              <button onClick={()=>isEditing?setEditingId(null):openEdit(m)} title="Edit title / content" style={smallBtn(isEditing,"#fde68a","#92400e")}>✏️</button>
+              <button onClick={()=>confirmDeleteId===m.id?setConfirmDeleteId(null):setConfirmDeleteId(m.id)} title="Delete material" disabled={isDeleting} style={smallBtn(confirmDeleteId===m.id,"#fecaca","#b91c1c")}>{isDeleting?"⌛":"🗑️"}</button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
   return(
     <>
     {viewersLayer}
     {/* PiP floats above list when user is browsing while materials are minimized */}
     {forceList&&renderPip()}
-    <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={handleClose}>
+    <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(15,23,42,.45)"}} onClick={handleClose}>
       <div onClick={e=>e.stopPropagation()} style={{
         position:"absolute",top:0,right:0,
         /* Important: bottom:0 so footer stays below this panel */
         bottom:0,
-        width:"min(340px,100%)",
-        background:"#202124",
-        borderLeft:"1px solid rgba(255,255,255,.08)",
+        width:"min(380px,100%)",
+        background:"#ffffff",
+        borderLeft:"1px solid #e5e7eb",
         display:"flex",flexDirection:"column",
         animation:"slide-right .2s cubic-bezier(.34,1.2,.64,1) both",
-        boxShadow:"-6px 0 28px rgba(0,0,0,.5)",
+        boxShadow:"-8px 0 32px rgba(15,23,42,.25)",
+        fontFamily:"'Google Sans',system-ui,sans-serif",
       }}>
-        {/* Header — no minimize button here, only close */}
-        <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,background:"#2d2e30",height:50}}>
-          <Eye style={{width:15,height:15,color:TEAL,flexShrink:0}}/>
-          <span style={{flex:1,fontSize:14,fontWeight:600,color:"#fff",fontFamily:"'Google Sans',sans-serif"}}>Materials</span>
-          <button onClick={handleClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-            <X style={{width:14,height:14}}/>
+        {/* Header */}
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",borderBottom:"1px solid #e5e7eb",flexShrink:0,background:"#ffffff"}}>
+          <div style={{width:34,height:34,borderRadius:10,background:"#e6f4f1",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+            <Eye style={{width:17,height:17,color:TEAL}}/>
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:17,fontWeight:800,color:"#0f172a",lineHeight:1.2}}>Class Materials</div>
+            {subject?.title&&<div style={{fontSize:12,color:"#64748b",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" as const}}>{subject.title}</div>}
+          </div>
+          <button onClick={handleClose} aria-label="Close materials" style={{background:"#f1f5f9",border:"none",color:"#334155",borderRadius:10,width:34,height:34,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+            <X style={{width:16,height:16}}/>
           </button>
         </div>
 
-        {/* Sync is now opt-in per material — open any unlocked material and
-            press the "Sync" toggle in its own header to push it live. */}
+        <div style={{flex:1,overflowY:"auto",padding:"12px 14px 24px",background:"#ffffff"}}>
 
-        {/* Student record toggle (if allowed) */}
-        {!isPrivileged&&canStudentRec&&(
-          <button onClick={onToggleStuRecord} style={{
-            margin:"10px 10px 0",padding:"11px 14px",borderRadius:10,
-            border:`1px solid ${stuRec?"rgba(239,68,68,.4)":"rgba(255,255,255,.1)"}`,
-            background:stuRec?"rgba(239,68,68,.12)":"rgba(255,255,255,.04)",
-            cursor:"pointer",display:"flex",alignItems:"center",gap:10,flexShrink:0,
-          }}>
-            <Circle style={{width:11,height:11,fill:stuRec?"#ef4444":"none",color:stuRec?"#ef4444":"rgba(255,255,255,.5)"}}/>
-            <span style={{fontSize:13,color:stuRec?"#ef4444":"rgba(255,255,255,.7)",fontFamily:"'Google Sans',sans-serif"}}>{stuRec?"Stop Recording":"Record Audio"}</span>
-          </button>
-        )}
-
-        {/* Quran button */}
-        <button onClick={()=>setQuranOpen(true)} style={{
-          margin:"10px 10px 0",padding:"12px 14px",borderRadius:10,
-          border:"1px solid rgba(183,121,31,.4)",
-          background:"linear-gradient(135deg,rgba(26,61,36,.9),rgba(39,103,73,.9))",
-          cursor:"pointer",textAlign:"left" as const,display:"flex",alignItems:"center",gap:10,flexShrink:0,
-        }}>
-          <div style={{fontSize:22,flexShrink:0}}>📖</div>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{fontFamily:"'Amiri',serif",fontSize:14,fontWeight:700,color:"#fef9ee"}}>Open Full Quran</div>
-            <div style={{fontSize:11,color:"rgba(255,255,255,.5)"}}>Arabic · Translation · Tafseer</div>
-          </div>
-          <ChevronRight style={{width:13,height:13,color:"#34d399",flexShrink:0}}/>
-        </button>
-
-        {/* Share with class / jot a staff-only note — teacher/admin only */}
-        {isPrivileged&&(
-          <div style={{margin:"10px 10px 0",borderRadius:10,border:"1px solid rgba(201,168,76,.3)",background:"rgba(201,168,76,.06)",overflow:"hidden",flexShrink:0}}>
-            <button onClick={()=>setComposerOpen(v=>!v)} style={{width:"100%",padding:"12px 14px",background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left" as const}}>
-              <div style={{fontSize:18,flexShrink:0}}>{cVisibility==="staff"?"🔒":"📤"}</div>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13,fontWeight:700,color:"#f2dfa8",fontFamily:"'Google Sans',sans-serif"}}>{cVisibility==="staff"?"Staff note / material":"Share with class"}</div>
-                <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>Post a note or upload a file — choose who can see it below</div>
-              </div>
-              <ChevronDown style={{width:14,height:14,color:"rgba(255,255,255,.4)",transform:composerOpen?"rotate(180deg)":"none",transition:"transform .15s",flexShrink:0}}/>
-            </button>
-            {composerOpen&&(
-              <div style={{padding:"0 14px 14px"}}>
-                {/* Visibility toggle */}
-                <div style={{display:"flex",gap:6,marginBottom:10}}>
-                  {([["all","👥 Students"],["staff","🔒 Staff only"]] as const).map(([v,lb])=>(
-                    <button key={v} onClick={()=>setCVisibility(v as "all"|"staff")} style={{
-                      flex:1,padding:"7px 0",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",
-                      border:`1px solid ${cVisibility===v?"#93c5fd":"rgba(255,255,255,.12)"}`,
-                      background:cVisibility===v?"rgba(59,130,246,.18)":"transparent",
-                      color:cVisibility===v?"#dbeafe":"rgba(255,255,255,.5)",
-                    }}>{lb}</button>
-                  ))}
-                </div>
-                {/* Admin/teacher: authorize this material for live sync to students */}
+          {/* ── QUICK TOOLS (collapsible) ── */}
+          {matSectionHeader("tools","Quick tools",undefined,"🧰")}
+          {secOpen.tools&&(
+            <div style={{margin:"4px 0 14px"}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                <button onClick={()=>setQuranOpen(true)} style={matToolTile("#ecfdf5","#a7f3d0")}>
+                  <span style={{fontSize:22}}>📖</span>
+                  <span style={{fontSize:13,fontWeight:700,color:"#065f46"}}>Full Quran</span>
+                  <span style={{fontSize:11,color:"#047857"}}>Arabic · Translation · Tafseer</span>
+                </button>
+                <button onClick={()=>setAssignmentsOpen(true)} style={matToolTile("#eff6ff","#bfdbfe")}>
+                  <ClipboardList style={{width:22,height:22,color:"#1d4ed8"}}/>
+                  <span style={{fontSize:13,fontWeight:700,color:"#1e3a8a"}}>Assignments</span>
+                  <span style={{fontSize:11,color:"#1d4ed8"}}>{isPrivileged?"Create, review, grade":"View and submit"}</span>
+                </button>
                 {isPrivileged&&(
+                  <button onClick={()=>setComposerOpen(v=>!v)} style={{...matToolTile("#fffbeb","#fde68a"),outline:composerOpen?"2px solid #f59e0b":"none"}}>
+                    <span style={{fontSize:22}}>{cVisibility==="staff"?"🔒":"📤"}</span>
+                    <span style={{fontSize:13,fontWeight:700,color:"#92400e"}}>{cVisibility==="staff"?"Staff note":"Share with class"}</span>
+                    <span style={{fontSize:11,color:"#b45309"}}>Post a note or file</span>
+                  </button>
+                )}
+                {!isPrivileged&&canStudentRec&&(
+                  <button onClick={onToggleStuRecord} style={{...matToolTile(stuRec?"#fef2f2":"#f8fafc",stuRec?"#fecaca":"#e2e8f0")}}>
+                    <Circle style={{width:20,height:20,fill:stuRec?"#dc2626":"none",color:stuRec?"#dc2626":"#475569"}}/>
+                    <span style={{fontSize:13,fontWeight:700,color:stuRec?"#b91c1c":"#0f172a"}}>{stuRec?"Stop recording":"Record audio"}</span>
+                    <span style={{fontSize:11,color:"#64748b"}}>Your own notes</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Share composer — teacher/admin only */}
+              {isPrivileged&&composerOpen&&(
+                <div style={{marginTop:10,padding:14,borderRadius:12,border:"1px solid #fde68a",background:"#fffdf5"}}>
+                  <div style={{display:"flex",gap:6,marginBottom:10}}>
+                    {([["all","👥 Students"],["staff","🔒 Staff only"]] as const).map(([v,lb])=>(
+                      <button key={v} onClick={()=>setCVisibility(v as "all"|"staff")} style={{
+                        flex:1,padding:"8px 0",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",
+                        border:`1px solid ${cVisibility===v?"#3b82f6":"#d1d5db"}`,
+                        background:cVisibility===v?"#dbeafe":"#fff",
+                        color:cVisibility===v?"#1e40af":"#475569",
+                      }}>{lb}</button>
+                    ))}
+                  </div>
                   <button onClick={()=>setCSyncAllowed(v=>!v)} style={{
-                    width:"100%",display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:8,marginBottom:10,cursor:"pointer",
-                    border:`1px solid ${cSyncAllowed?"rgba(52,211,153,.4)":"rgba(255,255,255,.12)"}`,
-                    background:cSyncAllowed?"rgba(52,211,153,.1)":"transparent",
+                    width:"100%",display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:8,marginBottom:10,cursor:"pointer",
+                    border:`1px solid ${cSyncAllowed?"#6ee7b7":"#d1d5db"}`,
+                    background:cSyncAllowed?"#ecfdf5":"#fff",
                   }}>
                     <span style={{fontSize:14}}>{cSyncAllowed?"🔗":"🔒"}</span>
-                    <span style={{fontSize:11,fontWeight:600,color:cSyncAllowed?"#34d399":"rgba(255,255,255,.5)",textAlign:"left" as const,flex:1}}>
+                    <span style={{fontSize:12,fontWeight:700,color:cSyncAllowed?"#047857":"#475569",textAlign:"left" as const,flex:1}}>
                       Allow live sync to students{cSyncAllowed?" — authorized":""}
                     </span>
                   </button>
-                )}
-                {/* Mode toggle */}
-                <div style={{display:"flex",gap:6,marginBottom:10}}>
-                  {(["text","file"] as const).map(m=>(
-                    <button key={m} onClick={()=>{setComposerMode(m);setCError("");}} style={{
-                      flex:1,padding:"7px 0",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",
-                      border:`1px solid ${composerMode===m?"#c9a84c":"rgba(255,255,255,.12)"}`,
-                      background:composerMode===m?"rgba(201,168,76,.18)":"transparent",
-                      color:composerMode===m?"#f2dfa8":"rgba(255,255,255,.5)",
-                    }}>{m==="text"?"✏️ Write a note":"📎 Upload a file"}</button>
-                  ))}
-                </div>
-                <input value={cTitle} onChange={e=>setCTitle(e.target.value)} placeholder="Title (e.g. Today's homework)" style={{
-                  width:"100%",boxSizing:"border-box" as const,padding:"9px 11px",borderRadius:8,border:"1px solid rgba(255,255,255,.12)",
-                  background:"rgba(255,255,255,.05)",color:"#fff",fontSize:12,marginBottom:8,fontFamily:"inherit",
-                }}/>
-                {composerMode==="text"?(
-                  <textarea value={cBody} onChange={e=>setCBody(e.target.value)} rows={4} placeholder="Type the note or instructions here…" style={{
-                    width:"100%",boxSizing:"border-box" as const,padding:"9px 11px",borderRadius:8,border:"1px solid rgba(255,255,255,.12)",
-                    background:"rgba(255,255,255,.05)",color:"#fff",fontSize:12,marginBottom:8,fontFamily:"inherit",resize:"vertical" as const,
-                  }}/>
-                ):(
-                  <div style={{marginBottom:8}}>
-                    <input ref={fileInputRef} type="file" onChange={e=>setCFile(e.target.files?.[0]||null)} style={{
-                      width:"100%",fontSize:11,color:"rgba(255,255,255,.6)",
-                    }}/>
-                    {cFile&&<div style={{fontSize:10,color:"#34d399",marginTop:4}}>Ready: {cFile.name} ({(cFile.size/1024/1024).toFixed(1)}MB)</div>}
+                  <div style={{display:"flex",gap:6,marginBottom:10}}>
+                    {(["text","file"] as const).map(m=>(
+                      <button key={m} onClick={()=>{setComposerMode(m);setCError("");}} style={{
+                        flex:1,padding:"8px 0",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",
+                        border:`1px solid ${composerMode===m?"#d97706":"#d1d5db"}`,
+                        background:composerMode===m?"#fef3c7":"#fff",
+                        color:composerMode===m?"#92400e":"#475569",
+                      }}>{m==="text"?"✏️ Write a note":"📎 Upload a file"}</button>
+                    ))}
                   </div>
-                )}
-                {cError&&<div style={{fontSize:11,color:"#ef4444",marginBottom:8}}>{cError}</div>}
-                <button onClick={handleSharePost} disabled={cPosting} style={{
-                  width:"100%",padding:"10px",borderRadius:8,border:"none",cursor:cPosting?"default":"pointer",
-                  background:cPosting?"rgba(201,168,76,.3)":"linear-gradient(135deg,#c9a84c,#a8893a)",
-                  color:"#1a1408",fontWeight:700,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:6,
-                }}>{cPosting?"Saving…":cVisibility==="staff"?"Save (staff only)":"Share with class"}</button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Assignments — teacher/admin can create/grade, students view/submit,
-            all without leaving the live class. Homework no longer lives inside
-            the material composer above; this is the single place for it. */}
-        <button onClick={()=>setAssignmentsOpen(true)} style={{
-          margin:"10px 10px 0",padding:"12px 14px",borderRadius:10,
-          border:"1px solid rgba(59,130,246,.35)",
-          background:"rgba(59,130,246,.08)",
-          cursor:"pointer",textAlign:"left" as const,display:"flex",alignItems:"center",gap:10,flexShrink:0,
-        }}>
-          <ClipboardList style={{width:18,height:18,color:"#93c5fd",flexShrink:0}}/>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:13,fontWeight:700,color:"#dbeafe",fontFamily:"'Google Sans',sans-serif"}}>Assignments</div>
-            <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>
-              {isPrivileged?"Create, review and grade homework":"View and submit your homework"}
-            </div>
-          </div>
-          <ChevronRight style={{width:13,height:13,color:"#93c5fd",flexShrink:0}}/>
-        </button>
-
-        {/* List — a locked (🔒 not sync_allowed) material is hidden from
-            students entirely here; only admin/teacher ever see it, so they
-            can review and unlock it. Unlocking (🔗) is what makes a
-            material appear in a student's own list at all. */}
-        <div style={{flex:1,overflowY:"auto",padding:"8px 10px"}}>
-          {classLessons.length>0&&(
-            <div style={{marginBottom:10}}>
-              <div style={{fontSize:10,color:"rgba(255,255,255,.3)",fontWeight:600,letterSpacing:.6,padding:"8px 2px 6px",fontFamily:"'Google Sans',sans-serif"}}>LESSONS</div>
-              {classLessons.map((l:any)=>(
-                <button key={l.id} onClick={()=>openMaterial({
-                  id:`lesson-${l.id}`,title:l.title,title_ar:l.title_ar,subject_id:subjectId,
-                  material_type:"Document",file_type:"text/html",visibility:"all",
-                  sync_allowed:true,is_downloadable:false,
-                  inline_lesson:true,lesson_source_id:l.id,
-                })} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 12px",marginBottom:6,borderRadius:10,border:"1px solid rgba(255,255,255,.08)",background:"rgba(255,255,255,.04)",cursor:"pointer",textAlign:"left" as const,color:"#e8eaed",fontFamily:"'Google Sans',sans-serif"}}>
-                  <span style={{fontSize:18,flexShrink:0}}>📖</span>
-                  <span style={{flex:1,minWidth:0,fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" as const}}>{l.title}</span>
-                  <ChevronRight style={{width:13,height:13,color:"rgba(255,255,255,.4)",flexShrink:0}}/>
-                </button>
-              ))}
-            </div>
-          )}
-          {visibleMats.filter(m=>m.visibility!=="staff").length>0&&<div style={{fontSize:10,color:"rgba(255,255,255,.3)",fontWeight:600,letterSpacing:.6,padding:"8px 2px 6px",fontFamily:"'Google Sans',sans-serif"}}>UPLOADED MATERIALS</div>}
-          {busy&&<div style={{display:"flex",justifyContent:"center",padding:32}}><div style={{width:22,height:22,border:`2px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/></div>}
-          {!busy&&visibleMats.length===0&&<div style={{textAlign:"center" as const,padding:"24px 16px",color:"rgba(255,255,255,.3)"}}>
-            <div style={{fontSize:30,marginBottom:6}}>📭</div>
-            <p style={{fontSize:12,margin:0,fontFamily:"'Google Sans',sans-serif"}}>{isPrivileged?"No materials yet":"No materials available yet"}</p>
-          </div>}
-          {[...visibleMats].sort((a,b)=>(a.visibility==="staff"?1:0)-(b.visibility==="staff"?1:0)).map((m,idx,arr)=>{
-            const icon=MAT_TYPE_ICON[m.material_type||"document"]||"📄";
-            const resume=loadResume(m.id||"");
-            const isDeleting=deletingId===m.id;
-            const isEditing=editingId===m.id;
-            // Staff-only rows are grouped last — drop a section divider right
-            // before the first one. Non-staff users never receive these rows
-            // at all (enforced at the database level), so this only ever
-            // shows for admin/teacher.
-            const showStaffHeader=m.visibility==="staff"&&(idx===0||arr[idx-1].visibility!=="staff");
-
-            return(
-              <div key={m.id} style={{marginBottom:6}}>
-                {showStaffHeader&&(
-                  <div style={{fontSize:10,color:"#93c5fd",fontWeight:700,letterSpacing:.6,padding:"14px 2px 6px",fontFamily:"'Google Sans',sans-serif",display:"flex",alignItems:"center",gap:5}}>
-                    🔒 STAFF NOTES — not visible to students
-                  </div>
-                )}
-                {/* ── Edit drawer (slides in inline) ── */}
-                {isEditing&&isPrivileged&&(
-                  <div style={{background:"rgba(201,168,76,.08)",border:"1px solid rgba(201,168,76,.3)",borderRadius:10,padding:"12px 12px 10px",marginBottom:4}}>
-                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                      <span style={{fontSize:11,fontWeight:700,color:"#f2dfa8",letterSpacing:.4}}>✏️ EDITING</span>
-                      <button onClick={()=>setEditingId(null)} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",fontSize:15,padding:"0 2px"}}>✕</button>
-                    </div>
-                    <input
-                      value={editTitle} onChange={e=>setEditTitle(e.target.value)}
-                      placeholder="Title"
-                      style={{width:"100%",boxSizing:"border-box" as const,padding:"8px 10px",borderRadius:7,border:"1px solid rgba(255,255,255,.12)",background:"rgba(255,255,255,.05)",color:"#fff",fontSize:12,marginBottom:8,fontFamily:"inherit"}}
-                    />
-                    {/* Show text body editor only for text-type materials */}
-                    {!isInlineLessonRow(m)&&(m.material_type==="Text"||m.material_type==="text"||!m.file_url)&&(
-                      <textarea
-                        value={editBody} onChange={e=>setEditBody(e.target.value)}
-                        rows={4} placeholder="Content / note text…"
-                        style={{width:"100%",boxSizing:"border-box" as const,padding:"8px 10px",borderRadius:7,border:"1px solid rgba(255,255,255,.12)",background:"rgba(255,255,255,.05)",color:"#fff",fontSize:12,marginBottom:8,fontFamily:"inherit",resize:"vertical" as const}}
-                      />
-                    )}
-                    {/* File replacement for file-type materials */}
-                    {m.file_url&&(
-                      <div style={{marginBottom:8}}>
-                        <div style={{fontSize:10,color:"rgba(255,255,255,.4)",marginBottom:4}}>Replace file (optional):</div>
-                        <input ref={editFileRef} type="file" onChange={e=>setEditReplaceFile(e.target.files?.[0]||null)}
-                          style={{fontSize:11,color:"rgba(255,255,255,.5)",width:"100%"}}/>
-                        {editReplaceFile&&<div style={{fontSize:10,color:"#34d399",marginTop:3}}>Ready: {editReplaceFile.name}</div>}
-                        <div style={{fontSize:10,color:"rgba(255,255,255,.3)",marginTop:3}}>Current: {m.file_url?.split("/").pop()?.split("?")[0]||"file"}</div>
-                      </div>
-                    )}
-                    {editError&&<div style={{fontSize:11,color:"#ef4444",marginBottom:7}}>{editError}</div>}
-                    <div style={{display:"flex",gap:6}}>
-                      <button onClick={handleEditSave} disabled={editSaving}
-                        style={{flex:1,padding:"8px 0",borderRadius:7,border:"none",background:editSaving?"rgba(201,168,76,.3)":"linear-gradient(135deg,#c9a84c,#a8893a)",color:"#1a1408",fontWeight:700,fontSize:12,cursor:editSaving?"default":"pointer"}}>
-                        {editSaving?"Saving…":"💾 Save Changes"}
-                      </button>
-                      <button onClick={()=>setEditingId(null)}
-                        style={{padding:"8px 12px",borderRadius:7,border:"1px solid rgba(255,255,255,.12)",background:"transparent",color:"rgba(255,255,255,.5)",fontSize:12,cursor:"pointer"}}>
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* ── Confirm-delete bar ── */}
-                {confirmDeleteId===m.id&&isPrivileged&&(
-                  <div style={{background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.35)",borderRadius:10,padding:"10px 12px",marginBottom:4,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap" as const}}>
-                    <span style={{fontSize:12,color:"#fca5a5",flex:1,minWidth:120}}>Delete "<strong>{m.title||"Untitled"}</strong>"? This cannot be undone.</span>
-                    <button onClick={()=>handleDelete(m)}
-                      style={{padding:"6px 14px",borderRadius:7,border:"none",background:"#ef4444",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}>
-                      {isDeleting?"Deleting…":"Yes, Delete"}
-                    </button>
-                    <button onClick={()=>setConfirmDeleteId(null)}
-                      style={{padding:"6px 10px",borderRadius:7,border:"1px solid rgba(255,255,255,.15)",background:"transparent",color:"rgba(255,255,255,.5)",fontSize:12,cursor:"pointer"}}>
-                      Cancel
-                    </button>
-                  </div>
-                )}
-
-                {/* ── Material card row ── */}
-                <div style={{
-                  display:"flex",alignItems:"center",gap:10,
-                  padding:"10px 10px 10px 12px",background:isEditing?"rgba(201,168,76,.06)":"rgba(255,255,255,.04)",
-                  border:`1px solid ${isEditing?"rgba(201,168,76,.25)":"rgba(255,255,255,.07)"}`,borderRadius:10,
-                }}>
-                  <button onClick={()=>openMaterial(m)} style={{display:"flex",alignItems:"center",gap:10,flex:1,background:"none",border:"none",cursor:"pointer",textAlign:"left" as const,minWidth:0}}>
-                    <div style={{width:36,height:36,borderRadius:8,background:"rgba(10,124,104,.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{icon}</div>
-                    <div style={{flex:1,minWidth:0}}>
-                      <p style={{margin:0,fontSize:12,fontWeight:600,color:"#e8eaf0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{m.visibility==="staff"&&"🔒 "}{m.title||m.name||"Untitled"}</p>
-                      <p style={{margin:"2px 0 0",fontSize:10,color:"rgba(255,255,255,.35)",textTransform:"capitalize" as const}}>
-                        {m.material_type||"file"}
-                        {resume?.time&&<span style={{marginLeft:5,color:TEAL}}>▶ {Math.floor((resume.time||0)/60)}m</span>}
-                        {resume?.page&&!resume?.time&&<span style={{marginLeft:5,color:TEAL}}>p.{resume.page}</span>}
-                      </p>
-                    </div>
-                    <ChevronRight style={{width:13,height:13,color:"rgba(255,255,255,.25)",flexShrink:0}}/>
-                  </button>
-                  {/* Edit / delete buttons — teacher/admin only */}
-                  {isPrivileged&&(
-                    <div style={{display:"flex",gap:3,flexShrink:0}}>
-                      {/* Lock / unlock — admin or teacher. A locked (🔒) material is
-                          completely hidden from students' own materials list
-                          and can never be force-synced. Unlocking (🔗) makes
-                          it visible to students and eligible for the teacher's
-                          per-material sync toggle in the viewer header. */}
-                      {isPrivileged&&(
-                        <button
-                          onClick={()=>toggleSyncAllowed(m)}
-                          disabled={syncTogglingIds.has(m.id)}
-                          title={m.sync_allowed?"Visible to students — tap to lock/hide it":"Hidden from students — tap to unlock so they can see it"}
-                          style={{width:28,height:28,borderRadius:7,border:"none",cursor:syncTogglingIds.has(m.id)?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",
-                            background:m.sync_allowed?"rgba(52,211,153,.18)":"rgba(255,255,255,.07)",
-                            color:m.sync_allowed?"#34d399":"rgba(255,255,255,.4)",fontSize:13,transition:"all .12s"}}
-                        >{syncTogglingIds.has(m.id)?"⌛":m.sync_allowed?"🔗":"🔒"}</button>
-                      )}
-                      <button
-                        onClick={()=>isEditing?setEditingId(null):openEdit(m)}
-                        title="Edit title / content"
-                        style={{width:28,height:28,borderRadius:7,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
-                          background:isEditing?"rgba(201,168,76,.3)":"rgba(255,255,255,.07)",
-                          color:isEditing?"#f2dfa8":"rgba(255,255,255,.45)",fontSize:13,transition:"all .12s"}}
-                      >✏️</button>
-                      <button
-                        onClick={()=>confirmDeleteId===m.id?setConfirmDeleteId(null):setConfirmDeleteId(m.id)}
-                        title="Delete material"
-                        disabled={isDeleting}
-                        style={{width:28,height:28,borderRadius:7,border:"none",cursor:isDeleting?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",
-                          background:confirmDeleteId===m.id?"rgba(239,68,68,.25)":"rgba(255,255,255,.07)",
-                          color:confirmDeleteId===m.id?"#ef4444":"rgba(255,255,255,.4)",fontSize:13,transition:"all .12s"}}
-                      >{isDeleting?"⌛":"🗑️"}</button>
+                  <input value={cTitle} onChange={e=>setCTitle(e.target.value)} placeholder="Title (e.g. Today's homework)" style={matLightInput}/>
+                  {composerMode==="text"?(
+                    <textarea value={cBody} onChange={e=>setCBody(e.target.value)} rows={4} placeholder="Type the note or instructions here…" style={{...matLightInput,resize:"vertical" as const}}/>
+                  ):(
+                    <div style={{marginBottom:8}}>
+                      <input ref={fileInputRef} type="file" onChange={e=>setCFile(e.target.files?.[0]||null)} style={{width:"100%",fontSize:12,color:"#334155"}}/>
+                      {cFile&&<div style={{fontSize:11,color:"#047857",marginTop:4}}>Ready: {cFile.name} ({(cFile.size/1024/1024).toFixed(1)}MB)</div>}
                     </div>
                   )}
+                  {cError&&<div style={{fontSize:12,color:"#dc2626",marginBottom:8}}>{cError}</div>}
+                  <button onClick={handleSharePost} disabled={cPosting} style={{
+                    width:"100%",padding:"11px",borderRadius:8,border:"none",cursor:cPosting?"default":"pointer",
+                    background:cPosting?"#fcd34d":"#d97706",color:"#fff",fontWeight:700,fontSize:13,
+                  }}>{cPosting?"Saving…":cVisibility==="staff"?"Save (staff only)":"Share with class"}</button>
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* ── LESSONS (collapsible) ── */}
+          {classLessons.length>0&&<>
+            {matSectionHeader("lessons","Lessons",classLessons.length,"📖")}
+            {secOpen.lessons&&(
+              <div style={{margin:"4px 0 14px",display:"flex",flexDirection:"column",gap:6}}>
+                {classLessons.map((l:any)=>{
+                  const mm=String(l.title||"").match(/^\s*((?:Lesson|Term|Week|Unit)\s*\d+)\s*[:\-–—]\s*(.+)$/i);
+                  return(
+                    <button key={l.id} onClick={()=>openMaterial({
+                      id:`lesson-${l.id}`,title:l.title,title_ar:l.title_ar,subject_id:subjectId,
+                      material_type:"Document",file_type:"text/html",visibility:"all",
+                      sync_allowed:true,is_downloadable:false,
+                      inline_lesson:true,lesson_source_id:l.id,
+                    })} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"11px 12px",borderRadius:12,border:"1px solid #e5e7eb",background:"#fff",cursor:"pointer",textAlign:"left" as const,fontFamily:"inherit",boxShadow:"0 1px 2px rgba(15,23,42,.04)"}}>
+                      <span style={{width:38,height:38,borderRadius:10,background:"#e6f4f1",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>📖</span>
+                      <span style={{flex:1,minWidth:0}}>
+                        {mm&&<span style={{display:"block",fontSize:11,fontWeight:700,color:TEAL,letterSpacing:.4,textTransform:"uppercase" as const,marginBottom:2}}>{mm[1]}</span>}
+                        <span style={{display:"block",fontSize:14,fontWeight:700,color:"#0f172a",lineHeight:1.3,wordBreak:"break-word" as const}}>{mm?mm[2]:l.title}</span>
+                        {l.title_ar&&<span style={{display:"block",fontSize:15,color:"#334155",marginTop:2,fontFamily:"'Amiri',serif",direction:"rtl" as const,textAlign:"right" as const}}>{l.title_ar}</span>}
+                      </span>
+                      <ChevronRight style={{width:16,height:16,color:"#94a3b8",flexShrink:0}}/>
+                    </button>
+                  );
+                })}
               </div>
-            );
-          })}
+            )}
+          </>}
+
+          {/* ── UPLOADED MATERIALS (collapsible) ── */}
+          {busy&&<div style={{display:"flex",justifyContent:"center",padding:32}}><div style={{width:22,height:22,border:`2px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/></div>}
+          {!busy&&classLessons.length===0&&visibleMats.length===0&&(
+            <div style={{textAlign:"center" as const,padding:"28px 16px",color:"#64748b"}}>
+              <div style={{fontSize:32,marginBottom:6}}>📭</div>
+              <p style={{fontSize:13,margin:0}}>{isPrivileged?"No materials yet":"No materials available yet"}</p>
+            </div>
+          )}
+          {!busy&&visibleMats.filter(m=>m.visibility!=="staff").length>0&&<>
+            {matSectionHeader("uploads","Uploaded materials",visibleMats.filter(m=>m.visibility!=="staff").length,"📎")}
+            {secOpen.uploads&&<div style={{margin:"4px 0 14px"}}>{visibleMats.filter(m=>m.visibility!=="staff").map(renderMatRow)}</div>}
+          </>}
+          {!busy&&isPrivileged&&visibleMats.filter(m=>m.visibility==="staff").length>0&&<>
+            {matSectionHeader("staff","Staff notes — not visible to students",visibleMats.filter(m=>m.visibility==="staff").length,"🔒")}
+            {secOpen.staff&&<div style={{margin:"4px 0 14px"}}>{visibleMats.filter(m=>m.visibility==="staff").map(renderMatRow)}</div>}
+          </>}
         </div>
       </div>
     </div>

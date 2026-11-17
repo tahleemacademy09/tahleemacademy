@@ -208,6 +208,14 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[token,setToken]=useState<string|null>(null);const[wsUrl,setWsUrl]=useState<string|null>(null);
   const[error,setError]=useState<string|null>(null);const[loading,setLoading]=useState(false);
   const[reconnecting,setReconnecting]=useState(false);
+  // The full-screen "Checking connection…" overlay may block the class for at most
+  // 5 seconds. After that it shrinks to a small non-blocking pill while retries continue.
+  const[overlayExpired,setOverlayExpired]=useState(false);
+  useEffect(()=>{
+    if(!reconnecting){setOverlayExpired(false);return;}
+    const t=setTimeout(()=>setOverlayExpired(true),5_000);
+    return()=>clearTimeout(t);
+  },[reconnecting]);
   /* ── reconnect state ── */
   const[roomKey,setRoomKey]=useState(0);          // bump to remount <LiveKitRoom> with fresh token
   // Use refs instead of state so autoReconnect useCallback never needs them as deps.
@@ -993,8 +1001,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       autoReconnectCountRef.current=0;
     }
     if(backgrounded)backgroundReconnectRef.current=true;
-    const maxAttempts     = backgrounded ? 40 : 8;
-    const backoffCapMs    = backgrounded ? 30_000 : 15_000;
+    // Foreground retries are now quick (first one instant, cap 2s), so the budget
+    // is counted in attempts of ~2s each: 30 attempts ≈ a minute of trying.
+    const maxAttempts     = backgrounded ? 40 : 30;
+    const backoffCapMs    = backgrounded ? 30_000 : 2_000;
     if(autoReconnectCountRef.current>=maxAttempts){
       setReconnecting(false);
       setError("Connection lost after several attempts. Please try again.");
@@ -1010,7 +1020,11 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     // network blip) fires almost immediately: combined with the 1s drop
     // debounce above, a normal reconnect now completes in ~2-3s instead of
     // several seconds, while later attempts still back off further apart.
-    const backoffMs=Math.min(400*Math.pow(2,autoReconnectCountRef.current),backoffCapMs);
+    // Foreground: first retry fires immediately (0ms), then 0.6s, 0.9s, 1.4s, 2s…
+    // Background keeps the old patient exponential schedule.
+    const backoffMs=(!backgrounded&&autoReconnectCountRef.current===0)
+      ?0
+      :Math.min(400*Math.pow(backgrounded?2:1.5,autoReconnectCountRef.current),backoffCapMs);
     await new Promise(r=>setTimeout(r,backoffMs));
     try{
       const{data}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}});
@@ -1528,15 +1542,13 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             // reaching the app-level rebuild.
             reconnectPolicy:{
               nextRetryDelayInMs:(context:{retryCount:number;elapsedMs:number})=>{
-                // Stop after ~2 minutes of trying internally — beyond that,
-                // handing off to autoReconnect (which fetches a fresh token,
-                // useful if the room/session itself changed server-side) is
-                // more likely to help than continuing to retry the same one.
-                if(context.elapsedMs>120_000)return -1; // negative = give up, let Disconnected fire
-                // Gentle backoff: .5s, .75s, 1.1s, 1.7s ... capped at 8s —
-                // frequent-but-cheap retries suit a low-network connection
-                // better than a few expensive, widely-spaced ones.
-                return Math.min(500*Math.pow(1.5,context.retryCount),8_000);
+                // CHANGED: only try the cheap in-place resume for ~4s. Waiting
+                // 2 minutes here is what left users staring at "Checking
+                // connection…" for ages. After 4s we let Disconnected fire so
+                // autoReconnect rebuilds the room with a fresh token right away.
+                if(context.elapsedMs>4_000)return -1; // negative = give up, let Disconnected fire
+                // Quick, cheap retries: 0, .3s, .6s, .9s, then 1s.
+                return Math.min(300*context.retryCount,1_000);
               },
             },
             audioCaptureDefaults:{
@@ -1685,7 +1697,15 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <JoinLeaveOverlay/>
           <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>{setMatOpen(mat);setMatMinimized(false);}} onMatClose={()=>{setMatOpen(null);setMatMinimized(false);}} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}} onForceAudioOnly={(active:boolean)=>{setForcedAudioOnly(active);setAudioOnlyActive(active);}} onAllowVideo={onAllowVideoMsg}
             onClassEnded={!isPrivileged?()=>setPhase("ended"):undefined} roomRef={roomRef}/>{/* FIX BUG 10: pass roomRef */}
-          {reconnecting&&<ReconnectingOverlay attempt={autoReconnectCountRef.current}/>}
+          {reconnecting&&!overlayExpired&&<ReconnectingOverlay attempt={autoReconnectCountRef.current}/>}
+          {reconnecting&&overlayExpired&&(
+            <div style={{position:"fixed",top:"calc(env(safe-area-inset-top, 0px) + 62px)",left:0,right:0,zIndex:9400,display:"flex",justifyContent:"center",pointerEvents:"none"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 14px",borderRadius:20,background:"rgba(217,119,6,.95)",color:"#fff",fontSize:12,fontWeight:600,fontFamily:"'Google Sans',sans-serif",boxShadow:"0 4px 16px rgba(0,0,0,.4)"}}>
+                <span style={{width:10,height:10,borderRadius:"50%",border:"2px solid rgba(255,255,255,.6)",borderTopColor:"#fff",animation:"cv-spin .7s linear infinite"}}/>
+                Reconnecting… still trying
+              </div>
+            </div>
+          )}
           {/* ══ FEATURE 4: CONNECTION STATE BANNER — shown during LiveKit's own reconnect ══ */}
           <ConnectionStateBanner/>
           <NetworkGuard isPrivileged={isPrivileged} audioOnlyActive={audioOnlyActive} forcedAudioOnly={forcedAudioOnly} onAutoAudioOnly={(on:boolean)=>setAudioOnlyActive(on)}/>

@@ -11,6 +11,7 @@
 //  • All original features kept intact
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useRoomContext } from "@livekit/components-react";
 import { Track, RoomEvent } from "livekit-client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -797,6 +798,7 @@ const ClassControls = ({
   // Long-press (450ms) on the mic / camera button opens its device menu.
   // A normal tap still toggles mute / camera exactly as before.
   const [micMenuOpen, setMicMenuOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [camMenuOpen, setCamMenuOpen] = useState(false);
   const micLP = useRef<{ timer: any; fired: boolean; x: number; y: number }>({ timer: null, fired: false, x: 0, y: 0 });
   const camLP = useRef<{ timer: any; fired: boolean; x: number; y: number }>({ timer: null, fired: false, x: 0, y: 0 });
@@ -909,6 +911,7 @@ const ClassControls = ({
           >
             {micEnabled ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" style={{ color: "#f28b82" }} />}
           </button>
+          <MenuBackdrop open={micMenuOpen} onClose={() => setMicMenuOpen(false)} />
           <DropdownMenu open={micMenuOpen} onOpenChange={(open) => { setMicMenuOpen(open); if (open) refreshDevices(); }}>
             <DropdownMenuTrigger asChild>
               <span aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
@@ -957,7 +960,8 @@ const ClassControls = ({
           >
             {camEnabled && !camLocked ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" style={camLocked ? undefined : { color: "#f28b82" }} />}
           </button>
-          {!camLocked && (
+          {!camLocked && (<>
+            <MenuBackdrop open={camMenuOpen} onClose={() => setCamMenuOpen(false)} />
             <DropdownMenu open={camMenuOpen} onOpenChange={(open) => { setCamMenuOpen(open); if (open) refreshDevices(); }}>
               <DropdownMenuTrigger asChild>
                 <span aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
@@ -975,7 +979,7 @@ const ClassControls = ({
                 }
               </DropdownMenuContent>
             </DropdownMenu>
-          )}
+          </>)}
         </div>
 
         {/* Chat */}
@@ -1000,7 +1004,8 @@ const ClassControls = ({
         </div>
 
         {/* More menu */}
-        <DropdownMenu>
+        <MenuBackdrop open={moreMenuOpen} onClose={() => setMoreMenuOpen(false)} />
+        <DropdownMenu open={moreMenuOpen} onOpenChange={setMoreMenuOpen}>
           <DropdownMenuTrigger asChild>
             <button title="More" style={sqBtn({width:"auto",flex:"1 1 0",maxWidth:64,minWidth:40})}>
               <MoreHorizontal className="h-5 w-5" />
@@ -1130,5 +1135,24 @@ const ClassControls = ({
     </>
   );
 };
+
+
+/* Full-screen invisible catcher shown while a dropdown is open. A normal Radix
+   "click outside" listener never fires when the tap lands on an <iframe> (lesson
+   / material content lives in one), so the menu used to stay stuck open. This
+   sits above everything except the menu itself, swallows the tap and closes it. */
+const MenuBackdrop = ({ open, onClose }: { open: boolean; onClose: () => void }) =>
+  open
+    ? createPortal(
+        <div
+          aria-hidden
+          onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }}
+          onClick={(e) => { e.stopPropagation(); onClose(); }}
+          onTouchStart={(e) => { e.stopPropagation(); onClose(); }}
+          style={{ position: "fixed", inset: 0, zIndex: 9998, background: "transparent", pointerEvents: "auto", touchAction: "none" }}
+        />,
+        document.body
+      )
+    : null;
 
 export default ClassControls;
