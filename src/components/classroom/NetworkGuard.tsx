@@ -292,12 +292,6 @@ export default function NetworkGuard({ isPrivileged, audioOnlyActive, forcedAudi
     msg = lost
       ? t(`⚠ ${names}: connection lost — they can't hear you.`, `⚠ ${names}: انقطع الاتصال — لا يسمعونك.`)
       : t(`⚠ ${names}: weak network — they may not hear you well.`, `⚠ ${names}: شبكة ضعيفة — قد لا يسمعونك جيدًا.`);
-  } else if (slowLink) {
-    bg = "rgba(37,99,235,.92)";
-    msg = t(
-      "Slow network detected — video is off to save data. Your voice and the class audio keep working.",
-      "تم اكتشاف شبكة بطيئة — تم إيقاف الفيديو لتوفير البيانات. الصوت يعمل بشكل طبيعي."
-    );
   } else if (restoredFlash) {
     bg = "rgba(22,163,74,.94)";
     msg = t("✓ Connection restored", "✓ عاد الاتصال");

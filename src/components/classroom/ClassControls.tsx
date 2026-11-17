@@ -580,12 +580,19 @@ const ClassControls = ({
     micBusy.current = true;
     try {
       const next = !room.localParticipant.isMicrophoneEnabled;
-      // Flip the button instantly, but keep the mic open briefly so the last word is sent.
-      if (!next) { setMicEnabled(false); setCtxMicEnabled(false); }
-      await micTail(room, next);
-      await queueMediaOp(room, () => room.localParticipant.setMicrophoneEnabled(next));
-      setMicEnabled(next);
-      setCtxMicEnabled(next);
+      // Flip the button instantly in BOTH directions. Turning the mic ON used to wait for the
+      // browser to open the microphone (~1s) before the icon changed, which felt like a lag.
+      // When muting, the mic still stays open briefly (micTail) so the last word is sent.
+      setMicEnabled(next); setCtxMicEnabled(next);
+      try {
+        await micTail(room, next);
+        await queueMediaOp(room, () => room.localParticipant.setMicrophoneEnabled(next));
+      } catch (err) {
+        // couldn't actually switch — put the icon back to the real state
+        const real = !!room.localParticipant.isMicrophoneEnabled;
+        setMicEnabled(real); setCtxMicEnabled(real);
+        throw err;
+      }
     } catch (e: any) {
       toast({ title: t("Microphone error", "خطأ في الميكروفون"), description: e?.message, variant: "destructive" });
     } finally {
@@ -947,6 +954,18 @@ const ClassControls = ({
           </DropdownMenu>
         </div>
 
+        {/* Chat — sits right after the mic, away from the camera button, so video is not tapped by mistake */}
+        <div style={{ position: "relative", flex: "1 1 0", maxWidth: 64, minWidth: 40 }}>
+          <button onClick={onToggleChat} title={chatButtonTitle || "Chat"} style={sqBtn()}>
+            {chatButtonIcon ?? <MessageSquareText className="h-5 w-5" />}
+            {chatUnread > 0 && (
+              <span style={{position:"absolute",top:-6,right:-6,minWidth:18,height:18,padding:"0 5px",borderRadius:9,background:"#ea4335",color:"#fff",fontSize:10,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",border:"2px solid #111b21",boxSizing:"content-box"}}>
+                {chatUnread > 99 ? "99+" : chatUnread}
+              </span>
+            )}
+          </button>
+        </div>
+
         {/* Cam — greyed out and locked while admin has forced audio-only mode room-wide.
             Tap toggles the camera, long-press opens the camera device picker. */}
         <div style={{ position: "relative", flex: "1 1 0", maxWidth: 64, minWidth: 40 }}>
@@ -982,7 +1001,7 @@ const ClassControls = ({
           </>)}
         </div>
 
-        {/* Chat */}
+        {/* Screen share */}
         {canShare && (
           <div style={{ position: "relative", flex: "1 1 0", maxWidth: 64, minWidth: 40 }}>
             <button onClick={toggleScreenShare} title={screenSharing ? "Stop sharing" : "Share screen"}
@@ -991,17 +1010,6 @@ const ClassControls = ({
             </button>
           </div>
         )}
-
-        <div style={{ position: "relative", flex: "1 1 0", maxWidth: 64, minWidth: 40 }}>
-          <button onClick={onToggleChat} title={chatButtonTitle || "Chat"} style={sqBtn()}>
-            {chatButtonIcon ?? <MessageSquareText className="h-5 w-5" />}
-            {chatUnread > 0 && (
-              <span style={{position:"absolute",top:-6,right:-6,minWidth:18,height:18,padding:"0 5px",borderRadius:9,background:"#ea4335",color:"#fff",fontSize:10,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",border:"2px solid #111b21",boxSizing:"content-box"}}>
-                {chatUnread > 99 ? "99+" : chatUnread}
-              </span>
-            )}
-          </button>
-        </div>
 
         {/* More menu */}
         <MenuBackdrop open={moreMenuOpen} onClose={() => setMoreMenuOpen(false)} />

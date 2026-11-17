@@ -408,6 +408,15 @@ export const CSS = `
     transition:transform .12s ease, background .1s;
   }
   .gm-emoji-btn:hover { transform:scale(1.3); background:rgba(255,255,255,.08); }
+
+  /* While a material is open: slim class header + control bar so the lesson gets the room.
+     (SubjectMaterialsPanel sets body[data-mat-open] and the --mat-top / --mat-bottom insets.) */
+  body[data-mat-open="1"] [data-class-header] { height:34px !important; background:#14161b !important; border-bottom:1px solid rgba(255,255,255,.1) !important; }
+  body[data-mat-open="1"] .cx-control-bar { background:#14161b !important; border-top:1px solid rgba(255,255,255,.1) !important; }
+  body[data-mat-open="1"] [data-class-header] > * { zoom:.8; }
+  body[data-mat-open="1"] .cx-control-bar > div { padding:6px 12px !important; }
+  body[data-mat-open="1"] .cx-control-bar button { height:34px !important; border-radius:11px !important; }
+  body[data-mat-open="1"] .cx-control-bar svg { width:17px !important; height:17px !important; }
 `;
 
 /* ══ RECONNECT MONITOR ══
@@ -3435,8 +3444,8 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
   };
   const bodyInsets: React.CSSProperties = {
     position: "absolute", left: 0, right: 0,
-    top: headerH,
-    bottom: `calc(${BAR_H}px + env(safe-area-inset-bottom, 0px))`,
+    top: `var(--mat-top, ${headerH}px)`,
+    bottom: `calc(var(--mat-bottom, ${BAR_H}px) + env(safe-area-inset-bottom, 0px))`,
     display: "flex", flexDirection: "column", background: "#0f1117",
   };
   // Tap in the middle of the material → show/hide header + footer (ignores buttons/links/inputs)
@@ -3551,18 +3560,18 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
   return(
     <div style={{...overlayStyle,background:"#ffffff"}}>
       {/* Edge strips: tapping where the header/footer were (while hidden) brings them back */}
-      <div onClick={toggleChrome} style={{position:"absolute",top:0,left:0,right:0,height:headerH,zIndex:1}}/>
-      <div onClick={toggleChrome} style={{position:"absolute",bottom:0,left:0,right:0,height:`calc(${BAR_H}px + env(safe-area-inset-bottom, 0px))`,zIndex:1}}/>
+      <div onClick={toggleChrome} style={{position:"absolute",top:0,left:0,right:0,height:`var(--mat-top, ${headerH}px)`,zIndex:1}}/>
+      <div onClick={toggleChrome} style={{position:"absolute",bottom:0,left:0,right:0,height:`calc(var(--mat-bottom, ${BAR_H}px) + env(safe-area-inset-bottom, 0px))`,zIndex:1}}/>
       <div style={{...bodyInsets,zIndex:2}}>
       {/* Viewer header */}
-      <div style={{height:52,background:"#ffffff",display:"flex",alignItems:"center",padding:"0 12px",gap:10,flexShrink:0,borderBottom:"1px solid #e5e7eb",boxShadow:"0 1px 3px rgba(15,23,42,.06)"}}>
+      <div style={{height:38,background:"#ffffff",display:"flex",alignItems:"center",padding:"0 8px",gap:8,flexShrink:0,borderBottom:"1px solid #e5e7eb"}}>
         {/* Minimize to pip */}
         {onMinimize&&<button onClick={onMinimize} title="Minimize"
-          style={{width:34,height:34,borderRadius:10,background:"#f1f5f9",border:"none",color:"#0f172a",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <ChevronDown style={{width:16,height:16}}/>
+          style={{width:28,height:28,borderRadius:8,background:"#f1f5f9",border:"none",color:"#0f172a",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <ChevronDown style={{width:14,height:14}}/>
         </button>}
         <span style={{fontSize:15,flexShrink:0}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
-        <span style={{flex:1,fontSize:15,fontWeight:800,color:"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{material.title||"Material"}</span>
+        <span style={{flex:1,fontSize:13.5,fontWeight:800,color:"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{material.title||"Material"}</span>
         {resumeBadge&&(
           <span style={{fontSize:10,color:"#475569",background:"#f1f5f9",borderRadius:8,padding:"2px 7px",flexShrink:0}}>
             {resume?.time?`▶ ${Math.floor((resume.time||0)/60)}m${Math.floor((resume.time||0)%60)}s`:`p.${resume?.page}`} resumed
@@ -3585,7 +3594,7 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
             onClick={onToggleSync}
             title={!canSync?"Unlock this material (🔒 icon in the list) before syncing it":syncOn?"Synced live — students are following this. Tap to stop.":"Tap to sync this live to every student"}
             style={{
-              display:"flex",alignItems:"center",gap:5,padding:"5px 10px",borderRadius:8,border:"none",
+              display:"flex",alignItems:"center",gap:4,padding:"3px 8px",borderRadius:8,border:"none",
               cursor:canSync?"pointer":"not-allowed",flexShrink:0,fontSize:11,fontWeight:700,
               background:syncOn?"#d1fae5":canSync?"#f1f5f9":"#f8fafc",
               color:syncOn?"#047857":canSync?"#0f172a":"#94a3b8",
@@ -3596,10 +3605,10 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
           </button>
         )}
         {rawUrl&&<a href={url} target="_blank" rel="noopener noreferrer"
-          style={{fontSize:13,color:"#0f172a",background:"#f1f5f9",borderRadius:10,padding:"6px 11px",textDecoration:"none",fontWeight:700,flexShrink:0}}>↗</a>}
+          style={{fontSize:12,color:"#0f172a",background:"#f1f5f9",borderRadius:8,padding:"4px 9px",textDecoration:"none",fontWeight:700,flexShrink:0}}>↗</a>}
         <button onClick={onClose} title="Close material"
-          style={{width:34,height:34,borderRadius:10,background:"#f1f5f9",border:"none",color:"#0f172a",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <X style={{width:16,height:16}}/>
+          style={{width:28,height:28,borderRadius:8,background:"#f1f5f9",border:"none",color:"#0f172a",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <X style={{width:14,height:14}}/>
         </button>
       </div>
       {renderContent()}
@@ -5167,6 +5176,23 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
      position and layout survive; they're always the FIRST child of the returned fragment so React
      never remounts them when the panel switches view. */
   const viewersShown=!quranOpen&&openMats.length>0&&!forceList&&listVisible;
+  // Tell the class chrome a material is on screen: slim header/footer + give the lesson those pixels.
+  const matCompact=viewersShown&&!!activeMatId;
+  useEffect(()=>{
+    const root=document.documentElement;
+    if(matCompact){
+      document.body.dataset.matOpen="1";
+      root.style.setProperty("--mat-top","calc(34px + env(safe-area-inset-top, 0px))");
+      root.style.setProperty("--mat-bottom","46px");
+    }else{
+      delete document.body.dataset.matOpen;
+      root.style.removeProperty("--mat-top");root.style.removeProperty("--mat-bottom");
+    }
+    return()=>{
+      delete document.body.dataset.matOpen;
+      root.style.removeProperty("--mat-top");root.style.removeProperty("--mat-bottom");
+    };
+  },[matCompact]);
   const viewersLayer=openMats.map(m=>{
     const visible=viewersShown&&m.id===activeMatId;
     return(
