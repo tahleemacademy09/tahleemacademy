@@ -409,7 +409,7 @@ function mvPrefetchAround(page: number, white = false): () => void {
 }
 
 /** fitHeight: pixels of screen NOT available to the page (bars, buttons). When set, the whole page is fitted to the screen height. */
-export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, onUnavailable, onlySurahs, coverUnrevealed, revealProgress, coverOutside, hidePortionChip }: {
+export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, dimOthers, onUnavailable, onlySurahs, coverUnrevealed, revealProgress, coverOutside, hidePortionChip }: {
   page: number; fontSize?: number; halves?: [number, number]; fitHeight?: number;
   /** hide the floating "Your portion" chip (when the screen already says it) */
   hidePortionChip?: boolean;
@@ -432,6 +432,8 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
   onBackground?: (css: string) => void;
   /** ayah that is currently playing / being read — drawn in gold behind the text */
   highlight?: MvAyahRef | null;
+  /** with `highlight`: dim the rest of the page so only the highlighted ayah stays bright */
+  dimOthers?: boolean;
   /** ayah the user selected — drawn in soft green behind the text */
   selected?: MvAyahRef | null;
   /** tap on an ayah (inline mode only) */
@@ -748,6 +750,58 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
     });
     return () => window.cancelAnimationFrame(id);
   }, [onlyKey, mode, src, aspect, boxW, fillH, fillW]);
+
+  // Dim everything except the highlighted ayah: a semi-transparent sheet over the page with a hole cut
+  // (SVG mask) in the exact shape of the highlighted ayah's polygon(s). The sheet ignores pointer events.
+  useEffect(() => {
+    const root = hostRef.current?.shadowRoot;
+    if (!root || mode !== "inline") return;
+    const svg = root.querySelector("svg") as SVGSVGElement | null;
+    if (!svg) return;
+    root.querySelectorAll("[data-dim]").forEach((n) => n.remove());
+    if (!dimOthers || !highlight) return;
+    const NS = "http://www.w3.org/2000/svg";
+    const BIG = 200000;
+    const inv = svg.getScreenCTM()?.inverse();
+    if (!inv) return;
+    const targets = Array.from(root.querySelectorAll(MV_POLY)).filter((el) => {
+      const a = mvAyahOf(el);
+      return !!a && a.surah === highlight.surah && a.ayah === highlight.ayah;
+    });
+    if (!targets.length) return;
+    const mask = document.createElementNS(NS, "mask");
+    mask.setAttribute("id", "mv-dim-mask");
+    mask.setAttribute("maskUnits", "userSpaceOnUse");
+    mask.setAttribute("x", String(-BIG)); mask.setAttribute("y", String(-BIG));
+    mask.setAttribute("width", String(BIG * 2)); mask.setAttribute("height", String(BIG * 2));
+    const white = document.createElementNS(NS, "rect");
+    white.setAttribute("x", String(-BIG)); white.setAttribute("y", String(-BIG));
+    white.setAttribute("width", String(BIG * 2)); white.setAttribute("height", String(BIG * 2));
+    white.setAttribute("fill", "#fff");
+    mask.appendChild(white);
+    targets.forEach((el) => {
+      const m = (el as SVGGraphicsElement).getScreenCTM?.();
+      if (!m) return;
+      const c = el.cloneNode(false) as SVGElement;
+      c.removeAttribute("class"); c.removeAttribute("transform");
+      c.setAttribute("style", "fill:#000;fill-opacity:1;stroke:#000;stroke-width:2;pointer-events:none");
+      const r = inv.multiply(m);
+      c.setAttribute("transform", `matrix(${r.a} ${r.b} ${r.c} ${r.d} ${r.e} ${r.f})`);
+      mask.appendChild(c);
+    });
+    const defs = document.createElementNS(NS, "defs");
+    defs.setAttribute("data-dim", "1");
+    defs.appendChild(mask);
+    const sheet = document.createElementNS(NS, "rect");
+    sheet.setAttribute("data-dim", "1");
+    sheet.setAttribute("x", String(-BIG)); sheet.setAttribute("y", String(-BIG));
+    sheet.setAttribute("width", String(BIG * 2)); sheet.setAttribute("height", String(BIG * 2));
+    sheet.setAttribute("style", "fill:rgba(0,0,0,.42);pointer-events:none");
+    sheet.setAttribute("mask", "url(#mv-dim-mask)");
+    svg.appendChild(defs);
+    svg.appendChild(sheet);
+    return () => { root.querySelectorAll("[data-dim]").forEach((n) => n.remove()); };
+  }, [dimOthers, highlight?.surah, highlight?.ayah, mode, src, aspect, boxW, fillH, fillW]);
 
   if (mode === "text") return <MushafTextPage page={safe} fontSize={fontSize} halves={halves} coverOutside={coverOutside} />;
 
