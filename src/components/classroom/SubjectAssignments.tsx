@@ -18,6 +18,7 @@
 */
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -138,8 +139,10 @@ type SheetItem = {
   onClick: () => void; danger?: boolean; right?: React.ReactNode;
 };
 function ActionSheet({ title, subtitle, onClose, items }: { title: string; subtitle?: string; onClose: () => void; items: SheetItem[] }) {
-  return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 80, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
+  // Portal to <body> + very high z-index so the sheet sits above the live-class control bar
+  // (the classroom overlay uses z-index up to 9500 and traps anything rendered inside it).
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, zIndex: 20000, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
       <div style={{ width: "100%", maxWidth: 520, background: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: "max(14px, env(safe-area-inset-bottom))", maxHeight: "86vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 2px" }}>
           <div style={{ width: 36, height: 4, borderRadius: 2, background: "#ddd" }} />
@@ -162,7 +165,8 @@ function ActionSheet({ title, subtitle, onClose, items }: { title: string; subti
           ))}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
