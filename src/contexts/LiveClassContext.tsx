@@ -145,6 +145,9 @@ interface LiveClassContextType extends LiveClassState {
   setMicEnabled:   (v: boolean) => void;
   setCamEnabled:   (v: boolean) => void;
   setHasConnected: (v: boolean) => void;
+  /** True while the teacher has locked student video (audio-only / video off). The minimized pill hides its camera button while this is true. */
+  camLocked:       boolean;
+  setCamLocked:    (v: boolean) => void;
   toggleMicFnRef:  React.MutableRefObject<() => void>;
   toggleCamFnRef:  React.MutableRefObject<() => void>;
   // FIX: "restore" sets mic ON only — safe to call on background return.
@@ -180,6 +183,7 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
   const [state, setState] = useState<LiveClassState>(() => restore() ?? DEFAULT_STATE);
   const [audioBoost, setAudioBoostState] = useState<number>(() => restoreAudioBoost());
   const guardPushed = useRef(false);
+  const [camLocked, setCamLocked] = useState(false);
 
   const setAudioBoost = useCallback((v: number) => {
     setAudioBoostState(v);
@@ -285,6 +289,7 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
     clearPersist();
     guardPushed.current = false;
     setState(DEFAULT_STATE);
+    setCamLocked(false);
   }, []);
 
   const setMinimized = useCallback((v: boolean) => {
@@ -304,7 +309,7 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
   return (
     <LiveClassContext.Provider value={{
       ...state, joinClass, leaveClass, setMinimized,
-      setMicEnabled, setCamEnabled, setHasConnected,
+      setMicEnabled, setCamEnabled, setHasConnected, camLocked, setCamLocked,
       toggleMicFnRef, toggleCamFnRef, restoreMicFnRef, leaveSessionFnRef, getLocalCameraTrackRef,
       audioBoost, setAudioBoost,
     }}>
