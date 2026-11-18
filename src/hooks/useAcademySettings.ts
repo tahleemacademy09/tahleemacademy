@@ -56,9 +56,25 @@ const DEFAULT_SETTINGS: AcademySettings = {
   timetable_module_message_ar: null,
 };
 
+let memCache: AcademySettings | null = null;
+const CACHE_KEY = "ta_academy_settings_cache";
+const readCache = (): AcademySettings | null => {
+  if (memCache) return memCache;
+  try { const r = localStorage.getItem(CACHE_KEY); if (r) memCache = { ...DEFAULT_SETTINGS, ...JSON.parse(r) }; } catch {}
+  return memCache;
+};
+const writeCache = (v: AcademySettings) => {
+  memCache = v;
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(v)); } catch {}
+};
+
 export const useAcademySettings = () => {
-  const [settings, setSettings] = useState<AcademySettings>(DEFAULT_SETTINGS);
-  const [loading, setLoading] = useState(true);
+  // Shared cache (memory + localStorage): every component using this hook starts
+  // with the last known settings instantly instead of spinning and refetching.
+  const [settings, setSettingsRaw] = useState<AcademySettings>(readCache() || DEFAULT_SETTINGS);
+  const [loading, setLoading] = useState(!readCache());
+  const setSettings: typeof setSettingsRaw = (v) =>
+    setSettingsRaw((prev) => { const nv = typeof v === "function" ? (v as any)(prev) : v; writeCache(nv); return nv; });
 
   const fetchSettings = useCallback(async () => {
     const { data } = await supabase
