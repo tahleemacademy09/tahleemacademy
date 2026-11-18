@@ -3,6 +3,8 @@
    Routing configuration with lazy-loaded pages
 ═══════════════════════════════════════════════════════════════════════════════*/
 import { lazy, Suspense, useEffect } from "react";
+import { lazyRoute, preloadGroups } from "@/lib/routePreload";
+import { useAuth } from "@/contexts/AuthContext";
 import Maintenance from "@/pages/Maintenance";
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -54,133 +56,133 @@ const JoinClass            = lazy(() => import("./pages/public/JoinClass"));
 const LiveClasses          = lazy(() => import("./pages/public/LiveClasses"));
 
 // ── Student pages ──────────────────────────────────────────────────────────
-const StudentDashboard    = lazy(() => import("./pages/student/StudentDashboard"));
-const StudentDashboardV2  = lazy(() => import("./pages/student/StudentDashboardV2"));
-const StudentExams        = lazy(() => import("./pages/student/StudentExams"));
-const StudentOralExams    = lazy(() => import("./pages/student/StudentOralExams"));
-const ExamRegistration    = lazy(() => import("./pages/student/ExamRegistration"));
-const SubjectRegistration = lazy(() => import("./pages/student/SubjectRegistration"));
-const ExamTaking          = lazy(() => import("./pages/student/ExamTaking"));
-const ProfileSettings     = lazy(() => import("./pages/student/ProfileSettings"));
-const StudentApp          = lazy(() => import("./pages/student/StudentApp"));
-const ExamResults         = lazy(() => import("./pages/student/ExamResults"));
-const PreExamVerification = lazy(() => import("./pages/student/PreExamVerification"));
-const ReportCard          = lazy(() => import("./pages/student/ReportCard"));
-const Majlis              = lazy(() => import("./pages/student/Majlis"));
-const RecitationTest      = lazy(() => import("./pages/student/RecitationTest"));
-const LearningHub         = lazy(() => import("./pages/student/LearningHub"));
-const CourseView          = lazy(() => import("./pages/student/CourseView"));
-const SubjectView         = lazy(() => import("./pages/student/SubjectView"));
-const Onboarding          = lazy(() => import("./pages/student/Onboarding"));
-const EntranceExamTaking  = lazy(() => import("./pages/student/EntranceExamTaking"));
-const EntranceExamResume  = lazy(() => import("./pages/student/EntranceExamResume"));
-const EntranceResults     = lazy(() => import("./pages/student/EntranceResults"));
-const RevisionHub         = lazy(() => import("./pages/student/RevisionHub"));
-const QuranPage               = lazy(() => import("./pages/student/QuranPage"));
-const HifdhPage              = lazy(() => import("./pages/student/HifdhPage"));
-const HifdhProgramHome        = lazy(() => import("./pages/student/HifdhProgramHome"));
-const HifdhDailyRevisionPage = lazy(() => import("./pages/student/HifdhDailyRevisionPage"));
-const RevisionRoom           = lazy(() => import("./pages/student/RevisionRoom"));
-const RecordingPlayer     = lazy(() => import("./pages/student/RecordingPlayer"));
-const EnrollmentPayment   = lazy(() => import("./pages/student/EnrollmentPayment"));
-const TasjeelAwaitingLevel = lazy(() => import("./pages/student/TasjeelAwaitingLevel"));
-const RecitationSession    = lazy(() => import("./pages/student/RecitationSession"));
-const StudentTimetable     = lazy(() => import("./pages/student/StudentTimetable"));
-const LiveNow              = lazy(() => import("./pages/student/LiveNow"));
-const StudentAssignments   = lazy(() => import("./pages/student/StudentAssignments"));
-const ProgressHub          = lazy(() => import("./pages/student/ProgressHub"));
-const StudentSupport       = lazy(() => import("./pages/student/StudentSupport"));
-const AdhkaarPage          = lazy(() => import("./pages/student/AdhkaarPage"));
+const StudentDashboard    = lazyRoute("student", () => import("./pages/student/StudentDashboard"));
+const StudentDashboardV2  = lazyRoute("student", () => import("./pages/student/StudentDashboardV2"));
+const StudentExams        = lazyRoute("student", () => import("./pages/student/StudentExams"));
+const StudentOralExams    = lazyRoute("student", () => import("./pages/student/StudentOralExams"));
+const ExamRegistration    = lazyRoute("student", () => import("./pages/student/ExamRegistration"));
+const SubjectRegistration = lazyRoute("student", () => import("./pages/student/SubjectRegistration"));
+const ExamTaking          = lazyRoute("student", () => import("./pages/student/ExamTaking"));
+const ProfileSettings     = lazyRoute("student", () => import("./pages/student/ProfileSettings"));
+const StudentApp          = lazyRoute("student", () => import("./pages/student/StudentApp"));
+const ExamResults         = lazyRoute("student", () => import("./pages/student/ExamResults"));
+const PreExamVerification = lazyRoute("student", () => import("./pages/student/PreExamVerification"));
+const ReportCard          = lazyRoute("student", () => import("./pages/student/ReportCard"));
+const Majlis              = lazyRoute("student", () => import("./pages/student/Majlis"));
+const RecitationTest      = lazyRoute("student", () => import("./pages/student/RecitationTest"));
+const LearningHub         = lazyRoute("student", () => import("./pages/student/LearningHub"));
+const CourseView          = lazyRoute("student", () => import("./pages/student/CourseView"));
+const SubjectView         = lazyRoute("student", () => import("./pages/student/SubjectView"));
+const Onboarding          = lazyRoute("student", () => import("./pages/student/Onboarding"));
+const EntranceExamTaking  = lazyRoute("student", () => import("./pages/student/EntranceExamTaking"));
+const EntranceExamResume  = lazyRoute("student", () => import("./pages/student/EntranceExamResume"));
+const EntranceResults     = lazyRoute("student", () => import("./pages/student/EntranceResults"));
+const RevisionHub         = lazyRoute("student", () => import("./pages/student/RevisionHub"));
+const QuranPage               = lazyRoute("student", () => import("./pages/student/QuranPage"));
+const HifdhPage              = lazyRoute("student", () => import("./pages/student/HifdhPage"));
+const HifdhProgramHome        = lazyRoute("student", () => import("./pages/student/HifdhProgramHome"));
+const HifdhDailyRevisionPage = lazyRoute("student", () => import("./pages/student/HifdhDailyRevisionPage"));
+const RevisionRoom           = lazyRoute("student", () => import("./pages/student/RevisionRoom"));
+const RecordingPlayer     = lazyRoute("student", () => import("./pages/student/RecordingPlayer"));
+const EnrollmentPayment   = lazyRoute("student", () => import("./pages/student/EnrollmentPayment"));
+const TasjeelAwaitingLevel = lazyRoute("student", () => import("./pages/student/TasjeelAwaitingLevel"));
+const RecitationSession    = lazyRoute("student", () => import("./pages/student/RecitationSession"));
+const StudentTimetable     = lazyRoute("student", () => import("./pages/student/StudentTimetable"));
+const LiveNow              = lazyRoute("student", () => import("./pages/student/LiveNow"));
+const StudentAssignments   = lazyRoute("student", () => import("./pages/student/StudentAssignments"));
+const ProgressHub          = lazyRoute("student", () => import("./pages/student/ProgressHub"));
+const StudentSupport       = lazyRoute("student", () => import("./pages/student/StudentSupport"));
+const AdhkaarPage          = lazyRoute("student", () => import("./pages/student/AdhkaarPage"));
 
 // ── Musabaqah ──────────────────────────────────────────────────────────────
 // Hub:  inside DashboardLayout → shows Quiz vs Recitation choice cards
 // Page: standalone full-screen route → the actual Qur'an recitation competition
-const MusabaqahHub   = lazy(() => import("./pages/student/MusabaqahHub"));
+const MusabaqahHub   = lazyRoute("student", () => import("./pages/student/MusabaqahHub"));
 const RamadanPrograms = lazy(() => import("./pages/RamadanPrograms"));
-const MustabaqahPage = lazy(() => import("./pages/student/MustabaqahPage"));
-const GeneralMusabaqahAdmin       = lazy(() => import("./pages/admin/GeneralMusabaqahAdmin"));
-const GeneralMusabaqahEventDetail = lazy(() => import("./pages/admin/GeneralMusabaqahEventDetail"));
-const GeneralMusabaqahRegister    = lazy(() => import("./pages/student/GeneralMusabaqahRegister"));
-const GeneralMusabaqahWaitingRoom = lazy(() => import("./pages/student/GeneralMusabaqahWaitingRoom"));
-const GeneralMusabaqahResult      = lazy(() => import("./pages/student/GeneralMusabaqahResult"));
-const GeneralMusabaqahEventLeaderboard = lazy(() => import("./pages/student/GeneralMusabaqahEventLeaderboard"));
-const MusabaqahOverallLeaderboard      = lazy(() => import("./pages/student/MusabaqahOverallLeaderboard"));
+const MustabaqahPage = lazyRoute("student", () => import("./pages/student/MustabaqahPage"));
+const GeneralMusabaqahAdmin       = lazyRoute("admin", () => import("./pages/admin/GeneralMusabaqahAdmin"));
+const GeneralMusabaqahEventDetail = lazyRoute("admin", () => import("./pages/admin/GeneralMusabaqahEventDetail"));
+const GeneralMusabaqahRegister    = lazyRoute("student", () => import("./pages/student/GeneralMusabaqahRegister"));
+const GeneralMusabaqahWaitingRoom = lazyRoute("student", () => import("./pages/student/GeneralMusabaqahWaitingRoom"));
+const GeneralMusabaqahResult      = lazyRoute("student", () => import("./pages/student/GeneralMusabaqahResult"));
+const GeneralMusabaqahEventLeaderboard = lazyRoute("student", () => import("./pages/student/GeneralMusabaqahEventLeaderboard"));
+const MusabaqahOverallLeaderboard      = lazyRoute("student", () => import("./pages/student/MusabaqahOverallLeaderboard"));
 const GeneralMusabaqahExamRoom    = lazy(() => import("./pages/GeneralMusabaqahExamRoom"));
 
 // ── Admin pages ────────────────────────────────────────────────────────────
-const AdminDashboard        = lazy(() => import("./pages/admin/AdminDashboard"));
-const SubjectManagement     = lazy(() => import("./pages/admin/SubjectManagement"));
-const CourseManagement      = lazy(() => import("./pages/admin/CourseManagement"));
-const SyllabusManager       = lazy(() => import("./pages/admin/SyllabusManager"));
-const TimetableManagement   = lazy(() => import("./pages/admin/TimetableManagement"));
-const ExamTimetableManagement = lazy(() => import("./pages/admin/ExamTimetableManagement"));
-const ExamManager           = lazy(() => import("./pages/admin/ExamManager"));
-const ExamLiveMonitor       = lazy(() => import("./pages/admin/ExamLiveMonitor"));
-const ExamEditor            = lazy(() => import("./pages/admin/ExamEditor"));
-const GradingPage           = lazy(() => import("./pages/admin/GradingPage"));
-const QuestionBank          = lazy(() => import("./pages/admin/QuestionBank"));
-const ProctoringDashboard   = lazy(() => import("./pages/admin/ProctoringDashboard"));
-const EntranceExamAdmin     = lazy(() => import("./pages/admin/EntranceExamAdmin"));
-const ViewAsStudent         = lazy(() => import("./pages/admin/ViewAsStudent"));
-const RecordingManagement   = lazy(() => import("./pages/admin/RecordingManagement"));
-const LiveClassManagement   = lazy(() => import("./pages/admin/LiveClassManagement"));
-const MajlisModeration      = lazy(() => import("./pages/admin/MajlisModeration"));const NotificationManagement = lazy(() => import("./pages/admin/NotificationManagement"));
-const SupportTickets        = lazy(() => import("./pages/admin/SupportTickets"));
-const PaymentManagement     = lazy(() => import("./pages/admin/PaymentManagement"));
-const TeacherPayments       = lazy(() => import("./pages/admin/TeacherPayments"));
-const AcademicCalendar      = lazy(() => import("./pages/admin/AcademicCalendar"));
-const PaymentSettings       = lazy(() => import("./pages/admin/PaymentSettings.tsx"));
-const PublicClassManagement = lazy(() => import("./pages/admin/PublicClassManagement"));
-const HifdhAdminReview      = lazy(() => import("./pages/admin/HifdhAdminReview"));
-const HifdhRevisionTracker  = lazy(() => import("./pages/admin/HifdhRevisionTracker"));
-const HifdhProgramAdmin      = lazy(() => import("./pages/admin/HifdhProgramAdmin"));
-const HifdhHub               = lazy(() => import("./pages/admin/HifdhHub"));
-const QuranRecitationAdmin  = lazy(() => import("./pages/admin/QuranRecitationAdmin"));
-const LetterAudioRecorder   = lazy(() => import("./pages/admin/LetterAudioRecorder"));
-const AdminRecitationSession = lazy(() => import("./pages/admin/RecitationSession"));
-const LevelSubjectMapping   = lazy(() => import("./pages/admin/LevelSubjectMapping"));
-const LevelManagement       = lazy(() => import("./pages/admin/LevelManagement"));
+const AdminDashboard        = lazyRoute("admin", () => import("./pages/admin/AdminDashboard"));
+const SubjectManagement     = lazyRoute("admin", () => import("./pages/admin/SubjectManagement"));
+const CourseManagement      = lazyRoute("admin", () => import("./pages/admin/CourseManagement"));
+const SyllabusManager       = lazyRoute("admin", () => import("./pages/admin/SyllabusManager"));
+const TimetableManagement   = lazyRoute("admin", () => import("./pages/admin/TimetableManagement"));
+const ExamTimetableManagement = lazyRoute("admin", () => import("./pages/admin/ExamTimetableManagement"));
+const ExamManager           = lazyRoute("admin", () => import("./pages/admin/ExamManager"));
+const ExamLiveMonitor       = lazyRoute("admin", () => import("./pages/admin/ExamLiveMonitor"));
+const ExamEditor            = lazyRoute("admin", () => import("./pages/admin/ExamEditor"));
+const GradingPage           = lazyRoute("admin", () => import("./pages/admin/GradingPage"));
+const QuestionBank          = lazyRoute("admin", () => import("./pages/admin/QuestionBank"));
+const ProctoringDashboard   = lazyRoute("admin", () => import("./pages/admin/ProctoringDashboard"));
+const EntranceExamAdmin     = lazyRoute("admin", () => import("./pages/admin/EntranceExamAdmin"));
+const ViewAsStudent         = lazyRoute("admin", () => import("./pages/admin/ViewAsStudent"));
+const RecordingManagement   = lazyRoute("admin", () => import("./pages/admin/RecordingManagement"));
+const LiveClassManagement   = lazyRoute("admin", () => import("./pages/admin/LiveClassManagement"));
+const MajlisModeration      = lazyRoute("admin", () => import("./pages/admin/MajlisModeration"));const NotificationManagement = lazyRoute("admin", () => import("./pages/admin/NotificationManagement"));
+const SupportTickets        = lazyRoute("admin", () => import("./pages/admin/SupportTickets"));
+const PaymentManagement     = lazyRoute("admin", () => import("./pages/admin/PaymentManagement"));
+const TeacherPayments       = lazyRoute("admin", () => import("./pages/admin/TeacherPayments"));
+const AcademicCalendar      = lazyRoute("admin", () => import("./pages/admin/AcademicCalendar"));
+const PaymentSettings       = lazyRoute("admin", () => import("./pages/admin/PaymentSettings.tsx"));
+const PublicClassManagement = lazyRoute("admin", () => import("./pages/admin/PublicClassManagement"));
+const HifdhAdminReview      = lazyRoute("admin", () => import("./pages/admin/HifdhAdminReview"));
+const HifdhRevisionTracker  = lazyRoute("admin", () => import("./pages/admin/HifdhRevisionTracker"));
+const HifdhProgramAdmin      = lazyRoute("admin", () => import("./pages/admin/HifdhProgramAdmin"));
+const HifdhHub               = lazyRoute("admin", () => import("./pages/admin/HifdhHub"));
+const QuranRecitationAdmin  = lazyRoute("admin", () => import("./pages/admin/QuranRecitationAdmin"));
+const LetterAudioRecorder   = lazyRoute("admin", () => import("./pages/admin/LetterAudioRecorder"));
+const AdminRecitationSession = lazyRoute("admin", () => import("./pages/admin/RecitationSession"));
+const LevelSubjectMapping   = lazyRoute("admin", () => import("./pages/admin/LevelSubjectMapping"));
+const LevelManagement       = lazyRoute("admin", () => import("./pages/admin/LevelManagement"));
 // Merged hub pages — group several of the above into one tabbed page so
 // related admin functions are accessed together instead of being split
 // across separate settings screens. The individual routes below still
 // exist and render these hubs (with the matching tab pre-selected) so no
 // existing links break.
-const RegistrationHub       = lazy(() => import("./pages/admin/RegistrationHub"));
-const StudentsHub           = lazy(() => import("./pages/admin/StudentsHub"));
-const AdminSettings         = lazy(() => import("./pages/admin/AdminSettings"));
-const AppReleases           = lazy(() => import("./pages/admin/AppReleases"));
-const SiteAnalytics         = lazy(() => import("./pages/admin/SiteAnalytics"));
+const RegistrationHub       = lazyRoute("admin", () => import("./pages/admin/RegistrationHub"));
+const StudentsHub           = lazyRoute("admin", () => import("./pages/admin/StudentsHub"));
+const AdminSettings         = lazyRoute("admin", () => import("./pages/admin/AdminSettings"));
+const AppReleases           = lazyRoute("admin", () => import("./pages/admin/AppReleases"));
+const SiteAnalytics         = lazyRoute("admin", () => import("./pages/admin/SiteAnalytics"));
 
 // ── Auth callback ──────────────────────────────────────────────────────────
 const AuthCallback = lazy(() => import("./pages/AuthCallback"));
 // ── Teacher pages ──────────────────────────────────────────────────────────
-const TeacherDashboard       = lazy(() => import("./pages/teacher/TeacherDashboard"));
-const TeacherStudentsHub     = lazy(() => import("./pages/teacher/TeacherStudentsHub"));
-const TeacherTeachingHub     = lazy(() => import("./pages/teacher/TeacherTeachingHub"));
-const TeacherAssessmentsHub  = lazy(() => import("./pages/teacher/TeacherAssessmentsHub"));
-const TeacherStudents        = lazy(() => import("./pages/teacher/TeacherStudents"));
-const TeacherPrivateStudents = lazy(() => import("./pages/teacher/TeacherPrivateStudents"));
-const TeacherSubjects        = lazy(() => import("./pages/teacher/TeacherSubjects"));
-const TeacherClasses         = lazy(() => import("./pages/teacher/TeacherClasses"));
-const TeacherAnnouncements   = lazy(() => import("./pages/teacher/TeacherAnnouncements"));
-const TeacherAttendance      = lazy(() => import("./pages/teacher/TeacherAttendance"));
-const TeacherExamsPage       = lazy(() => import("./pages/teacher/TeacherExamsPage"));
-const TeacherOralExams       = lazy(() => import("./pages/teacher/TeacherOralExams"));
-const TeacherResults         = lazy(() => import("./pages/teacher/TeacherResults"));
-const TeacherSettings        = lazy(() => import("./pages/teacher/TeacherSettings"));
-const TeacherRecordings      = lazy(() => import("./pages/teacher/TeacherRecordings"));
-const TeacherRecitation      = lazy(() => import("./pages/teacher/TeacherRecitation"));
-const TeacherTranscript      = lazy(() => import("./pages/teacher/TeacherTranscript"));
-const TeacherPrivateSessions = lazy(() => import("./pages/teacher/TeacherPrivateSessions"));
-const TeacherGrading         = lazy(() => import("./pages/teacher/TeacherGrading"));
-const TeacherTimetable       = lazy(() => import("./pages/teacher/TeacherTimetable"));
-const TeacherPublicClasses   = lazy(() => import("./pages/teacher/TeacherPublicClasses"));
-const TeacherHifdhReview     = lazy(() => import("./pages/teacher/TeacherHifdhReview"));
-const TeacherHifdhProgram    = lazy(() => import("./pages/teacher/TeacherHifdhProgram"));
-const TeacherHifdhLive       = lazy(() => import("./pages/teacher/TeacherHifdhLive"));
-const TeacherHifdhPlanBuilder = lazy(() => import("./pages/teacher/TeacherHifdhPlanBuilder"));
-const TeacherMajlis          = lazy(() => import("./pages/teacher/TeacherMajlis"));
-const TeacherSupport         = lazy(() => import("./pages/teacher/TeacherSupport"));
+const TeacherDashboard       = lazyRoute("teacher", () => import("./pages/teacher/TeacherDashboard"));
+const TeacherStudentsHub     = lazyRoute("teacher", () => import("./pages/teacher/TeacherStudentsHub"));
+const TeacherTeachingHub     = lazyRoute("teacher", () => import("./pages/teacher/TeacherTeachingHub"));
+const TeacherAssessmentsHub  = lazyRoute("teacher", () => import("./pages/teacher/TeacherAssessmentsHub"));
+const TeacherStudents        = lazyRoute("teacher", () => import("./pages/teacher/TeacherStudents"));
+const TeacherPrivateStudents = lazyRoute("teacher", () => import("./pages/teacher/TeacherPrivateStudents"));
+const TeacherSubjects        = lazyRoute("teacher", () => import("./pages/teacher/TeacherSubjects"));
+const TeacherClasses         = lazyRoute("teacher", () => import("./pages/teacher/TeacherClasses"));
+const TeacherAnnouncements   = lazyRoute("teacher", () => import("./pages/teacher/TeacherAnnouncements"));
+const TeacherAttendance      = lazyRoute("teacher", () => import("./pages/teacher/TeacherAttendance"));
+const TeacherExamsPage       = lazyRoute("teacher", () => import("./pages/teacher/TeacherExamsPage"));
+const TeacherOralExams       = lazyRoute("teacher", () => import("./pages/teacher/TeacherOralExams"));
+const TeacherResults         = lazyRoute("teacher", () => import("./pages/teacher/TeacherResults"));
+const TeacherSettings        = lazyRoute("teacher", () => import("./pages/teacher/TeacherSettings"));
+const TeacherRecordings      = lazyRoute("teacher", () => import("./pages/teacher/TeacherRecordings"));
+const TeacherRecitation      = lazyRoute("teacher", () => import("./pages/teacher/TeacherRecitation"));
+const TeacherTranscript      = lazyRoute("teacher", () => import("./pages/teacher/TeacherTranscript"));
+const TeacherPrivateSessions = lazyRoute("teacher", () => import("./pages/teacher/TeacherPrivateSessions"));
+const TeacherGrading         = lazyRoute("teacher", () => import("./pages/teacher/TeacherGrading"));
+const TeacherTimetable       = lazyRoute("teacher", () => import("./pages/teacher/TeacherTimetable"));
+const TeacherPublicClasses   = lazyRoute("teacher", () => import("./pages/teacher/TeacherPublicClasses"));
+const TeacherHifdhReview     = lazyRoute("teacher", () => import("./pages/teacher/TeacherHifdhReview"));
+const TeacherHifdhProgram    = lazyRoute("teacher", () => import("./pages/teacher/TeacherHifdhProgram"));
+const TeacherHifdhLive       = lazyRoute("teacher", () => import("./pages/teacher/TeacherHifdhLive"));
+const TeacherHifdhPlanBuilder = lazyRoute("teacher", () => import("./pages/teacher/TeacherHifdhPlanBuilder"));
+const TeacherMajlis          = lazyRoute("teacher", () => import("./pages/teacher/TeacherMajlis"));
+const TeacherSupport         = lazyRoute("teacher", () => import("./pages/teacher/TeacherSupport"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -214,6 +216,7 @@ const AppMain = () => (
           <BrowserRouter>
       <AppStateRestorer />
       <PageViewTracker />
+      <RoutePreloader />
             <RecordingPlayerProvider>
             <LiveClassProvider>
             <ErrorBoundary>
@@ -461,6 +464,16 @@ const AppMain = () => (
 );
 
 // Restores route + scroll after Android WebView kills the backgrounded tab
+function RoutePreloader() {
+  const { user, roles } = useAuth();
+  useEffect(() => {
+    if (!user || roles.length === 0) return;
+    const g = roles.includes("admin") ? ["admin", "teacher"] : roles.includes("teacher") ? ["teacher"] : ["student"];
+    preloadGroups(g);
+  }, [user?.id, roles.join(",")]);
+  return null;
+}
+
 function AppStateRestorer() {
   useAppStateRestore();
 
