@@ -4337,7 +4337,7 @@ export const InClassQuranReader=({onClose}:any)=>{
                     page={page}
                     seamless
                     pureWhite
-                    fillParent
+                    availableHeight={mushafBoxH>0?mushafBoxH:undefined}
                     maxStretch={1.4}
                     maxSqueeze={0.85}
                     softHighlight
