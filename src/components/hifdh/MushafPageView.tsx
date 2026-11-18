@@ -409,7 +409,7 @@ function mvPrefetchAround(page: number, white = false): () => void {
 }
 
 /** fitHeight: pixels of screen NOT available to the page (bars, buttons). When set, the whole page is fitted to the screen height. */
-export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, dimOthers, onUnavailable, onlySurahs, coverUnrevealed, revealProgress, coverOutside, hidePortionChip, softHighlight, maxSqueeze }: {
+export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, dimOthers, onUnavailable, onlySurahs, coverUnrevealed, revealProgress, coverOutside, hidePortionChip, softHighlight, maxSqueeze, fillParent }: {
   page: number; fontSize?: number; halves?: [number, number]; fitHeight?: number;
   /** hide the floating "Your portion" chip (when the screen already says it) */
   hidePortionChip?: boolean;
@@ -436,6 +436,8 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
   dimOthers?: boolean;
   /** very faint tint for the highlighted ayah (instead of the strong gold) */
   softHighlight?: boolean;
+  /** fill the parent's live height (measured here), so the page always reaches the bottom of whatever box it is in */
+  fillParent?: boolean;
   /** full-screen mode: allow the page to be squeezed vertically down to this ratio (e.g. 0.85) so it keeps the full width instead of being narrowed */
   maxSqueeze?: number;
   /** ayah the user selected — drawn in soft green behind the text */
@@ -453,6 +455,7 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
   const [aspect, setAspect] = useState<number | null>(null);
   const [bg, setBg] = useState(pureWhite ? "#ffffff" : "#fffdf6");
   const [boxW, setBoxW] = useState(0);
+  const [boxH, setBoxH] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
   const unavailRef = useRef(onUnavailable);
   unavailRef.current = onUnavailable;
@@ -538,7 +541,7 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
   useEffect(() => {
     const parent = wrapRef.current?.parentElement;
     if (!parent) return;
-    const upd = () => setBoxW(parent.clientWidth);
+    const upd = () => { setBoxW(parent.clientWidth); setBoxH(parent.clientHeight); };
     upd();
     const ro = new ResizeObserver(upd);
     ro.observe(parent);
@@ -570,15 +573,16 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
   // full-screen mode: fill availableHeight (stretch up to maxStretch), or narrow the page if it is too tall
   let fillW: number | undefined;
   let fillH: number | undefined;
-  if (availableHeight && aspect && boxW && zoom <= 1) {
+  const availH = fillParent ? boxH : availableHeight;
+  if (availH && aspect && boxW && zoom <= 1) {
     const naturalH = boxW / aspect;
-    if (naturalH > availableHeight) {
-      const ratio = availableHeight / naturalH;
+    if (naturalH > availH) {
+      const ratio = availH / naturalH;
       const minR = maxSqueeze && maxSqueeze < 1 ? maxSqueeze : 1;
-      if (ratio >= minR) fillH = Math.round(availableHeight); // full width, squeezed slightly to fill the box exactly
-      else { fillW = Math.floor((availableHeight * aspect) / minR); fillH = Math.round(availableHeight); }
+      if (ratio >= minR) fillH = Math.round(availH); // full width, squeezed slightly to fill the box exactly
+      else { fillW = Math.floor((availH * aspect) / minR); fillH = Math.round(availH); }
     }
-    else fillH = Math.round(naturalH * Math.min(maxStretch, availableHeight / naturalH));
+    else fillH = Math.round(naturalH * Math.min(maxStretch, availH / naturalH));
   }
 
   // apply (or clear) the vertical stretch on the inline SVG
@@ -832,7 +836,7 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
           )}
 
           {/* inline SVG lives in a shadow root inside this host */}
-          <div ref={hostRef} onClick={handleClick} style={mode === "inline" ? ({ display: "block", ...(softHighlight ? { "--mv-hl": "rgba(201,168,76,.15)" } : {}) } as React.CSSProperties) : { visibility: "hidden", position: "absolute", left: 0, top: 0, width: "100%", height: 0, overflow: "hidden" }} />
+          <div ref={hostRef} onClick={handleClick} style={mode === "inline" ? ({ display: "block", ...(softHighlight ? { "--mv-hl": "rgba(201,168,76,.10)" } : {}) } as React.CSSProperties) : { visibility: "hidden", position: "absolute", left: 0, top: 0, width: "100%", height: 0, overflow: "hidden" }} />
 
           {mode === "img" && (
             <img
