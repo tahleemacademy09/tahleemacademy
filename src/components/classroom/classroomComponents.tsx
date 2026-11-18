@@ -4322,14 +4322,17 @@ export const InClassQuranReader=({onClose}:any)=>{
             <ReciterStrip/>
             <div
               ref={mushafBoxRef}
-              style={{flex:1,minHeight:0,overflowY:"auto",touchAction:"manipulation",background:"#fff"}}
+              style={{flex:1,minHeight:0,position:"relative",overflowY:"auto",touchAction:"manipulation",background:"#fff"}}
               onTouchStart={onTouchStart}
               onTouchEnd={onTouchEnd}
               onClick={onReaderTap}
             >
               {/* ── Printed Madinah Mushaf page — tap an ayah to hear it, playing ayah is highlighted ── */}
+              {/* The wrapper is absolutely positioned (inset 0) instead of height:100% — a percentage height inside a
+                  flex item does not always resolve (mobile browsers), which collapsed it to the page's natural height
+                  and left a blank strip under the last line. Absolute inset:0 always equals the real visible box. */}
               {!printedFail&&(
-                <div style={{height:"100%"}}>
+                <div style={{position:"absolute",top:0,left:0,right:0,bottom:0}}>
                   <MushafPageView
                     page={page}
                     seamless
