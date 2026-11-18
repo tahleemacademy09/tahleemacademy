@@ -4158,7 +4158,7 @@ export const InClassQuranReader=({onClose}:any)=>{
 
   /* ── ONE compact top bar: mode dropdown · prev/page/next · Surah · Read/Listen · Reciter · close ── */
   const TopBar=()=>chromeHidden?null:(
-    <div style={{display:"flex",alignItems:"center",gap:5,padding:"5px 8px",background:"linear-gradient(135deg,#1a3d24,#276749)",flexShrink:0,overflowX:"auto",WebkitOverflowScrolling:"touch" as any}}>
+    <div style={{display:"flex",alignItems:"center",gap:4,padding:"5px 6px",background:"linear-gradient(135deg,#1a3d24,#276749)",flexShrink:0,overflowX:"auto",scrollbarWidth:"none" as any,WebkitOverflowScrolling:"touch" as any}}>
       {/* Mode dropdown */}
       <select value={mode} onChange={e=>setMode(e.target.value as QuranMode)} aria-label="Mode"
         style={{flexShrink:0,height:28,borderRadius:6,border:"1px solid rgba(255,255,255,.35)",background:"rgba(0,0,0,.28)",color:"#fff",fontSize:11,fontWeight:700,padding:"0 4px",outline:"none",cursor:"pointer"}}>
@@ -4188,8 +4188,8 @@ export const InClassQuranReader=({onClose}:any)=>{
       </>}
       {/* Surah picker */}
       <button onClick={()=>setShowPicker(true)}
-        style={{flexShrink:0,height:28,padding:"0 8px",borderRadius:6,border:"1px solid rgba(230,201,120,.7)",background:"rgba(255,251,240,.95)",color:"#8a5a12",cursor:"pointer",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>
-        ☰ Surah
+        aria-label="Surah" title="Surah" style={{flexShrink:0,height:28,padding:"0 9px",borderRadius:6,border:"1px solid rgba(230,201,120,.7)",background:"rgba(255,251,240,.95)",color:"#8a5a12",cursor:"pointer",fontSize:13,fontWeight:700,whiteSpace:"nowrap"}}>
+        ☰
       </button>
       {/* Reading / Listening */}
       <div style={{flexShrink:0,display:"flex",gap:2,background:"rgba(0,0,0,.28)",borderRadius:6,padding:2}}>
@@ -4201,7 +4201,7 @@ export const InClassQuranReader=({onClose}:any)=>{
       </div>
       {/* Reciter dropdown — only in listening mode */}
       {listenMode&&<button onClick={()=>setShowReciters(true)}
-        style={{flexShrink:0,height:28,padding:"0 8px",borderRadius:6,border:"1px solid rgba(230,201,120,.7)",background:"rgba(255,251,240,.95)",color:"#8a5a12",cursor:"pointer",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>
+        style={{flexShrink:0,height:28,padding:"0 8px",borderRadius:6,border:"1px solid rgba(230,201,120,.7)",background:"rgba(255,251,240,.95)",color:"#8a5a12",cursor:"pointer",fontSize:11,fontWeight:700,whiteSpace:"nowrap",maxWidth:78,overflow:"hidden",textOverflow:"ellipsis"}}>
         🎙 {RECITERS.find(r=>r.id===reciter)?.ar||"Reciter"} ▾
       </button>}
       <div style={{flex:1,minWidth:2}}/>
@@ -4322,19 +4322,19 @@ export const InClassQuranReader=({onClose}:any)=>{
             <ReciterStrip/>
             <div
               ref={mushafBoxRef}
-              style={{flex:1,overflowY:"auto",touchAction:"manipulation",background:"#fff"}}
+              style={{flex:1,minHeight:0,overflowY:"auto",touchAction:"manipulation",background:"#fff"}}
               onTouchStart={onTouchStart}
               onTouchEnd={onTouchEnd}
               onClick={onReaderTap}
             >
               {/* ── Printed Madinah Mushaf page — tap an ayah to hear it, playing ayah is highlighted ── */}
               {!printedFail&&(
-                <FitToBox boxH={mushafBoxH}>
+                <div style={{height:"100%"}}>
                   <MushafPageView
                     page={page}
                     seamless
                     pureWhite
-                    availableHeight={Math.max(300,mushafBoxH-2)}
+                    fillParent
                     maxStretch={1.4}
                     maxSqueeze={0.85}
                     softHighlight
@@ -4347,7 +4347,7 @@ export const InClassQuranReader=({onClose}:any)=>{
                     }}
                     onUnavailable={()=>setPrintedFail(true)}
                   />
-                </FitToBox>
+                </div>
               )}
               {printedFail&&mushafLoading&&(
                 <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:40,gap:10}}>
