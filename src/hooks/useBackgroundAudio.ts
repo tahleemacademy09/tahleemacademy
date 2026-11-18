@@ -50,7 +50,10 @@
 // output is about -62 dBFS, which is above Chrome's silence threshold (-72 dBFS, as far as I know), so the tab counts
 // as playing audio.
 function buildKeepAliveWav(): string {
-  const rate = 8000, secs = 2, n = rate * secs;
+  // 12 s (not 2 s): Chrome only creates the "now playing" media notification for media that is
+  // long enough to count as real playback — a 2 s looping clip is treated like a sound effect, so
+  // the notification bar never appeared when the class was minimized.
+  const rate = 8000, secs = 12, n = rate * secs;
   const buf = new ArrayBuffer(44 + n * 2);
   const v = new DataView(buf);
   const w = (o: number, t: string) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
@@ -58,10 +61,16 @@ function buildKeepAliveWav(): string {
   v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
   v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
   w(36, "data"); v.setUint32(40, n * 2, true);
+  // 25 Hz → exactly 25 cycles per second, so the loop point is seamless (no click).
   for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.round(Math.sin((2 * Math.PI * 25 * i) / rate) * 0.08 * 32767), true);
-  let bin = ""; const u8 = new Uint8Array(buf);
-  for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode(...u8.subarray(i, i + 0x8000));
-  return "data:audio/wav;base64," + btoa(bin);
+  // A Blob URL is far lighter than a ~215 KB base64 data: URI; fall back to data: if Blob URLs are unavailable.
+  try {
+    return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+  } catch {
+    let bin = ""; const u8 = new Uint8Array(buf);
+    for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+    return "data:audio/wav;base64," + btoa(bin);
+  }
 }
 let SILENCE_WAV = "";
 
@@ -103,6 +112,33 @@ function pingServiceWorker(): void {
   } catch { /* SW not available */ }
 }
 
+
+// ── Media notification (MediaSession) ────────────────────────────────────────
+// Chrome shows the "now playing" bar only while a real <audio> element is playing AND the page has
+// MediaSession metadata. Other code (recording player, guest page cleanup, an element swap when the
+// title changes) can clear that metadata, after which the bar silently never comes back. So we
+// re-assert it on every heartbeat tick and right as the page goes to the background.
+let sessionTitle = "Live Class";
+const SESSION_ART = [
+  { src: "/icons/icon-512x512.png", sizes: "512x512", type: "image/png" },
+  { src: "/icons/icon-192x192.png", sizes: "192x192", type: "image/png" },
+];
+function assertMediaSession(): void {
+  if (!("mediaSession" in navigator) || !audioEl) return;
+  try {
+    const md = navigator.mediaSession.metadata;
+    if (!md || md.title !== sessionTitle) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title:  sessionTitle,
+        artist: "Tahleem Academy",
+        album:  "🔴 Live Class — tap to return",
+        artwork: SESSION_ART,
+      });
+    }
+    if (navigator.mediaSession.playbackState !== "playing") navigator.mediaSession.playbackState = "playing";
+  } catch {}
+}
+
 // ── Heartbeat: keeps audio alive and SW awake every 20 s ────────────────────
 function startHeartbeat(): void {
   if (heartbeat) return; // already running
@@ -114,6 +150,8 @@ function startHeartbeat(): void {
     // Re-acquire wake lock if it was released (screen-off / interrupted) —
     // only when this session actually needs the screen kept on.
     if (wakeLockNeeded) acquireWakeLock();
+    // Keep the notification-bar media card alive
+    assertMediaSession();
     // Ping the service worker so it doesn't sleep
     pingServiceWorker();
   }, 5_000);
@@ -283,16 +321,9 @@ export function startBackgroundAudio(title = "Live Class"): void {
   // ── MediaSession metadata ──────────────────────────────────────────────
   // Action handlers are wired by GlobalClassroomOverlay separately so they
   // stay up-to-date with the latest handleReturn / handleLeave callbacks.
-  if ("mediaSession" in navigator) {
-    try {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title,
-        artist: "Tahleem Academy",
-        album:  "🟢 Live Class",
-      });
-      navigator.mediaSession.playbackState = "playing";
-    } catch {}
-  }
+  sessionTitle = title;
+  try { if ("mediaSession" in navigator) navigator.mediaSession.metadata = null; } catch {}  // force a fresh card for a new title
+  assertMediaSession();
 
   // ── Wake-up listeners ──────────────────────────────────────────────────
   // These fire when the user returns from lock screen / background even if
@@ -301,6 +332,7 @@ export function startBackgroundAudio(title = "Live Class"): void {
     resumeFn = () => {
       audioEl?.play().catch(() => {});
       if (wakeLockNeeded) acquireWakeLock();
+      assertMediaSession();
       pingServiceWorker();
     };
     window.addEventListener("pageshow",         resumeFn);
@@ -308,7 +340,11 @@ export function startBackgroundAudio(title = "Live Class"): void {
     document.addEventListener("resume",         resumeFn as EventListener); // Capacitor
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") resumeFn?.();
-      else if (audioEl?.paused) audioEl.play().catch(() => {}); // going to background: make sure the quiet audio is running
+      else {
+        // going to background: make sure the quiet audio is running AND the notification card exists
+        if (audioEl?.paused) audioEl.play().catch(() => {});
+        assertMediaSession();
+      }
     });
   }
 
