@@ -339,7 +339,7 @@ export const mvSurahStartPages = () => Array.from(new Set((SURAHS as any[]).map(
 type MvPrep = { clean: string; box: MvBox | null; bg: string | null };
 const MV_PREP = new Map<string, Promise<MvPrep>>();
 const MV_READY = new Map<string, MvPrep & { white?: string }>();
-const MV_MEAS_KEY = "mushaf-measure-v1";
+const MV_MEAS_KEY = "mushaf-measure-v2"; // bumped: forces every device to re-measure each page's ink box (old cached boxes could include blank space)
 const mvMeasLoad = (): Record<string, { box: MvBox | null; bg: string | null }> => { try { return JSON.parse(localStorage.getItem(MV_MEAS_KEY) || "{}"); } catch { return {}; } };
 let MV_MEAS: Record<string, { box: MvBox | null; bg: string | null }> | null = null;
 const mvMeasGet = (src: string) => (MV_MEAS ??= mvMeasLoad())[src];
