@@ -2076,11 +2076,12 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             handRaiseEnabled={sessionSettings.hand_raise_enabled}
             extraMenuItems={
               <>
+                {/* Subject Materials: first in the list and visually distinct — it is what students open most. */}
+                <DropdownMenuItem onClick={toggleMatPanel} style={{margin:"4px 4px 6px",borderRadius:10,padding:"10px 10px",background:matPanelOpen?"rgba(52,211,153,.28)":"rgba(52,211,153,.14)",border:"1px solid rgba(52,211,153,.45)",fontWeight:700,color:"#6ee7b7"}}>
+                  <BookOpen style={{width:18,height:18,marginRight:10,color:"#34d399"}}/> {matPanelOpen?"Close Materials":"Subject Materials"}
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={()=>setWbOpen(v=>!v)} style={{margin:"0 4px",borderRadius:8}}>
                   <PenTool style={{width:16,height:16,marginRight:8}}/> {wbOpen?"Close Whiteboard":"Whiteboard"}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={toggleMatPanel} style={{margin:"0 4px",borderRadius:8}}>
-                  <BookOpen style={{width:16,height:16,marginRight:8}}/> {matPanelOpen?"Close Materials":"Subject Materials"}
                 </DropdownMenuItem>
                 {isPrivileged&&(
                   <DropdownMenuItem onClick={()=>handleGroupRecite(roomRef.current)} style={{margin:"0 4px",borderRadius:8}}>
