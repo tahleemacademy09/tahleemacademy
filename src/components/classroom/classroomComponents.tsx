@@ -1188,8 +1188,10 @@ export const getMirrorFixEnabled = () => {
   try {
     const v = localStorage.getItem(MIRROR_FIX_KEY);
     if (v !== null) return v === "1";
-    const c = (window as any).Capacitor; // Android app: front camera frames arrive mirrored, so un-mirror by default
-    return !!c?.isNativePlatform?.() && c.getPlatform?.() === "android";
+    // Android (app OR browser/PWA): front camera frames arrive mirrored, so un-mirror by default
+    const c = (window as any).Capacitor;
+    if (!!c?.isNativePlatform?.() && c.getPlatform?.() === "android") return true;
+    return /Android/i.test(navigator.userAgent || "");
   } catch { return false; }
 };
 export const setMirrorFixEnabled = (on: boolean) => {
