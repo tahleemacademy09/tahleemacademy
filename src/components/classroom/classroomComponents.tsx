@@ -3804,12 +3804,32 @@ export const SURAHS_LIST = [
 ];
 
 export const QURAN_PAGE_KEY="inclass_quran_page_v1";
+/* Scales its child down (never up) so the whole page is always visible, no scrolling. */
+const FitToBox=({boxH,children}:{boxH:number;children:React.ReactNode})=>{
+  const innerRef=useRef<HTMLDivElement>(null);
+  const[scale,setScale]=useState(1);
+  useEffect(()=>{
+    const el=innerRef.current;
+    if(!el)return;
+    const calc=()=>{const h=el.offsetHeight;if(h>0&&boxH>0)setScale(Math.min(1,boxH/h));};
+    calc();
+    const ro=new ResizeObserver(calc);
+    ro.observe(el);
+    return()=>ro.disconnect();
+  },[boxH]);
+  return(
+    <div style={{height:boxH>0?boxH:undefined,overflow:"hidden",display:"flex",justifyContent:"center"}}>
+      <div ref={innerRef} style={{width:"100%",transform:`scale(${scale})`,transformOrigin:"top center"}}>{children}</div>
+    </div>
+  );
+};
+
 export const InClassQuranReader=({onClose}:any)=>{
   const[mode,setMode]=useState<QuranMode>("quran");
   const[page,setPage]=useState(()=>{try{const s=localStorage.getItem(QURAN_PAGE_KEY);return s?Math.max(1,Math.min(604,parseInt(s)||1)):1;}catch{return 1;}});
   const[pageInput,setPageInput]=useState("");
   const[pageInputOpen,setPageInputOpen]=useState(false);
-  const[fullscreen,setFullscreen]=useState(false);
+  const fullscreen=false as boolean; // the in-panel fullscreen toggle was removed
   /* mushaf text (page-based) */
   const[mushafAyahs,setMushafAyahs]=useState<any[]>([]);
   const[mushafLoading,setMushafLoading]=useState(false);
@@ -3836,6 +3856,10 @@ export const InClassQuranReader=({onClose}:any)=>{
   },[]);
   const onReaderTap=(e:any)=>{
     if(e?.target?.closest?.("button,a,input,textarea,select"))return;
+    if(listenMode){ // a tap on a verse plays it — it must not also turn the page
+      const t=(e.nativeEvent?.composedPath?.()[0]||e.target) as Element;
+      if(t?.closest?.(".ayahPolygon, path[ayah]"))return;
+    }
     const r=e.currentTarget.getBoundingClientRect();
     const x=(e.clientX-r.left)/Math.max(1,r.width);
     if(x<0.4)changePage(1);
@@ -3869,6 +3893,12 @@ export const InClassQuranReader=({onClose}:any)=>{
   const audioRef=useRef<HTMLAudioElement|null>(null);
   const[playingVerse,setPlayingVerse]=useState<string|null>(null);
   const[reciter,setReciter]=useState("Alafasy_128kbps");
+  /* Reading mode = text only, never plays audio. Listening mode = tapping a verse plays it with the chosen reciter. */
+  const[listenMode,setListenMode]=useState(()=>{try{return localStorage.getItem("quran_listen_mode")==="1";}catch{return false;}});
+  useEffect(()=>{
+    try{localStorage.setItem("quran_listen_mode",listenMode?"1":"0");}catch{}
+    if(!listenMode){audioRef.current?.pause();setPlayingVerse(null);}
+  },[listenMode]);
   /* printed Madinah Mushaf page (SVG). If it cannot load we fall back to the text reader below. */
   const[printedFail,setPrintedFail]=useState(false);
   useEffect(()=>{setPrintedFail(false);},[page]);
@@ -4052,6 +4082,7 @@ export const InClassQuranReader=({onClose}:any)=>{
 
   /* audio — uses selected reciter */
   const playVerse=(surah:number,verse:number)=>{
+    if(!listenMode)return; // reading mode: text only
     const key=`${surah}:${verse}`;
     if(playingVerse===key){audioRef.current?.pause();setPlayingVerse(null);return;}
     audioRef.current?.pause();
@@ -4153,11 +4184,19 @@ export const InClassQuranReader=({onClose}:any)=>{
         style={{flexShrink:0,padding:"4px 8px",borderRadius:6,border:"1px solid #b7791f",background:"#fffbf0",color:"#b7791f",cursor:"pointer",fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>
         ☰ Surah
       </button>
-      {/* Reciter — opens a list, like Surah */}
-      <button onClick={()=>setShowReciters(true)}
+      {/* Reading / Listening mode */}
+      <div style={{flexShrink:0,display:"flex",gap:2,background:"#f5f0e4",borderRadius:6,padding:2,border:"1px solid #d4c9a0"}}>
+        {([[false,"📖 Read"],[true,"🎧 Listen"]] as [boolean,string][]).map(([v,lb])=>(
+          <button key={lb} onClick={()=>setListenMode(v)}
+            style={{padding:"3px 8px",borderRadius:4,border:"none",cursor:"pointer",fontSize:10,fontWeight:800,whiteSpace:"nowrap",
+              background:listenMode===v?"#1a3d24":"transparent",color:listenMode===v?"#fff":"#1a3d24"}}>{lb}</button>
+        ))}
+      </div>
+      {/* Reciter — only relevant in listening mode */}
+      {listenMode&&<button onClick={()=>setShowReciters(true)}
         style={{flexShrink:0,padding:"4px 8px",borderRadius:6,border:"1px solid #b7791f",background:"#fffbf0",color:"#b7791f",cursor:"pointer",fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>
         🎙 {RECITERS.find(r=>r.id===reciter)?.ar||"Reciter"} ▾
-      </button>
+      </button>}
     </div>
   );
 
@@ -4257,7 +4296,7 @@ export const InClassQuranReader=({onClose}:any)=>{
 
   return(
     <div style={outerStyle} onClick={fullscreen?undefined:onClose}>
-      <div ref={panelRef} onClick={e=>e.stopPropagation()} style={{...panelStyle,paddingTop:topPad,boxSizing:"border-box"}}>
+      <div ref={panelRef} onClick={e=>e.stopPropagation()} style={{...panelStyle,paddingTop:topPad,paddingBottom:chromeHidden?0:BAR_H,boxSizing:"border-box"}}>
 
         {/* ── Single-line compact header ── */}
         <div style={{background:"linear-gradient(135deg,#1a3d24,#276749)",padding:"7px 10px",flexShrink:0,display:chromeHidden?"none":"flex",alignItems:"center",gap:6}}>
@@ -4274,12 +4313,6 @@ export const InClassQuranReader=({onClose}:any)=>{
               </button>
             ))}
           </div>
-          {/* Fullscreen toggle */}
-          <button onClick={()=>setFullscreen(f=>!f)}
-            style={{background:"rgba(255,255,255,.15)",border:"none",color:"#fff",borderRadius:6,width:28,height:28,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}
-            title={fullscreen?"Exit fullscreen":"Fullscreen"}>
-            {fullscreen?"⊡":"⛶"}
-          </button>
           {/* Close */}
           <button onClick={onClose}
             style={{background:"rgba(255,255,255,.15)",border:"none",color:"#fff",borderRadius:6,width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
@@ -4304,18 +4337,20 @@ export const InClassQuranReader=({onClose}:any)=>{
             >
               {/* ── Printed Madinah Mushaf page — tap an ayah to hear it, playing ayah is highlighted ── */}
               {!printedFail&&(
-                <div style={{margin:"0 auto"}}>
+                <FitToBox boxH={mushafBoxH}>
                   <MushafPageView
                     page={page}
                     seamless
                     pureWhite
-                    availableHeight={Math.max(300,mushafBoxH-(chromeHidden?8:64))}
+                    availableHeight={Math.max(300,mushafBoxH-8)}
                     maxStretch={1.4}
                     onBackground={setPrintedBg}
-                    highlight={playingVerse?(()=>{const[ps,pv]=playingVerse.split(":").map(Number);return{surah:ps,ayah:pv};})():null}
+                    highlight={listenMode&&playingVerse?(()=>{const[ps,pv]=playingVerse.split(":").map(Number);return{surah:ps,ayah:pv};})():null}
+                    dimOthers={listenMode}
+                    onAyahClick={listenMode?((su:number,ay:number)=>playVerse(su,ay)):undefined}
                     onUnavailable={()=>setPrintedFail(true)}
                   />
-                </div>
+                </FitToBox>
               )}
               {printedFail&&mushafLoading&&(
                 <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:40,gap:10}}>
@@ -4578,10 +4613,10 @@ export const InClassQuranReader=({onClose}:any)=>{
                     </div>
                     {/* English translation */}
                     <p style={{margin:"0 0 6px",fontSize:12,color:"#2d3748",lineHeight:1.75}}>{a.text}</p>
-                    <button onClick={()=>playVerse(sn,a.numberInSurah)}
+                    {listenMode&&<button onClick={()=>playVerse(sn,a.numberInSurah)}
                       style={{padding:"2px 8px",borderRadius:5,border:"1px solid #d4e8d4",background:playingVerse===vKey?"#fee2e2":"#f0fff4",color:playingVerse===vKey?"#c0392b":"#1a3d24",fontSize:9,fontWeight:700,cursor:"pointer"}}>
                       {playingVerse===vKey?"⏹ Stop":"▶ Listen"}
-                    </button>
+                    </button>}
                   </div>
                 );
               })}
@@ -4635,10 +4670,10 @@ export const InClassQuranReader=({onClose}:any)=>{
                             </span>
                           </div>
                           {/* Listen button only */}
-                          <button onClick={()=>playVerse(surahNum,a.numberInSurah)}
+                          {listenMode&&<button onClick={()=>playVerse(surahNum,a.numberInSurah)}
                             style={{padding:"3px 10px",borderRadius:5,border:"1px solid #d4e8d4",background:playingVerse===key?"#fee2e2":"#f0fff4",color:playingVerse===key?"#c0392b":"#1a3d24",fontSize:10,fontWeight:700,cursor:"pointer",marginTop:4}}>
                             {playingVerse===key?"⏹ Stop":"▶ Listen"}
-                          </button>
+                          </button>}
                         </div>
                         {/* Tafseer — always visible */}
                         <div style={{padding:"8px 12px 12px",background:"#fffbf0",borderTop:"1px solid #f5edd8"}}>
