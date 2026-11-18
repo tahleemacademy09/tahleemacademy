@@ -5335,12 +5335,20 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
     {viewersLayer}
     {/* PiP floats above list when user is browsing while materials are minimized */}
     {forceList&&renderPip()}
-    <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(15,23,42,.45)"}} onClick={handleClose}>
+    <div style={{
+      /* Pinned to the viewport BETWEEN the class header and the control bar (same measured
+         --cls-top / --cls-bottom the Assignments overlay uses), so the fixed header/footer
+         never sit on top of the panel's content and nothing scrolls underneath them. */
+      position:"fixed",left:0,right:0,
+      top:"var(--cls-top, calc(56px + env(safe-area-inset-top, 0px)))",
+      bottom:"var(--cls-bottom, calc(76px + env(safe-area-inset-bottom, 0px)))",
+      zIndex:55,background:"rgba(15,23,42,.45)",overflow:"hidden",
+    }} onClick={handleClose}>
       <div onClick={e=>e.stopPropagation()} style={{
         position:"absolute",top:0,right:0,
-        /* Important: bottom:0 so footer stays below this panel */
         bottom:0,
-        width:"min(380px,100%)",
+        /* Full width on phones (same as admin sees); capped on tablets/desktop */
+        width:"min(420px,100%)",
         background:"#ffffff",
         borderLeft:"1px solid #e5e7eb",
         display:"flex",flexDirection:"column",
@@ -5362,10 +5370,10 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
           </button>
         </div>
 
-        <div style={{flex:1,overflowY:"auto",padding:"12px 14px 24px",background:"#ffffff"}}>
+        <div style={{flex:1,minHeight:0,overflowY:"auto",WebkitOverflowScrolling:"touch" as any,overscrollBehavior:"contain" as any,padding:"12px 14px 24px",background:"#ffffff"}}>
 
           {/* ── QUICK TOOLS (collapsible) ── */}
-          {matSectionHeader("tools","Quick tools",undefined,"🧰")}
+          {matSectionHeader("tools","أدوات سريعة",undefined,"🧰")}
           {secOpen.tools&&(
             <div style={{margin:"4px 0 14px"}}>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
@@ -5449,7 +5457,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
 
           {/* ── LESSONS (collapsible) ── */}
           {classLessons.length>0&&<>
-            {matSectionHeader("lessons","Lessons",classLessons.length,"📖")}
+            {matSectionHeader("lessons","الدروس",classLessons.length,"📖")}
             {secOpen.lessons&&(
               <div style={{margin:"4px 0 14px",display:"flex",flexDirection:"column",gap:6}}>
                 {classLessons.map((l:any)=>{
@@ -5484,7 +5492,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
             </div>
           )}
           {!busy&&visibleMats.filter(m=>m.visibility!=="staff").length>0&&<>
-            {matSectionHeader("uploads","Uploaded materials",visibleMats.filter(m=>m.visibility!=="staff").length,"📎")}
+            {matSectionHeader("uploads","المواد المرفوعة",visibleMats.filter(m=>m.visibility!=="staff").length,"📎")}
             {secOpen.uploads&&<div style={{margin:"4px 0 14px"}}>{visibleMats.filter(m=>m.visibility!=="staff").map(renderMatRow)}</div>}
           </>}
           {!busy&&isPrivileged&&visibleMats.filter(m=>m.visibility==="staff").length>0&&<>
