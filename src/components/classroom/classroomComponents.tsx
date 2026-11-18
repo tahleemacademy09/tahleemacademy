@@ -6319,7 +6319,7 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
   const[hasVideo,setHasVideo]=useState(false);
   const[backCam,setBackCam]=useState(false);
   const[isSpeaking,setIsSpeaking]=useState(false);
-  const[micEnabled,setMicEnabled]=useState(true);
+  const[micEnabled,setMicEnabled]=useState(false); // off until a live mic track actually exists
   const room=useRoomContext();
 
   // ── Admin tile controls: tap mic to mute/unmute, long-press to remove/block ──
@@ -6483,7 +6483,9 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
     }
     let micPub=participant.getTrackPublication?.(Track.Source.Microphone);
     if(!micPub)participant.trackPublications?.forEach?.((p:any)=>{if(p.source===Track.Source.Microphone)micPub=micPub||p;});
-    setMicEnabled(!(micPub?.isMuted??false));
+    // FIX: no mic track published yet (fresh join) used to count as "on", so no red slash showed until
+    // the person had turned the mic on and off once. Only a published, un-muted track is "on".
+    setMicEnabled(!!micPub&&!micPub.isMuted);
   },[participant,isLocal]);
 
   useEffect(()=>{
@@ -6651,7 +6653,7 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
             <button data-tile-control="true" onClick={toggleTileMic} onPointerDown={(e:any)=>e.stopPropagation()} title={micEnabled?"Mute":"Unmute"}
               style={{background:"none",border:"none",padding:0,margin:0,pointerEvents:"auto",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}>
               {micEnabled
-                ? <Mic style={{width:12,height:12,color:"rgba(255,255,255,.9)"}}/>
+                ? <Mic style={{width:12,height:12,color:"#34d399"}}/>
                 : <MicOff style={{width:12,height:12,color:"#ef4444"}}/>
               }
             </button>
@@ -6660,7 +6662,7 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
             // so this just confirms it's this participant's mic that's live.
             <span style={{width:7,height:7,borderRadius:"50%",background:"#25D366",animation:"pip-pulse 1s ease-in-out infinite",flexShrink:0}}/>
           ) : micEnabled
-            ? <Mic style={{width:12,height:12,color:"rgba(255,255,255,.75)",flexShrink:0}}/>
+            ? <Mic style={{width:12,height:12,color:"#34d399",flexShrink:0}}/>
             : <MicOff style={{width:12,height:12,color:"#ef4444",flexShrink:0}}/>
           }
           <span style={{fontSize:12,fontWeight:500,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"system-ui,sans-serif"}}>
@@ -6676,10 +6678,10 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
           {canModerate ? (
             <button data-tile-control="true" onClick={toggleTileMic} onPointerDown={(e:any)=>e.stopPropagation()} title={micEnabled?"Mute":"Unmute"}
               style={{background:"none",border:"none",padding:0,margin:0,cursor:"pointer",display:"flex",alignItems:"center"}}>
-              {micEnabled?<Mic style={{width:12,height:12,color:"rgba(255,255,255,.9)"}}/>:<MicOff style={{width:12,height:12,color:"#ef4444"}}/>}
+              {micEnabled?<Mic style={{width:12,height:12,color:"#34d399"}}/>:<MicOff style={{width:12,height:12,color:"#ef4444"}}/>}
             </button>
           ) : micEnabled
-            ? <Mic style={{width:12,height:12,color:"rgba(255,255,255,.75)"}}/>
+            ? <Mic style={{width:12,height:12,color:"#34d399"}}/>
             : <MicOff style={{width:12,height:12,color:"#ef4444"}}/>}
         </div>
       )}
@@ -6727,7 +6729,7 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
           {isSpeaking&&micEnabled ? (
             <span style={{width:6,height:6,borderRadius:"50%",background:"#25D366",animation:"pip-pulse 1s ease-in-out infinite"}}/>
           ) : micEnabled
-            ? <Mic style={{width:10,height:10,color:"rgba(255,255,255,.8)"}}/>
+            ? <Mic style={{width:10,height:10,color:"#34d399"}}/>
             : <MicOff style={{width:10,height:10,color:"#ef4444"}}/>
           }
         </div>

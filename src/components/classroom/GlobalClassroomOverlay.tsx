@@ -144,6 +144,13 @@ export default function GlobalClassroomOverlay() {
   // No leave / end control lives here on purpose. It folds back by itself after a few seconds.
   const [expanded, setExpanded] = useState(false);
   const [expandTick, setExpandTick] = useState(0); // bump to restart the auto-collapse timer
+  // FIX ("opening the round pip turns the mic on"): the pill animates from 60px to 188px wide.
+  // For the first ~200ms its 3 buttons are squeezed into the old 60px, so the MIC button briefly sits
+  // right under the finger that just tapped the bubble — and the tap's click lands on it. Remember when
+  // the pill opened and ignore button clicks until it has finished opening. Nothing can now be toggled
+  // by the tap that opens the pill; mic and camera only change when the person presses them on purpose.
+  const expandedAtRef = useRef(0);
+  const pillSettled = () => Date.now() - expandedAtRef.current > 450;
   useEffect(() => { if (!minimized) setExpanded(false); }, [minimized]);
   useEffect(() => {
     if (!expanded) return;
@@ -181,7 +188,7 @@ export default function GlobalClassroomOverlay() {
   const handleBubblePointerUp = useCallback(() => {
     const wasTap = !dragRef.current.moved;
     dragRef.current.dragging = false;
-    if (wasTap) setExpanded(e => !e);
+    if (wasTap) setExpanded(e => { if (!e) expandedAtRef.current = Date.now(); return !e; });
   }, []);
 
   // Keep the bubble on-screen after a rotation or keyboard-triggered resize.
@@ -563,7 +570,7 @@ export default function GlobalClassroomOverlay() {
                   aria-label={micEnabled ? "Mute microphone" : "Unmute microphone"}
                   title={micEnabled ? "Mute" : "Unmute"}
                   onPointerDown={stop} onPointerUp={stop}
-                  onClick={() => { toggleMicFnRef.current?.(); setExpandTick(t => t + 1); }}
+                  onClick={() => { if (!pillSettled()) return; toggleMicFnRef.current?.(); setExpandTick(t => t + 1); }}
                   style={roundBtn(micEnabled)}
                 >
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={ic(micEnabled)} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -591,7 +598,7 @@ export default function GlobalClassroomOverlay() {
                   aria-label={camEnabled ? "Turn camera off" : "Turn camera on"}
                   title={camEnabled ? "Camera off" : "Camera on"}
                   onPointerDown={stop} onPointerUp={stop}
-                  onClick={() => { toggleCamFnRef.current?.(); setExpandTick(t => t + 1); }}
+                  onClick={() => { if (!pillSettled()) return; toggleCamFnRef.current?.(); setExpandTick(t => t + 1); }}
                   style={roundBtn(camEnabled)}
                 >
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={ic(camEnabled)} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -614,7 +621,7 @@ export default function GlobalClassroomOverlay() {
                   aria-label="Return to class"
                   title="Return to class"
                   onPointerDown={stop} onPointerUp={stop}
-                  onClick={() => { setExpanded(false); handleReturn(); }}
+                  onClick={() => { if (!pillSettled()) return; setExpanded(false); handleReturn(); }}
                   style={{ width: 44, height: 44, borderRadius: "50%", cursor: "pointer", padding: 0, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#c9a84c", border: "none" }}
                 >
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0c1f12" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">

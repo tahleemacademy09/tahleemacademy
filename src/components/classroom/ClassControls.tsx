@@ -854,6 +854,13 @@ const ClassControls = ({
     position: "relative", transition: "background .15s ease, transform .1s ease", ...extra,
   });
 
+  // Green = on, red = off (same colours as the minimized pill)
+  const GREEN = "#34d399", RED = "#ef4444";
+  const onOffBtn = (on: boolean): React.CSSProperties => ({
+    background: on ? "rgba(52,211,153,.16)" : "rgba(239,68,68,.18)",
+    border: `1.5px solid ${on ? GREEN : RED}`,
+  });
+
   return (
     <>
       {/* ── Floating emoji ── */}
@@ -921,9 +928,9 @@ const ClassControls = ({
         <div style={{ position: "relative", flex: "1 1 0", maxWidth: 64, minWidth: 40 }}>
           <button
             {...longPressProps(micLP, () => { refreshDevices(); setMicMenuOpen(true); }, toggleMic)}
-            style={{ ...sqBtn(), ...noSelect }}
+            style={{ ...sqBtn(onOffBtn(micEnabled)), ...noSelect }}
           >
-            {micEnabled ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" style={{ color: "#f28b82" }} />}
+            {micEnabled ? <Mic className="h-5 w-5" style={{ color: GREEN }} /> : <MicOff className="h-5 w-5" style={{ color: "#fca5a5" }} />}
           </button>
           <MenuBackdrop open={micMenuOpen} onClose={() => setMicMenuOpen(false)} />
           <DropdownMenu open={micMenuOpen} onOpenChange={(open) => { setMicMenuOpen(open); if (open) refreshDevices(); }}>
@@ -980,11 +987,11 @@ const ClassControls = ({
             {...(camLocked
               ? { onClick: toggleCam }
               : longPressProps(camLP, () => { refreshDevices(); setCamMenuOpen(true); }, toggleCam))}
-            style={{ ...sqBtn(camLocked ? { background: "rgba(255,255,255,.06)", color: "rgba(255,255,255,.35)", cursor: "not-allowed" } : {}), ...noSelect }}
+            style={{ ...sqBtn(camLocked ? { background: "rgba(255,255,255,.06)", color: "rgba(255,255,255,.35)", cursor: "not-allowed" } : onOffBtn(camEnabled)), ...noSelect }}
             aria-disabled={camLocked || undefined}
             title={camLocked ? (camLockedReason === "no_video" ? t("Video is turned off by the teacher", "الفيديو متوقف من قبل المعلم") : t("Camera disabled by teacher", "الكاميرا معطّلة من قبل المعلم")) : undefined}
           >
-            {camEnabled && !camLocked ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" style={camLocked ? undefined : { color: "#f28b82" }} />}
+            {camEnabled && !camLocked ? <Video className="h-5 w-5" style={{ color: GREEN }} /> : <VideoOff className="h-5 w-5" style={camLocked ? undefined : { color: "#fca5a5" }} />}
           </button>
           {!camLocked && (<>
             <MenuBackdrop open={camMenuOpen} onClose={() => setCamMenuOpen(false)} />
