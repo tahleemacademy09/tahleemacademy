@@ -5064,6 +5064,38 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
     else onClose();
   };
 
+  // ── Swipe right on the panel → minimize/close it ─────────────────────────
+  // Follows the finger, closes past ~90px (or a quick flick), otherwise springs back.
+  // Ignores swipes that start on inputs, or that are mostly vertical (normal list scrolling).
+  const[swipeX,setSwipeX]=useState(0);
+  const[swiping,setSwiping]=useState(false);
+  const swipeRef=useRef<{x:number;y:number;t:number;locked:""|"h"|"v"}|null>(null);
+  const onSwipeStart=(e:React.TouchEvent)=>{
+    if(e.touches.length!==1)return;
+    if((e.target as HTMLElement)?.closest?.("input,textarea,select,[contenteditable=true],[data-no-swipe]"))return;
+    const t=e.touches[0];
+    swipeRef.current={x:t.clientX,y:t.clientY,t:Date.now(),locked:""};
+  };
+  const onSwipeMove=(e:React.TouchEvent)=>{
+    const st=swipeRef.current;if(!st)return;
+    const t=e.touches[0];
+    const dx=t.clientX-st.x,dy=t.clientY-st.y;
+    if(!st.locked){
+      if(Math.abs(dx)<8&&Math.abs(dy)<8)return;
+      st.locked=Math.abs(dx)>Math.abs(dy)*1.2&&dx>0?"h":"v";
+      if(st.locked==="h")setSwiping(true);
+    }
+    if(st.locked==="h")setSwipeX(Math.max(0,dx));
+  };
+  const onSwipeEnd=()=>{
+    const st=swipeRef.current;swipeRef.current=null;
+    if(!st||st.locked!=="h"){setSwiping(false);setSwipeX(0);return;}
+    const dx=swipeX,fast=dx>40&&(Date.now()-st.t)<250;
+    setSwiping(false);
+    if(dx>90||fast){setSwipeX(0);handleClose();}
+    else setSwipeX(0);
+  };
+
   // ── Open / restore / close a material (multi-material aware) ──────────────
   const openMaterial=(m:any)=>{
     setOpenMats(prev=>prev.find(e=>e.id===m.id)?prev:[...prev,m]);
@@ -5352,10 +5384,13 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
         background:"#ffffff",
         borderLeft:"1px solid #e5e7eb",
         display:"flex",flexDirection:"column",
-        animation:"slide-right .2s cubic-bezier(.34,1.2,.64,1) both",
+        animation:swipeX===0&&!swiping?"slide-right .2s cubic-bezier(.34,1.2,.64,1) both":undefined,
+        transform:swipeX>0?`translateX(${swipeX}px)`:undefined,
+        transition:swiping?"none":"transform .2s ease",
+        touchAction:"pan-y",
         boxShadow:"-8px 0 32px rgba(15,23,42,.25)",
         fontFamily:"'Google Sans',system-ui,sans-serif",
-      }}>
+      }} onTouchStart={onSwipeStart} onTouchMove={onSwipeMove} onTouchEnd={onSwipeEnd} onTouchCancel={onSwipeEnd}>
         {/* Header */}
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",borderBottom:"1px solid #e5e7eb",flexShrink:0,background:"#ffffff"}}>
           <div style={{width:34,height:34,borderRadius:10,background:"#e6f4f1",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
