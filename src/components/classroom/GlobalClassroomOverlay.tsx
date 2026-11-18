@@ -82,6 +82,7 @@ export default function GlobalClassroomOverlay() {
     micEnabled, camEnabled,
     hasConnected,
     restoreMicFnRef, getLocalCameraTrackRef, leaveSessionFnRef,
+    toggleMicFnRef, toggleCamFnRef,
   } = useLiveClass();
 
   const title = activeSubject?.title ?? "Live Class";
@@ -137,6 +138,18 @@ export default function GlobalClassroomOverlay() {
   }>({ dragging: false, startClientX: 0, startClientY: 0, startX: 0, startY: 0, moved: false });
   const BUBBLE_SIZE = 60;
   const BUBBLE_MARGIN = 14;
+  const PILL_W = 188; // width of the bubble once it has expanded into the control pill
+
+  // Tap the bubble → it widens into a small pill with mic, camera and "back to class" buttons.
+  // No leave / end control lives here on purpose. It folds back by itself after a few seconds.
+  const [expanded, setExpanded] = useState(false);
+  const [expandTick, setExpandTick] = useState(0); // bump to restart the auto-collapse timer
+  useEffect(() => { if (!minimized) setExpanded(false); }, [minimized]);
+  useEffect(() => {
+    if (!expanded) return;
+    const t = setTimeout(() => setExpanded(false), 5000);
+    return () => clearTimeout(t);
+  }, [expanded, expandTick]);
 
   const clampBubblePos = useCallback((x: number, y: number) => {
     const maxX = window.innerWidth  - BUBBLE_SIZE - BUBBLE_MARGIN;
@@ -168,8 +181,7 @@ export default function GlobalClassroomOverlay() {
   const handleBubblePointerUp = useCallback(() => {
     const wasTap = !dragRef.current.moved;
     dragRef.current.dragging = false;
-    if (wasTap) handleReturn();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (wasTap) setExpanded(e => !e);
   }, []);
 
   // Keep the bubble on-screen after a rotation or keyboard-triggered resize.
@@ -475,7 +487,18 @@ export default function GlobalClassroomOverlay() {
          touch + pen with one code path, and pointer capture means the drag
          keeps tracking even if the finger/cursor leaves the small bubble. ── */}
       {minimized && (() => {
-        const pos = bubblePos ?? { x: BUBBLE_MARGIN, y: BUBBLE_MARGIN };
+        const w = expanded ? PILL_W : BUBBLE_SIZE;
+        const base = bubblePos ?? { x: BUBBLE_MARGIN, y: BUBBLE_MARGIN };
+        const maxX = Math.max(BUBBLE_MARGIN, window.innerWidth - w - BUBBLE_MARGIN);
+        const pos = { x: Math.min(base.x, maxX), y: base.y }; // keep the wider pill on-screen
+        const stop = (e: ReactPointerEvent) => e.stopPropagation(); // buttons must not start a drag / toggle
+        const roundBtn = (on: boolean) => ({
+          width: 44, height: 44, borderRadius: "50%", cursor: "pointer", padding: 0, flexShrink: 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: on ? "rgba(52,211,153,.16)" : "rgba(239,68,68,.18)",
+          border: `1.5px solid ${on ? "#34d399" : "#ef4444"}`,
+        } as const);
+        const ic = (on: boolean) => (on ? "#34d399" : "#fca5a5");
         return (
           <div
             onPointerDown={handleBubblePointerDown}
@@ -487,59 +510,122 @@ export default function GlobalClassroomOverlay() {
               right:         `calc(${pos.x}px + env(safe-area-inset-right, 0px))`,
               bottom:        `calc(${pos.y}px + env(safe-area-inset-bottom, 0px))`,
               zIndex:        9000,
-              width:         BUBBLE_SIZE,
+              width:         w,
               height:        BUBBLE_SIZE,
-              borderRadius:  "50%",
+              borderRadius:  expanded ? 30 : "50%",
               background:    "linear-gradient(135deg, #0c1f12 0%, #14290f 100%)",
               border:        "2px solid #c9a84c",
               display:       "flex",
               alignItems:    "center",
-              justifyContent: "center",
+              justifyContent: expanded ? "space-evenly" : "center",
+              padding:       expanded ? "0 6px" : 0,
+              boxSizing:     "border-box",
+              transition:    "width .18s ease, border-radius .18s ease",
               cursor:        "grab",
               boxShadow:     "0 6px 20px rgba(0,0,0,0.5), 0 0 0 1px rgba(201,168,76,0.15)",
               userSelect:    "none",
               WebkitUserSelect: "none",
               touchAction:   "none", // let us handle all drag movement ourselves
             }}
-            title={`${title} — tap to return, drag to move`}
+            title={expanded ? title : `${title} — tap for controls, drag to move`}
           >
-            {/* Pulsing live dot, top-right of the bubble */}
-            <span style={{ position: "absolute", top: 4, right: 4, display: "flex", alignItems: "center", justifyContent: "center", width: 10, height: 10 }}>
-              <span style={{
-                position:     "absolute",
-                width:        "100%",
-                height:       "100%",
-                borderRadius: "50%",
-                background:   "#ef4444",
-                opacity:      0.6,
-                animation:    "tahleem-ping 1.4s cubic-bezier(0,0,0.2,1) infinite",
-              }} />
-              <span style={{
-                position:     "relative",
-                width:        8,
-                height:       8,
-                borderRadius: "50%",
-                background:   "#ef4444",
-                display:      "block",
-              }} />
-            </span>
+            {!expanded && (
+              <>
+                {/* Pulsing live dot, top-right of the bubble */}
+                <span style={{ position: "absolute", top: 4, right: 4, display: "flex", alignItems: "center", justifyContent: "center", width: 10, height: 10 }}>
+                  <span style={{ position: "absolute", width: "100%", height: "100%", borderRadius: "50%", background: "#ef4444", opacity: 0.6, animation: "tahleem-ping 1.4s cubic-bezier(0,0,0.2,1) infinite" }} />
+                  <span style={{ position: "relative", width: 8, height: 8, borderRadius: "50%", background: "#ef4444", display: "block" }} />
+                </span>
 
-            {/* Mic-off indicator, so a glance tells you if you're muted while minimized */}
-            {!micEnabled && (
-              <span style={{ position: "absolute", bottom: 3, right: 3, width: 16, height: 16, borderRadius: "50%", background: "#ef4444", display: "flex", alignItems: "center", justifyContent: "center", border: "1.5px solid #0c1f12" }}>
-                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="1" y1="1" x2="23" y2="23" />
-                  <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
-                  <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
+                {/* Mic-off indicator, so a glance tells you if you're muted while minimized */}
+                {!micEnabled && (
+                  <span style={{ position: "absolute", bottom: 3, right: 3, width: 16, height: 16, borderRadius: "50%", background: "#ef4444", display: "flex", alignItems: "center", justifyContent: "center", border: "1.5px solid #0c1f12" }}>
+                    <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="1" y1="1" x2="23" y2="23" />
+                      <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
+                      <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
+                    </svg>
+                  </span>
+                )}
+
+                {/* Center glyph */}
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#c9a84c" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M23 7l-7 5 7 5V7z" />
+                  <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
                 </svg>
-              </span>
+              </>
             )}
 
-            {/* Center glyph */}
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#c9a84c" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M23 7l-7 5 7 5V7z" />
-              <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-            </svg>
+            {expanded && (
+              <>
+                {/* Microphone */}
+                <button
+                  aria-label={micEnabled ? "Mute microphone" : "Unmute microphone"}
+                  title={micEnabled ? "Mute" : "Unmute"}
+                  onPointerDown={stop} onPointerUp={stop}
+                  onClick={() => { toggleMicFnRef.current?.(); setExpandTick(t => t + 1); }}
+                  style={roundBtn(micEnabled)}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={ic(micEnabled)} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    {micEnabled ? (
+                      <>
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                        <line x1="12" y1="19" x2="12" y2="23" />
+                        <line x1="8" y1="23" x2="16" y2="23" />
+                      </>
+                    ) : (
+                      <>
+                        <line x1="1" y1="1" x2="23" y2="23" />
+                        <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
+                        <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
+                        <line x1="12" y1="19" x2="12" y2="23" />
+                        <line x1="8" y1="23" x2="16" y2="23" />
+                      </>
+                    )}
+                  </svg>
+                </button>
+
+                {/* Camera */}
+                <button
+                  aria-label={camEnabled ? "Turn camera off" : "Turn camera on"}
+                  title={camEnabled ? "Camera off" : "Camera on"}
+                  onPointerDown={stop} onPointerUp={stop}
+                  onClick={() => { toggleCamFnRef.current?.(); setExpandTick(t => t + 1); }}
+                  style={roundBtn(camEnabled)}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={ic(camEnabled)} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    {camEnabled ? (
+                      <>
+                        <path d="M23 7l-7 5 7 5V7z" />
+                        <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+                      </>
+                    ) : (
+                      <>
+                        <path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10" />
+                        <line x1="1" y1="1" x2="23" y2="23" />
+                      </>
+                    )}
+                  </svg>
+                </button>
+
+                {/* Expand — back to the class */}
+                <button
+                  aria-label="Return to class"
+                  title="Return to class"
+                  onPointerDown={stop} onPointerUp={stop}
+                  onClick={() => { setExpanded(false); handleReturn(); }}
+                  style={{ width: 44, height: 44, borderRadius: "50%", cursor: "pointer", padding: 0, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#c9a84c", border: "none" }}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0c1f12" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="15 3 21 3 21 9" />
+                    <polyline points="9 21 3 21 3 15" />
+                    <line x1="21" y1="3" x2="14" y2="10" />
+                    <line x1="3" y1="21" x2="10" y2="14" />
+                  </svg>
+                </button>
+              </>
+            )}
           </div>
         );
       })()}
