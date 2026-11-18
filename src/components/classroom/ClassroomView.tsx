@@ -48,7 +48,7 @@ import {
   PenTool, MessageCircle, MoreVertical, BookOpen,
   Circle, Loader2, X, Smile, Play, Pause,
   Volume2, ChevronDown, ChevronLeft, ChevronRight, Users, Eye,
-  LayoutGrid, AlignJustify, Columns, Rows, Maximize2,
+  LayoutGrid, AlignJustify, Columns, Rows, Maximize2, Minimize2,
   SwitchCamera, Settings, Check, Wifi,
   Monitor, MonitorOff, Pin, Timer, UserCheck, Crosshair,
   Zap, ClipboardList, Bell, Radio, Layers,
@@ -319,6 +319,22 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       else if (document.fullscreenElement) document.exitFullscreen?.().catch(()=>{});
     };
   },[phase]);
+
+  // Manual full-screen toggle (⋮ menu) — browser only. Hidden in the native app (no page chrome to
+  // hide) and in browsers without the Fullscreen API (e.g. iPhone Safari).
+  const canFullscreen = typeof document!=="undefined" && !Capacitor.isNativePlatform() && !!document.documentElement.requestFullscreen;
+  const[isFullscreen,setIsFullscreen]=useState(typeof document!=="undefined"&&!!document.fullscreenElement);
+  useEffect(()=>{
+    if(!canFullscreen)return;
+    const onFs=()=>setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange",onFs);
+    onFs();
+    return()=>document.removeEventListener("fullscreenchange",onFs);
+  },[canFullscreen]);
+  const toggleFullscreen=useCallback(()=>{
+    if(document.fullscreenElement)document.exitFullscreen?.().catch(()=>{});
+    else document.documentElement.requestFullscreen?.().catch(()=>{});
+  },[]);
 
   const[sessionId,setSessionId]=useState<string|null>(null);const[sessionInfo,setSessionInfo]=useState<any>(null);
   const[showAttendanceReview,setShowAttendanceReview]=useState(false);
@@ -2083,6 +2099,11 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                 <DropdownMenuItem onClick={()=>setWbOpen(v=>!v)} style={{margin:"0 4px",borderRadius:8}}>
                   <PenTool style={{width:16,height:16,marginRight:8}}/> {wbOpen?"Close Whiteboard":"Whiteboard"}
                 </DropdownMenuItem>
+                {canFullscreen&&(
+                  <DropdownMenuItem onClick={toggleFullscreen} style={{margin:"0 4px",borderRadius:8}}>
+                    {isFullscreen?<Minimize2 style={{width:16,height:16,marginRight:8}}/>:<Maximize2 style={{width:16,height:16,marginRight:8}}/>} {isFullscreen?"Exit Full Screen":"Full Screen"}
+                  </DropdownMenuItem>
+                )}
                 {isPrivileged&&(
                   <DropdownMenuItem onClick={()=>handleGroupRecite(roomRef.current)} style={{margin:"0 4px",borderRadius:8}}>
                     <Radio style={{width:16,height:16,marginRight:8}}/> {groupRecite?"Stop Group Recite":"Start Group Recite"}
