@@ -1183,13 +1183,12 @@ class MirrorCorrectProcessor {
 // isn't just always on.
 // v2: the old key could be left ON from earlier testing, which makes this processor
 // FLIP an already-correct camera for everyone watching. New key = starts OFF again.
-const MIRROR_FIX_KEY = "ta_camera_unmirror_fix_v2";
+const MIRROR_FIX_KEY = "ta_camera_unmirror_fix_v3";
 export const getMirrorFixEnabled = () => {
   try {
     const v = localStorage.getItem(MIRROR_FIX_KEY);
-    if (v !== null) return v === "1";
-    const c = (window as any).Capacitor; // Android app: front camera frames arrive mirrored, so un-mirror by default
-    return !!c?.isNativePlatform?.() && c.getPlatform?.() === "android";
+    // Default OFF everywhere (incl. Android app): camera publishes as-is, teacher sees it normal.
+    return v === "1";
   } catch { return false; }
 };
 export const setMirrorFixEnabled = (on: boolean) => {
