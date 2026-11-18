@@ -1187,8 +1187,9 @@ const MIRROR_FIX_KEY = "ta_camera_unmirror_fix_v3";
 export const getMirrorFixEnabled = () => {
   try {
     const v = localStorage.getItem(MIRROR_FIX_KEY);
-    // Default OFF everywhere (incl. Android app): camera publishes as-is, teacher sees it normal.
-    return v === "1";
+    if (v !== null) return v === "1";
+    const c = (window as any).Capacitor; // Android app: front camera frames arrive mirrored, so un-mirror by default
+    return !!c?.isNativePlatform?.() && c.getPlatform?.() === "android";
   } catch { return false; }
 };
 export const setMirrorFixEnabled = (on: boolean) => {
