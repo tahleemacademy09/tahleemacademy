@@ -2908,14 +2908,73 @@ function compactEdge(doc:Document,edge:"top"|"bottom"){
     // full-width, bar-sized (not the whole page) and touching the edge; the loop keeps the OUTERMOST match
     if(r.width>=vw*0.85&&r.height>=28&&r.height<=vh*0.32&&touches)pick=el;
   }
-  if(pick){pick.setAttribute(COMPACT_ATTR,"1");pick.style.setProperty("zoom",String(COMPACT_ZOOM),"important");}
+  if(pick){pick.setAttribute(COMPACT_ATTR,edge);pick.style.setProperty("zoom",String(COMPACT_ZOOM),"important");}
+}
+
+/* ── Let the lesson's main card fill the space the smaller bars freed up ──
+   The lesson sizes its scrolling card with a fixed allowance for the original (taller) bars plus its own
+   padding, so after the bars shrink a band of empty space is left above and below the card. Find the card
+   (the big scrolling panel between the two bars) and stretch it to run from just under the top bar to just
+   above the bottom bar. Measured from the real layout each time, so it follows resizes and tab switches. */
+const CARD_ATTR="data-tm-card";
+const CARD_PROPS:[string,string][]=[["height","height"],["maxHeight","max-height"],["minHeight","min-height"],["marginTop","margin-top"],["boxSizing","box-sizing"]];
+function resetLessonCard(doc:Document){
+  doc.querySelectorAll<HTMLElement>(`[${CARD_ATTR}]`).forEach(el=>{
+    let o:any={};try{o=JSON.parse(el.getAttribute(CARD_ATTR)||"{}");}catch{}
+    CARD_PROPS.forEach(([k,css])=>{if(o[k])el.style.setProperty(css,o[k]);else el.style.removeProperty(css);});
+    el.removeAttribute(CARD_ATTR);
+  });
+}
+function fillLessonCard(doc:Document){
+  const win=doc.defaultView;if(!win||!doc.body)return;
+  const vw=win.innerWidth,vh=win.innerHeight;
+  if(vw<50||vh<120)return;
+  resetLessonCard(doc);
+  const topEl=doc.querySelector<HTMLElement>(`[${COMPACT_ATTR}="top"]`);
+  const botEl=doc.querySelector<HTMLElement>(`[${COMPACT_ATTR}="bottom"]`);
+  if(!topEl&&!botEl)return;
+  const topLimit=topEl?topEl.getBoundingClientRect().bottom:0;
+  const botLimit=botEl?botEl.getBoundingClientRect().top:vh;
+  // the card = the largest scrolling panel (nearly full width) that sits between the bars and is not one of them
+  let card:HTMLElement|null=null,best=0;
+  const all=doc.body.querySelectorAll<HTMLElement>("*");
+  const n=Math.min(all.length,2500);
+  for(let i=0;i<n;i++){
+    const el=all[i];
+    if(el.closest(`[${COMPACT_ATTR}]`))continue;                               // inside / is a bar
+    if((topEl&&el.contains(topEl))||(botEl&&el.contains(botEl)))continue;      // page-level wrapper holding the bars
+    const oy=win.getComputedStyle(el).overflowY;
+    if(oy!=="auto"&&oy!=="scroll")continue;
+    const r=el.getBoundingClientRect();
+    if(r.width<vw*0.8||r.height<120)continue;
+    if(r.bottom<topLimit||r.top>botLimit)continue;
+    const area=r.width*r.height;
+    if(area>best){best=area;card=el;}
+  }
+  if(!card)return;
+  const cs=win.getComputedStyle(card);
+  const orig:any={};
+  CARD_PROPS.forEach(([k,css])=>{orig[k]=card!.style.getPropertyValue(css);});
+  card.setAttribute(CARD_ATTR,JSON.stringify(orig));
+  const PAD=6;
+  card.style.setProperty("box-sizing","border-box","important");
+  card.style.setProperty("max-height","none","important");
+  for(let pass=0;pass<4;pass++){
+    const r=card.getBoundingClientRect();
+    const gapTop=r.top-(topLimit+PAD);
+    const gapBot=(botLimit-PAD)-r.bottom;
+    if(Math.abs(gapTop)<3&&Math.abs(gapBot)<3)break;
+    const mt=parseFloat(win.getComputedStyle(card).marginTop)||0;
+    card.style.setProperty("height",Math.max(120,r.height+gapTop+gapBot)+"px","important");
+    card.style.setProperty("margin-top",(mt-gapTop)+"px","important");
+  }
 }
 function startCompactChrome(frame:HTMLIFrameElement|null){
   try{
     (frame as any)?.__tmCompactStop?.();
     const doc=frame?.contentDocument,win=frame?.contentWindow;
     if(!frame||!doc||!win)return;
-    const run=()=>{try{compactEdge(doc,"top");compactEdge(doc,"bottom");}catch{}};
+    const run=()=>{try{compactEdge(doc,"top");compactEdge(doc,"bottom");fillLessonCard(doc);}catch{}};
     let deb:any=null;
     const kick=()=>{if(deb)clearTimeout(deb);deb=setTimeout(run,250);};
     // lessons often build their DOM after load, so retry a few times, then watch for re-renders
