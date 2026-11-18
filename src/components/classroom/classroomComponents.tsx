@@ -1778,7 +1778,7 @@ export const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false, isFirstJo
 };
 
 /* ══ ROOM DATA LISTENER ══ */
-export const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed,onEmojiReact,onGroupRecite,onHandRaise,onAdminMuteAll,onClassEnded,onForceAudioOnly,onAllowVideo,roomRef }:any) => {
+export const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed,onEmojiReact,onGroupRecite,onHandRaise,onAdminMuteAll,onClassEnded,onForceAudioOnly,onAllowVideo,onWorkShow,onWorkHide,roomRef }:any) => {
   const room = useRoomContext();
   useEffect(() => {
     // FIX BUG 10: Store room in a React ref instead of window.__lkRoom__ global.
@@ -1811,6 +1811,8 @@ export const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,on
         if(msg.type==="force_audio_only") onForceAudioOnly?.(msg.active);
         if(msg.type==="allow_video")      onAllowVideo?.(!!msg.allow);
         if(msg.type==="class_ended")      onClassEnded?.();
+        if(msg.type==="work_show")        onWorkShow?.(msg.work);
+        if(msg.type==="work_hide")        onWorkHide?.();
       } catch {}
     };
     room.on(RoomEvent.DataReceived,h);
@@ -4702,7 +4704,7 @@ export const resolveUploadContentType=(file:File):string=>{
   return file.type||"application/octet-stream";
 };
 
-export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,isPrivileged,isAdmin,stuRec,onToggleStuRecord,onOpenMatsChange,panelRef}:any)=>{
+export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,isPrivileged,isAdmin,stuRec,onToggleStuRecord,onOpenMatsChange,panelRef,onSyncWork}:any)=>{
   const{user}=useAuth();
   const[mats,setMats]=useState<any[]>([]);
   const[busy,setBusy]=useState(true);
@@ -5668,7 +5670,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
           </button>
         </div>
         <div style={{flex:1,overflowY:"auto",padding:16}}>
-          <SubjectAssignments subjectId={subjectId}/>
+          <SubjectAssignments subjectId={subjectId} onSyncWork={isPrivileged?onSyncWork:undefined}/>
         </div>
       </div>
     )}

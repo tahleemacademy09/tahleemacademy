@@ -6998,6 +6998,7 @@ export type Database = {
           description_ar: string | null
           file_url: string | null
           id: string
+          kind: string
           max_score: number | null
           question: string | null
           question_ar: string | null
@@ -7018,6 +7019,7 @@ export type Database = {
           description_ar?: string | null
           file_url?: string | null
           id?: string
+          kind?: string
           max_score?: number | null
           question?: string | null
           question_ar?: string | null
@@ -7038,6 +7040,7 @@ export type Database = {
           description_ar?: string | null
           file_url?: string | null
           id?: string
+          kind?: string
           max_score?: number | null
           question?: string | null
           question_ar?: string | null

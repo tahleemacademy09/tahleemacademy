@@ -30,6 +30,7 @@ import { canNativeScreenShare, startNativeScreenShare, stopNativeScreenShare, on
 import { StatusBar } from "@capacitor/status-bar";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { getSignedUrl } from "../../integrations/supabase/storageClient";
+import { SharedWorkOverlay } from "./SubjectAssignments";
 import { isInlineLessonRow } from "./lessonBuilder";
 import { playJoinSound, playLeaveSound, playRecordingStartSound, playRecordingStopSound } from "@/lib/soundUtils";
 import NetworkGuard from "@/components/classroom/NetworkGuard";
@@ -453,7 +454,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[showLeaveConfirm,setShowLeaveConfirm]=useState(false);
   // FIX BUG 2: quizOpen state — LiveQuizOverlay was permanently disabled with hardcoded isOpen={false}
   const[quizOpen,setQuizOpen]=useState(false);
-  const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);const[matPanelOpen,setMatPanelOpen]=useState(false);
+  const[sharedWork,setSharedWork]=useState<any>(null);const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);const[matPanelOpen,setMatPanelOpen]=useState(false);
   // Track whether SubjectMaterialsPanel has any open/minimized materials — keep it mounted if so
   const[matPanelHasPip,setMatPanelHasPip]=useState(false);
   // Imperative ref to panel — lets us call showList() without toggling mount state
@@ -660,6 +661,23 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const wbBuffer=useRef<any[]|null>(null);
   // FIX BUG 10: roomRef stores the LiveKit Room object via RoomDataListener — replaces __lkRoom__ global
   const roomRef=useRef<any>(null);
+  // Teacher "Sync": show one student's classwork on every screen in the class (null = stop showing it).
+  // Returns false when the live connection isn't ready so the UI doesn't claim it is sharing.
+  const syncWorkToClass=(work:any|null):boolean=>{
+    const lp=roomRef.current?.localParticipant;
+    if(!lp)return false;
+    try{
+      const enc=new TextEncoder();
+      if(!work){lp.publishData(enc.encode(JSON.stringify({type:"work_hide"})),{reliable:true});return true;}
+      const w={...work};
+      let bytes=enc.encode(JSON.stringify({type:"work_show",work:w}));
+      // Live data messages must stay small (~15 KB): shorten very long text rather than fail.
+      while(bytes.length>14000&&w.text&&w.text.length>200){w.text=w.text.slice(0,Math.floor(w.text.length*0.7))+"…";bytes=enc.encode(JSON.stringify({type:"work_show",work:w}));}
+      if(bytes.length>14000)return false;
+      lp.publishData(bytes,{reliable:true});
+      return true;
+    }catch{return false;}
+  };
   // FIX BUG 8: ref to hold the session-end channel so we can subscribe immediately on join
   const sessionEndChannelRef=useRef<any>(null);
 
@@ -1719,7 +1737,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           {/* Feature 9: data channel queue flusher — replays queued messages on reconnect */}
           <DataQueueFlusher roomRef={roomRef}/>
           <JoinLeaveOverlay/>
-          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>{setMatOpen(mat);setMatMinimized(false);}} onMatClose={()=>{setMatOpen(null);setMatMinimized(false);}} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string,identity?:string)=>{if(!fireTileEmoji(identity,emoji,sender))addFloatingEmoji(emoji,sender);}} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}} onForceAudioOnly={(active:boolean)=>{setForcedAudioOnly(active);setAudioOnlyActive(active);}} onAllowVideo={onAllowVideoMsg}
+          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>{setMatOpen(mat);setMatMinimized(false);}} onMatClose={()=>{setMatOpen(null);setMatMinimized(false);}} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string,identity?:string)=>{if(!fireTileEmoji(identity,emoji,sender))addFloatingEmoji(emoji,sender);}} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}} onForceAudioOnly={(active:boolean)=>{setForcedAudioOnly(active);setAudioOnlyActive(active);}} onAllowVideo={onAllowVideoMsg} onWorkShow={(w:any)=>setSharedWork(w)} onWorkHide={()=>setSharedWork(null)}
             onClassEnded={!isPrivileged?()=>setPhase("ended"):undefined} roomRef={roomRef}/>{/* FIX BUG 10: pass roomRef */}
           {reconnecting&&!overlayExpired&&<ReconnectingOverlay attempt={autoReconnectCountRef.current}/>}
           {reconnecting&&overlayExpired&&(
@@ -1834,11 +1852,13 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               <FloatingEmojiLayer emojis={floatingEmojis}/>
               <RaisedHandsOverlay hands={raisedHands}/>
               {/* Materials panel — keep mounted when it has minimized PiP materials */}
-              {(matPanelOpen||matPanelHasPip)&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} sessionId={sessionId} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} isAdmin={isAdmin} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop} onOpenMatsChange={(has:boolean)=>setMatPanelHasPip(has)} panelRef={matPanelRef}/>}
+              {(matPanelOpen||matPanelHasPip)&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} sessionId={sessionId} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} isAdmin={isAdmin} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop} onOpenMatsChange={(has:boolean)=>setMatPanelHasPip(has)} panelRef={matPanelRef} onSyncWork={syncWorkToClass}/>}
               {/* Every student sees whatever the teacher opens, immediately —
                   no "Subject Materials" click needed. Always mounted for the
                   whole live session, entirely independent of the panel above. */}
               {!isPrivileged&&phase==="live"&&<TeacherMaterialFollower sessionId={sessionId}/>}
+              {/* Teacher pressed Sync on a student's classwork — shown to everyone else */}
+              {!isPrivileged&&sharedWork&&<SharedWorkOverlay work={sharedWork} onClose={()=>setSharedWork(null)}/>}
               {/* Teacher-shared material viewer — absolute inside content */}
               {matOpen&&(
                 <div style={{position:"absolute",inset:0,zIndex:55,display:matMinimized?"none":"block"}}>

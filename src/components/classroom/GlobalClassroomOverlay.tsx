@@ -299,10 +299,11 @@ export default function GlobalClassroomOverlay() {
     sa("play",          handleReturn);
     sa("pause",         handleReturn);
     sa("stop",          handleLeave);
-    sa("previoustrack", handleReturn);
-    sa("nexttrack",     handleReturn);
+    // No skip buttons: a live class isn't a playlist, and they made the card look like a music player.
+    sa("previoustrack", null);
+    sa("nexttrack",     null);
     return () => {
-      (["play","pause","stop","previoustrack","nexttrack"] as MediaSessionAction[])
+      (["play","pause","stop"] as MediaSessionAction[])
         .forEach(a => { try { navigator.mediaSession.setActionHandler(a, null); } catch {} });
     };
   }, [hasConnected, handleReturn, handleLeave]);

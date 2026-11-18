@@ -123,19 +123,31 @@ const SESSION_ART = [
   { src: "/icons/icon-512x512.png", sizes: "512x512", type: "image/png" },
   { src: "/icons/icon-192x192.png", sizes: "192x192", type: "image/png" },
 ];
+const SESSION_SUBTITLE = "🔴 Live class in progress · tap to return";
+// Buttons that make the card look like a music player. A live class has no tracks to skip and
+// nothing to seek, so these are always cleared.
+const PLAYER_ONLY_ACTIONS: MediaSessionAction[] = ["previoustrack", "nexttrack", "seekbackward", "seekforward", "seekto"];
 function assertMediaSession(): void {
   if (!("mediaSession" in navigator) || !audioEl) return;
   try {
     const md = navigator.mediaSession.metadata;
-    if (!md || md.title !== sessionTitle) {
+    if (!md || md.title !== sessionTitle || md.artist !== SESSION_SUBTITLE) {
       navigator.mediaSession.metadata = new MediaMetadata({
         title:  sessionTitle,
-        artist: "Tahleem Academy",
-        album:  "🔴 Live Class — tap to return",
+        artist: SESSION_SUBTITLE,
+        album:  "",
         artwork: SESSION_ART,
       });
     }
     if (navigator.mediaSession.playbackState !== "playing") navigator.mediaSession.playbackState = "playing";
+    // The keep-alive clip is only 12 s long, which is what made the card show a 00:01 / 00:12 progress bar.
+    // Telling Chrome this is a live stream (infinite duration) removes the progress bar and timer.
+    try {
+      navigator.mediaSession.setPositionState({ duration: Infinity, position: 0, playbackRate: 1 });
+    } catch {
+      try { (navigator.mediaSession as any).setPositionState(); } catch {}
+    }
+    PLAYER_ONLY_ACTIONS.forEach(a => { try { navigator.mediaSession.setActionHandler(a, null); } catch {} });
   } catch {}
 }
 
