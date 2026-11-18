@@ -152,7 +152,9 @@ function step(words: RevealWord[], s: RevealState, rawToken: string, next: strin
 /** Feed a list of tokens (mutates `s`). */
 export function feed(words: RevealWord[], s: RevealState, tokens: string[], final: boolean, strict = false): RevealState {
   const clean = tokens.filter((t) => soundKey(t));
-  for (let i = 0; i < clean.length;) i += step(words, s, clean[i], clean[i + 1], final, strict);
+  // Strict mode reacts to PARTIAL results too: every token except the last (which may still be being spoken)
+  // is treated as settled, so a mistake is caught while the reader is still talking, not after the pause.
+  for (let i = 0; i < clean.length;) i += step(words, s, clean[i], clean[i + 1], final || (strict && i < clean.length - 1), strict);
   return s;
 }
 
