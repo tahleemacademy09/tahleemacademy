@@ -108,9 +108,23 @@ function clearPersist() {
   try { localStorage.removeItem(STORAGE_KEY); sessionStorage.removeItem(STORAGE_KEY); } catch {}
 }
 function restore(): LiveClassState | null {
-  // A live class does NOT survive the app being closed: on a cold start we wipe any
-  // saved call so the floating class bubble stays gone until the user joins a class anew.
-  // (Plain backgrounding keeps JS alive, so the in-memory state / bubble is untouched.)
+  // A plain PAGE REFRESH must put the person back into the exact live class they were in.
+  // sessionStorage survives a reload of the same tab but is wiped when the tab/app is really closed,
+  // so it is the right switch: reload → rejoin the room directly (no lobby), closed app → stay out.
+  // Only a class the person had actually CONNECTED to is restored; refreshing on the lobby stays on the lobby.
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const d = JSON.parse(raw);
+      if (d?.inCall && d?.activeSubject && d?.connected) {
+        return {
+          activeSubject: d.activeSubject, inCall: true, minimized: false,
+          autoJoin: true, micEnabled: false, camEnabled: false, hasConnected: false,
+        };
+      }
+    }
+  } catch {}
+  // Cold start (app closed and reopened): wipe any leftover saved call so the bubble stays gone.
   clearPersist();
   return null;
 }
@@ -202,11 +216,13 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
   // Persist call state
   useEffect(() => {
     if (state.inCall && state.activeSubject) {
-      persist({ activeSubject: state.activeSubject, inCall: true, minimized: state.minimized });
+      // `connected` remembers that the person was really inside the room, so a refresh can rejoin it.
+      // autoJoin counts too: right after a refresh hasConnected is still false until the room reconnects.
+      persist({ activeSubject: state.activeSubject, inCall: true, minimized: state.minimized, connected: state.hasConnected || state.autoJoin });
     } else {
       clearPersist();
     }
-  }, [state.inCall, state.minimized, state.activeSubject]);
+  }, [state.inCall, state.minimized, state.activeSubject, state.hasConnected, state.autoJoin]);
 
   // Push ONE guard entry when the call starts (and only once)
   useEffect(() => {
@@ -296,7 +312,7 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
     setState(prev => {
       const next = { ...prev, minimized: v, autoJoin: false };
       if (next.inCall && next.activeSubject) {
-        persist({ activeSubject: next.activeSubject, inCall: true, minimized: v });
+        persist({ activeSubject: next.activeSubject, inCall: true, minimized: v, connected: next.hasConnected });
       }
       return next;
     });
