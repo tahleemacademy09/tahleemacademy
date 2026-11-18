@@ -70,7 +70,7 @@ export default function RecitationReveal() {
   const [seconds, setSeconds] = useState(0);
   const [live, setLive] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<RevealState>(() => initialState(0));
+  const [rawView, setView] = useState<RevealState>(() => initialState(0));
   const [peeked, setPeeked] = useState<Set<number>>(new Set());
   const [hint, setHint] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
@@ -83,6 +83,11 @@ export default function RecitationReveal() {
   const words = useMemo(
     () => buildWords(ayahs.filter((a) => a.n >= from && a.n <= to), canBism && withBism ? BISMILLAH : undefined),
     [ayahs, from, to, withBism, canBism],
+  );
+  // The reset effect runs after the render in which `words` changes — never read a state of the wrong length.
+  const view = useMemo(
+    () => (rawView.status.length === words.length ? rawView : initialState(words.length)),
+    [rawView, words.length],
   );
   const wordsRef = useRef(words);
   wordsRef.current = words;
