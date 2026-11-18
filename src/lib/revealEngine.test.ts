@@ -44,4 +44,32 @@ describe("revealEngine", () => {
     expect(stripCumulative(["قل", "هو"], ["قل", "هو", "الله"])).toEqual(["الله"]);
     expect(stripCumulative(["الله"], ["الله", "الصمد"])).toEqual(["الله", "الصمد"]);
   });
+
+  describe("strict mode", () => {
+    const strict = (text: string, final = true) => feed(W, initialState(W.length), tokenize(text), final, true);
+    it("does not move past a skipped word", () => {
+      const s = strict("قل هو احد");
+      expect(s.cursor).toBe(2);
+      expect(s.blocked).toBe(true);
+      expect(s.errors).toBe(1);
+    });
+    it("does not move past a wrong word", () => {
+      const s = strict("قل هو بلا");
+      expect(s.cursor).toBe(2);
+      expect(s.blocked).toBe(true);
+    });
+    it("counts one error per mistake and continues once corrected", () => {
+      const s = strict("قل هو احد بلا الله احد الله");
+      expect(s.errors).toBe(1);
+      expect(s.status[2]).toBe("close");
+      expect(s.fixed[2]).toBe(true);
+      expect(s.cursor).toBe(5);
+    });
+    it("allows restarting the phrase after a mistake", () => {
+      expect(strict("قل هو احد قل هو الله").cursor).toBe(3);
+    });
+    it("ignores the app's own spoken correction word", () => {
+      expect(strict("قل خطأ هو").cursor).toBe(2);
+    });
+  });
 });
