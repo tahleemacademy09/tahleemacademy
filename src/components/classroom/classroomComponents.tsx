@@ -3862,7 +3862,7 @@ export const InClassQuranReader=({onClose}:any)=>{
   },[]);
   const onReaderTap=(e:any)=>{
     if(e?.target?.closest?.("button,a,input,textarea,select"))return;
-    if(listenMode){ // a tap on a verse plays it — it must not also turn the page
+    { // a tap on a verse highlights (and in listen mode plays) it — it must not also turn the page
       const t=(e.nativeEvent?.composedPath?.()[0]||e.target) as Element;
       if(t?.closest?.(".ayahPolygon, path[ayah]"))return;
     }
@@ -3895,6 +3895,8 @@ export const InClassQuranReader=({onClose}:any)=>{
   const[loadingTafseer,setLoadingTafseer]=useState<Record<string,boolean>>({});
   const[showPicker,setShowPicker]=useState(false);
   const[showReciters,setShowReciters]=useState(false);
+  const[pickedVerse,setPickedVerse]=useState<string|null>(null); // verse tapped on the Mushaf (faint highlight)
+  useEffect(()=>{setPickedVerse(null);},[page]);
   /* audio + reciters */
   const audioRef=useRef<HTMLAudioElement|null>(null);
   const[playingVerse,setPlayingVerse]=useState<string|null>(null);
@@ -4150,59 +4152,64 @@ export const InClassQuranReader=({onClose}:any)=>{
 
   const MODES=[
     {key:"quran" as QuranMode,icon:"📖",label:"Mushaf"},
-    {key:"translation" as QuranMode,icon:"🌐",label:"Trans."},
+    {key:"translation" as QuranMode,icon:"🌐",label:"Translation"},
     {key:"tafseer" as QuranMode,icon:"📚",label:"Tafseer"},
   ];
 
-  /* ── single-line nav bar: prev | page | next | Surah | reciters (scrollable) ── */
-  const PageNav=()=>chromeHidden?null:(
-    <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderBottom:"1px solid #eee",background:"#fff",flexShrink:0,overflowX:"auto",WebkitOverflowScrolling:"touch" as any}}>
-      {/* Prev */}
-      {mode!=="quran"&&<button onClick={()=>changePage(-1)} disabled={page<=1}
-        style={{flexShrink:0,padding:"4px 10px",borderRadius:6,border:"1px solid #d4c9a0",background:"#f5f0e4",color:"#1a3d24",cursor:page<=1?"not-allowed":"pointer",fontSize:14,fontWeight:700,opacity:page<=1?0.35:1}}>
-        ←
-      </button>}
-      {/* Page number / jump input */}
-      {pageInputOpen?(
-        <div style={{display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
-          <input autoFocus type="number" min={1} max={604} value={pageInput}
-            onChange={e=>setPageInput(e.target.value)}
-            onKeyDown={e=>{if(e.key==="Enter")commitPageInput();if(e.key==="Escape"){setPageInputOpen(false);setPageInput("");}}}
-            onBlur={commitPageInput}
-            style={{width:48,textAlign:"center",padding:"2px 4px",border:"2px solid #b7791f",borderRadius:6,fontSize:13,fontWeight:700,color:"#1a3d24",outline:"none"}}
-            placeholder={String(page)}/>
-          <span style={{fontSize:9,color:"#b7791f",fontWeight:600,flexShrink:0}}>/ 604</span>
-        </div>
-      ):(
-        <button onClick={()=>{setPageInput(String(page));setPageInputOpen(true);}} title="Tap to jump"
-          style={{flexShrink:0,background:"none",border:"1px solid transparent",borderRadius:6,cursor:"pointer",padding:"3px 4px"}}>
-          <span style={{fontSize:11,fontWeight:800,color:"#1a3d24"}}>P{page}</span>
-          <span style={{fontSize:9,color:"#b7791f"}}>/604</span>
-        </button>
-      )}
-      {/* Next */}
-      {mode!=="quran"&&<button onClick={()=>changePage(1)} disabled={page>=604}
-        style={{flexShrink:0,padding:"4px 10px",borderRadius:6,border:"1px solid #d4c9a0",background:"#f5f0e4",color:"#1a3d24",cursor:page>=604?"not-allowed":"pointer",fontSize:14,fontWeight:700,opacity:page>=604?0.35:1}}>
-        →
-      </button>}
+  /* ── ONE compact top bar: mode dropdown · prev/page/next · Surah · Read/Listen · Reciter · close ── */
+  const TopBar=()=>chromeHidden?null:(
+    <div style={{display:"flex",alignItems:"center",gap:5,padding:"5px 8px",background:"linear-gradient(135deg,#1a3d24,#276749)",flexShrink:0,overflowX:"auto",WebkitOverflowScrolling:"touch" as any}}>
+      {/* Mode dropdown */}
+      <select value={mode} onChange={e=>setMode(e.target.value as QuranMode)} aria-label="Mode"
+        style={{flexShrink:0,height:28,borderRadius:6,border:"1px solid rgba(255,255,255,.35)",background:"rgba(0,0,0,.28)",color:"#fff",fontSize:11,fontWeight:700,padding:"0 4px",outline:"none",cursor:"pointer"}}>
+        {MODES.map(m=><option key={m.key} value={m.key} style={{color:"#1a3d24",background:"#fff"}}>{m.icon} {m.label}</option>)}
+      </select>
+      {mode!=="tafseer"&&<>
+        <button onClick={()=>changePage(-1)} disabled={page<=1} aria-label="Previous page"
+          style={{flexShrink:0,width:24,height:28,borderRadius:6,border:"none",background:"rgba(255,255,255,.15)",color:"#fff",cursor:page<=1?"not-allowed":"pointer",fontSize:14,fontWeight:700,opacity:page<=1?0.35:1}}>←</button>
+        {pageInputOpen?(
+          <div style={{display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
+            <input autoFocus type="number" min={1} max={604} value={pageInput}
+              onChange={e=>setPageInput(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter")commitPageInput();if(e.key==="Escape"){setPageInputOpen(false);setPageInput("");}}}
+              onBlur={commitPageInput}
+              style={{width:46,height:26,textAlign:"center",padding:"0 4px",border:"2px solid #c9a84c",borderRadius:6,fontSize:12,fontWeight:700,color:"#1a3d24",outline:"none"}}
+              placeholder={String(page)}/>
+          </div>
+        ):(
+          <button onClick={()=>{setPageInput(String(page));setPageInputOpen(true);}} title="Tap to jump"
+            style={{flexShrink:0,background:"none",border:"none",cursor:"pointer",padding:"0 2px",whiteSpace:"nowrap"}}>
+            <span style={{fontSize:12,fontWeight:800,color:"#fff"}}>P{page}</span>
+            <span style={{fontSize:9,color:"#e6c978"}}>/604</span>
+          </button>
+        )}
+        <button onClick={()=>changePage(1)} disabled={page>=604} aria-label="Next page"
+          style={{flexShrink:0,width:24,height:28,borderRadius:6,border:"none",background:"rgba(255,255,255,.15)",color:"#fff",cursor:page>=604?"not-allowed":"pointer",fontSize:14,fontWeight:700,opacity:page>=604?0.35:1}}>→</button>
+      </>}
       {/* Surah picker */}
       <button onClick={()=>setShowPicker(true)}
-        style={{flexShrink:0,padding:"4px 8px",borderRadius:6,border:"1px solid #b7791f",background:"#fffbf0",color:"#b7791f",cursor:"pointer",fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>
+        style={{flexShrink:0,height:28,padding:"0 8px",borderRadius:6,border:"1px solid rgba(230,201,120,.7)",background:"rgba(255,251,240,.95)",color:"#8a5a12",cursor:"pointer",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>
         ☰ Surah
       </button>
-      {/* Reading / Listening mode */}
-      <div style={{flexShrink:0,display:"flex",gap:2,background:"#f5f0e4",borderRadius:6,padding:2,border:"1px solid #d4c9a0"}}>
-        {([[false,"📖 Read"],[true,"🎧 Listen"]] as [boolean,string][]).map(([v,lb])=>(
-          <button key={lb} onClick={()=>setListenMode(v)}
-            style={{padding:"3px 8px",borderRadius:4,border:"none",cursor:"pointer",fontSize:10,fontWeight:800,whiteSpace:"nowrap",
-              background:listenMode===v?"#1a3d24":"transparent",color:listenMode===v?"#fff":"#1a3d24"}}>{lb}</button>
+      {/* Reading / Listening */}
+      <div style={{flexShrink:0,display:"flex",gap:2,background:"rgba(0,0,0,.28)",borderRadius:6,padding:2}}>
+        {([[false,"📖","Read"],[true,"🎧","Listen"]] as [boolean,string,string][]).map(([v,ic,lb])=>(
+          <button key={lb} onClick={()=>setListenMode(v)} title={lb} aria-label={lb}
+            style={{height:24,padding:"0 7px",borderRadius:4,border:"none",cursor:"pointer",fontSize:12,fontWeight:800,whiteSpace:"nowrap",
+              background:listenMode===v?"rgba(255,255,255,.9)":"transparent",color:listenMode===v?"#1a3d24":"#fff"}}>{ic}</button>
         ))}
       </div>
-      {/* Reciter — only relevant in listening mode */}
+      {/* Reciter dropdown — only in listening mode */}
       {listenMode&&<button onClick={()=>setShowReciters(true)}
-        style={{flexShrink:0,padding:"4px 8px",borderRadius:6,border:"1px solid #b7791f",background:"#fffbf0",color:"#b7791f",cursor:"pointer",fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>
+        style={{flexShrink:0,height:28,padding:"0 8px",borderRadius:6,border:"1px solid rgba(230,201,120,.7)",background:"rgba(255,251,240,.95)",color:"#8a5a12",cursor:"pointer",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>
         🎙 {RECITERS.find(r=>r.id===reciter)?.ar||"Reciter"} ▾
       </button>}
+      <div style={{flex:1,minWidth:2}}/>
+      {/* Close */}
+      <button onClick={onClose} aria-label="Close"
+        style={{background:"rgba(255,255,255,.15)",border:"none",color:"#fff",borderRadius:6,width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+        <X style={{width:13,height:13}}/>
+      </button>
     </div>
   );
 
@@ -4304,27 +4311,7 @@ export const InClassQuranReader=({onClose}:any)=>{
     <div style={outerStyle} onClick={fullscreen?undefined:onClose}>
       <div ref={panelRef} onClick={e=>e.stopPropagation()} style={{...panelStyle,paddingTop:topPad,paddingBottom:chromeHidden?0:BAR_H,boxSizing:"border-box"}}>
 
-        {/* ── Single-line compact header ── */}
-        <div style={{background:"linear-gradient(135deg,#1a3d24,#276749)",padding:"7px 10px",flexShrink:0,display:chromeHidden?"none":"flex",alignItems:"center",gap:6}}>
-          {/* Title */}
-          <span style={{fontFamily:"'Amiri',serif",fontSize:14,fontWeight:800,color:"#fff",whiteSpace:"nowrap"}}>📖 القرآن</span>
-          {/* Mode tabs */}
-          <div style={{flex:1,display:"flex",gap:2,background:"rgba(0,0,0,.25)",borderRadius:6,padding:2}}>
-            {MODES.map(m=>(
-              <button key={m.key} onClick={()=>setMode(m.key)}
-                style={{flex:1,padding:"4px 2px",borderRadius:4,border:"none",fontSize:10,fontWeight:700,cursor:"pointer",
-                  background:mode===m.key?"rgba(255,255,255,.22)":"transparent",
-                  color:mode===m.key?"#fff":"rgba(255,255,255,.45)",transition:"all .15s",whiteSpace:"nowrap"}}>
-                {m.icon} {m.label}
-              </button>
-            ))}
-          </div>
-          {/* Close */}
-          <button onClick={onClose}
-            style={{background:"rgba(255,255,255,.15)",border:"none",color:"#fff",borderRadius:6,width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-            <X style={{width:13,height:13}}/>
-          </button>
-        </div>
+        {TopBar()}
 
         {chromeHidden&&mode==="quran"&&(
           <button onClick={()=>window.dispatchEvent(new Event("classroom:toggle-ui"))} style={{position:"absolute",top:8,right:8,zIndex:5,padding:"6px 10px",borderRadius:999,border:"none",background:"rgba(26,61,36,.6)",color:"#fff",fontSize:11,fontWeight:700,opacity:.85}}>Show controls</button>
@@ -4332,7 +4319,6 @@ export const InClassQuranReader=({onClose}:any)=>{
         {/* ══ MODE: MUSHAF — authentic line-by-line Quran layout ══ */}
         {mode==="quran"&&(
           <>
-            <PageNav/>
             <ReciterStrip/>
             <div
               ref={mushafBoxRef}
@@ -4348,12 +4334,17 @@ export const InClassQuranReader=({onClose}:any)=>{
                     page={page}
                     seamless
                     pureWhite
-                    availableHeight={Math.max(300,mushafBoxH-8)}
+                    availableHeight={Math.max(300,mushafBoxH-2)}
                     maxStretch={1.4}
+                    maxSqueeze={0.85}
+                    softHighlight
                     onBackground={setPrintedBg}
-                    highlight={listenMode&&playingVerse?(()=>{const[ps,pv]=playingVerse.split(":").map(Number);return{surah:ps,ayah:pv};})():null}
-                    dimOthers={listenMode}
-                    onAyahClick={listenMode?((su:number,ay:number)=>playVerse(su,ay)):undefined}
+                    highlight={pickedVerse?(()=>{const[ps,pv]=pickedVerse.split(":").map(Number);return{surah:ps,ayah:pv};})():null}
+                    onAyahClick={(su:number,ay:number)=>{
+                      const k=`${su}:${ay}`;
+                      if(listenMode){setPickedVerse(k);playVerse(su,ay);}
+                      else setPickedVerse(p=>p===k?null:k);
+                    }}
                     onUnavailable={()=>setPrintedFail(true)}
                   />
                 </FitToBox>
@@ -4595,7 +4586,6 @@ export const InClassQuranReader=({onClose}:any)=>{
         {/* ══ MODE: TRANSLATION (page nav + Arabic + English per ayah, no image) ══ */}
         {mode==="translation"&&(
           <>
-            <PageNav/>
             <div style={{flex:1,overflowY:"auto",background:"#fff"}}>
               <div style={{padding:"6px 12px",background:"linear-gradient(90deg,rgba(26,61,36,.06),transparent)",borderBottom:"1px solid #f0e8d4",display:"flex",alignItems:"center",gap:6}}>
                 <span style={{fontSize:10,fontWeight:800,color:"#1a3d24",letterSpacing:.5,textTransform:"uppercase"}}>🌐 Sahih International · Page {page}</span>
