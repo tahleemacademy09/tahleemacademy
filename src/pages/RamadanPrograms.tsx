@@ -1,9 +1,10 @@
-import { lazy, Suspense } from "react";
-import { Moon, Sparkles, BookOpen, Users, Mic, Loader2 } from "lucide-react";
+import { lazy, Suspense, useState } from "react";
+import { Moon, Sparkles, BookOpen, Users, Mic, Loader2, EyeOff, FileAudio } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 
-// Loaded only for admins, so other roles never download the checker.
+// Loaded only for admins, so other roles never download the tools.
+const RecitationReveal = lazy(() => import("@/components/ramadan/RecitationReveal"));
 const RecitationChecker = lazy(() => import("@/components/ramadan/RecitationChecker"));
 
 /** "Coming soon" screen shown to everyone except admins. */
@@ -54,14 +55,40 @@ const Spinner = () => (
   </div>
 );
 
-/** Ramadan Programs — admins get the recitation checker; everyone else sees "Coming soon". */
+type Tab = "reveal" | "check";
+
+/** Admin tools: live Read & Reveal + recording-based word check. */
+function AdminTools() {
+  const { t, dir } = useLanguage();
+  const [tab, setTab] = useState<Tab>("reveal");
+  const tabs = [
+    { id: "reveal" as const, icon: EyeOff,    en: "Read & Reveal",   ar: "اقرأ وستظهر" },
+    { id: "check" as const,  icon: FileAudio, en: "Recording Check", ar: "فحص التسجيل" },
+  ];
+  return (
+    <div dir={dir}>
+      <div className="mx-auto max-w-2xl px-4 pt-4">
+        <div className="grid grid-cols-2 gap-1 rounded-2xl bg-gray-100 p-1" role="tablist">
+          {tabs.map(({ id, icon: Icon, en, ar }) => (
+            <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl text-sm font-bold transition"
+              style={tab === id ? { background: "#064E3B", color: "#fff" } : { color: "#374151" }}>
+              <Icon size={16} /> {t(en, ar)}
+            </button>
+          ))}
+        </div>
+      </div>
+      <Suspense fallback={<Spinner />}>
+        {tab === "reveal" ? <RecitationReveal /> : <RecitationChecker />}
+      </Suspense>
+    </div>
+  );
+}
+
+/** Ramadan Programs — admins get the recitation tools; everyone else sees "Coming soon". */
 export default function RamadanPrograms() {
   const { loading, hasRole } = useAuth();
   if (loading) return <Spinner />;
   if (!hasRole("admin")) return <ComingSoon />;
-  return (
-    <Suspense fallback={<Spinner />}>
-      <RecitationChecker />
-    </Suspense>
-  );
+  return <AdminTools />;
 }
