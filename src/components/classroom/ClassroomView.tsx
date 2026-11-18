@@ -562,6 +562,17 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       .subscribe();
     return()=>{cancelled=true;supabase.removeChannel(ch);};
   },[sessionId,phase,applyAllowVideo]);
+  // LIVE PRESENCE — who is really in the room right now. Supabase Presence drops a person the moment their
+  // connection closes (refresh, closed tab, dead phone), unlike class_participants.left_at which is only written
+  // on a clean leave. The lobby reads this channel so "already inside" never counts people who have left.
+  useEffect(()=>{
+    if(!sessionId||phase!=="live"||!user?.id)return;
+    const ch=supabase.channel(`class-presence-${sessionId}`,{config:{presence:{key:user.id}}});
+    ch.subscribe(async(status:string)=>{
+      if(status==="SUBSCRIBED"){try{await ch.track({user_id:user.id,at:Date.now()});}catch{}}
+    });
+    return()=>{try{ch.untrack();}catch{} supabase.removeChannel(ch);};
+  },[sessionId,phase,user?.id]);
   // Data-channel message from the teacher: apply it, and tell the student what just happened.
   const onAllowVideoMsg=useCallback((allow:boolean)=>{
     applyAllowVideo(allow);
@@ -962,6 +973,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           }
           if(sessions?.length){
             const freshSessionId=sessions[0].id;
+            // Announce the join FIRST (fire-and-forget): it used to run after the settings update below, so the
+            // teacher/admin notification waited on extra round trips before it was even sent.
+            try{(supabase as any).rpc("announce_class_join",{_subject_id:subject.id,_session_id:freshSessionId}).then((r:any)=>{if(r?.error)console.warn("[announce_class_join]",r.error.message);},()=>{});}catch{}
             // FIX BUG 1: Apply class settings using the freshly-retrieved session ID, not the
             // stale sessionId state (which is null when a teacher starts a new class for the first time).
             // FIX: a session must flip to "live" whenever ANYONE connects to the room — student,
@@ -980,7 +994,6 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             // "mark live" silently failed for them. This RPC (SECURITY DEFINER) flips the class live for
             // ANY joiner and notifies: student joined -> admins + class teacher; teacher/admin joined -> students.
             // Deduped per (session,user) server-side, so rejoining after a drop never re-notifies.
-            try{(supabase as any).rpc("announce_class_join",{_subject_id:subject.id,_session_id:freshSessionId}).then((r:any)=>{if(r?.error)console.warn("[announce_class_join]",r.error.message);},()=>{});}catch{}
             // FIX: check for an attendance_logs row this student already has for
             // this exact session (from an earlier stint that disconnected/logged
             // out) before inserting a new one. Reusing it means a rejoin shows up

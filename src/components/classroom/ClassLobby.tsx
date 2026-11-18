@@ -31,6 +31,9 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
   const [devices,  setDevices]    = useState<{ cameras: MediaDeviceInfo[]; mics: MediaDeviceInfo[] }>({ cameras: [], mics: [] });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [waitingStudents, setWaitingStudents] = useState<any[]>([]);
+  // Ids of people really in the room right now (live presence). null until the first sync arrives.
+  const [presentIds, setPresentIds] = useState<Set<string> | null>(null);
+  const insideStudents = presentIds ? waitingStudents.filter((s: any) => presentIds.has(s.student_id)) : [];
   // FIX BUG 9: State to surface permission denial to the user
   const [permError, setPermError] = useState<string | null>(null);
 
@@ -163,6 +166,16 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
     return () => { supabase.removeChannel(ch); };
   }, [session?.id]);
 
+  // Live presence: listen only (never tracks), so the lobby sees exactly who is inside the class right now.
+  useEffect(() => {
+    if (!session?.id) return;
+    const ch = supabase.channel(`class-presence-${session.id}`);
+    ch.on("presence", { event: "sync" }, () => {
+      try { setPresentIds(new Set(Object.keys(ch.presenceState()))); } catch {}
+    }).subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [session?.id]);
+
   const handleStart = () => {
     stopAllMedia();
     onStartClass({
@@ -291,10 +304,10 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
         </div>
 
         {/* Students: "already inside" pill */}
-        {!isPrivileged && waitingStudents.length > 0 && (
+        {!isPrivileged && insideStudents.length > 0 && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(201,168,76,.09)", borderRadius: 12, padding: "10px 14px", border: "1px solid rgba(201,168,76,.18)", marginBottom: 12 }}>
             <Users style={{ width: 14, height: 14, color: GOLD, flexShrink: 0 }} />
-            <span style={{ fontSize: 13, color: "rgba(255,255,255,.65)" }}>{waitingStudents.length} participant{waitingStudents.length !== 1 ? "s" : ""} already inside</span>
+            <span style={{ fontSize: 13, color: "rgba(255,255,255,.65)" }}>{insideStudents.length} participant{insideStudents.length !== 1 ? "s" : ""} already inside</span>
           </div>
         )}
 
@@ -343,10 +356,10 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
                     <Toggle checked={item.checked} onChange={item.onChange} />
                   </div>
                 ))}
-                {waitingStudents.length > 0 && (
+                {insideStudents.length > 0 && (
                   <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,.06)" }}>
                     <p style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,.35)", letterSpacing: .6, textTransform: "uppercase" as const, marginBottom: 8 }}>In waiting room</p>
-                    {waitingStudents.map(s => (
+                    {insideStudents.map(s => (
                       <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                         <div style={{ width: 26, height: 26, borderRadius: "50%", background: TEAL, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: "#fff" }}>
                           {((s as any).profiles?.full_name || "S")[0].toUpperCase()}
