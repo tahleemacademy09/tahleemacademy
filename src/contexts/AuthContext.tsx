@@ -57,19 +57,43 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// ── Instant resume ────────────────────────────────────────────────────────
+// Cold start used to wait for: supabase token check (and refresh if expired) +
+// roles/profile queries, all behind a full-page spinner. We now remember the last
+// roles/profile per user and, if a persisted session exists, start already signed in.
+// The normal INITIAL_SESSION + fetchUserData flow still runs and silently corrects
+// anything stale; if the session turns out invalid, SIGNED_OUT sends them to /login.
+const SNAPSHOT_KEY = "ta_auth_snapshot_v1";
+const readInstantAuth = (): { user: User; roles: string[]; profile: UserProfile | null } | null => {
+  try {
+    const key = Object.keys(localStorage).find((k) => k.startsWith("sb-") && k.endsWith("-auth-token"));
+    const snap = JSON.parse(localStorage.getItem(SNAPSHOT_KEY) || "null");
+    if (!key || !snap) return null;
+    const u = JSON.parse(localStorage.getItem(key) || "null")?.user as User | undefined;
+    if (!u?.id || u.id !== snap.uid || !Array.isArray(snap.roles) || snap.roles.length === 0) return null;
+    return { user: u, roles: snap.roles, profile: snap.profile ?? null };
+  } catch { return null; }
+};
+const saveAuthSnapshot = (uid: string, roles: string[], profile: UserProfile | null) => {
+  try { localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ uid, roles, profile })); } catch {}
+};
+const clearAuthSnapshot = () => { try { localStorage.removeItem(SNAPSHOT_KEY); } catch {} };
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user,               setUser]               = useState<User | null>(null);
+  const instantRef = useRef(readInstantAuth());   // computed once, before first render
+  const instant = instantRef.current;
+  const [user,               setUser]               = useState<User | null>(instant?.user ?? null);
   const [session,            setSession]            = useState<Session | null>(null);
-  const [loading,            setLoading]            = useState(true);
-  const [roles,              setRoles]              = useState<string[]>([]);
-  const [profile,            setProfile]            = useState<UserProfile | null>(null);
-  const [mustChangePassword, setMustChangePassword] = useState(false);
+  const [loading,            setLoading]            = useState(!instant);
+  const [roles,              setRoles]              = useState<string[]>(instant?.roles ?? []);
+  const [profile,            setProfile]            = useState<UserProfile | null>(instant?.profile ?? null);
+  const [mustChangePassword, setMustChangePassword] = useState(instant?.user?.user_metadata?.must_change_password === true);
 
   // Guards against stale state from unmounted component or concurrent fetches
   const mountedRef  = useRef(true);
   const lastRecoveryAt = useRef(0);   // throttles automatic session recovery
   const fetchingRef = useRef<string | null>(null); // userId currently being fetched
-  const profileRef  = useRef<UserProfile | null>(null); // mirrors profile state for use in closures
+  const profileRef  = useRef<UserProfile | null>(instant?.profile ?? null); // mirrors profile state for use in closures
 
   // FIX (always-reloads-on-resume bug): whether to show the blocking full-page
   // spinner is decided below using this flag, NOT profileRef.current.
@@ -84,7 +108,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // initialLoadDoneRef is set exactly once, after the FIRST fetch attempt
   // finishes (success, final failure, or safety-timeout), and never again —
   // so the blocking spinner can only ever appear once per session.
-  const initialLoadDoneRef = useRef(false);
+  const initialLoadDoneRef = useRef(!!instant);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -168,6 +192,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (profileRes.data)  {
           profileRef.current = profileRes.data as UserProfile;
           setProfile(profileRes.data as UserProfile);
+        }
+        if (rolesRes.data && rolesRes.data.length > 0) {
+          saveAuthSnapshot(userId, rolesRes.data.map((r) => r.role), (profileRes.data as UserProfile) ?? profileRef.current);
         }
       } catch (err) {
         console.warn("[AuthContext] fetchUserData error (attempt", tries + 1, "):", err);
@@ -257,6 +284,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       fetchingRef.current = null;
       profileRef.current  = null;
       initialLoadDoneRef.current = false;
+      clearAuthSnapshot();
       setSession(null);
       setUser(null);
       setRoles([]);
@@ -330,7 +358,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       setSession(sess);
-      setUser(sess?.user ?? null);
+      if (_event === "INITIAL_SESSION") {
+        // Same account as the instant-resume user: keep the object identity so nothing restarts.
+        setUser((cur) => (cur && sess?.user && cur.id === sess.user.id ? cur : (sess?.user ?? null)));
+      } else {
+        setUser(sess?.user ?? null);
+      }
 
       const mustChange = sess?.user?.user_metadata?.must_change_password === true;
       setMustChangePassword(mustChange);
@@ -372,6 +405,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // "global" would also log them out of their other devices) and drop the recovery copy.
     markUserSignOut();
     clearSessionBackup();
+    clearAuthSnapshot();
     fetchingRef.current = null;
     initialLoadDoneRef.current = false;
     await supabase.auth.signOut({ scope: "local" });
