@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import tahleemHeaderArt from "@/assets/tahleem-header-art.png";
-import heroBg from "@/assets/hero-bg.jpg";
+// Hero images live in /public so index.html can preload them before any JS runs.
+const tahleemHeaderArt = "/images/tahleem-header-art.webp";
+const heroBg = "/images/hero-bg.webp";
 import { useAuth } from "@/contexts/AuthContext";
 import { resolveTasjeelStep, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 
@@ -452,7 +453,7 @@ const Index = () => {
 
         <div className="ta-hero-content">
           <div className="ta-hero-badge">✦ Excellence in Islamic Education ✦</div>
-          <div className="ta-hero-bismi"><img src={tahleemHeaderArt} alt="أكاديمية التعليم" style={{ width:"min(100%,520px)", height:"auto", display:"block", margin:"0 auto" }} /></div>
+          <div className="ta-hero-bismi"><img src={tahleemHeaderArt} alt="أكاديمية التعليم" width={947} height={263} fetchPriority="high" decoding="async" style={{ width:"min(100%,520px)", height:"auto", display:"block", margin:"0 auto" }} /></div>
           <div className="ta-divider">
             <span className="ta-divider-line" />
             <span className="ta-divider-gem">◆</span>
