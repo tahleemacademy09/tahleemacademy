@@ -101,6 +101,7 @@ import {
   VolumeBooster,
   MediaAutoPublish,
   RoomDataListener,
+  fireTileEmoji,
   FloatingEmojiLayer,
   RaisedHandsOverlay,
   JoinLeaveOverlay,
@@ -1718,7 +1719,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           {/* Feature 9: data channel queue flusher — replays queued messages on reconnect */}
           <DataQueueFlusher roomRef={roomRef}/>
           <JoinLeaveOverlay/>
-          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>{setMatOpen(mat);setMatMinimized(false);}} onMatClose={()=>{setMatOpen(null);setMatMinimized(false);}} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}} onForceAudioOnly={(active:boolean)=>{setForcedAudioOnly(active);setAudioOnlyActive(active);}} onAllowVideo={onAllowVideoMsg}
+          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>{setMatOpen(mat);setMatMinimized(false);}} onMatClose={()=>{setMatOpen(null);setMatMinimized(false);}} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string,identity?:string)=>{if(!fireTileEmoji(identity,emoji,sender))addFloatingEmoji(emoji,sender);}} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}} onForceAudioOnly={(active:boolean)=>{setForcedAudioOnly(active);setAudioOnlyActive(active);}} onAllowVideo={onAllowVideoMsg}
             onClassEnded={!isPrivileged?()=>setPhase("ended"):undefined} roomRef={roomRef}/>{/* FIX BUG 10: pass roomRef */}
           {reconnecting&&!overlayExpired&&<ReconnectingOverlay attempt={autoReconnectCountRef.current}/>}
           {reconnecting&&overlayExpired&&(

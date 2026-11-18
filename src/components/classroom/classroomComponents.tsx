@@ -142,6 +142,7 @@ export const CSS = `
   @keyframes slide-right  { from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1} }
   @keyframes fade-in      { from{opacity:0;transform:scale(.97)}to{opacity:1;transform:scale(1)} }
   @keyframes fade-up      { from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)} }
+  @keyframes tile-emoji-rise { 0%{bottom:4%;opacity:0;transform:scale(.5)} 12%{opacity:1;transform:scale(1.15)} 70%{opacity:1} 100%{bottom:72%;opacity:0;transform:scale(1.3)} }
   @keyframes emoji-float  { 0%{transform:translateY(0) scale(1);opacity:1}60%{opacity:.95}100%{transform:translateY(-150px) scale(1.3);opacity:0} }
   @keyframes rec-pulse    { 0%,100%{opacity:1}50%{opacity:.3} }
   @keyframes hand-bounce  { 0%,100%{transform:translateY(0)}45%{transform:translateY(-6px)} }
@@ -1803,7 +1804,7 @@ export const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,on
         if(msg.type==="mat_close")        onMatClose?.();
         if(msg.type==="wb_allow_write")   onWbAllowWrite?.(msg.allow);
         if(msg.type==="rec_allowed")      onRecAllowed?.(msg.allow);
-        if(msg.type==="emoji_react")      onEmojiReact?.(msg.emoji, msg.sender);
+        if(msg.type==="emoji_react")      onEmojiReact?.(msg.emoji, msg.sender, msg.identity||participant?.identity);
         if(msg.type==="group_recite")     onGroupRecite?.(msg.active);
         if(msg.type==="hand_raise")       onHandRaise?.(msg.identity||participant?.identity, msg.name, msg.raised);
         if(msg.type==="admin_mute_all")   onAdminMuteAll?.();
@@ -1864,6 +1865,18 @@ export const JoinLeaveOverlay = () => {
     </div>
   );
 };
+
+/* ══ EMOJI ON THE SENDER'S OWN VIDEO CARD ══
+   A reaction rises up inside the sender's tile (for the sender and for everyone watching), instead of
+   floating across the whole stage. Returns true if at least one tile for that person is on screen; when
+   it returns false (their tile isn't visible — spotlight on someone else, audio-only, etc.) the caller
+   falls back to the old stage-wide floating emoji so the reaction is never lost. */
+export function fireTileEmoji(identity:string|undefined|null,emoji:string,sender:string=""):boolean{
+  if(!identity||typeof window==="undefined")return false;
+  const detail={identity,emoji,sender,handled:false};
+  try{window.dispatchEvent(new CustomEvent("classroom:tile-emoji",{detail}));}catch{return false;}
+  return detail.handled;
+}
 
 /* ══ FLOATING EMOJI LAYER ══ */
 export const FloatingEmojiLayer=({emojis}:{emojis:FloatingEmoji[]})=>(
@@ -6280,6 +6293,22 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
   const canModerate=adminIsPrivileged&&!isLocal;
   const[tileMenuOpen,setTileMenuOpen]=useState(false);
   const[tileActionBusy,setTileActionBusy]=useState(false);
+  // Reactions that are currently rising up inside THIS tile
+  const[tileEmojis,setTileEmojis]=useState<{id:number;emoji:string;x:number;sender:string}[]>([]);
+  const tileEmojiSeq=useRef(0);
+  useEffect(()=>{
+    const onEmoji=(e:any)=>{
+      const d=e?.detail;
+      if(!d||!participant||d.identity!==participant.identity)return;
+      d.handled=true;
+      const id=++tileEmojiSeq.current;
+      const x=18+Math.random()*64;
+      setTileEmojis(prev=>[...prev.slice(-6),{id,emoji:d.emoji,x,sender:d.sender||""}]);
+      setTimeout(()=>setTileEmojis(prev=>prev.filter(t=>t.id!==id)),2500);
+    };
+    window.addEventListener("classroom:tile-emoji",onEmoji);
+    return()=>window.removeEventListener("classroom:tile-emoji",onEmoji);
+  },[participant?.identity]);
   const longPressTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
   const longPressFired=useRef(false);
 
@@ -6502,6 +6531,18 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
       onPointerCancel={canModerate?cancelLongPress:undefined}
       onContextMenu={canModerate?(e:any)=>{e.preventDefault();setTileMenuOpen(true);}:undefined}
     >
+      {tileEmojis.length>0&&(
+        <div style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:30,overflow:"hidden"}}>
+          {tileEmojis.map(t=>(
+            <span key={t.id} style={{
+              position:"absolute",left:`${t.x}%`,bottom:"4%",transform:"translateX(-50%)",
+              fontSize:size==="small"||pip?26:40,lineHeight:1,
+              filter:"drop-shadow(0 2px 6px rgba(0,0,0,.55))",
+              animation:"tile-emoji-rise 2.4s ease-out forwards",userSelect:"none",
+            }}>{t.emoji}</span>
+          ))}
+        </div>
+      )}
       {/* BUG FIX ("camera looks flipped/backwards to me"): a CSS transform on
           THIS <video> element only changes how the LOCAL viewer's own copy is
           rendered on screen — it never touches the actual frames that get
@@ -7198,8 +7239,9 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
   };
   const sendEmoji=(e:string)=>{
     setEmojisOpen(false);
-    try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"emoji_react",emoji:e,sender:user?.user_metadata?.full_name||""})),{reliable:false});}catch{}
-    onSendEmoji?.(e);
+    const myId=room?.localParticipant?.identity;
+    try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"emoji_react",emoji:e,sender:user?.user_metadata?.full_name||"",identity:myId})),{reliable:false});}catch{}
+    if(!fireTileEmoji(myId,e,user?.user_metadata?.full_name||""))onSendEmoji?.(e);
     if(user&&sessionId)supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:e,type:"reaction"});
   };
 

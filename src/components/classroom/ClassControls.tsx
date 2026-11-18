@@ -22,7 +22,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { Capacitor } from "@capacitor/core";
 import { useLiveClass } from "@/contexts/LiveClassContext";
-import { queueMediaOp } from "./classroomComponents";
+import { queueMediaOp, fireTileEmoji } from "./classroomComponents";
 import { micTail } from "@/lib/micTail";
 import { playJoinSound, playLeaveSound } from "@/lib/soundUtils";
 import { Button } from "@/components/ui/button";
@@ -725,18 +725,25 @@ const ClassControls = ({
 
   // ── Reactions ─────────────────────────────────────────────────────────
   const sendReaction = (emoji: string) => {
-    setFloatingEmoji({ emoji, id: Date.now() });
-    // Broadcast to everyone else in the room (they render it via RoomDataListener → FloatingEmojiLayer).
+    const myName = room?.localParticipant?.name || (user as any)?.user_metadata?.full_name || "";
+    const myId = room?.localParticipant?.identity;
+    // Close the ⋮ menu straight away so the emoji is seen on the video card, not behind the overlay.
+    setMoreMenuOpen(false);
+    setShowReactions(false);
+    setShowMoreEmojis(false);
+    // Show it rising up on MY OWN card; only if my card isn't on screen fall back to the big centre emoji.
+    if (!fireTileEmoji(myId, emoji, myName)) {
+      setFloatingEmoji({ emoji, id: Date.now() });
+      setTimeout(() => setFloatingEmoji(null), 2000);
+    }
+    // Broadcast to everyone else — they show it on my card too (identity tells their tiles whose card it is).
     try {
       room?.localParticipant?.publishData(
-        new TextEncoder().encode(JSON.stringify({ type: "emoji_react", emoji, sender: room.localParticipant.name || (user as any)?.user_metadata?.full_name || "" })),
+        new TextEncoder().encode(JSON.stringify({ type: "emoji_react", emoji, sender: myName, identity: myId })),
         { reliable: false }
       );
     } catch {}
-    setShowReactions(false);
-    setShowMoreEmojis(false);
     if (user && sessionId) supabase.from("class_chat_messages").insert({ session_id: sessionId, sender_id: user.id, message: emoji, type: "emoji" });
-    setTimeout(() => setFloatingEmoji(null), 2000);
   };
 
   // ── Live Captions (Web Speech API) ────────────────────────────────────
