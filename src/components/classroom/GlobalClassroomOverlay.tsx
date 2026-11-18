@@ -79,7 +79,7 @@ export default function GlobalClassroomOverlay() {
   const {
     activeSubject, inCall, minimized, autoJoin,
     leaveClass, setMinimized,
-    micEnabled, camEnabled,
+    micEnabled, camEnabled, camLocked,
     hasConnected,
     restoreMicFnRef, getLocalCameraTrackRef, leaveSessionFnRef,
     toggleMicFnRef, toggleCamFnRef,
@@ -138,7 +138,7 @@ export default function GlobalClassroomOverlay() {
   }>({ dragging: false, startClientX: 0, startClientY: 0, startX: 0, startY: 0, moved: false });
   const BUBBLE_SIZE = 60;
   const BUBBLE_MARGIN = 14;
-  const PILL_W = 188; // width of the bubble once it has expanded into the control pill
+  const PILL_W = camLocked ? 132 : 188; // width of the bubble once it has expanded into the control pill
 
   // Tap the bubble → it widens into a small pill with mic, camera and "back to class" buttons.
   // No leave / end control lives here on purpose. It folds back by itself after a few seconds.
@@ -593,8 +593,8 @@ export default function GlobalClassroomOverlay() {
                   </svg>
                 </button>
 
-                {/* Camera */}
-                <button
+                {/* Camera — hidden while the teacher has locked student video; reappears once allowed */}
+                {!camLocked && <button
                   aria-label={camEnabled ? "Turn camera off" : "Turn camera on"}
                   title={camEnabled ? "Camera off" : "Camera on"}
                   onPointerDown={stop} onPointerUp={stop}
@@ -614,7 +614,7 @@ export default function GlobalClassroomOverlay() {
                       </>
                     )}
                   </svg>
-                </button>
+                </button>}
 
                 {/* Expand — back to the class */}
                 <button

@@ -369,7 +369,7 @@ const ClassControls = ({
 
   // ── Sync mic/cam state into global context so minimized pill shows correct icons ──
   const { setMicEnabled: setCtxMicEnabled, setCamEnabled: setCtxCamEnabled,
-          toggleMicFnRef, toggleCamFnRef } = useLiveClass();
+          toggleMicFnRef, toggleCamFnRef, setCamLocked: setCtxCamLocked } = useLiveClass();
 
   // ── Media state — read from LiveKit, not just optimistic shadow ───────
   const [micEnabled,    setMicEnabled]    = useState(() => room.localParticipant.isMicrophoneEnabled);
@@ -853,6 +853,12 @@ const ClassControls = ({
     color: "#fff", background: "#3c4043", display: "flex", alignItems: "center", justifyContent: "center",
     position: "relative", transition: "background .15s ease, transform .1s ease", ...extra,
   });
+
+  // Tell the minimized pill whether the camera is locked, so it hides its camera button until the teacher allows video again.
+  useEffect(() => {
+    setCtxCamLocked(!!camLocked);
+    return () => setCtxCamLocked(false);
+  }, [camLocked, setCtxCamLocked]);
 
   // Green = on, red = off (same colours as the minimized pill)
   const GREEN = "#34d399", RED = "#ef4444";
