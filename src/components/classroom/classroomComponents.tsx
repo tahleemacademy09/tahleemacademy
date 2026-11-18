@@ -2885,6 +2885,50 @@ function unfreezeAnimations(doc:Document){
 function finishAnimations(doc:Document){
   try{(doc as any).getAnimations?.().forEach((a:any)=>{try{a.finish();}catch{}});}catch{}
 }
+/* ── Compact lesson chrome ──
+   HTML lessons ship their own tab/header bar at the top and a pager/footer bar at the bottom, and on a
+   phone (already squeezed between the class header and the class control bar) those two bars eat most of
+   the screen. The lesson pages are stored in the database, so instead of editing each one we find the bar
+   that touches the top edge and the bar that touches the bottom edge of the lesson frame (by geometry, so
+   it works whatever the lesson's markup is) and scale them down. `zoom` also shrinks the space they take
+   up, so the lesson's content area gets the room. */
+const COMPACT_ATTR="data-tm-compact";
+const COMPACT_ZOOM=0.72;
+function compactEdge(doc:Document,edge:"top"|"bottom"){
+  const win=doc.defaultView;if(!win)return;
+  const vw=win.innerWidth,vh=win.innerHeight;
+  if(vw<50||vh<120)return;
+  const stack=doc.elementsFromPoint(Math.round(vw/2),edge==="top"?3:vh-3) as HTMLElement[];
+  let pick:HTMLElement|null=null;
+  for(const el of stack){
+    if(el.hasAttribute?.(COMPACT_ATTR))return;                 // this edge is already compacted
+    if(el===doc.documentElement||el===doc.body)continue;
+    const r=el.getBoundingClientRect();
+    const touches=edge==="top"?r.top<=8:r.bottom>=vh-8;
+    // full-width, bar-sized (not the whole page) and touching the edge; the loop keeps the OUTERMOST match
+    if(r.width>=vw*0.85&&r.height>=28&&r.height<=vh*0.32&&touches)pick=el;
+  }
+  if(pick){pick.setAttribute(COMPACT_ATTR,"1");pick.style.setProperty("zoom",String(COMPACT_ZOOM),"important");}
+}
+function startCompactChrome(frame:HTMLIFrameElement|null){
+  try{
+    (frame as any)?.__tmCompactStop?.();
+    const doc=frame?.contentDocument,win=frame?.contentWindow;
+    if(!frame||!doc||!win)return;
+    const run=()=>{try{compactEdge(doc,"top");compactEdge(doc,"bottom");}catch{}};
+    let deb:any=null;
+    const kick=()=>{if(deb)clearTimeout(deb);deb=setTimeout(run,250);};
+    // lessons often build their DOM after load, so retry a few times, then watch for re-renders
+    const timers=[0,300,900,2000,4000].map(ms=>setTimeout(run,ms));
+    const mo=new MutationObserver(kick);
+    try{mo.observe(doc.body||doc.documentElement,{childList:true,subtree:true});}catch{}
+    win.addEventListener("resize",kick);
+    (frame as any).__tmCompactStop=()=>{
+      timers.forEach(clearTimeout);if(deb)clearTimeout(deb);mo.disconnect();
+      try{win.removeEventListener("resize",kick);}catch{}
+    };
+  }catch{}
+}
 /* Drive the student's copy to the teacher's slide.
    After each click we WAIT for the lesson to actually show the new slide before clicking again.
    (The old version clicked again on a fixed 180ms timer: on a slower phone the lesson hadn't
@@ -3519,7 +3563,7 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
         ):(<>
           <iframe ref={iframeRef} srcDoc={htmlDoc} title={material.title}
             sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-            onLoad={()=>setFrameReady(true)}
+            onLoad={()=>{setFrameReady(true);startCompactChrome(iframeRef.current);}}
             style={{width:"100%",height:"100%",border:"none",display:"block",background:"#fff",pointerEvents:following?"none":"auto"}}/>
           {following&&(
             <div style={{position:"absolute",inset:0,zIndex:5}}/>
