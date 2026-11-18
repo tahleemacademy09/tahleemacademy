@@ -37,7 +37,10 @@ import { usePageViewTracking } from "@/hooks/usePageViewTracking";
 import { setNavigateRef } from "@/lib/nativeApp";
 
 // ── Public pages ───────────────────────────────────────────────────────────
-const Index                = lazy(() => import("./pages/Index"));
+const loadIndex = () => import("./pages/Index");
+const Index                = lazy(loadIndex);
+// Homepage: begin fetching its code now, in parallel, rather than after first render.
+if (typeof window !== "undefined" && window.location.pathname === "/") loadIndex();
 const Login                = lazy(() => import("./pages/Login"));
 const AdminLogin           = lazy(() => import("./pages/AdminLogin"));
 const Register             = lazy(() => import("./pages/Register"));
