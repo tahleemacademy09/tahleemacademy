@@ -1760,9 +1760,13 @@ export const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false, isFirstJo
       if (cancelled) return;
       try {
         const lp = room.localParticipant;
-        const { mic, cam } = isReconnect
+        const { mic, cam: camBase } = isReconnect
           ? { mic: lastKnownRef.current.micEnabled, cam: lastKnownRef.current.camEnabled }
           : { mic: optsRef.current.lobbyMic,        cam: optsRef.current.lobbyCam };
+        // Camera was refused because the token only allowed audio; ClassroomView fetched a fresh
+        // token and remounted, so now switch the camera on as the person asked.
+        let cam = camBase;
+        if ((window as any).__tahleemCamAfterReconnect) { (window as any).__tahleemCamAfterReconnect = false; cam = true; }
         if (lp.isMicrophoneEnabled !== mic) await queueMediaOp(room, () => lp.setMicrophoneEnabled(mic));
         if (lp.isCameraEnabled     !== cam) await queueMediaOp(room, () => lp.setCameraEnabled(cam));
       } catch {}

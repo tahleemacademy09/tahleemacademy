@@ -1152,6 +1152,23 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
 
+  /* FIX ("Camera error: failed to publish track, insufficient permissions" after the teacher allowed
+     video): the join token is minted when the student joins. If video was OFF at that moment the token
+     only lets them publish audio, and LiveKit keeps enforcing that until a NEW token is used — so the
+     camera is refused even after the teacher turns video back on. ClassControls fires this event when
+     the camera is refused for that reason; we fetch a fresh token and remount the room (same path as a
+     network reconnect), and the camera is switched on again right after it reconnects. */
+  useEffect(()=>{
+    const h=()=>{
+      if(isReconnectingRef.current)return;
+      autoReconnectCountRef.current=0;
+      autoReconnect();
+    };
+    window.addEventListener("tahleem:refresh-token",h);
+    return()=>window.removeEventListener("tahleem:refresh-token",h);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[autoReconnect]);
+
   useEffect(()=>()=>{
     if(attendanceId){const d=attPriorDurationRef.current+Math.floor((Date.now()-joinedAt)/1000);supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId);}
     if(sessionId&&user)supabase.from("class_participants").update({left_at:new Date().toISOString(),duration_minutes:Math.floor((Date.now()-joinedAt)/60000)}).eq("session_id",sessionId).eq("student_id",user.id);

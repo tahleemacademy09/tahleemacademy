@@ -612,11 +612,28 @@ const ClassControls = ({
     camBusy.current = true;
     try {
       const next = !room.localParticipant.isCameraEnabled;
-      await queueMediaOp(room, () => room.localParticipant.setCameraEnabled(next));
+      // Flip the button instantly (same as the mic). Opening the camera hardware takes about a second,
+      // and the icon used to wait for it, which felt like the tap did nothing.
       setCamEnabled(next);
       setCtxCamEnabled(next);
+      try {
+        await queueMediaOp(room, () => room.localParticipant.setCameraEnabled(next));
+      } catch (err) {
+        // couldn't actually switch — put the icon back to the real state
+        const real = !!room.localParticipant.isCameraEnabled;
+        setCamEnabled(real); setCtxCamEnabled(real);
+        throw err;
+      }
     } catch (e: any) {
-      toast({ title: t("Camera error", "خطأ في الكاميرا"), description: e?.message, variant: "destructive" });
+      // The join token was minted while video was off, so it still only allows audio. Get a fresh
+      // token (ClassroomView reconnects the room) and turn the camera on again once it is back.
+      if (/insufficient permissions|not allowed/i.test(String(e?.message || ""))) {
+        (window as any).__tahleemCamAfterReconnect = true;
+        toast({ title: t("Updating your connection…", "جارٍ تحديث الاتصال…"), description: t("Your camera will turn on in a moment.", "ستعمل الكاميرا بعد لحظات.") });
+        window.dispatchEvent(new CustomEvent("tahleem:refresh-token"));
+      } else {
+        toast({ title: t("Camera error", "خطأ في الكاميرا"), description: e?.message, variant: "destructive" });
+      }
     } finally {
       camBusy.current = false;
     }
