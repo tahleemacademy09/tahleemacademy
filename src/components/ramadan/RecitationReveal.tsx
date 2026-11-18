@@ -4,7 +4,7 @@
 // Uses the browser Web Speech API (Arabic) for live recognition; matching logic lives in src/lib/revealEngine.ts.
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
-  AlertCircle, Eye, EyeOff, Lightbulb, Loader2, Lock, Mic, Minus, Moon, Plus, RotateCcw, SkipForward, Square, Vibrate,
+  AlertCircle, Eye, EyeOff, Lightbulb, Loader2, Lock, Mic, Minus, Moon, Plus, RotateCcw, ShieldAlert, SkipForward, Square, Vibrate, Volume2,
 } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { fetchAyahs, fetchSurahs, type Ayah, type SurahInfo } from "@/lib/quranCheck";
@@ -18,6 +18,35 @@ const BISMILLAH = "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَ
 const MAX_AYAHS = 40;
 const FONT_KEY = "ramadan.reveal.font";
 const VIB_KEY = "ramadan.reveal.vibrate";
+const STRICT_KEY = "ramadan.reveal.strict";
+const VOICE_KEY = "ramadan.reveal.voice";
+
+/**
+ * Say "خطأ" out loud. Plays /sounds/khata.mp3 if you add your own recording to public/sounds/,
+ * otherwise falls back to the device's Arabic text-to-speech voice.
+ */
+function speakKhata() {
+  let spoken = false;
+  const tts = () => {
+    if (spoken) return;
+    spoken = true;
+    try {
+      const sy = window.speechSynthesis;
+      if (!sy) return;
+      sy.cancel();
+      const u = new SpeechSynthesisUtterance("خطأ");
+      u.lang = "ar-SA"; u.rate = 0.85; u.volume = 1;
+      const v = sy.getVoices().find((x) => x.lang.toLowerCase().startsWith("ar"));
+      if (v) u.voice = v;
+      sy.speak(u);
+    } catch { /* noop */ }
+  };
+  try {
+    const a = new Audio("/sounds/khata.mp3");
+    a.volume = 1; a.onerror = tts;
+    a.play().catch(tts);
+  } catch { tts(); }
+}
 
 /* ── minimal Web Speech API typings (not in lib.dom) ─────────────────────────────────────────────────────── */
 interface SRAlt { transcript: string }
@@ -66,6 +95,8 @@ export default function RecitationReveal() {
   const [mode, setMode] = useState<Mode>("word");
   const [fontSize, setFontSize] = useState(() => Number(lsGet(FONT_KEY)) || 32);
   const [vibrate, setVibrate] = useState(() => lsGet(VIB_KEY) !== "0");
+  const [strict, setStrict] = useState(() => lsGet(STRICT_KEY) !== "0");
+  const [voice, setVoice] = useState(() => lsGet(VOICE_KEY) !== "0");
   const [listening, setListening] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [live, setLive] = useState("");
@@ -99,6 +130,7 @@ export default function RecitationReveal() {
   const lastFinal = useRef<string[]>([]);
   const restarts = useRef<number[]>([]);
   const flags = useRef(0);
+  const errBuzzed = useRef(0);
   const wake = useRef<{ release(): Promise<void> } | null>(null);
 
   /* ── Quran text ──────────────────────────────────────────────── */
@@ -126,7 +158,7 @@ export default function RecitationReveal() {
   const resetExercise = useCallback(() => {
     hardStop();
     committed.current = initialState(wordsRef.current.length);
-    processed.current = 0; lastFinal.current = []; flags.current = 0;
+    processed.current = 0; lastFinal.current = []; flags.current = 0; errBuzzed.current = 0;
     setView(cloneState(committed.current));
     setPeeked(new Set()); setHint(false); setSelected(null); setLive(""); setSeconds(0); setError(null); setShowAll(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -150,11 +182,16 @@ export default function RecitationReveal() {
   useEffect(() => () => { hardStop(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── feedback buzz on a new mistake ─────────────────────────── */
-  const vibrateRef = useRef(vibrate);
-  vibrateRef.current = vibrate;
-  const buzzOnce = useCallback(() => {
-    if (!vibrateRef.current) return;
-    import("@/lib/ctcNative").then((m) => m.buzz([0, 120])).catch(() => { try { navigator.vibrate?.(120); } catch { /* noop */ } });
+  const vibrateRef = useRef(vibrate); vibrateRef.current = vibrate;
+  const strictRef = useRef(strict); strictRef.current = strict;
+  const voiceRef = useRef(voice); voiceRef.current = voice;
+  /** strong = a strict-mode mistake: long double buzz + "خطأ"; otherwise a short buzz. */
+  const alarm = useCallback((strong: boolean) => {
+    if (vibrateRef.current) {
+      const pattern = strong ? [0, 500, 120, 500] : [0, 120];
+      import("@/lib/ctcNative").then((m) => m.buzz(pattern)).catch(() => { try { navigator.vibrate?.(pattern.slice(1)); } catch { /* noop */ } });
+    }
+    if (strong && voiceRef.current) speakKhata();
   }, []);
 
   /* ── recognition ─────────────────────────────────────────────── */
@@ -175,7 +212,7 @@ export default function RecitationReveal() {
     for (let a = 0; a < count; a++) {
       const full = tokenize(res[a].transcript);
       const fresh = stripCumulative(lastFinal.current, full);
-      const gain = stateScore(feed(wordsRef.current, cloneState(base), fresh, final)) - stateScore(base);
+      const gain = stateScore(feed(wordsRef.current, cloneState(base), fresh, final, strictRef.current)) - stateScore(base);
       if (gain > bestGain) { bestGain = gain; best = { full, fresh }; }
     }
     return best ?? { full: [], fresh: [] };
@@ -187,7 +224,7 @@ export default function RecitationReveal() {
     const c = committed.current;
     while (processed.current < res.length && res[processed.current].isFinal) {
       const pick = pickAlt(res[processed.current], c, true);
-      feed(w, c, pick.fresh, true);
+      feed(w, c, pick.fresh, true, strictRef.current);
       if (pick.full.length) lastFinal.current = pick.full;
       processed.current++;
     }
@@ -198,16 +235,21 @@ export default function RecitationReveal() {
       for (let i = processed.current; i < res.length; i++) {
         const full = tokenize(res[i][0].transcript);
         text += " " + res[i][0].transcript;
-        feed(w, shown, stripCumulative(lastFinal.current, full), false);
+        feed(w, shown, stripCumulative(lastFinal.current, full), false, strictRef.current);
       }
     }
     setLive(text.trim());
     setView(cloneState(shown));
 
     const sum = summarize(c);
-    const bad = sum.wrong + sum.missed;
-    if (bad > flags.current) buzzOnce();
-    flags.current = bad;
+    if (strictRef.current) {
+      if (shown.errors > errBuzzed.current) alarm(true);
+      errBuzzed.current = shown === c ? c.errors : Math.max(errBuzzed.current, shown.errors);
+    } else {
+      const bad = sum.wrong + sum.missed;
+      if (bad > flags.current) alarm(false);
+      flags.current = bad;
+    }
     if (sum.done) { hardStop(); }
   }
 
@@ -217,6 +259,7 @@ export default function RecitationReveal() {
     if (!words.length) return;
     if (summarize(committed.current).done) resetExercise();
     setError(null);
+    try { window.speechSynthesis?.getVoices(); } catch { /* noop */ }
     listeningRef.current = true; restarts.current = [];
     setListening(true);
     (navigator as Navigator & { wakeLock?: { request(t: "screen"): Promise<{ release(): Promise<void> }> } })
@@ -268,6 +311,8 @@ export default function RecitationReveal() {
   const sel = selected !== null ? { w: words[selected], st: view.status[selected], heard: view.heard[selected] } : null;
 
   const changeFont = (d: number) => setFontSize((f) => { const n = Math.min(56, Math.max(22, f + d)); lsSet(FONT_KEY, String(n)); return n; });
+  const toggleStrict = () => setStrict((v) => { lsSet(STRICT_KEY, v ? "0" : "1"); return !v; });
+  const toggleVoice = () => setVoice((v) => { lsSet(VOICE_KEY, v ? "0" : "1"); return !v; });
   const toggleVibrate = () => setVibrate((v) => { lsSet(VIB_KEY, v ? "0" : "1"); return !v; });
   const locked = listening;
 
@@ -349,12 +394,35 @@ export default function RecitationReveal() {
             style={vibrate ? { background: "#ecfdf5", color: G, borderColor: "#a7f3d0" } : { color: "#6b7280" }}>
             <Vibrate size={15} /> {t("Buzz on mistake", "اهتزاز عند الخطأ")}
           </button>
+          <button onClick={toggleStrict} aria-pressed={strict}
+            className="inline-flex h-10 items-center gap-1.5 rounded-xl border px-3 text-xs font-bold"
+            style={strict ? { background: "#fef2f2", color: "#991b1b", borderColor: "#fecaca" } : { color: "#6b7280" }}>
+            <ShieldAlert size={15} /> {t("Strict mode", "الوضع الصارم")}
+          </button>
+          <button onClick={toggleVoice} aria-pressed={voice}
+            className="inline-flex h-10 items-center gap-1.5 rounded-xl border px-3 text-xs font-bold"
+            style={voice ? { background: "#ecfdf5", color: G, borderColor: "#a7f3d0" } : { color: "#6b7280" }}>
+            <Volume2 size={15} /> {t("Say “خطأ”", "نطق «خطأ»")}
+          </button>
           <button onClick={() => setShowAll((v) => !v)}
             className="inline-flex h-10 items-center gap-1.5 rounded-xl border px-3 text-xs font-bold text-gray-700">
             {showAll ? <EyeOff size={15} /> : <Eye size={15} />} {showAll ? t("Hide text", "إخفاء النص") : t("Show text", "إظهار النص")}
           </button>
         </div>
       </div>
+
+      {strict && listening && view.blocked && (
+        <div className="flex items-center gap-3 rounded-2xl border-2 border-red-400 bg-red-50 p-3" role="alert">
+          <div className="text-3xl font-black text-red-700" style={{ fontFamily: "'Amiri',serif" }}>خطأ</div>
+          <div className="min-w-0 flex-1 text-sm font-semibold text-red-900">
+            {t("Mistake — say this word correctly to continue.", "خطأ — انطق هذه الكلمة صحيحة لتتابع.")}
+          </div>
+          <button onClick={() => togglePeek(view.cursor)}
+            className="h-10 shrink-0 rounded-xl bg-white px-3 text-xs font-bold text-red-800 ring-1 ring-red-300">
+            {peeked.has(view.cursor) ? t("Hide", "إخفاء") : t("Show answer", "أظهر")}
+          </button>
+        </div>
+      )}
 
       {/* Reading surface */}
       <div className="rounded-2xl border p-4 shadow-sm" style={{ background: "#fffdf5", borderColor: "#e7dfb8" }}>
@@ -390,10 +458,12 @@ export default function RecitationReveal() {
                       if (!open) { style.filter = "blur(8px)"; style.opacity = 0.55; }
                       if (peeked.has(i) && !graded) { style.outline = "2px dashed #d97706"; }
                       if (isCur) { style.outline = "2px solid #d4a017"; style.background = "#fff7d6"; }
+                      const isBad = i === view.cursor && view.blocked && listening;
+                      if (isBad) { style.outline = "3px solid #dc2626"; style.background = "#fee2e2"; }
                       return (
                         <button key={i} data-w={i} type="button"
                           onClick={() => (graded ? setSelected(i === selected ? null : i) : togglePeek(i))}
-                          className="mx-0.5 inline-block rounded-lg px-1.5 align-middle"
+                          className={`mx-0.5 inline-block rounded-lg px-1.5 align-middle${i === view.cursor && view.blocked && listening ? " animate-pulse" : ""}`}
                           style={style}
                           aria-label={open ? w.text : t("Hidden word", "كلمة مخفية")}>
                           {open ? w.text : isCur && hint ? `${firstLetter(w.text)}…` : w.text}
@@ -428,7 +498,7 @@ export default function RecitationReveal() {
 
       {sel && sel.st !== "pending" && (
         <div className="rounded-xl border p-3 text-sm" style={{ borderColor: WORD[sel.st].bg, background: "#fff" }}>
-          <div className="mb-1 font-bold" style={{ color: WORD[sel.st].fg }}>{t(WORD[sel.st].en, WORD[sel.st].ar)}</div>
+          <div className="mb-1 font-bold" style={{ color: WORD[sel.st].fg }}>{selected !== null && view.fixed[selected] ? t("Corrected after a mistake", "صُحّحت بعد خطأ") : t(WORD[sel.st].en, WORD[sel.st].ar)}</div>
           <div className="grid grid-cols-2 gap-2" dir="rtl">
             <div><div className="text-[10px] text-gray-500" dir={dir}>{t("Expected", "المطلوب")}</div><div style={{ fontSize: 22 }}>{sel.w.text}</div></div>
             <div><div className="text-[10px] text-gray-500" dir={dir}>{t("Heard", "المسموع")}</div><div style={{ fontSize: 22 }}>{sel.heard ?? "—"}</div></div>
@@ -464,6 +534,9 @@ export default function RecitationReveal() {
                 {t(WORD[k].en, WORD[k].ar)} · {sum[k]}
               </span>
             ))}
+            {sum.errors > 0 && (
+              <span className="rounded-full bg-red-100 px-2.5 py-1 text-[11px] font-bold text-red-800">{t("Mistakes", "الأخطاء")} · {sum.errors}</span>
+            )}
             {sum.pending > 0 && (
               <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-bold text-gray-600">{t("Not reached", "لم يُقرأ")} · {sum.pending}</span>
             )}
