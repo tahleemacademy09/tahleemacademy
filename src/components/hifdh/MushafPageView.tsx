@@ -409,7 +409,7 @@ function mvPrefetchAround(page: number, white = false): () => void {
 }
 
 /** fitHeight: pixels of screen NOT available to the page (bars, buttons). When set, the whole page is fitted to the screen height. */
-export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, dimOthers, onUnavailable, onlySurahs, coverUnrevealed, revealProgress, coverOutside, hidePortionChip }: {
+export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, dimOthers, onUnavailable, onlySurahs, coverUnrevealed, revealProgress, coverOutside, hidePortionChip, softHighlight, maxSqueeze }: {
   page: number; fontSize?: number; halves?: [number, number]; fitHeight?: number;
   /** hide the floating "Your portion" chip (when the screen already says it) */
   hidePortionChip?: boolean;
@@ -434,6 +434,10 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
   highlight?: MvAyahRef | null;
   /** with `highlight`: dim the rest of the page so only the highlighted ayah stays bright */
   dimOthers?: boolean;
+  /** very faint tint for the highlighted ayah (instead of the strong gold) */
+  softHighlight?: boolean;
+  /** full-screen mode: allow the page to be squeezed vertically down to this ratio (e.g. 0.85) so it keeps the full width instead of being narrowed */
+  maxSqueeze?: number;
   /** ayah the user selected — drawn in soft green behind the text */
   selected?: MvAyahRef | null;
   /** tap on an ayah (inline mode only) */
@@ -478,7 +482,7 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
           "svg *{pointer-events:none}" +
           ".ayahPolygon,path[ayah]{pointer-events:all;cursor:pointer;-webkit-tap-highlight-color:transparent}" +
           ".hl-sel{fill:rgba(6,78,59,.16)!important;fill-opacity:1!important}" +
-          ".hl-play{fill:rgba(201,168,76,.42)!important;fill-opacity:1!important}";
+          ".hl-play{fill:var(--mv-hl,rgba(201,168,76,.42))!important;fill-opacity:1!important}";
         root.appendChild(st);
         if (pureWhite && !useWhite) {
           const done = mvRecolor(prep.clean);
@@ -568,7 +572,12 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
   let fillH: number | undefined;
   if (availableHeight && aspect && boxW && zoom <= 1) {
     const naturalH = boxW / aspect;
-    if (naturalH > availableHeight) fillW = Math.floor(availableHeight * aspect);
+    if (naturalH > availableHeight) {
+      const ratio = availableHeight / naturalH;
+      const minR = maxSqueeze && maxSqueeze < 1 ? maxSqueeze : 1;
+      if (ratio >= minR) fillH = Math.round(availableHeight); // full width, squeezed slightly to fill the box exactly
+      else { fillW = Math.floor((availableHeight * aspect) / minR); fillH = Math.round(availableHeight); }
+    }
     else fillH = Math.round(naturalH * Math.min(maxStretch, availableHeight / naturalH));
   }
 
@@ -823,7 +832,7 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
           )}
 
           {/* inline SVG lives in a shadow root inside this host */}
-          <div ref={hostRef} onClick={handleClick} style={mode === "inline" ? { display: "block" } : { visibility: "hidden", position: "absolute", left: 0, top: 0, width: "100%", height: 0, overflow: "hidden" }} />
+          <div ref={hostRef} onClick={handleClick} style={mode === "inline" ? ({ display: "block", ...(softHighlight ? { "--mv-hl": "rgba(201,168,76,.15)" } : {}) } as React.CSSProperties) : { visibility: "hidden", position: "absolute", left: 0, top: 0, width: "100%", height: 0, overflow: "hidden" }} />
 
           {mode === "img" && (
             <img
