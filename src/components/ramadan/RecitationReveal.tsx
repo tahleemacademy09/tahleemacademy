@@ -21,31 +21,40 @@ const VIB_KEY = "ramadan.reveal.vibrate";
 const STRICT_KEY = "ramadan.reveal.strict";
 const VOICE_KEY = "ramadan.reveal.voice";
 
+let khata: HTMLAudioElement | null = null;
+let khataBad = false;
+let arVoice: SpeechSynthesisVoice | null = null;
+
+/** Call on a user tap (Start): preloads the sound and the Arabic voice so "خطأ" plays with no delay later. */
+function warmKhata() {
+  try {
+    if (!khata && !khataBad) {
+      khata = new Audio("/sounds/khata.mp3");
+      khata.preload = "auto"; khata.onerror = () => { khataBad = true; }; khata.load();
+    }
+    arVoice = window.speechSynthesis?.getVoices().find((v) => v.lang.toLowerCase().startsWith("ar")) ?? arVoice;
+  } catch { /* noop */ }
+}
+
+function speakTts() {
+  try {
+    const sy = window.speechSynthesis;
+    if (!sy) return;
+    if (sy.speaking) sy.cancel();
+    const u = new SpeechSynthesisUtterance("خطأ");
+    u.lang = "ar-SA"; u.rate = 1; u.volume = 1;
+    if (arVoice) u.voice = arVoice;
+    sy.speak(u);
+  } catch { /* noop */ }
+}
+
 /**
  * Say "خطأ" out loud. Plays /sounds/khata.mp3 if you add your own recording to public/sounds/,
- * otherwise falls back to the device's Arabic text-to-speech voice.
+ * otherwise uses the device's Arabic text-to-speech voice.
  */
 function speakKhata() {
-  let spoken = false;
-  const tts = () => {
-    if (spoken) return;
-    spoken = true;
-    try {
-      const sy = window.speechSynthesis;
-      if (!sy) return;
-      sy.cancel();
-      const u = new SpeechSynthesisUtterance("خطأ");
-      u.lang = "ar-SA"; u.rate = 0.85; u.volume = 1;
-      const v = sy.getVoices().find((x) => x.lang.toLowerCase().startsWith("ar"));
-      if (v) u.voice = v;
-      sy.speak(u);
-    } catch { /* noop */ }
-  };
-  try {
-    const a = new Audio("/sounds/khata.mp3");
-    a.volume = 1; a.onerror = tts;
-    a.play().catch(tts);
-  } catch { tts(); }
+  if (khata && !khataBad) { try { khata.currentTime = 0; khata.play().catch(speakTts); return; } catch { /* fall through */ } }
+  speakTts();
 }
 
 /* ── minimal Web Speech API typings (not in lib.dom) ─────────────────────────────────────────────────────── */
@@ -131,6 +140,7 @@ export default function RecitationReveal() {
   const restarts = useRef<number[]>([]);
   const flags = useRef(0);
   const errBuzzed = useRef(0);
+  const pendingErr = useRef<string | null>(null);
   const wake = useRef<{ release(): Promise<void> } | null>(null);
 
   /* ── Quran text ──────────────────────────────────────────────── */
@@ -158,7 +168,7 @@ export default function RecitationReveal() {
   const resetExercise = useCallback(() => {
     hardStop();
     committed.current = initialState(wordsRef.current.length);
-    processed.current = 0; lastFinal.current = []; flags.current = 0; errBuzzed.current = 0;
+    processed.current = 0; lastFinal.current = []; flags.current = 0; errBuzzed.current = 0; pendingErr.current = null;
     setView(cloneState(committed.current));
     setPeeked(new Set()); setHint(false); setSelected(null); setLive(""); setSeconds(0); setError(null); setShowAll(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -243,8 +253,16 @@ export default function RecitationReveal() {
 
     const sum = summarize(c);
     if (strictRef.current) {
-      if (shown.errors > errBuzzed.current) alarm(true);
-      errBuzzed.current = shown === c ? c.errors : Math.max(errBuzzed.current, shown.errors);
+      // A mistake seen in live (partial) text must show up in two consecutive updates (~0.3 s) before it buzzes,
+      // so a half-heard word doesn't cause a false alarm; a mistake in committed text buzzes at once.
+      if (shown.errors > errBuzzed.current) {
+        const key = `${shown.cursor}:${shown.errors}`;
+        if (shown === c || pendingErr.current === key) { alarm(true); errBuzzed.current = shown.errors; pendingErr.current = null; }
+        else pendingErr.current = key;
+      } else {
+        pendingErr.current = null;
+        if (shown === c) errBuzzed.current = c.errors;
+      }
     } else {
       const bad = sum.wrong + sum.missed;
       if (bad > flags.current) alarm(false);
@@ -259,7 +277,7 @@ export default function RecitationReveal() {
     if (!words.length) return;
     if (summarize(committed.current).done) resetExercise();
     setError(null);
-    try { window.speechSynthesis?.getVoices(); } catch { /* noop */ }
+    warmKhata();
     listeningRef.current = true; restarts.current = [];
     setListening(true);
     (navigator as Navigator & { wakeLock?: { request(t: "screen"): Promise<{ release(): Promise<void> }> } })
