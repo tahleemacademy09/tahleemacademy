@@ -8,6 +8,7 @@ import { glyphFontFamily, glyphText, type GlyphLine } from "@/components/quran/m
 import { SURAHS } from "@/components/hifdh/surahData";
 import type { RevealState, RevealStatus } from "@/lib/revealEngine";
 import type { QcfPlan } from "@/lib/qcfPlan";
+import SurahBanner from "@/components/hifdh/SurahBanner";
 
 const GOLD = "#c9a84c";
 const AMIRI = "'Amiri Quran','Amiri','Noto Naskh Arabic',serif";
@@ -105,10 +106,8 @@ export default function QcfMushafReveal({
             {lines.map((line, li) => {
               if (line.type === "surah-header") {
                 return (
-                  <div key={li} style={{ ...lineStyle(true), justifyContent: "center", fontFamily: AMIRI }}>
-                    <div style={{ width: "86%", height: "82%", display: "grid", placeItems: "center", border: `1.5px solid ${GOLD}`, borderRadius: "0.3em", background: "#fbf3d9", fontSize: "0.82em", lineHeight: 1 }}>
-                      سُورَةُ {surahNameAr(line.surah ?? 0).replace(/^سورة\s*/, "")}
-                    </div>
+                  <div key={li} style={{ ...lineStyle(true), height: `${LINE_H * 1.45}em`, justifyContent: "center", fontFamily: AMIRI }}>
+                    <SurahBanner name={surahNameAr(line.surah ?? 0).replace(/^سورة\s*/, "")} />
                   </div>
                 );
               }

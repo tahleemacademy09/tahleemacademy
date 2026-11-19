@@ -14,7 +14,7 @@
 //  • At Finish it hands the page a grade for every printed word (same order as refTokens of the assigned ayahs), so the
 //    page's result screen, saved results and staff review work exactly as before.
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
-import { AlertCircle, Loader2, MicOff, Pause, Play } from "lucide-react";
+import { AlertCircle, Loader2, MicOff, Pause, Play, RotateCcw } from "lucide-react";
 import { getGlyphPage, loadGlyphFont, type GlyphLine } from "@/components/quran/mushafGlyphs";
 import { buildQcfPlanRanges, rangesOf, type QcfPlan } from "@/lib/qcfPlan";
 import {
@@ -97,7 +97,7 @@ export type { RevealAyah };
 const fmt = (s: number) => `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
 
 export default function DailyReadReveal({
-  ayahs, pageNumbers, title, subtitle, dots, backButton, recSecs, paused, onPause, onResume, onFinish, handleRef,
+  ayahs, pageNumbers, title, subtitle, dots, backButton, recSecs, paused, onPause, onResume, onFinish, onRetry, handleRef,
   getMicLevel, onMicConflict, onAudioSilent, audioOn, getAudioTrack,
 }: {
   ayahs: RevealAyah[];
@@ -111,6 +111,8 @@ export default function DailyReadReveal({
   onPause: () => void; onResume: () => void;
   /** the Finished button (and the automatic finish once every word has been recited) — the page then calls handleRef.current.finish() */
   onFinish: () => void;
+  /** the retry icon: throw this attempt away and start the page again from its first word */
+  onRetry: () => void;
   handleRef: MutableRefObject<RevealHandle | null>;
   /** 0..1 loudness of the page's recorder right now (so a recorder that hears nothing / a recogniser that is deaf can be told apart) */
   getMicLevel: () => number;
@@ -511,6 +513,11 @@ export default function DailyReadReveal({
             style={{ flex: 1, padding: "15px", borderRadius: 14, border: "none", cursor: "pointer", background: FAIL, color: W, fontWeight: 900, fontSize: 14,
               opacity: sum.total - sum.pending === 0 ? 0.55 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "inherit" }}>
             <MicOff size={17} /> Finished — Evaluate
+          </button>
+          <button onClick={onRetry} aria-label="Retry — start this page again" title="Retry"
+            style={{ flexShrink: 0, width: 54, borderRadius: 14, cursor: "pointer", border: `1.5px solid ${BRD}`, background: W, color: G1,
+              display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}>
+            <RotateCcw size={20} />
           </button>
         </div>
       </div>
