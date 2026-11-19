@@ -23,7 +23,8 @@ const surahNameAr = (n: number) => SURAHS.find((s) => s.num === n)?.nameAr ?? ""
 const BISMILLAH = "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ";
 const MIN_GAP = 0.16;        // minimum space between two words, in em
 const LINE_H = 1.9;          // printed line height, in em
-const LINE_H_FIT = 1.55;     // tighter lines when the whole page has to fit on screen
+const LINE_H_FIT = 1.55;     // starting line height when the whole page has to fit on screen
+const LH_MIN = 1.4, LH_MAX = 2.9;   // how far the line spacing may stretch / tighten to fill the screen
 
 export default function QcfMushafReveal({
   pageNumbers, pages, plan, view, started, showAll, mode, hintOn, peeked, onPeek, fit = false,
@@ -47,7 +48,8 @@ export default function QcfMushafReveal({
   const pageRef = useRef<HTMLDivElement>(null);
   const [availH, setAvailH] = useState(0);
   const [k, setK] = useState(1);
-  const lh = fit ? LINE_H_FIT : LINE_H;
+  const [fitLh, setFitLh] = useState(LINE_H_FIT);
+  const lh = fit ? fitLh : LINE_H;
 
   useLayoutEffect(() => {
     const el = boxRef.current; if (!el) return;
@@ -73,14 +75,18 @@ export default function QcfMushafReveal({
     if (Math.abs(next - fs) > 0.25) setFs(next);
   }, [width, fs, pages]);
 
-  // fit mode: scale the whole printed page down (never up) so every line is on screen at once
+  // fit mode: the page fills the box exactly. The width fixes the letter size, so the printed LINE SPACING stretches (or, on a very
+  // short screen, tightens and finally the whole page scales down) until the last line sits at the bottom — everything on screen, no scrolling.
   useLayoutEffect(() => {
     if (!fit) return;
     const p = pageRef.current; if (!p || !availH) return;
     const h = p.offsetHeight; if (!h) return;
-    const next = Math.min(1, availH / h);
-    if (Math.abs(next - k) > 0.004) setK(next);
-  }, [fit, availH, fs, width, pages, plan, k]);
+    const ratio = availH / h;
+    const nl = Math.min(LH_MAX, Math.max(LH_MIN, fitLh * ratio));
+    if (Math.abs(nl - fitLh) > 0.01) setFitLh(nl);
+    const nk = fitLh <= LH_MIN + 0.001 && ratio < 1 ? ratio : 1;
+    if (Math.abs(nk - k) > 0.004) setK(nk);
+  }, [fit, availH, fs, width, pages, plan, k, fitLh]);
 
   // keep the current word in view while reciting; before starting, show the first selected word
   useEffect(() => {
@@ -126,7 +132,7 @@ export default function QcfMushafReveal({
             {lines.map((line, li) => {
               if (line.type === "surah-header") {
                 return (
-                  <div key={li} style={{ ...lineStyle(true), height: `${lh * 1.45}em`, justifyContent: "center", fontFamily: AMIRI }}>
+                  <div key={li} style={{ ...lineStyle(true), height: `${Math.min(lh, 2.1) * 1.45}em`, justifyContent: "center", fontFamily: AMIRI }}>
                     <SurahBanner name={surahNameAr(line.surah ?? 0).replace(/^سورة\s*/, "")} />
                   </div>
                 );
