@@ -410,11 +410,6 @@ function mvPrefetchAround(page: number, white = false): () => void {
 
 /** glyph → ayah map for the loaded page: "surah:ayah" → its glyph paths in reading order (line by line, right to left).
  *  Empty when the glyphs cannot be matched to the ayah polygons. */
-/** Decoration that belongs to no ayah (surah banner, Bismillah line, ornaments) — keyed by the map mvBuildGlyphMap returned.
- *  The live reveal leaves these visible: they are not recited text, so there is nothing to uncover. */
-const MV_EXTRAS = new WeakMap<Map<string, SVGGraphicsElement[]>, SVGGraphicsElement[]>();
-const MV_EXTRA_SEL = "path,use,rect,circle,ellipse,polygon,polyline";
-
 function mvBuildGlyphMap(root: ShadowRoot, svg: SVGSVGElement): Map<string, SVGGraphicsElement[]> {
   const NS = "http://www.w3.org/2000/svg";
   const byAyah = new Map<string, SVGGraphicsElement[]>();
@@ -425,7 +420,6 @@ function mvBuildGlyphMap(root: ShadowRoot, svg: SVGSVGElement): Map<string, SVGG
       // each ayah polygon = one sub-path per printed line, top to bottom
       type Line = { key: string; line: number; el: SVGGeometryElement; inv: DOMMatrix };
       const lines: Line[] = [];
-      const bands: { top: number; bottom: number }[] = [];   // screen-space vertical extent of every printed verse line
       const tmp: Element[] = [];
       polys.forEach((poly) => {
         const a = mvAyahOf(poly); const d = poly.getAttribute("d");
@@ -441,7 +435,6 @@ function mvBuildGlyphMap(root: ShadowRoot, svg: SVGSVGElement): Map<string, SVGG
           lines.push({ key: `${a.surah}:${a.ayah}`, line: i, el, inv: pm.inverse() });
         });
       });
-      lines.forEach((ln) => { const r = ln.el.getBoundingClientRect(); if (r.height > 0) bands.push({ top: r.top, bottom: r.bottom }); });
       const glyphs = Array.from(root.querySelectorAll("path")).filter((g) => !g.matches(MV_POLY)) as SVGGraphicsElement[];
       const buckets = new Map<string, { g: SVGGraphicsElement; line: number; x: number }[]>();
       glyphs.forEach((g) => {
@@ -467,20 +460,6 @@ function mvBuildGlyphMap(root: ShadowRoot, svg: SVGSVGElement): Map<string, SVGG
         arr.sort((p, q) => p.line - q.line || q.x - p.x); // line by line, right to left
         byAyah.set(key, arr.map((o) => o.g));
       });
-      // anything that sits OUTSIDE every verse line (surah banner, Bismillah line, ornaments) stays visible
-      if (bands.length) {
-        const mapped = new Set<Element>(); byAyah.forEach((arr) => arr.forEach((g) => mapped.add(g)));
-        const sr = svg.getBoundingClientRect();
-        const extras = (Array.from(root.querySelectorAll(MV_EXTRA_SEL)) as SVGGraphicsElement[]).filter((el) => {
-          if (mapped.has(el) || el.matches(MV_POLY) || el.closest("defs,clipPath,mask,symbol,pattern,[data-cover],[data-blur]")) return false;
-          const r = el.getBoundingClientRect();
-          if (!(r.width > 0 && r.height > 0)) return false;
-          if (r.width > sr.width * 0.9 && r.height > sr.height * 0.9) return false;   // page background / frame
-          const cy = (r.top + r.bottom) / 2;
-          return !bands.some((b) => cy >= b.top - 1 && cy <= b.bottom + 1);          // inside a verse line = a glyph that failed to map
-        });
-        MV_EXTRAS.set(byAyah, extras);
-      }
     }
   } catch { /* fall back to ayah-level below */ }
   return byAyah;
@@ -728,7 +707,6 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
         if (v.n >= 4 && v.m >= v.n) { checked++; if ((byAyah.get(key)?.length ?? 0) <= 1) broken++; }
       });
       if (checked > 0 && broken === checked) setTimeout(() => unavailRef.current?.(), 0);
-      (MV_EXTRAS.get(byAyah) ?? []).forEach((el) => addShape(el, 0.6));   // banner + Bismillah line: always visible
       Object.entries(prog).forEach(([key, v]) => {
         const gl = byAyah.get(key);
         if (!gl || !gl.length || v.m <= 0) return;
