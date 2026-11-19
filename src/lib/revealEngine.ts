@@ -120,6 +120,18 @@ function step(words: RevealWord[], s: RevealState, rawToken: string, next: strin
   // 1. the expected word
   const cur = words[s.cursor];
   const g = grade(sim(cur, token));
+  if (g === "ok") { accept(g, rawToken); return 1; }
+
+  // 1a. (before accepting a mere "close" match) the recogniser glued two or three words together (\"ماطاب\" for \"ما طاب\", \"وربعفان\") → accept all of them
+  for (let k = 2; k <= 3 && s.cursor + k <= n; k++) {
+    const glued = soundKey(words.slice(s.cursor, s.cursor + k).map((w) => w.text).join(""));
+    if (glued.length >= 3 && similarity(glued, token) >= 0.88) {
+      accept("ok", rawToken);
+      for (let j = 1; j < k; j++) { s.status[s.cursor] = "ok"; s.heard[s.cursor] = rawToken; s.cursor++; }
+      return 1;
+    }
+  }
+
   if (g) { accept(g, rawToken); return 1; }
 
   // 1b. the optional isti'adha / Bismillah before the first verse: accept it silently
@@ -128,18 +140,12 @@ function step(words: RevealWord[], s: RevealState, rawToken: string, next: strin
   // 2. the recogniser split one word in two ("و" + "لم" for "ولم") → try joining with the next token
   if (next) {
     const nk = soundKey(next);
-    const gj = nk ? grade(sim(cur, token + nk)) : null;
+    // join the RAW words before taking the key, so alefs that become medial after joining are dropped
+    // exactly as in the printed word (\"يا\" + \"ايها\" → يَـٰٓأَيُّهَا)
+    const gOld = nk ? grade(sim(cur, token + nk)) : null;
+    const gRaw = sim(cur, soundKey(rawToken + next)) >= OK_T ? "ok" : null;   // raw join only counts when it is a clean match
+    const gj = gRaw ?? gOld;
     if (gj) { accept(gj, `${rawToken} ${next}`); return 2; }
-  }
-
-  // 3. the recogniser glued two words together → expected word + the following one
-  if (s.cursor + 1 < n) {
-    const glued = cur.key + words[s.cursor + 1].key;
-    if (glued.length >= 5 && similarity(glued, token) >= 0.88) {
-      accept("ok", rawToken);
-      s.status[s.cursor] = "ok"; s.heard[s.cursor] = rawToken; s.cursor++;
-      return 1;
-    }
   }
 
   // 4. a repeat of a word just recited (recognisers repeat; in strict mode the reader restarts the phrase) → ignore
