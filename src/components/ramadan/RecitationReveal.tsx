@@ -11,13 +11,13 @@ import {
   Settings as SettingsIcon, SkipForward, Vibrate, X,
 } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { fetchAyahs, fetchSurahs, normalizeWord, type Ayah, type SurahInfo } from "@/lib/quranCheck";
+import { fetchAyahs, fetchSurahs, type Ayah, type SurahInfo } from "@/lib/quranCheck";
 import { getAyahPage, getPageText } from "@/lib/quranTextApi";
 import {
   ayahDone, buildWords, cloneState, feed, firstLetter, initialState, manualReveal, skipWord, stateScore, stripCumulative,
   summarize, tokenize, type RevealState, type RevealStatus, type RevealWord,
 } from "@/lib/revealEngine";
-import MushafPager, { type RevealProgress } from "./MushafPager";
+import MushafPager from "./MushafPager";
 
 /* ── palette (same as the Daily Hifdh Revision screen) ───────────────────────────────────────────────────── */
 const G0 = "#061409", G1 = "#0f2d1f", G2 = "#1a3d27", G3 = "#276749";
@@ -256,45 +256,62 @@ function SettingsPanel({ S, set, surahs, total, loading, wordCount, showQuran, c
 
 /* ═══════════════════════════ plain-text reader (fallback / "printed page" off) ═══════════════════════════ */
 
-function TextReader({ words, view, mode, fontSize, started, showAll, hintOn, peeked, onPeek }: {
+const BISMILLAH = "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ";
+const toArabicDigits = (n: number) => String(n).replace(/\d/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)]);
+
+/** Continuous Mushaf-style text: one flowing, justified block (never split by verse or boxed per word).
+ *  Unrecited words stay in place but are blurred, so the lines never move while the reader progresses. */
+function TextReader({ words, view, mode, fontSize, started, showAll, hintOn, peeked, onPeek, surahName, showBism }: {
   words: RevealWord[]; view: RevealState; mode: Mode; fontSize: number; started: boolean; showAll: boolean; hintOn: boolean;
-  peeked: Set<number>; onPeek: (i: number) => void;
+  peeked: Set<number>; onPeek: (i: number) => void; surahName?: string; showBism: boolean;
 }) {
-  const ayahNumbers = useMemo(() => [...new Set(words.map((w) => w.ayah))], [words]);
   useEffect(() => {
     if (started) document.querySelector(`[data-w="${view.cursor}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [view.cursor, started]);
+  const doneAyah = useMemo(() => {
+    const m = new Map<number, boolean>();
+    if (mode === "ayah") [...new Set(words.map((w) => w.ayah))].forEach((an) => m.set(an, ayahDone(words, view, an)));
+    return m;
+  }, [words, view, mode]);
   return (
-    <div style={{ position: "absolute", inset: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "12px 14px 24px", background: "#fffdf5" }}>
-      <div dir="rtl" style={{ fontFamily: ARABIC }}>
-        {ayahNumbers.map((an) => {
-          const idx = words.map((w, i) => (w.ayah === an ? i : -1)).filter((i) => i >= 0);
-          const hideWhole = mode === "ayah" && !showAll && started && !ayahDone(words, view, an);
+    <div style={{ position: "absolute", inset: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "14px 16px 28px", background: "#fffdf5" }}>
+      {(surahName || showBism) && (
+        <div style={{ textAlign: "center", marginBottom: 10, fontFamily: ARABIC, color: "#000" }}>
+          {surahName && (
+            <div style={{ display: "inline-block", minWidth: "62%", padding: "4px 18px", border: `1.5px solid ${GOLD}`, borderRadius: 10, background: "#fbf3d9", fontSize: 26, lineHeight: 1.8 }}>{surahName}</div>
+          )}
+          {showBism && <div style={{ fontSize: 28, lineHeight: 2, marginTop: 6 }}>{BISMILLAH}</div>}
+        </div>
+      )}
+      <div dir="rtl" style={{ fontFamily: ARABIC, fontSize, lineHeight: 2.35, textAlign: "justify", textAlignLast: "right", color: "#000" }}>
+        {words.map((w, i) => {
+          const st = view.status[i];
+          const graded = st !== "pending";
+          const isCur = started && i === view.cursor;
+          const bad = isCur && view.blocked;
+          const hideWhole = mode === "ayah" && !showAll && started && !doneAyah.get(w.ayah);
+          const open = showAll || !started || peeked.has(i) || (graded && !hideWhole);
+          const style: CSSProperties = { cursor: graded ? "default" : "pointer", borderRadius: 6, transition: "color .2s, text-shadow .2s, background .2s" };
+          if (!open) { style.color = "transparent"; style.textShadow = "0 0 9px rgba(0,0,0,.5)"; }
+          if (open && graded && started && !showAll && st !== "ok") {
+            style.color = WORD[st as keyof typeof WORD].fg;
+            style.textDecorationLine = "underline"; style.textDecorationStyle = "wavy"; style.textDecorationColor = WORD[st as keyof typeof WORD].fg;
+          }
+          if (peeked.has(i) && !graded) style.outline = "2px dashed #d97706";
+          if (isCur) style.background = "#fff2bf";
+          if (bad) { style.background = "#fecaca"; style.outline = "2px solid #dc2626"; }
+          const last = i === words.length - 1 || words[i + 1].ayah !== w.ayah;
+          const word = (
+            <span key={i} data-w={i} onClick={() => !graded && onPeek(i)} style={style}>
+              {!open && isCur && hintOn ? <span style={{ color: "#000", textShadow: "none" }}>{firstLetter(w.text)}…</span> : w.text}
+            </span>
+          );
+          if (!(last && w.ayah > 0)) return <span key={i}>{word}{" "}</span>;
+          // the verse-end sign stays glued to the last word of its verse, and the text simply continues
           return (
-            <div key={an} style={{ borderBottom: "1px solid #f5e9c4", padding: "6px 0" }}>
-              <div style={{ lineHeight: 2.3, fontSize }}>
-                {idx.map((i) => {
-                  const w = words[i];
-                  const st = view.status[i];
-                  const graded = st !== "pending";
-                  const isCur = started && i === view.cursor;
-                  const bad = isCur && view.blocked;
-                  const open = showAll || !started || peeked.has(i) || (graded && !hideWhole);
-                  const style: CSSProperties = { transition: "filter .25s, background .25s, opacity .25s", border: "none", fontFamily: "inherit", fontSize: "inherit", cursor: "pointer", margin: "0 2px", padding: "0 6px", borderRadius: 8, display: "inline-block", color: "#000", background: "transparent" };
-                  if (graded && open && started && !showAll) { style.background = WORD[st as keyof typeof WORD].bg; style.color = WORD[st as keyof typeof WORD].fg; }
-                  if (!open) { style.filter = "blur(8px)"; style.opacity = 0.55; }
-                  if (peeked.has(i) && !graded) style.outline = "2px dashed #d97706";
-                  if (isCur) { style.outline = "2px solid #d4a017"; style.background = "#fff7d6"; }
-                  if (bad) { style.outline = "3px solid #dc2626"; style.background = "#fee2e2"; }
-                  return (
-                    <button key={i} data-w={i} type="button" onClick={() => !graded && onPeek(i)} style={style}>
-                      {open ? w.text : isCur && hintOn ? `${firstLetter(w.text)}…` : w.text}
-                    </button>
-                  );
-                })}
-                {an > 0 && <span style={{ margin: "0 4px", color: "#b8860b", fontSize: fontSize * 0.6 }}>﴿{an}﴾</span>}
-              </div>
-            </div>
+            <span key={i}>
+              <span style={{ whiteSpace: "nowrap" }}>{word}{"\u00A0"}<span style={{ color: "#b8860b", fontSize: fontSize * 0.7 }}>﴿{toArabicDigits(w.ayah)}﴾</span></span>{" "}
+            </span>
           );
         })}
       </div>
@@ -614,27 +631,10 @@ export default function RecitationReveal() {
   const manual = { reveal: () => apply(manualReveal(words, committed.current, S.mode === "ayah")), skip: () => apply(skipWord(words, committed.current)), disabled: sum.done || !words.length };
   const togglePeek = (i: number) => setPeeked((p) => { const n = new Set(p); if (n.has(i)) n.delete(i); else n.add(i); return n; });
 
-  /* ── what the printed page uncovers ──────────────────────────── */
-  const progress = useMemo<RevealProgress>(() => {
-    const agg = new Map<number, { m: number; n: number; lm: number; ln: number }>();
-    words.forEach((w, i) => {
-      if (w.ayah === 0) return;
-      const a = agg.get(w.ayah) ?? { m: 0, n: 0, lm: 0, ln: 0 };
-      const L = normalizeWord(w.text).length || 1;
-      a.n++; a.ln += L;
-      if (view.status[i] !== "pending") { a.m++; a.lm += L; }
-      agg.set(w.ayah, a);
-    });
-    const out: RevealProgress = {};
-    agg.forEach((a, ay) => {
-      if (a.m === 0) return;
-      if (S.mode === "ayah" && a.m < a.n) return;   // ayah by ayah: uncover only when the whole ayah has been recited
-      out[`${S.surah}:${ay}`] = { m: a.m, n: a.n, f: a.lm / a.ln };
-    });
-    return out;
-  }, [words, view, S.mode, S.surah]);
-
   const useText = !S.printed || mushafFail;
+  // the printed Mushaf is for seeing the whole page (before reciting); while reciting, the words are revealed in a
+  // continuous text view instead (unless the reader chose to keep the verses visible)
+  const revealText = useText || (started && !S.showText);
   const scorePct = Math.round(sum.score * 100);
   const title = `${surahInfo?.englishName ?? `${t("Surah", "سورة")} ${S.surah}`} · ${S.from}${S.to !== S.from ? `–${S.to}` : ""}`;
   const pagesLabel = pages.length ? (pages.length > 1 ? `${pages[0]}–${pages[pages.length - 1]}` : String(pages[0])) : "";
@@ -765,16 +765,17 @@ export default function RecitationReveal() {
 
           {/* the page */}
           <div style={{ flex: 1, minHeight: 0, position: "relative", background: "#fff", marginTop: 8 }}>
-            {useText ? (
+            {revealText ? (
               <TextReader words={words} view={view} mode={S.mode} fontSize={S.fontSize} started={started} showAll={S.showText}
-                hintOn={hint} peeked={peeked} onPeek={togglePeek} />
+                hintOn={hint} peeked={peeked} onPeek={togglePeek}
+                surahName={S.from === 1 ? surahInfo?.name : undefined} showBism={canBism} />
             ) : loadingPages || !pages.length ? (
               <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
                 <Loader2 size={30} color={GOLD} className="animate-spin" />
               </div>
             ) : (
               <MushafPager key={pages.join(",")} pages={pages} viewIdx={viewIdx} onView={setViewIdx}
-                coverUnrevealed={started && !S.showText} revealProgress={progress} blurRange={blurRange} onUnavailable={onUnavailable} />
+                blurRange={blurRange} onUnavailable={onUnavailable} />
             )}
           </div>
 
