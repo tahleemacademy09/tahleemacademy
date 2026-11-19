@@ -408,8 +408,65 @@ function mvPrefetchAround(page: number, white = false): () => void {
   return () => timers.forEach((t) => t && clearTimeout(t));
 }
 
+/** glyph → ayah map for the loaded page: "surah:ayah" → its glyph paths in reading order (line by line, right to left).
+ *  Empty when the glyphs cannot be matched to the ayah polygons. */
+function mvBuildGlyphMap(root: ShadowRoot, svg: SVGSVGElement): Map<string, SVGGraphicsElement[]> {
+  const NS = "http://www.w3.org/2000/svg";
+  const byAyah = new Map<string, SVGGraphicsElement[]>();
+  try {
+    const inv = svg.getScreenCTM()?.inverse();
+    const polys = Array.from(root.querySelectorAll(MV_POLY)) as SVGGeometryElement[];
+    if (inv && polys.length) {
+      // each ayah polygon = one sub-path per printed line, top to bottom
+      type Line = { key: string; line: number; el: SVGGeometryElement; inv: DOMMatrix };
+      const lines: Line[] = [];
+      const tmp: Element[] = [];
+      polys.forEach((poly) => {
+        const a = mvAyahOf(poly); const d = poly.getAttribute("d");
+        const pm = poly.getScreenCTM();
+        if (!a || !d || !pm) return;
+        d.split(/(?=[Mm])/).filter((x) => x.trim()).forEach((sub, i) => {
+          const el = document.createElementNS(NS, "path") as unknown as SVGGeometryElement;
+          el.setAttribute("d", sub);
+          el.setAttribute("style", "fill:#000;stroke:none;pointer-events:none;visibility:hidden");
+          const g = poly.parentNode as Element;
+          g.insertBefore(el, poly.nextSibling);
+          tmp.push(el);
+          lines.push({ key: `${a.surah}:${a.ayah}`, line: i, el, inv: pm.inverse() });
+        });
+      });
+      const glyphs = Array.from(root.querySelectorAll("path")).filter((g) => !g.matches(MV_POLY)) as SVGGraphicsElement[];
+      const buckets = new Map<string, { g: SVGGraphicsElement; line: number; x: number }[]>();
+      glyphs.forEach((g) => {
+        const gm = g.getScreenCTM(); if (!gm) return;
+        let bb: DOMRect; try { bb = g.getBBox(); } catch { return; }
+        if (!(bb.width > 0 || bb.height > 0)) return;
+        const pts = [[0.5, 0.5], [0.25, 0.5], [0.75, 0.5], [0.5, 0.25], [0.5, 0.75]];
+        let hit: Line | null = null; let cx = 0;
+        for (const [fx, fy] of pts) {
+          const sp = new DOMPoint(bb.x + bb.width * fx, bb.y + bb.height * fy).matrixTransform(gm);
+          for (const ln of lines) {
+            if (ln.el.isPointInFill(sp.matrixTransform(ln.inv))) { hit = ln; cx = sp.matrixTransform(inv).x; break; }
+          }
+          if (hit) break;
+        }
+        if (!hit) return;
+        const arr = buckets.get(hit.key) ?? [];
+        arr.push({ g, line: hit.line, x: cx });
+        buckets.set(hit.key, arr);
+      });
+      tmp.forEach((t) => t.remove());
+      buckets.forEach((arr, key) => {
+        arr.sort((p, q) => p.line - q.line || q.x - p.x); // line by line, right to left
+        byAyah.set(key, arr.map((o) => o.g));
+      });
+    }
+  } catch { /* fall back to ayah-level below */ }
+  return byAyah;
+}
+
 /** fitHeight: pixels of screen NOT available to the page (bars, buttons). When set, the whole page is fitted to the screen height. */
-export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, dimOthers, onUnavailable, onlySurahs, coverUnrevealed, revealProgress, coverOutside, hidePortionChip, softHighlight, maxSqueeze, fillParent }: {
+export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, dimOthers, onUnavailable, onlySurahs, coverUnrevealed, revealProgress, coverOutside, hidePortionChip, softHighlight, maxSqueeze, fillParent, blurRange }: {
   page: number; fontSize?: number; halves?: [number, number]; fitHeight?: number;
   /** hide the floating "Your portion" chip (when the screen already says it) */
   hidePortionChip?: boolean;
@@ -419,6 +476,9 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
   coverUnrevealed?: boolean;
   /** recitation progress per ayah, keyed "surah:ayah": m of n words recited, f = fraction of the ayah's letters recited */
   revealProgress?: Record<string, { m: number; n: number; f: number }>;
+  /** blur (word by word, even mid-line) every ayah of the page that is OUTSIDE this inclusive range, so only the chosen verses stay sharp.
+   *  The blur sits above the live-recitation cover, so unselected verses stay blurred while the selected ones are covered/revealed. */
+  blurRange?: { from: MvAyahRef; to: MvAyahRef } | null;
   /** blur everything on the page that does not belong to these surahs (e.g. the end of the previous surah above where the assigned surah starts) */
   onlySurahs?: number[];
   /** force a pure white page with pure black ink (recolours the printed SVG) */
@@ -611,57 +671,7 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
 
     // 1) glyph → ayah/line map (computed once per loaded svg)
     if (!coverMapRef.current || coverMapRef.current.svg !== svg) {
-      const byAyah = new Map<string, SVGGraphicsElement[]>();
-      try {
-        const inv = svg.getScreenCTM()?.inverse();
-        const polys = Array.from(root.querySelectorAll(MV_POLY)) as SVGGeometryElement[];
-        if (inv && polys.length) {
-          // each ayah polygon = one sub-path per printed line, top to bottom
-          type Line = { key: string; line: number; el: SVGGeometryElement; inv: DOMMatrix };
-          const lines: Line[] = [];
-          const tmp: Element[] = [];
-          polys.forEach((poly) => {
-            const a = mvAyahOf(poly); const d = poly.getAttribute("d");
-            const pm = poly.getScreenCTM();
-            if (!a || !d || !pm) return;
-            d.split(/(?=[Mm])/).filter((x) => x.trim()).forEach((sub, i) => {
-              const el = document.createElementNS(NS, "path") as unknown as SVGGeometryElement;
-              el.setAttribute("d", sub);
-              el.setAttribute("style", "fill:#000;stroke:none;pointer-events:none;visibility:hidden");
-              const g = poly.parentNode as Element;
-              g.insertBefore(el, poly.nextSibling);
-              tmp.push(el);
-              lines.push({ key: `${a.surah}:${a.ayah}`, line: i, el, inv: pm.inverse() });
-            });
-          });
-          const glyphs = Array.from(root.querySelectorAll("path")).filter((g) => !g.matches(MV_POLY)) as SVGGraphicsElement[];
-          const buckets = new Map<string, { g: SVGGraphicsElement; line: number; x: number }[]>();
-          glyphs.forEach((g) => {
-            const gm = g.getScreenCTM(); if (!gm) return;
-            let bb: DOMRect; try { bb = g.getBBox(); } catch { return; }
-            if (!(bb.width > 0 || bb.height > 0)) return;
-            const pts = [[0.5, 0.5], [0.25, 0.5], [0.75, 0.5], [0.5, 0.25], [0.5, 0.75]];
-            let hit: Line | null = null; let cx = 0;
-            for (const [fx, fy] of pts) {
-              const sp = new DOMPoint(bb.x + bb.width * fx, bb.y + bb.height * fy).matrixTransform(gm);
-              for (const ln of lines) {
-                if (ln.el.isPointInFill(sp.matrixTransform(ln.inv))) { hit = ln; cx = sp.matrixTransform(inv).x; break; }
-              }
-              if (hit) break;
-            }
-            if (!hit) return;
-            const arr = buckets.get(hit.key) ?? [];
-            arr.push({ g, line: hit.line, x: cx });
-            buckets.set(hit.key, arr);
-          });
-          tmp.forEach((t) => t.remove());
-          buckets.forEach((arr, key) => {
-            arr.sort((p, q) => p.line - q.line || q.x - p.x); // line by line, right to left
-            byAyah.set(key, arr.map((o) => o.g));
-          });
-        }
-      } catch { /* fall back to ayah-level below */ }
-      coverMapRef.current = { svg, byAyah };
+      coverMapRef.current = { svg, byAyah: mvBuildGlyphMap(root, svg) };
     }
     const byAyah = coverMapRef.current.byAyah;
     const glyphMode = byAyah.size > 0;
@@ -726,9 +736,72 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
     sheet.setAttribute("style", `fill:${pureWhite ? "#ffffff" : bg};pointer-events:none`);
     sheet.setAttribute("mask", "url(#mv-cover-mask)");
     svg.appendChild(defs);
-    svg.appendChild(sheet);
+    const blurLayer = root.querySelector("g[data-blur]");
+    if (blurLayer && blurLayer.parentNode === svg) svg.insertBefore(sheet, blurLayer); else svg.appendChild(sheet);
     return () => { root.querySelectorAll("[data-cover]").forEach((n) => n.remove()); };
   }, [coverUnrevealed, progKey, mode, src, bg, pureWhite, aspect, boxW, fillH, fillW]);
+
+  // Blur every ayah outside `blurRange`: the real glyphs are hidden and re-drawn (cloned) in ONE blurred group, which is
+  // far cheaper than a filter on every glyph. The group is the top-most layer, so it also stays above the recitation cover.
+  const blurKey = blurRange ? `${blurRange.from.surah}:${blurRange.from.ayah}-${blurRange.to.surah}:${blurRange.to.ayah}` : "";
+  const blurHidden = useRef<SVGGraphicsElement[]>([]);
+  useEffect(() => {
+    const root = hostRef.current?.shadowRoot;
+    if (!root || mode !== "inline") return;
+    const cleanup = () => {
+      blurHidden.current.forEach((g) => g.style.removeProperty("visibility"));
+      blurHidden.current = [];
+      root.querySelectorAll("[data-blur]").forEach((n) => n.remove());
+    };
+    cleanup();
+    if (!blurRange) return;
+    const raf = window.requestAnimationFrame(() => {
+      const svg = root.querySelector("svg") as SVGSVGElement | null;
+      if (!svg) return;
+      if (!coverMapRef.current || coverMapRef.current.svg !== svg || coverMapRef.current.byAyah.size === 0) {
+        const m = mvBuildGlyphMap(root, svg);
+        if (m.size) coverMapRef.current = { svg, byAyah: m };
+      }
+      const map = coverMapRef.current?.svg === svg ? coverMapRef.current.byAyah : null;
+      const inv = svg.getScreenCTM()?.inverse();
+      if (!map || !map.size || !inv) return;
+      const cmp = (s1: number, a1: number, r: MvAyahRef) => (s1 !== r.surah ? s1 - r.surah : a1 - r.ayah);
+      const NS = "http://www.w3.org/2000/svg";
+      const layer = document.createElementNS(NS, "g");
+      layer.setAttribute("data-blur", "1");
+      layer.setAttribute("filter", "url(#mv-blur-f)");
+      layer.setAttribute("opacity", "0.6");
+      layer.setAttribute("style", "pointer-events:none");
+      let any = false;
+      map.forEach((glyphs, key) => {
+        const [sN, aN] = key.split(":").map(Number);
+        if (cmp(sN, aN, blurRange.from) >= 0 && cmp(sN, aN, blurRange.to) <= 0) return; // selected → stays sharp
+        glyphs.forEach((g) => {
+          const gm = g.getScreenCTM();
+          if (!gm) return;
+          const c = g.cloneNode(true) as SVGElement;
+          c.removeAttribute("class"); c.removeAttribute("transform");
+          let fill = "#000";
+          try { const f = getComputedStyle(g).fill; if (f && f !== "none") fill = f; } catch { /* keep black */ }
+          c.setAttribute("style", `fill:${fill};stroke:none;pointer-events:none`);
+          const r = inv.multiply(gm);
+          c.setAttribute("transform", `matrix(${r.a} ${r.b} ${r.c} ${r.d} ${r.e} ${r.f})`);
+          layer.appendChild(c);
+          g.style.setProperty("visibility", "hidden", "important");
+          blurHidden.current.push(g);
+          any = true;
+        });
+      });
+      if (!any) return;
+      const vbw = (svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width) || 600;
+      const defs = document.createElementNS(NS, "defs");
+      defs.setAttribute("data-blur", "1");
+      defs.innerHTML = `<filter id="mv-blur-f" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="${(vbw * 0.0065).toFixed(2)}"/></filter>`;
+      svg.appendChild(defs);
+      svg.appendChild(layer);
+    });
+    return () => { window.cancelAnimationFrame(raf); cleanup(); };
+  }, [blurKey, mode, src, aspect, boxW, fillH, fillW, pureWhite, bg]);
 
   // blur the unassigned part of the page (above / below the assigned surah)
   const [clipBands, setClipBands] = useState<{ top: number; bottom: number } | null>(null);
