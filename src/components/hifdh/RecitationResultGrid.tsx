@@ -25,6 +25,8 @@ interface Props {
   engineDiagnostics?: boolean;
   /** What the model heard for each word (same order as `words`). When given, it is written under each word. */
   heardWords?: string[];
+  /** show the "What the model heard" panel (staff review). The student screen turns it off. */
+  showHeard?: boolean;
 }
 
 const FONT = "'Amiri Quran','Amiri','Scheherazade New',serif";
@@ -41,7 +43,7 @@ const STYLE: Record<Grade, { bg: string; fg: string; strike?: boolean }> = {
   missed: { bg: "#44201f", fg: "#fca5a5", strike: true },
 };
 
-const RecitationResultGrid: React.FC<Props> = ({ words, extras = [], heardText, checkSecs, ayahEnds, engineDiagnostics = true, heardWords }) => {
+const RecitationResultGrid: React.FC<Props> = ({ words, extras = [], heardText, checkSecs, ayahEnds, engineDiagnostics = true, heardWords, showHeard = true }) => {
   const total = words.length;
   const count = (g: Grade) => words.filter((w) => w.grade === g).length;
   const ok = count("ok"), close = count("close"), wrong = count("wrong"), missed = count("missed");
@@ -121,6 +123,7 @@ const RecitationResultGrid: React.FC<Props> = ({ words, extras = [], heardText, 
       )}
 
       {/* What the model heard */}
+      {showHeard && (<>
       <p style={{ margin: "22px 0 8px", fontSize: 13, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", color: MUTED }}>
         What the model heard
       </p>
@@ -142,6 +145,7 @@ const RecitationResultGrid: React.FC<Props> = ({ words, extras = [], heardText, 
           </p>
         );
       })()}
+      </>)}
     </div>
   );
 };

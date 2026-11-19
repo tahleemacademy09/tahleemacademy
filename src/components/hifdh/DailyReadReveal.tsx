@@ -23,6 +23,7 @@ import {
 } from "@/lib/revealEngine";
 import { refTokens, type WordResult } from "@/lib/recitationCompare";
 import { gradeAgainstAyahs, type RevealAyah } from "@/lib/revealGrading";
+import { getSpeechCtor, type SpeechAlt, type SpeechResult, type SpeechEvent, type SpeechInstance, type SpeechCtor } from "@/lib/nativeSpeech";
 import QcfMushafReveal from "./QcfMushafReveal";
 import { TextReader } from "./RecitationReveal";
 
@@ -30,23 +31,14 @@ const G1 = "#0f2d1f", G2 = "#1a3d27", G3 = "#276749";
 const GOLD = "#c9a84c", BRD = "#e5ddd3", W = "#ffffff", PASS = "#16a34a", FAIL = "#dc2626";
 const ARABIC = "'Amiri Quran','Amiri','Noto Naskh Arabic',serif";
 
-/* ── minimal Web Speech API typings (not in lib.dom) ─────────────────────────────────────────────────────── */
-interface SRAlt { transcript: string }
-interface SRResult { isFinal: boolean; length: number; [i: number]: SRAlt }
-interface SREvent { results: { length: number; [i: number]: SRResult } }
-interface SRErrorEvent { error: string }
-interface SRInstance {
-  lang: string; continuous: boolean; interimResults: boolean; maxAlternatives: number;
-  onresult: ((e: SREvent) => void) | null; onerror: ((e: SRErrorEvent) => void) | null; onend: (() => void) | null;
-  start(): void; stop(): void; abort(): void;
-}
-type SRCtor = new () => SRInstance;
-const getSR = (): SRCtor | null => {
-  if (typeof window === "undefined") return null;
-  const w = window as unknown as { SpeechRecognition?: SRCtor; webkitSpeechRecognition?: SRCtor };
-  return w.SpeechRecognition || w.webkitSpeechRecognition || null;
-};
-/** Can this browser run Read & Reveal? (the page falls back to its previous recitation screen when it cannot) */
+/* ── speech recognition: the browser's (Chrome) or the app's native one, behind one Web-Speech-shaped constructor ── */
+type SRAlt = SpeechAlt;
+type SRResult = SpeechResult;
+type SREvent = SpeechEvent;
+type SRInstance = SpeechInstance;
+type SRCtor = SpeechCtor;
+const getSR = (): SRCtor | null => getSpeechCtor();
+/** Can this browser / app run Read & Reveal? */
 export const readRevealSupported = (): boolean => {
   try { if (localStorage.getItem("hifdh_reveal") === "0") return false; } catch { /* noop */ }
   return getSR() !== null;
@@ -106,7 +98,7 @@ const fmt = (s: number) => `${Math.floor(s / 60).toString().padStart(2, "0")}:${
 
 export default function DailyReadReveal({
   ayahs, pageNumbers, title, subtitle, dots, backButton, recSecs, paused, onPause, onResume, onFinish, handleRef,
-  getMicLevel, onMicConflict, onAudioSilent, audioOn,
+  getMicLevel, onMicConflict, onAudioSilent, audioOn, getAudioTrack,
 }: {
   ayahs: RevealAyah[];
   /** the Mushaf page(s) of today's assignment (the admin's setting — the page decides them) */
@@ -128,6 +120,9 @@ export default function DailyReadReveal({
   onAudioSilent: () => void;
   /** is the page's recorder still running (shown to the student) */
   audioOn: boolean;
+  /** the recorder's own microphone track. Newer Chrome lets speech recognition listen to it, so recognising and recording
+   *  share ONE microphone and the recitation keeps its audio. Older browsers ignore it (see onMicConflict). */
+  getAudioTrack?: () => MediaStreamTrack | null;
 }) {
   /* ── the words to grade, and the printed pages that hold them ─────────────────────────────────────────── */
   const ranges = useMemo(() => rangesOf(ayahs.map((a) => ({ surah: a.surah.number, ayah: a.numberInSurah }))), [ayahs]);
@@ -233,6 +228,8 @@ export default function DailyReadReveal({
     const r = recRef.current;
     recRef.current = null;
     if (r) { r.onresult = null; r.onerror = null; r.onend = null; try { r.abort(); } catch { /* noop */ } }
+    try { sharedTrack.current?.stop(); } catch { /* noop */ }
+    sharedTrack.current = null;
     wake.current?.release().catch(() => undefined); wake.current = null;
   }, []);
 
@@ -329,8 +326,18 @@ export default function DailyReadReveal({
       setTimeout(() => { if (listeningRef.current && recRef.current === rec) spawn(SR); }, 200);
     };
     recRef.current = rec;
-    try { rec.start(); } catch { hardStop(); setError("Could not start the microphone."); onPause(); }
+    try {
+      const src = audioOnRef.current && !conflictHandled.current ? getAudioTrackRef.current?.() ?? null : null;
+      if (src && src.readyState === "live") {
+        try { sharedTrack.current?.stop(); } catch { /* noop */ }   // a restart: let go of the previous copy
+        const t = src.clone();               // the recorder keeps its own copy; this one belongs to the recogniser
+        sharedTrack.current = t;
+        rec.start(t);
+      } else rec.start();
+    } catch { hardStop(); setError("Could not start the microphone."); onPause(); }
   }
+  const getAudioTrackRef = useRef(getAudioTrack); getAudioTrackRef.current = getAudioTrack;
+  const sharedTrack = useRef<MediaStreamTrack | null>(null);
   const audioOnRef = useRef(audioOn); audioOnRef.current = audioOn;
 
   function begin() {

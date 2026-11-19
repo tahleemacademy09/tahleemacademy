@@ -19,15 +19,11 @@ import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { playbackGainFor, decodeForPlayback, freshPlaybackContext, preferSpeaker } from "@/lib/audioEnhance";
-import { tarteelEngine, ChunkTranscriber, type TarteelProgress } from "@/lib/tarteelOnDevice";
-// Admin-controlled model switches + Whisper-large-v3-turbo (Cloudflare) — runs FIRST when switched on; the on-device engines are the fallback.
-import { useAsrSettings, asrEnabled, whisperCloudAvailable, refreshAsrSettings } from "@/lib/asrSettings";
-import { whisperTranscribe } from "@/lib/whisperCloud";
-import { LiveWhisper } from "@/lib/whisperLive";
 import { logRecitationMisses } from "@/lib/recitationMissLog";
 import { stripWaqf, normalizeArabic, wordsMatch, compareWords, analyzeRecitation, scoreOf, encodeGrades, scoreAgainstAyahs, type WordResult, type AyahScoring } from "@/lib/recitationCompare";
 import { saveHifdhRecording, resolveHifdhSessionAudio } from "@/lib/hifdhAudio";
 import { mergeAudioSegments } from "@/lib/mergeAudioSegments";
+import { startListening } from "@/lib/browserSpeech";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
 import HifdhLiveClass from "@/components/hifdh/HifdhLiveClass";
 import DailyReadReveal, { readRevealSupported, type RevealHandle, type RevealFinish } from "@/components/hifdh/DailyReadReveal";
@@ -48,18 +44,11 @@ import { useProctoring } from "@/hooks/useProctoring";
 import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
 import MushafPageView from "@/components/hifdh/MushafPageView";
 import RecitationResultGrid from "@/components/hifdh/RecitationResultGrid";
-// CTC-ONLY TEST MODE (?ctc=1): the FastConformer-Quran CTC check replaces Tarteel on this page.
-import { ctcEngine, ctcEnabled, type CtcCheckResult, type CtcStatusState, type CtcCheckProgress } from "@/lib/ctcEngine";
-import { LiveMic, revealFor } from "@/lib/ctcLive";
-import { buzz } from "@/lib/ctcNative";
-import { buzzPattern } from "@/lib/liveMistake";
-import { gradeFromCtc, registerCtcGrading, ctcScoringFor, ctcAnalysisFor } from "@/lib/ctcGrading";
+// Read & Reveal hands its word-by-word grading to the page through this small registry (no model involved).
+import { registerCtcGrading, ctcScoringFor, ctcAnalysisFor } from "@/lib/ctcGrading";
 import { refTokens } from "@/lib/recitationCompare";
 import { KNOWLEDGE } from "@/lib/hifdhKnowledge";
-import { mergeCtcTarteel } from "@/lib/ctcTarteelMerge";
-import { voteWord, type VoteModel } from "@/lib/modelVote";
-import { buildTarteelWords } from "@/lib/tarteelScore";
-// Transcription is 100% on-device Tarteel (no Groq / no server upload): the whole recording is transcribed once on Stop.
+// Recitation is graded live by Read & Reveal (the browser's Arabic speech recognition) — no AI model is downloaded or run.
 
 // ── Lazy surah lookup ─────────────────────────────────────────────────────
 // Building this map at module init time (`const X = Object.fromEntries(SURAHS.map(...))`)
@@ -1827,7 +1816,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const prevSegsRef   = useRef<Blob[]>([]);          // earlier pieces of the recording in progress
   const recPageRef    = useRef<number | null>(null); // page the recording belongs to (updated every render)
   const flushRecRef   = useRef<(() => Promise<void>) | null>(null);
-  const forceWholeRef = useRef(false);               // earlier text may be incomplete → score the whole joined recording
   const [recSecs,      setRecSecs]     = useState(0);
   // Seconds from a previous partial recording — timer starts here on "Continue Recording"
   const [carryOverSecs, setCarryOverSecs] = useState(0);
@@ -1868,95 +1856,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const recSecsRef   = useRef(0);
   const wakeLockRef  = useRef<any>(null);
 
-  // ── ON-DEVICE TARTEEL (the only transcription engine) ─────────────────────
-  // The student recites with NOTHING on screen. When they tap Finished, the whole recording is
-  // transcribed once by the Tarteel Quran model running inside their browser (Web Worker, nothing is
-  // uploaded) and the result is shown as a word-by-word grid. The model starts loading as soon as the
-  // student reaches the recite screen (first visit ≈100 MB, cached afterwards).
-  const [tarteelState, setTarteelState] = useState<TarteelProgress>(tarteelEngine.state);
-  useEffect(() => tarteelEngine.subscribe(setTarteelState), []);
-  // CTC-only test mode: the CTC model is loaded (and shown in the status line) INSTEAD of Tarteel.
-  useAsrSettings();   // loads the admin's model switches and re-renders when they change
-  // Cloud Whisper first: the page then behaves like the plain (non-CTC) flow — nothing heavy is downloaded or run on the phone
-  // unless Whisper fails, in which case the on-device engines below take over.
-  const ctcOn = ctcEnabled();   // admin switch decides — CTC runs together with cloud Whisper and Tarteel
-  const [ctcEng, setCtcEng] = useState<CtcStatusState>(ctcEngine.state);
-  useEffect(() => ctcEngine.subscribe(setCtcEng), []);
-  const [ctcRes, setCtcRes] = useState<CtcCheckResult | null>(null);
-  const [ctcProg, setCtcProg] = useState<CtcCheckProgress | null>(null);
-  useEffect(() => ctcEngine.subscribeProgress(setCtcProg), []);
-  const [ctcErr, setCtcErr] = useState("");
-  // Second-opinion (Tarteel) stage after CTC finished: lets the loader show real progress instead of sitting at 3 %.
-  const [tarteelProg, setTarteelProg] = useState<{ done: number; total: number } | null>(null);
-  const ctcResRef = useRef<CtcCheckResult | null>(null);
-  // After a page reload the grades come back from the saved session, but the per-word "what the model heard" text and the
-  // test panel live in the check result — put that back too (it was saved with the grading, keyed by the same marker).
-  useEffect(() => {
-    if (!ctcOn || ctcRes || phase !== "page_result" || score === null || !lastTranscript.includes("\u200B")) return;
-    try {
-      const sv = JSON.parse(localStorage.getItem("ctc_res_last") || "null");
-      if (sv && sv.tx === lastTranscript && sv.res) { ctcResRef.current = sv.res; setCtcRes(sv.res); }
-    } catch { /* noop */ }
-  }, [ctcOn, ctcRes, phase, score, lastTranscript]);
-  // LIVE reveal (?ctc=1): the printed page is covered while reciting and uncovers word by word as the CTC model hears them.
-  const [liveShown, setLiveShown] = useState(0);
-  // Android app: words skipped / said wrongly are caught WHILE reciting → the phone buzzes. The verse stays hidden
-  // (recite from memory), so only a count is shown, never the correct word. Turn the buzz off: localStorage hifdh_live_buzz = "0".
-  const [liveMiss, setLiveMiss] = useState(0);
-  const [liveFlash, setLiveFlash] = useState(false);
-  const liveFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const onLiveMistake = useCallback((idx: number[]) => {
-    setLiveMiss((n) => n + idx.length);
-    setLiveFlash(true);
-    const starts = liveAyahStartsRef.current;
-    let ai = 0; starts.forEach((st, i) => { if (st <= idx[0]) ai = i; });
-    const ay: any = (pageAyahsRef.current as any[])[ai];
-    setLiveNote(ay ? `ayah ${ay.numberInSurah}${ay.surah?.englishName ? ` of ${ay.surah.englishName}` : ""}` : "this page");
-    if (liveFlashTimer.current) clearTimeout(liveFlashTimer.current);
-    liveFlashTimer.current = setTimeout(() => { setLiveFlash(false); setLiveNote(null); }, 4000);
-    let on = true;
-    try { on = localStorage.getItem("hifdh_live_buzz") !== "0"; } catch { /* noop */ }
-    if (on) void buzz(buzzPattern(idx.length));
-  }, []);
-  // Where the last mistake was (shown in the banner). The student just carries on reciting — nothing is rewound or cut.
-  const [liveNote, setLiveNote] = useState<string | null>(null);
-  const liveAyahStartsRef = useRef<number[]>([]);
-  const liveMicRef = useRef<LiveMic | null>(null);
-  const lwRef = useRef<LiveWhisper | null>(null);   // cloud Whisper working on the pieces of the recitation while it is being recited
-  const stopLive = () => { try { liveMicRef.current?.stop(); } catch { /* noop */ } liveMicRef.current = null; try { ctcEngine.liveEnd(); } catch { /* noop */ } };
-  useEffect(() => () => { stopLive(); }, []);
-  const liveProg = useMemo(() => revealFor(pageAyahs as any, liveShown), [pageAyahs, liveShown]);
-  // Android app (native engine running): the page is shown while reciting and uncovers word by word as each word is heard.
-  // localStorage hifdh_live_show = "all" keeps the whole page visible instead.
-  const liveVisible = ctcOn && ctcEng.status === "ready" && ctcEngine.useNative;
-  const liveCover = (() => { try { return localStorage.getItem("hifdh_live_show") !== "all"; } catch { return true; } })();
-  const checkerState: TarteelProgress = ctcOn ? (ctcEng as TarteelProgress) : whisperCloudAvailable() ? { status: "ready" } : tarteelState;
-  useEffect(() => {
-    if (phase !== "reading") return;
-    if (ctcOn) {
-      ctcEngine.load().catch(() => { /* status is shown under the Start button */ });
-      // Load + warm up Tarteel too, while the student is still reading, so nothing heavy loads during or after the recitation.
-      if (tarteelAssistAllowed()) tarteelEngine.load(true).then(() => tarteelEngine.warmup()).catch(() => { /* CTC + Whisper still score */ });
-      return;
-    }
-    if (whisperCloudAvailable()) return;   // CTC off → cloud Whisper is first; Tarteel loads only if it fails
-    if (!asrEnabled("tarteel")) return;    // switched off by the admin
-    tarteelEngine.load(true).catch(() => { /* status is shown under the Start button */ });
-  }, [phase]);
-
-  // Load the Tarteel model BEFORE the test starts, so recorded answers are scored right after Stop
-  // instead of waiting for a ~100 MB model to load (which also made the result never appear).
-  useEffect(() => {
-    if (phase === "pre_test_review" || phase === "proctor_intro" || phase === "testing") {
-      // Same checker as the recitation phase: the CTC model on the app / ?ctc=1, otherwise Tarteel.
-      if (ctcEnabled()) {
-        ctcEngine.load().catch(() => { /* retried when the first recorded answer is scored */ });
-        if (tarteelAssistAllowed()) tarteelEngine.load(true).catch(() => { /* retried when needed */ });
-      }
-      else if (whisperCloudAvailable()) { /* CTC off → cloud Whisper first; Tarteel loads only if it fails */ }
-      else if (asrEnabled("tarteel")) tarteelEngine.load(true).catch(() => { /* retried when the first recorded answer is scored */ });
-    }
-  }, [phase]);
+  // Read & Reveal needs no model: the browser's own speech recognition does the listening, nothing is downloaded.
   // Tafseer text for today's pages (used for the tafseer questions).
   useEffect(() => {
     if (phase !== "pre_test_review" && phase !== "proctor_intro") return;
@@ -2065,7 +1965,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     const all = alignAyahs(tx, groups.flat());   // ONE grading of the whole recording, sliced per page
     let off = 0;
     let wAt = 0;
-    const heardAll = ctcResRef.current?.heard ?? revealHeardRef.current ?? undefined;
+    const heardAll = revealHeardRef.current ?? undefined;
     const totalWords = all.perAyah.reduce((n, a) => n + a.words.length, 0);
     return todayPages.map((pn, i) => {
       const ay = groups[i] ?? [];
@@ -2149,7 +2049,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 word_results:    wordRes.map(w => ({ word: w.word, status: w.status })),
                 ayahs:           snapAyahs(pageAyahsRef.current),
                 grades:          encodeGrades(wordRes),   // green / yellow / red, read back by the admin + teacher screens
-                ...((ctcResRef.current?.heard ?? revealHeardRef.current) && (ctcResRef.current?.heard ?? revealHeardRef.current)!.length === wordRes.length ? { heard_words: (ctcResRef.current?.heard ?? revealHeardRef.current)! } : {}),
+                ...(revealHeardRef.current && revealHeardRef.current.length === wordRes.length ? { heard_words: revealHeardRef.current } : {}),
                 extras:          analysisAll.extras,
                 ayahCorrectness: last?.ayahCorrectness ?? [],
                 errorWords,
@@ -2162,8 +2062,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             ...(revealNoAudioRef.current ? { audio_unavailable: true, audio_unavailable_reason: "microphone_not_shared_with_speech_recognition" } : {}),
             ...(revealSilentRef.current ? { audio_silent: true } : {}),
             ...(noApiWarning ? { transcription_failed: true, transcription_failed_reason: lastTranscribeErrorRef.current || "unknown" } : {}),
-            // CTC-only test mode: raw per-word scores (0 = certain … very negative = not heard) for later analysis
-            ...(ctcResRef.current ? { ctc_test: { v: 1, ok: -1, bad: -3, means: ctcResRef.current.words.map(w => (w.mean == null ? null : Math.round(w.mean * 100) / 100)), secs: Math.round(ctcResRef.current.secs), ms: ctcResRef.current.ms, basmalah: ctcResRef.current.basmalah } } : {}),
             // Preserve teacher override so it isn't wiped by re-attempts
             ...(existingTeacherOverride ? { teacher_override: existingTeacherOverride } : {}),
           },
@@ -2301,19 +2199,20 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     try {
       isPausedRef.current = false; setIsPaused(false);
       // Continuing a saved recording: its earlier audio becomes finished pieces and this run adds a new one.
-      const revealMode = readRevealSupported();          // Read & Reveal grades the recitation live; the old pipeline is the fallback
-      revealOnRef.current = revealMode; setRevealOn(revealMode); setRevealAudioOn(true);
+      if (!readRevealSupported()) {                      // Read & Reveal is the only way to recite: it needs the browser's speech recognition
+        alert("This browser can't listen to your recitation. Please open the app in Chrome on your phone and try again.");
+        return;
+      }
+      const revealMode = true;
+      revealOnRef.current = true; setRevealOn(true); setRevealAudioOn(true);
       revealNoAudioRef.current = false; revealSilentRef.current = false; revealGradeRef.current = null; revealHeardRef.current = null;
-      if (revealMode) { try { await clearSavedRecording(userId, todayISO()); } catch { /* noop */ } resume = false; }   // a reveal grading cannot be continued from a half recording
+      try { await clearSavedRecording(userId, todayISO()); } catch { /* noop */ } resume = false;   // a reveal grading cannot be continued from a half recording
       const info = resume ? resumeInfoRef.current : null;
       const carry = info ? info.secs : 0;
-      forceWholeRef.current = false;
       if (info) {
         prevSegsRef.current = info.segs.slice();
         for (let i = info.persisted; i < info.segs.length; i++) await idbSaveBlob(recSegKey(userId, todayISO(), i), info.segs[i]);
         await idbDeleteBlob(`${userId}_${todayISO()}_partial`);
-        const sc = ChunkTranscriber.saved(`hifdh_chunks_${userId}_${todayISO()}`);
-        forceWholeRef.current = !sc || !sc.idle;   // the app was closed mid-chunk → the saved text may be missing the last words
         resumeInfoRef.current = null; setSavedRec(null);
       } else {
         prevSegsRef.current = []; resumeInfoRef.current = null; setSavedRec(null);
@@ -2388,7 +2287,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         const ayahs = pageAyahsRef.current;
         setPhase("page_result");
         setScore(null);
-        ctcResRef.current = null; setCtcRes(null); setCtcErr(""); setNoApiWarning(false);   // a new recording must not inherit the "couldn't score" banner from an earlier failed one
+        setNoApiWarning(false);   // a new recording must not inherit the "couldn't score" banner from an earlier failed one
 
         // Upload audio to storage — defined inline so it can close over blob/userId/today.
         // Returns a signed URL (time-limited, auth-independent) so admin playback works
@@ -2438,7 +2337,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           const errs = getErrorWords(tx, ayahs);
           const corr = getAyahCorrectness(tx, ayahs, capturedSecs);
           setLastTranscript(tx);
-          // "transcribe time" = how long the Tarteel model itself took (as in the test page).
           setCheckSecs(transcribeMsRef.current != null ? transcribeMsRef.current / 1000
             : stopTsRef.current != null ? (performance.now() - stopTsRef.current) / 1000 : null);
           stopTsRef.current = null;
@@ -2457,40 +2355,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         }
       };
       attemptRef.current++;
-      // No live transcription: the audio is only recorded now and transcribed once, on Stop.
+      // The recorder only keeps the audio for staff; the recitation itself is graded live by Read & Reveal.
       mr.start(1000);
       mediaRecRef.current = mr;
       // If the phone takes the microphone away (a call, another app) keep everything recited so far and
       // go to the result instead of leaving a dead recording running.
       try { stream.getAudioTracks().forEach(t => { t.onended = () => { if (mediaRecRef.current === mr) { if (revealOnRef.current) finishReveal(); else handleStop(); } }; }); } catch { /* noop */ }
-      // Transcribe in the background AS the student recites (nothing is shown until Finished), so only
-      // the last few seconds are left to process at Stop.
-      if (revealMode) startMeter(stream);   // Read & Reveal listens by itself; here we only watch the recorder's loudness
-      else {
-      try { bgRef.current?.cancel(); } catch { /* noop */ }
-      void refreshAsrSettings();   // pick up an admin switch change made since the page was opened (applies from the next recording)
-      const cloudFirst = whisperCloudAvailable() && !ctcEnabled();   // with CTC on, all three models work WHILE the student recites (see below)   // cloud Whisper transcribes the whole recording on Stop — no on-device work while reciting
-      if (!cloudFirst && ctcEnabled() && tarteelScoreMode() && tarteelAssistAllowed()) tarteelEngine.load(true).then(() => tarteelEngine.warmup()).catch(() => { /* scoring falls back to CTC only */ });   // preload + warm up while the student recites
-      if (!cloudFirst && asrEnabled("tarteel") && (!ctcEnabled() || tarteelAssistAllowed())) try { const bg = new ChunkTranscriber(stream, mime, 8000, 4000, `hifdh_chunks_${userId}_${todayISO()}`); bg.start(!!info); bgRef.current = bg; } catch { bgRef.current = null; }
-      // Silent background processing: tap the same mic stream and let the worker check the audio WHILE the student
-      // recites, so the result is ready within seconds of Stop. Nothing is shown on screen. Never blocks or breaks
-      // recording — if anything here fails, the full check on Stop still runs.
-      if (!cloudFirst && ctcEnabled()) {
-        try {
-          const bgWords = refTokens(pageAyahsRef.current.map((a: any) => a.text).join(" "));
-          if (!carry) { setLiveMiss(0); setLiveShown(0); setLiveNote(null); }
-          const starts: number[] = []; let acc = 0;
-          for (const a of pageAyahsRef.current as any[]) { starts.push(acc); acc += refTokens(a.text).length; }
-          liveAyahStartsRef.current = starts;
-          ctcEngine.liveBegin(bgWords, (shown) => setLiveShown(shown), { onMistake: onLiveMistake });
-          const lm = new LiveMic(); liveMicRef.current = lm;
-          try { lwRef.current?.cancel(); } catch { /* noop */ }
-          lwRef.current = whisperCloudAvailable() ? new LiveWhisper() : null;
-          if (lwRef.current && (carry > 0 || forceWholeRef.current)) lwRef.current.incomplete = true;   // not the whole recording → Whisper uses the full file instead
-          lm.start(stream, (x) => { if (!isPausedRef.current) { ctcEngine.liveFeed(x); lwRef.current?.feed(x); } }).catch((e) => console.warn("[HifdhDaily] background mic tap failed:", e));
-        } catch (e) { console.warn("[HifdhDaily] background check unavailable:", e); }
-      }
-      }
+      startMeter(stream);   // Read & Reveal listens by itself; here we only watch the recorder's loudness
       setIsRecording(true);
       setRecSecs(carry);                   // resume from previous session's elapsed time
       recSecsRef.current = carry;
@@ -2509,217 +2380,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const lastTranscribeErrorRef = useRef<string>("");
   const transcribeMsRef = useRef<number | null>(null);
 
-  // Tarteel on-device transcription of one audio blob. Returns "__NO_API__" if the model could not
-  // load/run (unsupported browser, download failed, audio could not be decoded) — callers show a
-  // soft "couldn't score this" message instead of a silent 0%.
-  // Whisper-large-v3-turbo on Cloudflare — the FIRST engine when the admin has it switched on. Returns the transcript
-  // (may legitimately be "" for silence) or null when it is off / failed, so the caller falls back to the on-device engines.
-  const whisperTry = async (blob: Blob): Promise<string | null> => {
-    if (!whisperCloudAvailable()) return null;
-    const w = await whisperTranscribe(blob);
-    if (w.error) {
-      lastTranscribeErrorRef.current = `whisper_${w.error}`;
-      console.warn("[HifdhDaily] cloud Whisper failed, using the on-device engines:", w.error);
-      return null;
-    }
-    lastTranscribeErrorRef.current = "";
-    transcribeMsRef.current = null;   // "transcribe time" = the real wait after Stop
-    console.info(`[HifdhDaily] Whisper-large-v3-turbo transcript (${w.ms} ms):`, w.text);
-    return w.text;
-  };
-
-  // `cloudTried` = the caller already asked cloud Whisper (and it failed), so don't ask it a second time.
-  const transcribeAudio = async (blob: Blob, cloudTried = false): Promise<string> => {
-    const priorErr = lastTranscribeErrorRef.current;
-    lastTranscribeErrorRef.current = "";
-    transcribeMsRef.current = null;
-    if (!cloudTried) {
-      const cloud = await whisperTry(blob);
-      if (cloud !== null) return cloud;
-    } else lastTranscribeErrorRef.current = priorErr;   // keep the Whisper failure reason for the log
-    if (!asrEnabled("tarteel")) {   // switched off by the admin and nothing else answered
-      if (!lastTranscribeErrorRef.current) lastTranscribeErrorRef.current = "tarteel_disabled";
-      return "__NO_API__";
-    }
-    const res = await tarteelEngine.transcribeBlob(blob);
-    if (res.error) {
-      lastTranscribeErrorRef.current = `tarteel_${res.error}`;
-      console.error("[HifdhDaily] tarteel transcription failed:", res.error);
-      return "__NO_API__";
-    }
-    transcribeMsRef.current = res.ms ?? null;
-    return (res.text ?? "").trim(); // may legitimately be "" (silence) — caller decides what to do
-  };
-
-  // ONE result, shown once. CTC, Tarteel and cloud Whisper all work on the recording at the same time; at a short deadline
-  // after Stop (default 4 s, localStorage "final_deadline_ms") whatever has finished is combined into the final grading
-  // and shown. A model that is not done by then is simply left out — nobody waits for it, and nothing changes afterwards.
-  // Combining: Tarteel by the existing merge rules, then a weighted vote (CTC x2); a word CTC accepted is never lowered.
-  const combineWithinDeadline = async (
-    blob: Blob, refWords: string[], res: CtcCheckResult, ctcWords: WordResult[],
-    tPromise: Promise<string | null> | null, wPromise: Promise<string | null> | null, stopAt: number,
-  ): Promise<WordResult[]> => {
-    // Every model finishes (or fails) before ONE merged result is released. No early return and no short deadline any more;
-    // only a safety cap (default 90 s, localStorage final_deadline_ms) so a hung request can never block the result forever.
-    let deadlineMs = 90000;
-    try { const d = Number(localStorage.getItem("final_deadline_ms")); if (d > 0) deadlineMs = d; } catch { /* default */ }
-    const remaining = Math.max(1000, deadlineMs - (performance.now() - stopAt));
-    const RANK = ["missed", "wrong", "close", "ok"];
-    const means = res.words.map((w) => w.mean);
-    let tW: WordResult[] | null = null;
-    let tScored: (i: number) => boolean = () => true;
-    let wW: WordResult[] | null = null;
-    let closed = false;
-
-    const tarteelPart = async () => {
-      try {
-        if (tPromise) {
-          const tText = await tPromise;
-          if (!closed && tText) tW = analyzeRecitation(refWords.join(" "), tText).words;
-        } else if (tarteelAssistAllowed() && blob.size <= 10 * 1048576) {
-          const sc = await tarteelEngine.scoreRecitation(blob, refWords, ctcWords, res.words.map((w) => w.start), res.words.map((w) => w.end),
-            { budgetMs: Math.max(1000, remaining - 400), maxWindows: 4 });
-          if (!closed && !sc.error && sc.scores.size) { const scores = sc.scores; tW = buildTarteelWords(refWords, scores); tScored = (i) => scores.has(i); }
-        }
-      } catch (e) { console.warn("[HifdhDaily] Tarteel part unavailable:", e); }
-    };
-    const whisperPart = async () => {
-      try {
-        const t = wPromise ? await wPromise : null;
-        if (!closed && t && t.trim()) wW = analyzeRecitation(refWords.join(" "), t).words;
-      } catch (e) { console.warn("[HifdhDaily] Whisper part unavailable:", e); }
-    };
-    await Promise.race([Promise.all([tarteelPart(), whisperPart()]), new Promise((r) => setTimeout(r, remaining))]);
-    closed = true;
-    const tw = tW as WordResult[] | null, ww = wW as WordResult[] | null;
-    console.info(`[HifdhDaily] final = CTC${tw ? " + Tarteel" : ""}${ww ? " + Whisper" : ""} (waited ≤ ${Math.round(remaining)} ms)`);
-
-    let graded = ctcWords;
-    if (tw && tw.length === ctcWords.length) graded = mergeCtcTarteel(graded, means, tw).words;
-    if (ww && ww.length === ctcWords.length) {
-      const base = graded;
-      graded = base.map((g, i) => {
-        const entries: { model: VoteModel; word: WordResult }[] = [{ model: "ctc", word: ctcWords[i] }];
-        if (tw && tw.length === ctcWords.length && tScored(i)) entries.push({ model: "tarteel", word: tw[i] });
-        entries.push({ model: "whisper_cf", word: ww[i] });
-        const v = voteWord(entries);
-        return RANK.indexOf(v.grade) > RANK.indexOf(g.grade) ? v : g;
-      });
-    }
-    return graded;
-  };
-
-  // CTC-only test mode: no transcript exists. The CTC model checks every reference word of THIS page against the
-  // recording; the verdicts are registered as the grading and a key-"transcript" is returned so the rest of the
-  // page (score, grid, red words, ayah colours, saving) works unchanged.
-  const ctcGrade = async (blob: Blob): Promise<string> => {
-    lastTranscribeErrorRef.current = ""; transcribeMsRef.current = null; setCtcErr("");
-    try {
-      const refWords = refTokens(pageAyahsRef.current.map((a: any) => a.text).join(" "));
-      if (!refWords.length) return "__NO_API__";
-      const scoreMode = tarteelScoreMode();
-      // All three models start together on the recording; ONE final result is shown at a short deadline after Stop.
-      if (scoreMode) { const bg = bgRef.current; bgRef.current = null; try { bg?.cancel(); } catch { /* noop */ } }
-      const stopAt = stopTsRef.current ?? performance.now();
-      const tPromise = scoreMode ? null : tarteelTranscript(blob).catch(() => null);   // started now (reads the live chunks)
-      const lw = lwRef.current; lwRef.current = null;
-      const wholeWhisper = () => whisperTranscribe(blob).then((w) => (w.error ? null : (w.text ?? ""))).catch(() => null);
-      // live pieces were sent while the student recited → only the last piece is left; anything wrong → whole recording
-      const wPromise = whisperCloudAvailable()
-        ? (lw ? lw.finish().then((r) => (r.ok && r.text ? r.text : wholeWhisper())).catch(() => wholeWhisper()) : wholeWhisper())
-        : null;
-      const res = await ctcEngine.check(blob, refWords, { basmalah: "auto" });
-      ctcResRef.current = res; setCtcRes(res);
-      const ctcWords = gradeFromCtc(refWords, res.words, res.heard);
-      const graded = await combineWithinDeadline(blob, refWords, res, ctcWords, tPromise, wPromise, stopAt);
-      transcribeMsRef.current = null;   // show the real wait after Stop
-      const tx = registerCtcGrading(res.greedy, graded);
-      try {   // keep the heard text + timing so a reload shows the same detailed result
-        const r2 = (n: number | null) => (n == null ? null : Math.round(n * 100) / 100);
-        const slim = { ...res, words: res.words.map((w) => ({ mean: r2(w.mean), min: r2(w.min), start: null, end: null })) };
-        localStorage.setItem("ctc_res_last", JSON.stringify({ tx, res: slim }));
-      } catch { /* storage full — the result just shows without the detail after a reload */ }
-      return tx;
-    } catch (e: any) {
-      const msg = String(e?.message ?? e);
-      console.error("[HifdhDaily] CTC check failed:", msg);
-      lastTranscribeErrorRef.current = `ctc_${msg}`; setCtcErr(msg);
-      return "__NO_API__";
-    }
-  };
-
-  // CTC + Tarteel run TOGETHER on the same recording and ONE merged result is shown (no instant-then-upgrade).
-  // Tarteel is skipped on low-memory phones or with localStorage ctc_assist = "0"; if it fails, CTC alone is used.
-  const tarteelAssistAllowed = (): boolean => {
-    try {
-      if (!asrEnabled("tarteel")) return false;   // switched off by the admin
-      if (localStorage.getItem("ctc_assist") === "0") return false;
-      const mem = (navigator as any).deviceMemory;
-      return !(typeof mem === "number" && mem <= 3);
-    } catch { return true; }
-  };
-  // Default: Tarteel transcribes in 8 s chunks WHILE the student recites (so only the last piece is left at Stop). Set
-  // localStorage tarteel_mode = "score" to get the old behaviour (a rating pass over the words CTC did not accept, after Stop).
-  const tarteelScoreMode = (): boolean => { try { return localStorage.getItem("tarteel_mode") === "score"; } catch { return false; } };
-  // Tarteel transcribes the recording in 8 s chunks WHILE the student recites (same as CTC's live run), so at Stop only the
-  // tail is left and both results are ready almost together. Falls back to the whole recording if the chunks failed.
-  const tarteelTranscript = async (blob: Blob): Promise<string | null> => {
-    const bg = bgRef.current; bgRef.current = null;
-    if (!tarteelAssistAllowed()) { try { bg?.cancel(); } catch { /* noop */ } return null; }
-    try {
-      await tarteelEngine.load(true);
-      if (bg && !(forceWholeRef.current && blob.size <= 30 * 1048576)) {
-        try {
-          const r = await bg.finish();
-          const looped = /(\S+\s+\S+)(\s+\1){2,}/.test(normalizeArabic(r.text));
-          const long = blob.size > 10 * 1048576;
-          if (r.text.trim() && (long || (r.ok && !looped))) return r.text.trim();
-        } catch (e) { console.warn("[HifdhDaily] background Tarteel failed, whole recording:", e); }
-      } else { try { bg?.cancel(); } catch { /* noop */ } }
-      const t = await tarteelEngine.transcribeBlob(blob);
-      return t.error ? null : (t.text ?? "").trim() || null;
-    } catch (e) { console.warn("[HifdhDaily] Tarteel unavailable, CTC only:", e); return null; }
-  };
-
-  const bgRef = useRef<ChunkTranscriber | null>(null);
-  const finalizeTranscript = async (fullBlob: Blob): Promise<string> => {
+  const finalizeTranscript = async (_fullBlob: Blob): Promise<string> => {
     // Read & Reveal already graded every word while the student recited: hand that grading to the page as its key-"transcript"
-    // (the same mechanism the CTC grading uses), so score, grid, red words, ayah colours and saving work unchanged.
+    // (the same mechanism the old grading used), so score, grid, red words, ayah colours and saving work unchanged.
     const rg = revealGradeRef.current;
     if (rg) { revealGradeRef.current = null; return registerCtcGrading(rg.heardText, rg.words); }
-    // CTC available → it answers at once; Tarteel and cloud Whisper refine in the background (see ctcGrade). If CTC fails, fall through.
-    if (ctcEnabled()) { const ctcTx = await ctcGrade(fullBlob); if (ctcTx !== "__NO_API__") return ctcTx; }
-    // Cloud Whisper first. Any failure (offline, worker error, switched off) falls through to the original engines below.
-    const cloud = await whisperTry(fullBlob);
-    if (cloud !== null) { try { bgRef.current?.cancel(); } catch { /* noop */ } bgRef.current = null; return cloud; }
-    if (ctcEnabled()) return ctcGrade(fullBlob);
-    const bg = bgRef.current;
-    bgRef.current = null;
-    // Continued after the app was closed mid-chunk: the saved text may lack the last words of the earlier part, so
-    // score the whole joined recording instead (unless it is too long to decode in one piece on a phone).
-    if (bg && forceWholeRef.current && fullBlob.size <= 30 * 1048576) {
-      try { bg.cancel(); } catch { /* noop */ }
-      return transcribeAudio(fullBlob, true);
-    }
-    if (bg) {
-      try {
-        const r = await bg.finish();
-        // Good background result → use it. Anything went wrong (or nothing heard) → transcribe the whole recording.
-        // A repeated phrase ("إلى الذي إلى الذي إلى الذي …") is the model looping, not the student.
-        const looped = /(\S+\s+\S+)(\s+\1){2,}/.test(normalizeArabic(r.text));
-        // A long recording (> ~10 MB) is never re-decoded as one piece (that needs gigabytes of memory on a
-        // phone): the chunk transcripts are used even if one chunk failed.
-        const long = fullBlob.size > 10 * 1048576;
-        if (r.text.trim() && (long || (r.ok && !looped))) {
-          lastTranscribeErrorRef.current = "";
-          transcribeMsRef.current = null;   // "transcribe time" = wait after Stop
-          console.info("[HifdhDaily] final transcript (live chunks merged):", r.text.trim());
-          return r.text.trim();
-        }
-        console.warn(`[HifdhDaily] live transcript not used → whole-recording fallback (ok=${r.ok}, looped=${looped}, empty=${!r.text.trim()}, bytes=${fullBlob.size})`);
-      } catch (e) { console.warn("[HifdhDaily] background transcription failed, falling back:", e); }
-    }
-    return transcribeAudio(fullBlob, true);
+    lastTranscribeErrorRef.current = "no_reveal_grading";
+    return "__NO_API__";
   };
 
   const lastResultRef = useRef<{ tx: string; ayahCorrectness: boolean[] } | null>(null);
@@ -2739,26 +2406,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     lastResultRef.current = { tx: "", ayahCorrectness: [] };
     setScore(0); setErrorWords([]); setAyahCorrectness([]);
     setNoApiWarning(true);
-  };
-
-  // Re-run scoring from the saved recording (page reloaded while "analysing").
-  const reanalyse = async (blob: Blob) => {
-    stopTsRef.current = performance.now();
-    const cloud = await whisperTry(blob);   // cloud Whisper first; null → the original engines below
-    if (cloud === null && !ctcEnabled() && asrEnabled("tarteel")) { try { await tarteelEngine.load(true); } catch { /* transcribeAudio reports it */ } }
-    const ayahs = pageAyahsRef.current;
-    const savedChunks = cloud !== null || ctcEnabled() ? null : ChunkTranscriber.saved(`hifdh_chunks_${userId}_${todayISO()}`);
-    const tx = cloud !== null ? cloud : ctcEnabled() ? await ctcGrade(blob) : savedChunks?.complete && savedChunks.text.trim() ? (transcribeMsRef.current = null, savedChunks.text.trim()) : await transcribeAudio(blob, true);
-    if (tx === "__NO_API__") { softFailTranscript(); return; }
-    const sc   = alignAyahs(tx, ayahs).score;   // same alignment as the grid + red words + ayah colours
-    const errs = getErrorWords(tx, ayahs);
-    const corr = getAyahCorrectness(tx, ayahs, recSecsRef.current);
-    setLastTranscript(tx);
-    setCheckSecs(transcribeMsRef.current != null ? transcribeMsRef.current / 1000
-      : stopTsRef.current != null ? (performance.now() - stopTsRef.current) / 1000 : null);
-    stopTsRef.current = null;
-    lastResultRef.current = { tx, ayahCorrectness: corr };
-    setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
   };
 
   // Upload the saved recording again (the first upload had not finished before the reload).
@@ -2861,17 +2508,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             const wasAnalysing = d.phase === "page_result" && d.score == null;
             setPhase(d.phase);
             idbLoadBlob(FINAL_BLOB_KEY).then(blob => {
-              if (!blob) {
-                // Nothing to rebuild the result from → let the student recite this page again.
-                if (wasAnalysing) setPhase("reading");
-                return;
-              }
+              if (wasAnalysing) { setPhase("reading"); return; }   // the live grading cannot be rebuilt from the audio → recite again
+              if (!blob) return;
               audioBlobRef.current = blob;
               const url = URL.createObjectURL(blob);
               setAudioUrl(url); setSavedAudioUrl(url);
               if (d.phase === "page_result") {
-                if (wasAnalysing) reanalyse(blob);
-                else if (!d.audioPath) reuploadAudio(blob);
+                if (!d.audioPath) reuploadAudio(blob);
               }
             });
           }
@@ -2910,7 +2553,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     clearInterval(timerRef.current);
     pausedElapsedRef.current = Date.now() - t0Ref.current;
     setRecSecs(Math.floor(pausedElapsedRef.current / 1000));
-    try { bgRef.current?.pause(); } catch { /* noop */ }
     // keep it on the device so closing / refreshing while paused loses nothing
     setTimeout(() => { try { void flushRecRef.current?.(); } catch { /* noop */ } }, 350);
   };
@@ -2919,9 +2561,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const leaveWhilePaused = async () => {
     const mr = mediaRecRef.current;
     try { await flushRecRef.current?.(); } catch { /* noop */ }
-    stopLive();
-    try { bgRef.current?.cancel(); } catch { /* noop */ }
-    bgRef.current = null;
     if (mr) { mr.onstop = null as any; try { if (mr.state !== "inactive") mr.stop(); } catch { /* noop */ } }
     mediaRecRef.current = null;
     try { micRef.current?.getTracks().forEach(t => t.stop()); } catch { /* noop */ }
@@ -2935,7 +2574,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const discardSavedRec = () => {
     if (!window.confirm("Delete your saved recording and start again from the beginning?")) return;
     clearSavedRecording(userId, todayISO());
-    ChunkTranscriber.clearSaved(`hifdh_chunks_${userId}_${todayISO()}`);
     resumeInfoRef.current = null; prevSegsRef.current = []; setSavedRec(null);
   };
 
@@ -2949,18 +2587,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     timerRef.current = setInterval(() => {
       setRecSecs(Math.floor((Date.now() - t0Ref.current) / 1000));
     }, 500);
-    try { bgRef.current?.resume(); } catch { /* noop */ }
     try { void flushRecRef.current?.(); } catch { /* noop */ }   // meta says "recording" again
   };
 
   const handleStop = () => {
     stopTsRef.current = performance.now();
-    stopLive();
     isPausedRef.current = false; setIsPaused(false);
     setIsRecording(false);
     clearInterval(timerRef.current);
     if (mediaRecRef.current && mediaRecRef.current.state !== "inactive") {
-      mediaRecRef.current.stop(); // triggers mr.onstop → Tarteel transcribe → setScore
+      mediaRecRef.current.stop(); // triggers mr.onstop → finalizeTranscript → setScore
     }
     mediaRecRef.current = null;
     // mr.onstop handles setPhase("page_result") + setScore(null) + fill
@@ -2976,7 +2612,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     const ayahs = pageAyahsRef.current;
     const capturedSecs = recSecsRef.current;
     audioBlobRef.current = null; audioStorageUrlRef.current = null; setAudioUrl(null); setSavedAudioUrl(null);
-    ctcResRef.current = null; setCtcRes(null); setCtcErr(""); setNoApiWarning(false);
+    setNoApiWarning(false);
     setPhase("page_result"); setScore(null);
     const sc = alignAyahs(tx, ayahs).score;
     const errs = getErrorWords(tx, ayahs);
@@ -3067,126 +2703,70 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     const idx = qIdx;
     const q = questions[idx];
     if (!q || qMediaRecRef.current || qChecking) return;
-    try {
-      setQRecChunks([]); setQRecResult(null); setQRecDone(false); setQRecSecs(0); setQRecErr("");
-      stopListenAudio();
-      // Same raw-mic capture as the reading phase. Browser echo-cancel / noise-suppression / auto-gain are
-      // tuned for calls and clip soft endings, madd and ghunnah, which makes Tarteel mis-hear the answer.
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          sampleRate: 48000,
-          channelCount: 1,
-        }
-      });
-      const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t => {
-        try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
-      }) || "";
-      const mr = new MediaRecorder(stream, mime
-        ? { mimeType: mime, audioBitsPerSecond: 128000 }
-        : { audioBitsPerSecond: 128000 });
-      const chunks: Blob[] = [];
-      mr.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
-      mr.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        clearInterval(qRecTimerRef.current);
-        if (qMediaRecRef.current === mr) qMediaRecRef.current = null;
-        const stillHere = () => qIdxRef.current === idx;
-        if (stillHere()) { setQRecording(false); setQChecking(true); }
+    setQRecChunks([]); setQRecResult(null); setQRecDone(false); setQRecSecs(0); setQRecErr("");
+    stopListenAudio();
+    // The answer is listened to by the browser's own speech recognition (no model, no audio kept).
+    const listener = startListening();
+    if (!listener) { setQRecErr("This browser can't listen to your answer. Open the app in Chrome on your phone, or skip this question."); return; }
+    // A tiny stand-in with the recorder's shape, so the countdown, question change and time-up code keep working unchanged.
+    const mr: any = {
+      state: "recording",
+      stream: { getTracks: () => [] as MediaStreamTrack[] },
+      onstop: null as null | (() => void),
+      stop() {
+        if (mr.state === "inactive") return;
+        mr.state = "inactive";
+        if (mr.onstop) void mr.onstop(); else listener.cancel();
+      },
+    };
+    mr.onstop = async () => {
+      clearInterval(qRecTimerRef.current);
+      if (qMediaRecRef.current === mr) qMediaRecRef.current = null;
+      const stillHere = () => qIdxRef.current === idx;
+      if (stillHere()) { setQRecording(false); setQChecking(true); }
 
-        const advanceIfTimeUp = (fallbackAnswer: number | null) => {
-          if (!pendingAdvanceRef.current) return;
-          pendingAdvanceRef.current = false;
-          if (fallbackAnswer !== null) setAnswers(prev => { if (prev[idx] !== null && prev[idx] !== undefined) return prev; const a = [...prev]; a[idx] = fallbackAnswer; return a; });
-          setTimeout(() => { if (qIdxRef.current === idx) nextQRef.current(); }, 80);
-        };
-        const fail = (msg: string) => {
-          if (stillHere()) { setQChecking(false); setQRecErr(msg); }
-          advanceIfTimeUp(1);
-        };
-
-        const blob = new Blob(chunks, { type: mime || "audio/webm" });
-        if (blob.size < 1500) { fail("We couldn't hear anything. Tap record and try again."); return; }
-        const TIMEOUT_MSG = "Checking took too long. Tap record to try again, or skip this one.";
-        let raw = "";
-        let sc: number | null = null;
-        if (ctcEnabled() && !whisperCloudAvailable()) {
-          // CTC model: every word of the expected verse is checked against the recording.
-          const refWords = refTokens(q.correctText || "");
-          if (!refWords.length) { fail("Couldn't check this question. Skip to continue."); return; }
-          let res: CtcCheckResult | null = null;
-          try {
-            res = await Promise.race([
-              ctcEngine.check(blob, refWords, { basmalah: false, shortClip: true }),
-              new Promise<null>(r => setTimeout(() => r(null), 60000)),
-            ]);
-          } catch (e: any) {
-            console.error("[HifdhDaily] CTC answer check failed:", e?.message ?? e);
-            if (/no_speech/.test(String(e?.message ?? e))) fail("We couldn't hear your voice. Hold the phone closer, recite right after you tap record, and try again.");
-            else fail("Couldn't check this recording on your device. Tap record to try again, or skip.");
-            return;
-          }
-          if (!res) { fail(TIMEOUT_MSG); return; }
-          raw = (res.greedy || "").trim();
-          if (!raw) { fail("No recitation was detected. Tap record and try again."); return; }
-          sc = scoreOf(gradeFromCtc(refWords, res.words, res.heard));
-          // Second opinion: the model returned (almost) nothing, or a very low match, for a clip that did contain speech.
-          // Ask Tarteel too and keep the better of the two — one stray letter must not fail a student who recited correctly.
-          const tooLittle = normalizeArabic(raw).replace(/\s+/g, "").length < Math.min(6, Math.floor(refWords.join("").length / 3));
-          if ((tooLittle || (sc ?? 0) < 30) && tarteelAssistAllowed() && blob.size <= 10 * 1048576) {
-            try {
-              await Promise.race([tarteelEngine.load(true), new Promise((_, rj) => setTimeout(() => rj(new Error("load_timeout")), 20000))]);
-              const t2 = await Promise.race([
-                tarteelEngine.transcribeBlob(blob),
-                new Promise<{ text?: string; error?: string }>(r => setTimeout(() => r({ error: "timeout" }), 25000)),
-              ]);
-              const tText = (t2.error ? "" : (t2.text ?? "")).trim();
-              if (tText) {
-                const expW = normalizeArabic(q.correctText || "").split(/\s+/).filter(Boolean);
-                const gotW = normalizeArabic(tText).split(/\s+/).filter(Boolean);
-                const usedT = new Set<number>(); let m = 0;
-                for (const ew of expW) for (let i = 0; i < gotW.length; i++) { if (usedT.has(i)) continue; if (wordsMatch(ew, gotW[i])) { m++; usedT.add(i); break; } }
-                const sT = expW.length ? Math.round((m / expW.length) * 100) : 0;
-                if (sT > (sc ?? 0)) { sc = sT; raw = tText; }
-              }
-            } catch (e) { console.warn("[HifdhDaily] Tarteel second opinion unavailable:", e); }
-          }
-        } else {
-          // Tarteel (web without ?ctc=1). Never wait forever for the model: after 45 s tell the student.
-          const t = await Promise.race([
-            transcribeAudio(blob),
-            new Promise<string>(res => setTimeout(() => res("__TIMEOUT__"), 45000)),
-          ]);
-          if (t === "__TIMEOUT__") { fail(TIMEOUT_MSG); return; }
-          if (t === "__NO_API__")  { fail("Couldn't check this recording on your device. Tap record to try again, or skip."); return; }
-          if (!t.trim())           { fail("No recitation was detected. Tap record and try again."); return; }
-          raw = t;
-          const expWords = normalizeArabic(q.correctText || "").split(/\s+/).filter(Boolean);
-          const gotWords = normalizeArabic(raw).split(/\s+/).filter(Boolean);
-          let matched = 0;
-          const used2 = new Set<number>();
-          for (const ew of expWords) {
-            for (let i = 0; i < gotWords.length; i++) {
-              if (used2.has(i)) continue;
-              if (wordsMatch(ew, gotWords[i])) { matched++; used2.add(i); break; }
-            }
-          }
-          sc = expWords.length > 0 ? Math.round((matched / expWords.length) * 100) : 70;
-        }
-        if (!skippedQRef.current.has(idx)) {
-          // Auto-mark answer: score >= 60 = correct (0 = pass sentinel). Functional update → never clobbers other answers.
-          setAnswers(prev => { const a = [...prev]; a[idx] = (sc ?? 0) >= 60 ? 0 : 1; return a; });
-        }
-        if (stillHere()) { setQRecResult({ transcript: raw, score: sc ?? 0 }); setQRecDone(true); setQChecking(false); }
-        advanceIfTimeUp(null);
+      const advanceIfTimeUp = (fallbackAnswer: number | null) => {
+        if (!pendingAdvanceRef.current) return;
+        pendingAdvanceRef.current = false;
+        if (fallbackAnswer !== null) setAnswers(prev => { if (prev[idx] !== null && prev[idx] !== undefined) return prev; const a = [...prev]; a[idx] = fallbackAnswer; return a; });
+        setTimeout(() => { if (qIdxRef.current === idx) nextQRef.current(); }, 80);
       };
-      mr.start(200);
-      qMediaRecRef.current = mr;
-      setQRecording(true);
-      qRecTimerRef.current = setInterval(() => setQRecSecs(s => s+1), 1000);
-    } catch { alert("Mic access denied"); }
+      const fail = (msg: string) => {
+        if (stillHere()) { setQChecking(false); setQRecErr(msg); }
+        advanceIfTimeUp(1);
+      };
+
+      const heard = await listener.stop();
+      const raw = heard.text.trim();
+      if (!raw) {
+        fail(heard.error === "not-allowed" || heard.error === "service-not-allowed"
+          ? "Microphone permission was denied. Allow the microphone in the browser settings and try again."
+          : heard.error === "network"
+          ? "Speech recognition needs an internet connection. Tap record to try again, or skip."
+          : "We couldn't hear your voice. Hold the phone closer, recite right after you tap record, and try again.");
+        return;
+      }
+      const expWords = normalizeArabic(q.correctText || "").split(/\s+/).filter(Boolean);
+      const gotWords = normalizeArabic(raw).split(/\s+/).filter(Boolean);
+      let matched = 0;
+      const used2 = new Set<number>();
+      for (const ew of expWords) {
+        for (let i = 0; i < gotWords.length; i++) {
+          if (used2.has(i)) continue;
+          if (wordsMatch(ew, gotWords[i])) { matched++; used2.add(i); break; }
+        }
+      }
+      const sc = expWords.length > 0 ? Math.round((matched / expWords.length) * 100) : 70;
+      if (!skippedQRef.current.has(idx)) {
+        // Auto-mark answer: score >= 60 = correct (0 = pass sentinel). Functional update → never clobbers other answers.
+        setAnswers(prev => { const a = [...prev]; a[idx] = sc >= 60 ? 0 : 1; return a; });
+      }
+      if (stillHere()) { setQRecResult({ transcript: raw, score: sc }); setQRecDone(true); setQChecking(false); }
+      advanceIfTimeUp(null);
+    };
+    qMediaRecRef.current = mr;
+    setQRecording(true);
+    qRecTimerRef.current = setInterval(() => setQRecSecs(s => s+1), 1000);
   };
 
   const stopQRecording = () => {
@@ -3342,7 +2922,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       ayahCorrectness: last.ayahCorrectness,
       transcript: last.tx,
       grades: encodeGrades(an.words), extras: an.extras,
-      heard_words: ctcResRef.current?.heard && ctcResRef.current.heard.length === an.words.length ? ctcResRef.current.heard : undefined,
+      heard_words: revealHeardRef.current && revealHeardRef.current.length === an.words.length ? revealHeardRef.current : undefined,
     };
     const newResults=[...pageResults,r];
     setPageResults(newResults); setRetryCount(0); setScore(null);
@@ -4063,6 +3643,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           onMicConflict={revealMicConflict}
           onAudioSilent={revealAudioSilent}
           audioOn={revealAudioOn}
+          getAudioTrack={()=>micRef.current?.getAudioTracks()[0] ?? null}
         />
       )}
 
@@ -4071,7 +3652,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         <>
           <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:isRecording?"14px 16px":"10px 14px",
             display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
-            <BackBtn onClick={()=>{if(isPausedRef.current&&mediaRecRef.current){void leaveWhilePaused();return;}stopLive();if(mediaRecRef.current&&mediaRecRef.current.state!=="inactive"){mediaRecRef.current.stop();mediaRecRef.current=null;}isPausedRef.current=false;setIsPaused(false);setIsRecording(false);clearInterval(timerRef.current);setPhase("intro");}}/>
+            <BackBtn onClick={()=>{if(isPausedRef.current&&mediaRecRef.current){void leaveWhilePaused();return;}if(mediaRecRef.current&&mediaRecRef.current.state!=="inactive"){mediaRecRef.current.stop();mediaRecRef.current=null;}isPausedRef.current=false;setIsPaused(false);setIsRecording(false);clearInterval(timerRef.current);setPhase("intro");}}/>
             {!isRecording && (
               <div style={{flex:1,minWidth:0,display:"flex",alignItems:"center",gap:8}}>
                 <Target size={15} color={GOLD} style={{flexShrink:0}}/>
@@ -4106,9 +3687,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             )}
           </div>
 
-          <div style={(isRecording && !liveVisible)
-            ? {flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"10px 14px 90px"}
-            : {flex:1,minHeight:0,overflow:"hidden",display:"flex",flexDirection:"column",background:"#fff"}}>
+          <div style={{flex:1,minHeight:0,overflow:"hidden",display:"flex",flexDirection:"column",background:"#fff"}}>
 
             {retryMsg&&retryCount>0&&(
               <div style={{margin:isRecording?"0 0 10px":"8px 14px 6px",flexShrink:0,padding:"10px 12px",borderRadius:12,background:`${GOLD}12`,
@@ -4120,78 +3699,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               </div>
             )}
 
-            {/* Recording indicator — shown ALONE while recording. The Quran page
-                is intentionally hidden during recitation: the student should be
-                reciting from memory, not reading along with a blurred page, and
-                the previous blurred-word layout was confusing/distracting. */}
-            {isRecording && liveVisible && (
-              <div style={{flex:1,minHeight:0,display:"flex",flexDirection:"column"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"8px 14px",flexShrink:0}}>
-                  <span style={{padding:"4px 12px",borderRadius:20,background:`${PASS}18`,border:`1px solid ${PASS}50`,
-                    fontSize:13,fontWeight:900,color:PASS,fontVariantNumeric:"tabular-nums"}}>
-                    {isPaused?"⏸":"🔴"} {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
-                  </span>
-                  {liveMiss>0 && (
-                    <span style={{padding:"4px 12px",borderRadius:20,fontSize:12,fontWeight:800,transition:"all .25s",
-                      background:liveFlash?"#DC2626":"#FEE2E2",color:liveFlash?"#fff":"#B91C1C",border:"1px solid #FCA5A5"}}>
-                      ⚠ {liveMiss} {liveMiss===1?"mistake":"mistakes"}
-                    </span>
-                  )}
-                </div>
-                {liveNote && (
-                  <div role="alert" style={{margin:"0 14px 6px",flexShrink:0,padding:"10px 12px",borderRadius:12,background:"#FEF2F2",
-                    border:"1.5px solid #FCA5A5",color:"#991B1B",fontSize:13,fontWeight:700,lineHeight:1.5,animation:"slideUp .3s ease"}}>
-                    ⚠ Mistake caught in {liveNote} — carry on reciting.
-                  </div>
-                )}
-                {(todayPages[isGroup?0:pageIdx]) && (
-                  <div style={{flex:1,minHeight:0,position:"relative"}}>
-                    <SwipePages key={"live"+(isGroup?"group":String(todayPages[pageIdx]))}
-                      pages={isGroup?todayPages:[todayPages[pageIdx]]}
-                      viewIdx={isGroup?viewIdx:0} onView={isGroup?setViewIdx:()=>{}}
-                      onBg={setPrintedBg} clipFor={clipFor}
-                      coverUnrevealed={liveCover} revealProgress={liveProg}/>
-                  </div>
-                )}
-              </div>
-            )}
-            {isRecording && !liveVisible && (
-              <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
-                gap:22,padding:"48px 20px",minHeight:"50vh"}}>
-                <div style={{position:"relative",width:128,height:128,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  <div style={{position:"absolute",inset:0,borderRadius:"50%",
-                    background:`${PASS}22`,animation:isPaused?"none":"micPulse 1.6s ease-out infinite"}}/>
-                  <div style={{position:"absolute",inset:14,borderRadius:"50%",
-                    background:`${PASS}33`,animation:isPaused?"none":"micPulse 1.6s ease-out infinite .3s"}}/>
-                  <div style={{width:84,height:84,borderRadius:"50%",
-                    background:`linear-gradient(135deg,${G2},${G3})`,
-                    display:"flex",alignItems:"center",justifyContent:"center",
-                    boxShadow:`0 6px 24px ${G1}66`}}>
-                    {isPaused?<Pause size={36} color={GOLD}/>:<Mic size={36} color={GOLD}/>}
-                  </div>
-                </div>
-                {!isPaused&&<Wave/>}
-                <p style={{margin:0,fontWeight:800,fontSize:15,color:G1}}>{isPaused?"Paused":"Listening…"}</p>
-                {ctcOn && liveMiss>0 && (
-                  <span style={{padding:"6px 16px",borderRadius:20,fontSize:13,fontWeight:800,transition:"all .25s",
-                    background:liveFlash?"#DC2626":"#FEE2E2",color:liveFlash?"#fff":"#B91C1C",border:"1px solid #FCA5A5"}}>
-                    ⚠ {liveMiss} {liveMiss===1?"mistake":"mistakes"} caught
-                  </span>
-                )}
-                <span style={{padding:"5px 16px",borderRadius:20,
-                  background:`${PASS}18`,border:`1px solid ${PASS}50`,
-                  fontSize:14,fontWeight:900,color:PASS,fontVariantNumeric:"tabular-nums"}}>
-                  {isPaused?"⏸":"🔴"} {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
-                </span>
-                <p style={{margin:0,fontSize:11,color:"#9CA3AF",textAlign:"center",maxWidth:260,lineHeight:1.6}}>
-                  {isPaused
-                    ? "Recording is paused — nothing is being recorded. Tap Resume to carry on from where you stopped."
-                    : isGroup
-                    ? `Recite pages ${todayPages[0]} – ${todayPages[todayPages.length-1]} from memory, in order, in one go. Nothing is shown while you recite. Tap below when finished to get your score.`
-                    : `Recite Page ${todayPages[pageIdx]} from memory. Tap below when finished to get your score.`}
-                </p>
-              </div>
-            )}
             {/* Printed Madinah Mushaf page — ALWAYS full page: it takes all the room between the top bar and
                 Start Reciting. Multi-page days swipe left/right (no buttons). */}
             {!isRecording && (todayPages[isGroup?0:pageIdx]) && (
@@ -4206,16 +3713,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
           {/* Sticky bottom */}
           <div style={{padding:"12px 16px",background:W,borderTop:`1px solid ${BRD}`,flexShrink:0}}>
-            {!isRecording && (checkerState.status==="loading"||checkerState.status==="idle") && (
-              <p style={{margin:"0 0 8px",fontSize:11,color:"#9CA3AF",textAlign:"center"}}>
-                Preparing the Quran checker{checkerState.totalMB?` — ${Math.round(checkerState.loadedMB??0)} of ${Math.round(checkerState.totalMB)} MB`:"…"} (first time only — you can start reciting now)
-              </p>
-            )}
-            {!isRecording && (checkerState.status==="error"||checkerState.status==="unsupported") && (
-              <p style={{margin:"0 0 8px",fontSize:11,color:"#B45309",textAlign:"center"}}>
-                The Quran checker couldn't load on this device. Check your connection and reopen this page.
-              </p>
-            )}
             {!isRecording
               ?(
 (!readRevealSupported() && savedRec && (savedRec.page==null || savedRec.page===todayPages[isGroup?0:pageIdx]))
@@ -4274,37 +3771,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           <p style={{margin:0,color:"#e5c76b",fontWeight:700,fontSize:15,textAlign:"center"}}>
             Checking your recitation…
           </p>
-          {(checkerState.status==="loading" ? !!checkerState.totalMB : ctcOn) && (()=>{
-            const pg = ctcProg;
-            const pct = checkerState.status==="loading" ? Math.min(100,((checkerState.loadedMB??0)/(checkerState.totalMB||1))*100)
-              : tarteelProg ? (tarteelProg.total > 0 ? 96 + Math.min(1, tarteelProg.done / tarteelProg.total) * 3 : 96)
-              : !pg ? 3
-              : pg.stage==="decoding" ? 5
-              : pg.stage==="listening" && pg.total>0 ? 8 + Math.min(1,pg.done/pg.total)*84
-              : pg.stage==="aligning" ? 96
-              : 8;
-            const indeterminate = checkerState.status!=="loading" && !tarteelProg && (!pg || pg.stage==="decoding" || pg.stage==="finishing");
-            return (
-              <div style={{width:"100%",maxWidth:280}}>
-                <div style={{height:8,borderRadius:99,background:"#ffffff1f",overflow:"hidden",position:"relative"}}>
-                  <div style={{height:"100%",width:`${pct}%`,borderRadius:99,background:GOLD,transition:"width .4s ease",
-                    ...(indeterminate?{animation:"barPulse .8s ease-in-out infinite alternate"}:{})}}/>
-                </div>
-                <p style={{margin:"6px 0 0",color:"#9CA3AF",fontSize:11,textAlign:"center"}}>{Math.round(pct)}%</p>
-              </div>
-            );
-          })()}
           <p style={{margin:0,color:"#9CA3AF",fontSize:12,textAlign:"center",lineHeight:1.7,maxWidth:280}}>
-            {checkerState.status==="loading"
-              ? `Getting the Quran checker ready${checkerState.totalMB?` — ${Math.round(checkerState.loadedMB??0)} of ${Math.round(checkerState.totalMB)} MB`:"…"} (first time only)`
-              : ctcOn && tarteelProg
-                ? (tarteelProg.total > 0 ? `Double-checking the unclear words — part ${Math.min(tarteelProg.done + 1, tarteelProg.total)} of ${tarteelProg.total}…` : "Double-checking the unclear words…")
-              : ctcOn && ctcProg
-                ? (ctcProg.stage === "decoding" ? "Preparing your recording…"
-                  : ctcProg.stage === "listening" && ctcProg.total > 0
-                    ? `Listening to your recitation — ${Math.round(ctcProg.done)} of ${Math.round(ctcProg.total)} s done`
-                    : ctcProg.stage === "aligning" ? "Matching your recitation to the page…" : "Finishing the part you just recited…")
-                : "Finishing the last part of your recitation on your device — almost done."}
+            Adding up your recitation — almost done.
           </p>
         </div>
       )}
@@ -4384,14 +3852,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 </div>
               )}
 
-              {/* 3 ── Word-by-word result: correct / close / wrong / missed, word error rate, what the model heard */}
+              {/* 3 ── Word-by-word result: correct / close / wrong / missed, word error rate, */}
               {wordRes.length>0&&(
                 <RecitationResultGrid
                   words={wordRes}
                   extras={analysis.extras}
                   heardText={lastTranscript}
-                  checkSecs={checkSecs}
-                  heardWords={ctcOn && ctcRes?.heard && ctcRes.heard.length === wordRes.length ? ctcRes.heard : undefined}
+                  showHeard={false}
                 />
               )}
 
@@ -4729,9 +4196,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                             display:"flex",alignItems:"center",gap:10}}>
                             <Loader2 size={18} color={GOLD} style={{animation:"spin .9s linear infinite",flexShrink:0}}/>
                             <p style={{margin:0,fontSize:12.5,fontWeight:700,color:"#78350F",lineHeight:1.5}}>
-                              {checkerState.status==="loading"
-                                ?`Preparing the checker… ${checkerState.totalMB?Math.round(((checkerState.loadedMB??0)/checkerState.totalMB)*100)+"%":""}`
-                                :"Checking your recitation…"}
+                              Checking your answer…
                             </p>
                           </div>
                         )}

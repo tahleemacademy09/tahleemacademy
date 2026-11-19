@@ -79,6 +79,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <queries>
+        <!-- Android 11+: lets the app see the phone's speech recogniser (Read & Reveal listens through it) -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
         <!-- OEM auto-start/battery settings packages — used by DontKillMyApp -->
         <package android:name="com.asus.mobilemanager" />
         <package android:name="com.miui.securitycenter" />
