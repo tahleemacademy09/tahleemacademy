@@ -422,7 +422,8 @@ export default function DailyReadReveal({
       <style>{`@keyframes rrShake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-5px)} 75%{transform:translateX(5px)} }`}</style>
 
       {/* header — back, title, the recording timer (and mistakes) in the middle, page dots on the title's second line */}
-      <div style={{ background: `linear-gradient(160deg,${G1},${G2})`, padding: "8px 12px", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+      <div style={{ position: "relative", flexShrink: 0, zIndex: 10 }}>
+      <div style={{ background: `linear-gradient(160deg,${G1},${G2})`, padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 }}>
         {backButton}
         <div style={{ flex: 1, minWidth: 0 }}>
           <p style={{ margin: 0, fontWeight: 800, fontSize: 13, color: W, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</p>
@@ -449,39 +450,41 @@ export default function DailyReadReveal({
         </div>
       </div>
 
-      {/* the printed Mushaf page(s): only today's assigned verses are covered / uncovered */}
-      <div style={{ flex: 1, minHeight: 0, position: "relative", background: "#fff", overflow: "hidden" }}>
-        {/* mistake / error notes float over the page so the page itself never moves */}
-        <div style={{ position: "absolute", top: 6, left: 8, right: 8, zIndex: 6, display: "flex", flexDirection: "column", gap: 6, pointerEvents: "none" }}>
-          {view.blocked && !paused && (
-            <div role="alert" style={{ pointerEvents: "auto", display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 14, background: "#FEF2F2", border: "2px solid #F87171", animation: "rrShake .35s", boxShadow: "0 4px 14px rgba(0,0,0,.15)" }}>
-              <span style={{ fontFamily: "'Amiri',serif", fontWeight: 900, fontSize: 28, color: "#B91C1C", lineHeight: 1 }}>خطأ</span>
-              <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: "#7F1D1D", lineHeight: 1.4 }}>
+      {/* mistake / error notes take over the header bar, so they never cover the Mushaf page */}
+      {((view.blocked && !paused) || error || (note && !error)) && (
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, minHeight: "100%", boxSizing: "border-box", zIndex: 20, display: "flex", alignItems: "center", padding: "5px 8px", background: `linear-gradient(160deg,${G1},${G2})` }}>
+          {view.blocked && !paused ? (
+            <div role="alert" style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: 12, background: "#FEF2F2", border: "2px solid #F87171", animation: "rrShake .35s" }}>
+              <span style={{ fontFamily: "'Amiri',serif", fontWeight: 900, fontSize: 24, color: "#B91C1C", lineHeight: 1 }}>خطأ</span>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: "#7F1D1D", lineHeight: 1.3 }}>
                 {showAnswer && cur
                   ? <span dir="rtl" style={{ fontFamily: ARABIC, fontSize: 22, color: G1 }}>{cur.text}</span>
                   : "Say this word correctly to continue."}
               </span>
               <button onClick={() => setShowAnswer((v) => !v)}
-                style={{ flexShrink: 0, height: 34, padding: "0 10px", borderRadius: 10, border: "1px solid #FCA5A5", background: W, color: "#991B1B", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                style={{ flexShrink: 0, height: 32, padding: "0 10px", borderRadius: 10, border: "1px solid #FCA5A5", background: W, color: "#991B1B", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
                 {showAnswer ? "Hide" : "Show word"}
               </button>
               <button onClick={skip}
-                style={{ flexShrink: 0, height: 34, padding: "0 10px", borderRadius: 10, border: "1px solid #FCA5A5", background: W, color: "#991B1B", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                style={{ flexShrink: 0, height: 32, padding: "0 10px", borderRadius: 10, border: "1px solid #FCA5A5", background: W, color: "#991B1B", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
                 Skip
               </button>
             </div>
-          )}
-          {error && (
-            <div role="alert" style={{ pointerEvents: "auto", display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 10px", borderRadius: 12, background: "#FEF2F2", border: "1px solid #FCA5A5", color: "#991B1B", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 14px rgba(0,0,0,.12)" }}>
-              <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span>{error}</span>
+          ) : error ? (
+            <div role="alert" style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 12, background: "#FEF2F2", border: "1px solid #FCA5A5", color: "#991B1B", fontSize: 12, fontWeight: 600 }}>
+              <AlertCircle size={16} style={{ flexShrink: 0 }} /> <span>{error}</span>
             </div>
-          )}
-          {note && !error && (
-            <div style={{ pointerEvents: "auto", display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 10px", borderRadius: 12, background: "#FFFBEB", border: "1px solid #FCD34D", color: "#92400E", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 14px rgba(0,0,0,.12)" }}>
-              <MicOff size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span>{note}</span>
+          ) : (
+            <div style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 12, background: "#FFFBEB", border: "1px solid #FCD34D", color: "#92400E", fontSize: 12, fontWeight: 600 }}>
+              <MicOff size={16} style={{ flexShrink: 0 }} /> <span>{note}</span>
             </div>
           )}
         </div>
+      )}
+      </div>
+
+      {/* the printed Mushaf page(s): only today's assigned verses are covered / uncovered */}
+      <div style={{ flex: 1, minHeight: 0, position: "relative", background: "#fff", overflow: "hidden" }}>
         {useText ? (
           <TextReader words={words} view={view} mode="word" fontSize={32} started showAll={false} hintOn={false}
             peeked={new Set()} onPeek={noop} showBism={false} />
