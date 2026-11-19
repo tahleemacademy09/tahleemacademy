@@ -14,8 +14,11 @@
 export interface GlyphWord {
   surah: number;
   ayah: number;
-  code: string;          // QCF glyph codepoint(s) for this word
+  code: string;          // QCF glyph codepoint(s) for this word (HTML-entity or raw — run it through glyphText())
   isAyahEnd: boolean;    // ornate verse-number glyph
+  kind: "word" | "end" | "other";   // "other" = a stand-alone sign (pause / sajdah / rub-el-hizb)
+  pos: number;           // 1-based position inside its verse (0 for the end sign)
+  text: string;          // Unicode Uthmani text of the word — what the recitation checker compares against
 }
 export type GlyphLineType = "text" | "surah-header" | "basmalah";
 export interface GlyphLine {
@@ -26,25 +29,48 @@ export interface GlyphLine {
   endsSurah: boolean;    // last printed line of a surah → centred, not justified
 }
 
-const CACHE_PREFIX = "quran_glyph_page_v1_";
+const CACHE_PREFIX = "quran_glyph_page_v2_";
 const API = "https://api.quran.com/api/v4/verses/by_page";
+// mushaf=2 → QCF V1 layout (page/line numbers that match the V1 fonts); per_page=50 → a whole page in one response
+const API_QUERY = "mushaf=2&per_page=50&words=true&word_fields=code_v1,line_number,char_type_name,position,text_uthmani,text_qpc_hafs";
 const FONT_BASE = "https://static.qurancdn.com/fonts/quran/hafs/v1/woff2";
+
+/** The API returns glyph codes as HTML entities ("&#xfb51;"); this turns them into the real characters. */
+export function glyphText(code: string): string {
+  return code
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)));
+}
 
 export const glyphFontFamily = (page: number) => `QCF_P${String(page).padStart(3, "0")}`;
 
 const loadedFonts = new Set<number>();
 
-/** Loads (once) the official QCF font for a mushaf page. */
-export async function loadGlyphFont(page: number): Promise<void> {
-  if (page < 1 || page > 604 || loadedFonts.has(page)) return;
-  if (typeof FontFace === "undefined" || !document.fonts) return;
+const fontPromises = new Map<number, Promise<void>>();
+
+/** Loads (once) the official QCF font for a mushaf page. Retries twice; a failure is never remembered. */
+export function loadGlyphFont(page: number): Promise<void> {
+  if (page < 1 || page > 604 || loadedFonts.has(page)) return Promise.resolve();
+  if (typeof FontFace === "undefined" || !document.fonts) return Promise.resolve();
+  const existing = fontPromises.get(page);
+  if (existing) return existing;
   const family = glyphFontFamily(page);
-  const face = new FontFace(family, `url(${FONT_BASE}/p${page}.woff2) format("woff2")`, {
-    display: "block",
-  } as FontFaceDescriptors);
-  await face.load();
-  document.fonts.add(face);
-  loadedFonts.add(page);
+  const p = (async () => {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const face = new FontFace(family, `url(${FONT_BASE}/p${page}.woff2) format("woff2")`, { display: "block" } as FontFaceDescriptors);
+        await face.load();
+        document.fonts.add(face);
+        loadedFonts.add(page);
+        return;
+      } catch (e) { lastErr = e; await new Promise((r) => setTimeout(r, 400 * (attempt + 1))); }
+    }
+    throw lastErr;
+  })();
+  fontPromises.set(page, p);
+  p.catch(() => fontPromises.delete(page));
+  return p;
 }
 
 function buildLines(verses: any[]): GlyphLine[] {
@@ -56,7 +82,12 @@ function buildLines(verses: any[]): GlyphLine[] {
       const ln = Number(w.line_number);
       if (!code || !ln) continue;
       if (!byLine.has(ln)) byLine.set(ln, []);
-      byLine.get(ln)!.push({ surah: s, ayah: a, code, isAyahEnd: w.char_type_name === "end" });
+      const ct = String(w.char_type_name ?? "word");
+      const kind: GlyphWord["kind"] = ct === "end" ? "end" : ct === "word" ? "word" : "other";
+      byLine.get(ln)!.push({
+        surah: s, ayah: a, code, isAyahEnd: kind === "end", kind,
+        pos: Number(w.position) || 0, text: String(w.text_uthmani ?? w.text_qpc_hafs ?? ""),
+      });
     }
   }
   const textLines = [...byLine.keys()].sort((x, y) => x - y);
@@ -101,17 +132,21 @@ export async function getGlyphPage(page: number): Promise<GlyphLine[] | null> {
     if (cached) return JSON.parse(cached);
   } catch { /* corrupt cache — ignore */ }
 
-  try {
-    const res = await fetch(`${API}/${page}?words=true&word_fields=code_v1,line_number,char_type_name`);
-    if (!res.ok) return null;
-    const json = await res.json();
-    const lines = buildLines(json?.verses ?? []);
-    if (!lines.length) return null;
-    try { localStorage.setItem(cacheKey, JSON.stringify(lines)); } catch { /* full — ignore */ }
-    return lines;
-  } catch {
-    return null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(`${API}/${page}?${API_QUERY}`);
+      if (res.ok) {
+        const json = await res.json();
+        const lines = buildLines(json?.verses ?? []);
+        if (lines.length) {
+          try { localStorage.setItem(cacheKey, JSON.stringify(lines)); } catch { /* full — ignore */ }
+          return lines;
+        }
+      }
+    } catch { /* network — retry */ }
+    await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
   }
+  return null;
 }
 
 /** Warms glyph data + font for a neighbouring page so a turn is instant. */
