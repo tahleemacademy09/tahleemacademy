@@ -1704,9 +1704,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     phase === "testing" && !!hifdhProctoringEnabled && !!userId,
   );
   const [pageIdx,      setPageIdx]     = useState(0);
-  // Multi-page days (cumulative cycle): ONE recording + ONE transcription for all pages.
-  // pageIdx stays 0; viewIdx is only which page the student is looking at (swipe).
-  const isGroup = todayPages.length > 1;
+  // Multi-page days are recited PAGE BY PAGE: each page is its own recording + grading, and passing a page moves
+  // on to the next one (pageIdx). (The old "one recording for all pages" mode — isGroup — is switched off.)
+  const isGroup = false as boolean;
   const [viewIdx, setViewIdx] = useState(0);
   const pageGroupsRef = useRef<Ayah[][]>([]);
   const pagesKey = todayPages.join(",");
@@ -2686,6 +2686,25 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     setPhase("intro");
   };
 
+  // Retry icon during a Read & Reveal recitation: drop this attempt (recording + grading) and start the same page again from word 1.
+  const [revealKey, setRevealKey] = useState(0);
+  const retryReveal = () => {
+    if (!window.confirm("Start this page again from the beginning? What you have recited so far will be discarded.")) return;
+    try { revealHandleRef.current?.finish(); } catch { /* noop */ }
+    const mr = mediaRecRef.current;
+    if (mr) { mr.onstop = null as any; try { if (mr.state !== "inactive") mr.stop(); } catch { /* noop */ } }
+    mediaRecRef.current = null;
+    try { micRef.current?.getTracks().forEach(t => t.stop()); } catch { /* noop */ }
+    micRef.current = null; stopMeter();
+    clearInterval(timerRef.current);
+    revealGradeRef.current = null; revealHeardRef.current = null; audioChunks.current = [];
+    isPausedRef.current = false; setIsPaused(false); setIsRecording(false);
+    idbDeleteBlob(`${userId}_${todayISO()}_partial`);
+    setRecSecs(0); recSecsRef.current = 0; setCarryOverSecs(0);
+    setRevealKey(k => k + 1);
+    void startRecording();                                   // clears the saved recording and begins a fresh one
+  };
+
   // Reset per-question record state when question changes
   useEffect(() => {
     // Stop any CDN audio or TTS that was playing for the previous question
@@ -3631,6 +3650,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       {/* ══ READING — Read & Reveal while reciting (the screen before Start Reciting is unchanged) ══ */}
       {phase==="reading"&&isRecording&&revealOn&&(
         <DailyReadReveal
+          key={revealKey}
           ayahs={pageAyahs}
           pageNumbers={isGroup?todayPages:[todayPages[pageIdx]]}
           title={`${isGroup ? `Pages ${todayPages[0]} – ${todayPages[todayPages.length-1]}` : `Page ${todayPages[pageIdx]}`} — Recite Aloud`}
@@ -3644,6 +3664,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           onPause={revealPause}
           onResume={revealResume}
           onFinish={finishReveal}
+          onRetry={retryReveal}
           handleRef={revealHandleRef}
           getMicLevel={()=>micLevelRef.current}
           onMicConflict={revealMicConflict}
