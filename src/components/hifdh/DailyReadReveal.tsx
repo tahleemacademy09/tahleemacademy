@@ -94,6 +94,29 @@ export interface RevealHandle {
 
 export type { RevealAyah };
 
+/* ── one mistake per verse: a second mistake in the same verse sends the reciter back to that verse's first word ── */
+const sameVerse = (a: RevealWord, b: RevealWord) => a.ayah === b.ayah && a.surah === b.surah;
+function verseRange(w: RevealWord[], i: number): [number, number] {
+  let a = i, b = i + 1;
+  while (a > 0 && sameVerse(w[a - 1], w[i])) a--;
+  while (b < w.length && sameVerse(w[b], w[i])) b++;
+  return [a, b];
+}
+/** mistakes recorded in words [a,b): corrected words, skipped words, and the word being blocked on right now */
+function mistakesIn(s: RevealState, a: number, b: number): number {
+  let n = 0;
+  for (let i = a; i < b; i++) if (s.fixed[i] || s.status[i] === "missed") n++;
+  if (s.blocked && s.cursor >= a && s.cursor < b) n++;
+  return n;
+}
+/** wipe the verse [a,b) back to "not recited yet" and drop its mistakes from the count (mutates `s`) */
+function resetVerse(s: RevealState, a: number, b: number) {
+  const removed = mistakesIn(s, a, b);
+  for (let i = a; i < b; i++) { s.status[i] = "pending"; s.heard[i] = null; s.fixed[i] = false; }
+  if (s.cursor >= a) { s.cursor = a; s.blocked = false; s.junk = []; }
+  s.errors = Math.max(0, s.errors - removed);
+}
+
 const fmt = (s: number) => `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
 
 export default function DailyReadReveal({
@@ -192,7 +215,10 @@ export default function DailyReadReveal({
   const viewRef = useRef(view); viewRef.current = view;
   const [showAnswer, setShowAnswer] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
+  const [note] = useState<string | null>(null);
+  const [verseNote, setVerseNote] = useState<string | null>(null);
+  const [bannerOpen, setBannerOpen] = useState(false);   // the mistake / notice banner stays hidden until the header badge is tapped
+  const verseNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const recRef = useRef<SRInstance | null>(null);
   const listeningRef = useRef(false);
@@ -273,7 +299,25 @@ export default function DailyReadReveal({
     // so a half-heard word doesn't cause a false alarm; a mistake in committed text buzzes at once.
     if (shown.errors > errBuzzed.current) {
       const key = `${shown.cursor}:${shown.errors}`;
-      if (shown === c || pendingErr.current === key) { alarm(); errBuzzed.current = shown.errors; pendingErr.current = null; }
+      if (shown === c || pendingErr.current === key) {
+        // second mistake in the same verse → that verse must be recited again from its first word
+        if (shown.blocked && shown.cursor < w.length) {
+          const [va, vb] = verseRange(w, shown.cursor);
+          if (mistakesIn(shown, va, vb) >= 2) {
+            resetVerse(c, va, vb);
+            errBuzzed.current = c.errors; pendingErr.current = null;
+            setView(cloneState(c)); setShowAnswer(false); setBannerOpen(false);
+            setVerseNote(`أخطأتَ أكثر من مرة في الآية ${w[va].ayah} — أعد تلاوتها من أولها. ﴿وَرَتِّلِ الْقُرْآنَ تَرْتِيلًا﴾`);
+            if (verseNoteTimer.current) clearTimeout(verseNoteTimer.current);
+            verseNoteTimer.current = setTimeout(() => setVerseNote(null), 8000);
+            alarm();
+            hardStop();   // a fresh recognition session, so words still in flight from the bad attempt are dropped
+            setTimeout(() => { if (!pausedRef.current && !finishedRef.current) begin(); }, 350);
+            return;
+          }
+        }
+        alarm(); errBuzzed.current = shown.errors; pendingErr.current = null;
+      }
       else pendingErr.current = key;
     } else {
       pendingErr.current = null;
@@ -298,15 +342,14 @@ export default function DailyReadReveal({
         conflictHandled.current = true;
         hardStop();
         onMicConflict();
-        setNote("This phone can't record audio and listen at the same time, so this recitation is checked without a recording.");
         setTimeout(() => { if (!pausedRef.current && !finishedRef.current) begin(); }, 500);
         return;
       }
       const fatal: Record<string, string> = {
-        "not-allowed": "Microphone permission was denied. Allow the microphone in the browser settings and reload.",
-        "service-not-allowed": "The speech service is blocked on this device.",
-        "audio-capture": "No microphone found, or another app is using it.",
-        "network": "Speech recognition needs an internet connection.",
+        "not-allowed": "لم يُسمح باستخدام الميكروفون. اسمح به من إعدادات المتصفح ثم أعد تحميل الصفحة.",
+        "service-not-allowed": "خدمة التعرّف على الصوت غير متاحة على هذا الجهاز.",
+        "audio-capture": "لا يوجد ميكروفون، أو أن تطبيقًا آخر يستخدمه.",
+        "network": "لا حول ولا قوة إلا بالله — انقطع الاتصال بالإنترنت. ﴿وَاصْبِرْ فَإِنَّ اللَّهَ لَا يُضِيعُ أَجْرَ الْمُحْسِنِينَ﴾ تحقّق من الشبكة ثم اضغط استئناف.",
       };
       const f = fatal[ev.error];
       if (f) { hardStop(); setError(f); onPause(); }
@@ -320,9 +363,8 @@ export default function DailyReadReveal({
         hardStop();
         if (audioOnRef.current && !conflictHandled.current) {   // most likely the recorder is in the way
           conflictHandled.current = true; onMicConflict();
-          setNote("This phone can't record audio and listen at the same time, so this recitation is checked without a recording.");
           setTimeout(() => { if (!pausedRef.current && !finishedRef.current) begin(); }, 500);
-        } else { setError("Recognition keeps stopping. Press Resume to try again."); onPause(); }
+        } else { setError("توقّف التعرّف على الصوت. اضغط استئناف للمحاولة من جديد."); onPause(); }
         return;
       }
       setTimeout(() => { if (listeningRef.current && recRef.current === rec) spawn(SR); }, 200);
@@ -336,7 +378,7 @@ export default function DailyReadReveal({
         sharedTrack.current = t;
         rec.start(t);
       } else rec.start();
-    } catch { hardStop(); setError("Could not start the microphone."); onPause(); }
+    } catch { hardStop(); setError("تعذّر تشغيل الميكروفون."); onPause(); }
   }
   const getAudioTrackRef = useRef(getAudioTrack); getAudioTrackRef.current = getAudioTrack;
   const sharedTrack = useRef<MediaStreamTrack | null>(null);
@@ -363,7 +405,7 @@ export default function DailyReadReveal({
     return () => hardStop();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, paused]);
-  useEffect(() => () => { hardStop(); if (doneTimer.current) clearTimeout(doneTimer.current); }, [hardStop]);
+  useEffect(() => () => { hardStop(); if (doneTimer.current) clearTimeout(doneTimer.current); if (verseNoteTimer.current) clearTimeout(verseNoteTimer.current); }, [hardStop]);
 
   // Watchdog (1 s): tells apart "the recogniser is deaf" and "the recorder only gets silence" — the two ways the shared microphone can fail.
   useEffect(() => {
@@ -374,7 +416,6 @@ export default function DailyReadReveal({
         deafSecs.current = level > 0.015 && gotResults.current === 0 ? deafSecs.current + 1 : level > 0.015 ? deafSecs.current : 0;
         if (deafSecs.current >= 6) {   // the recorder hears the student clearly, the recogniser nothing at all
           conflictHandled.current = true; hardStop(); onMicConflict();
-          setNote("This phone can't record audio and listen at the same time, so this recitation is checked without a recording.");
           setTimeout(() => { if (!pausedRef.current && !finishedRef.current) begin(); }, 500);
         }
       }
@@ -382,7 +423,6 @@ export default function DailyReadReveal({
         mutedSecs.current = gotResults.current > 0 && level < 0.004 ? mutedSecs.current + 1 : 0;
         if (mutedSecs.current >= 8) {  // the recogniser hears the student, the recorder gets silence
           silentReported.current = true; onAudioSilent();
-          setNote("Your recitation is being checked, but this phone may not be recording the audio.");
         }
       }
     }, 1000);
@@ -401,7 +441,7 @@ export default function DailyReadReveal({
         const w = wordsRef.current;
         const sum = summarize(s);
         const checked = sum.total - sum.pending;
-        if (checked === 0) { finishedRef.current = false; setError("Nothing has been recited yet."); return null; }
+        if (checked === 0) { finishedRef.current = false; setError("لم تتلُ شيئًا بعد."); return null; }
         const g = gradeAgainstAyahs(ayahs, w, s);
         return { words: g.words, heard: g.heard, heardText: heardLog.current.join(" ").trim(), checked, mistakes: sum.wrong + sum.missed + sum.errors };
       },
@@ -416,6 +456,10 @@ export default function DailyReadReveal({
   const skip = () => { const n = skipWord(words, committed.current); committed.current = n; setView(cloneState(n)); setShowAnswer(false); };
   const noop = () => undefined;
   const useText = mushafFail;
+  const blockedNow = view.blocked && !paused;
+  const hasNotice = blockedNow || !!error || !!verseNote || !!note;
+  // the banner closes by itself as soon as the reciter moves on (word corrected / skipped / verse restarted)
+  useEffect(() => { setBannerOpen(false); setShowAnswer(false); }, [blockedNow, view.cursor]);
 
   return (
     <>
@@ -442,41 +486,43 @@ export default function DailyReadReveal({
           <span style={{ padding: "3px 10px", borderRadius: 20, background: "#ecfdf3", border: `1px solid ${PASS}80`, fontSize: 13, fontWeight: 900, color: PASS, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
             {paused ? "⏸" : "🔴"} {fmt(recSecs)}
           </span>
-          {mistakes > 0 && (
-            <span style={{ padding: "1px 8px", borderRadius: 20, fontSize: 10, fontWeight: 800, background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FCA5A5", whiteSpace: "nowrap" }}>
-              ⚠ {mistakes} {mistakes === 1 ? "mistake" : "mistakes"}
-            </span>
+          {(mistakes > 0 || hasNotice) && (
+            <button type="button" onClick={hasNotice ? () => setBannerOpen((o) => !o) : undefined} disabled={!hasNotice} aria-expanded={bannerOpen}
+              aria-label={bannerOpen ? "Hide message" : "Show message"}
+              style={{ padding: "1px 8px", borderRadius: 20, fontSize: 10, fontWeight: 800, background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FCA5A5", whiteSpace: "nowrap", fontFamily: "inherit", cursor: hasNotice ? "pointer" : "default", opacity: 1 }}>
+              ⚠ {mistakes > 0 ? `${mistakes} ${mistakes === 1 ? "mistake" : "mistakes"}` : "تنبيه"}{hasNotice ? (bannerOpen ? " ▴" : " ▾") : ""}
+            </button>
           )}
         </div>
       </div>
 
-      {/* mistake / error notes take over the header bar, so they never cover the Mushaf page */}
-      {((view.blocked && !paused) || error || (note && !error)) && (
+      {/* hidden until the header badge is tapped; takes over the header bar so it never covers the Mushaf page */}
+      {bannerOpen && hasNotice && (
         <div style={{ position: "absolute", top: 0, left: 0, right: 0, minHeight: "100%", boxSizing: "border-box", zIndex: 20, display: "flex", alignItems: "center", padding: "5px 8px", background: `linear-gradient(160deg,${G1},${G2})` }}>
-          {view.blocked && !paused ? (
+          {blockedNow ? (
             <div role="alert" style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: 12, background: "#FEF2F2", border: "2px solid #F87171", animation: "rrShake .35s" }}>
               <span style={{ fontFamily: "'Amiri',serif", fontWeight: 900, fontSize: 24, color: "#B91C1C", lineHeight: 1 }}>خطأ</span>
               <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: "#7F1D1D", lineHeight: 1.3 }}>
                 {showAnswer && cur
                   ? <span dir="rtl" style={{ fontFamily: ARABIC, fontSize: 22, color: G1 }}>{cur.text}</span>
-                  : "Say this word correctly to continue."}
+                  : "انطق هذه الكلمة صحيحة لتتابع."}
               </span>
               <button onClick={() => setShowAnswer((v) => !v)}
                 style={{ flexShrink: 0, height: 32, padding: "0 10px", borderRadius: 10, border: "1px solid #FCA5A5", background: W, color: "#991B1B", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-                {showAnswer ? "Hide" : "Show word"}
+                {showAnswer ? "إخفاء" : "أظهر الكلمة"}
               </button>
               <button onClick={skip}
                 style={{ flexShrink: 0, height: 32, padding: "0 10px", borderRadius: 10, border: "1px solid #FCA5A5", background: W, color: "#991B1B", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-                Skip
+                تخطَّ
               </button>
             </div>
           ) : error ? (
             <div role="alert" style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 12, background: "#FEF2F2", border: "1px solid #FCA5A5", color: "#991B1B", fontSize: 12, fontWeight: 600 }}>
-              <AlertCircle size={16} style={{ flexShrink: 0 }} /> <span>{error}</span>
+              <AlertCircle size={16} style={{ flexShrink: 0 }} /> <span dir="rtl" style={{ flex: 1, fontFamily: ARABIC, fontSize: 15, lineHeight: 1.5 }}>{error}</span>
             </div>
           ) : (
             <div style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 12, background: "#FFFBEB", border: "1px solid #FCD34D", color: "#92400E", fontSize: 12, fontWeight: 600 }}>
-              <MicOff size={16} style={{ flexShrink: 0 }} /> <span>{note}</span>
+              <MicOff size={16} style={{ flexShrink: 0 }} /> <span dir="rtl" style={{ flex: 1, fontFamily: ARABIC, fontSize: 15, lineHeight: 1.5 }}>{verseNote ?? note}</span>
             </div>
           )}
         </div>
