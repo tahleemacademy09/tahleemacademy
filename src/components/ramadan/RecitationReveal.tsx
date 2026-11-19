@@ -899,7 +899,7 @@ export default function RecitationReveal() {
                   </div>
                   <div dir="rtl" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                     <div><div dir={dir} style={{ fontSize: 10, color: "#6b7280" }}>{t("Expected", "المطلوب")}</div><div style={{ fontFamily: ARABIC, fontSize: 24 }}>{sel.w.text}</div></div>
-                    <div><div dir={dir} style={{ fontSize: 10, color: "#6b7280" }}>{t("Heard", "المسموع")}</div><div style={{ fontFamily: ARABIC, fontSize: 24 }}>{sel.heard ?? "—"}</div></div>
+                    <div><div dir={dir} style={{ fontSize: 10, color: "#6b7280" }}>{t("Heard (browser text)", "المسموع (نص المتصفح)")}</div><div style={{ fontFamily: ARABIC, fontSize: 24 }}>{sel.heard ?? "—"}</div></div>
                   </div>
                 </div>
               )}
@@ -915,11 +915,6 @@ export default function RecitationReveal() {
                 {t("No mistakes found — well done! 🌟", "لا أخطاء — أحسنت! 🌟")}
               </div>
             )}
-
-            <p style={{ margin: 0, fontSize: 11, lineHeight: 1.6, color: "#6b7280" }}>
-              {t("Based on the browser's general Arabic speech recogniser — a flagged word may simply have been misheard. It does not judge tajweed or short vowels, so treat flags as a prompt to listen again, not as a verdict.",
-                 "يعتمد على مُعرِّف الكلام العربي العام في المتصفح — قد تكون الكلمة المُعلَّمة أُسيء سماعها فقط. لا يحكم على التجويد أو الحركات، فاعتبر التنبيهات دعوة للاستماع مرة أخرى وليست حكمًا.")}
-            </p>
 
             <button onClick={() => { resetExercise(); setPhase("reading"); }}
               style={{ padding: 15, borderRadius: 14, border: "none", cursor: "pointer", background: `linear-gradient(135deg,${G2},${G3})`, color: W, fontWeight: 900, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "inherit" }}>

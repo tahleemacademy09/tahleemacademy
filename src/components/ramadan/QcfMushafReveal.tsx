@@ -65,11 +65,17 @@ export default function QcfMushafReveal({
     if (Math.abs(next - fs) > 0.25) setFs(next);
   }, [width, fs, pages]);
 
-  // keep the current word in view while reciting; before starting, show the first selected word
+  // keep the current word in view while reciting; before starting, show the first selected word WITH the surah
+  // banner and Bismillah printed above it (they are separate lines, so scrolling to the word alone would hide them)
   useEffect(() => {
-    const el = boxRef.current?.querySelector(`[data-w="${started ? view.cursor : 0}"]`);
-    el?.scrollIntoView({ block: started ? "center" : "start", behavior: started ? "smooth" : "auto" });
-  }, [view.cursor, started, pages]);
+    const box = boxRef.current; if (!box) return;
+    const el = box.querySelector<HTMLElement>(`[data-w="${started ? view.cursor : 0}"]`);
+    if (!el) return;
+    if (started) { el.scrollIntoView({ block: "center", behavior: "smooth" }); return; }
+    let target: HTMLElement = (el.closest("[data-line]") as HTMLElement | null) ?? el;
+    while ((target.previousElementSibling as HTMLElement | null)?.dataset.line === "head") target = target.previousElementSibling as HTMLElement;
+    box.scrollTop += target.getBoundingClientRect().top - box.getBoundingClientRect().top - 6;
+  }, [view.cursor, started, pages, fs, width]);
 
   const doneAyah = useMemo(() => {
     const m = new Map<number, boolean>();
@@ -105,7 +111,7 @@ export default function QcfMushafReveal({
             {lines.map((line, li) => {
               if (line.type === "surah-header") {
                 return (
-                  <div key={li} style={{ ...lineStyle(true), justifyContent: "center", fontFamily: AMIRI }}>
+                  <div key={li} data-line="head" style={{ ...lineStyle(true), justifyContent: "center", fontFamily: AMIRI }}>
                     <div style={{ width: "86%", height: "82%", display: "grid", placeItems: "center", border: `1.5px solid ${GOLD}`, borderRadius: "0.3em", background: "#fbf3d9", fontSize: "0.82em", lineHeight: 1 }}>
                       سُورَةُ {surahNameAr(line.surah ?? 0).replace(/^سورة\s*/, "")}
                     </div>
@@ -113,7 +119,7 @@ export default function QcfMushafReveal({
                 );
               }
               if (line.type === "basmalah") {
-                return <div key={li} style={{ ...lineStyle(true), fontFamily: AMIRI, fontSize: "0.9em", justifyContent: "center" }}>{BISMILLAH}</div>;
+                return <div key={li} data-line="head" style={{ ...lineStyle(true), fontFamily: AMIRI, fontSize: "0.9em", justifyContent: "center" }}>{BISMILLAH}</div>;
               }
               const centered = line.endsSurah || pageNumbers[pi] <= 2;
               return (
