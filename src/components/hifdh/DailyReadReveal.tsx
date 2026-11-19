@@ -421,66 +421,67 @@ export default function DailyReadReveal({
     <>
       <style>{`@keyframes rrShake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-5px)} 75%{transform:translateX(5px)} }`}</style>
 
-      {/* header — same as the page's recording header */}
-      <div style={{ background: `linear-gradient(160deg,${G1},${G2})`, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+      {/* header — back, title, the recording timer (and mistakes) in the middle, page dots on the title's second line */}
+      <div style={{ background: `linear-gradient(160deg,${G1},${G2})`, padding: "8px 12px", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
         {backButton}
-        <div style={{ flex: 1 }}>
-          <p style={{ margin: 0, fontWeight: 800, fontSize: 14, color: W }}>{title}</p>
-          <p style={{ margin: 0, fontSize: 10, color: `${GOLD}cc` }}>{subtitle}</p>
-        </div>
-        {dots && (
-          <div style={{ display: "flex", gap: 4 }}>
-            {Array.from({ length: dots.total }, (_, i) => (
-              <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: i < dots.idx ? PASS : i === dots.idx ? GOLD : "rgba(255,255,255,.25)" }} />
-            ))}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ margin: 0, fontWeight: 800, fontSize: 13, color: W, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</p>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
+            <span style={{ fontSize: 10, color: `${GOLD}cc`, whiteSpace: "nowrap" }}>{subtitle}</span>
+            {dots && (
+              <span style={{ display: "flex", gap: 3 }}>
+                {Array.from({ length: dots.total }, (_, i) => (
+                  <span key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: i < dots.idx ? PASS : i === dots.idx ? GOLD : "rgba(255,255,255,.25)" }} />
+                ))}
+              </span>
+            )}
           </div>
-        )}
-      </div>
-
-      {/* live info row */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", flexShrink: 0, background: W, borderBottom: `1px solid ${BRD}` }}>
-        <span style={{ padding: "4px 12px", borderRadius: 20, background: `${PASS}18`, border: `1px solid ${PASS}50`, fontSize: 13, fontWeight: 900, color: PASS, fontVariantNumeric: "tabular-nums" }}>
-          {paused ? "⏸" : "🔴"} {fmt(recSecs)}
-        </span>
-        {mistakes > 0 && (
-          <span style={{ padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 800, background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FCA5A5" }}>
-            ⚠ {mistakes} {mistakes === 1 ? "mistake" : "mistakes"}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3, flexShrink: 0 }}>
+          <span style={{ padding: "3px 10px", borderRadius: 20, background: "#ecfdf3", border: `1px solid ${PASS}80`, fontSize: 13, fontWeight: 900, color: PASS, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+            {paused ? "⏸" : "🔴"} {fmt(recSecs)}
           </span>
-        )}
+          {mistakes > 0 && (
+            <span style={{ padding: "1px 8px", borderRadius: 20, fontSize: 10, fontWeight: 800, background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FCA5A5", whiteSpace: "nowrap" }}>
+              ⚠ {mistakes} {mistakes === 1 ? "mistake" : "mistakes"}
+            </span>
+          )}
+        </div>
       </div>
-
-      {/* strict-mode mistake banner */}
-      {view.blocked && !paused && (
-        <div role="alert" style={{ margin: "8px 14px 0", flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 14, background: "#FEF2F2", border: "2px solid #F87171", animation: "rrShake .35s" }}>
-          <span style={{ fontFamily: "'Amiri',serif", fontWeight: 900, fontSize: 30, color: "#B91C1C", lineHeight: 1 }}>خطأ</span>
-          <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: "#7F1D1D", lineHeight: 1.4 }}>
-            {showAnswer && cur
-              ? <span dir="rtl" style={{ fontFamily: ARABIC, fontSize: 24, color: G1 }}>{cur.text}</span>
-              : "Say this word correctly to continue."}
-          </span>
-          <button onClick={() => setShowAnswer((v) => !v)}
-            style={{ flexShrink: 0, height: 38, padding: "0 10px", borderRadius: 10, border: "1px solid #FCA5A5", background: W, color: "#991B1B", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-            {showAnswer ? "Hide" : "Show word"}
-          </button>
-          <button onClick={skip}
-            style={{ flexShrink: 0, height: 38, padding: "0 10px", borderRadius: 10, border: "1px solid #FCA5A5", background: W, color: "#991B1B", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-            Skip
-          </button>
-        </div>
-      )}
-      {error && (
-        <div role="alert" style={{ margin: "8px 14px 0", flexShrink: 0, display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", borderRadius: 12, background: "#FEF2F2", border: "1px solid #FCA5A5", color: "#991B1B", fontSize: 12, fontWeight: 600 }}>
-          <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span>{error}</span>
-        </div>
-      )}
-      {note && !error && (
-        <div style={{ margin: "8px 14px 0", flexShrink: 0, display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", borderRadius: 12, background: "#FFFBEB", border: "1px solid #FCD34D", color: "#92400E", fontSize: 12, fontWeight: 600 }}>
-          <MicOff size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span>{note}</span>
-        </div>
-      )}
 
       {/* the printed Mushaf page(s): only today's assigned verses are covered / uncovered */}
-      <div style={{ flex: 1, minHeight: 0, position: "relative", background: "#fff", marginTop: 8 }}>
+      <div style={{ flex: 1, minHeight: 0, position: "relative", background: "#fff", overflow: "hidden" }}>
+        {/* mistake / error notes float over the page so the page itself never moves */}
+        <div style={{ position: "absolute", top: 6, left: 8, right: 8, zIndex: 6, display: "flex", flexDirection: "column", gap: 6, pointerEvents: "none" }}>
+          {view.blocked && !paused && (
+            <div role="alert" style={{ pointerEvents: "auto", display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 14, background: "#FEF2F2", border: "2px solid #F87171", animation: "rrShake .35s", boxShadow: "0 4px 14px rgba(0,0,0,.15)" }}>
+              <span style={{ fontFamily: "'Amiri',serif", fontWeight: 900, fontSize: 28, color: "#B91C1C", lineHeight: 1 }}>خطأ</span>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: "#7F1D1D", lineHeight: 1.4 }}>
+                {showAnswer && cur
+                  ? <span dir="rtl" style={{ fontFamily: ARABIC, fontSize: 22, color: G1 }}>{cur.text}</span>
+                  : "Say this word correctly to continue."}
+              </span>
+              <button onClick={() => setShowAnswer((v) => !v)}
+                style={{ flexShrink: 0, height: 34, padding: "0 10px", borderRadius: 10, border: "1px solid #FCA5A5", background: W, color: "#991B1B", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                {showAnswer ? "Hide" : "Show word"}
+              </button>
+              <button onClick={skip}
+                style={{ flexShrink: 0, height: 34, padding: "0 10px", borderRadius: 10, border: "1px solid #FCA5A5", background: W, color: "#991B1B", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                Skip
+              </button>
+            </div>
+          )}
+          {error && (
+            <div role="alert" style={{ pointerEvents: "auto", display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 10px", borderRadius: 12, background: "#FEF2F2", border: "1px solid #FCA5A5", color: "#991B1B", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 14px rgba(0,0,0,.12)" }}>
+              <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span>{error}</span>
+            </div>
+          )}
+          {note && !error && (
+            <div style={{ pointerEvents: "auto", display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 10px", borderRadius: 12, background: "#FFFBEB", border: "1px solid #FCD34D", color: "#92400E", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 14px rgba(0,0,0,.12)" }}>
+              <MicOff size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span>{note}</span>
+            </div>
+          )}
+        </div>
         {useText ? (
           <TextReader words={words} view={view} mode="word" fontSize={32} started showAll={false} hintOn={false}
             peeked={new Set()} onPeek={noop} showBism={false} />
@@ -490,7 +491,7 @@ export default function DailyReadReveal({
           </div>
         ) : (
           <QcfMushafReveal pageNumbers={pages} pages={qcfLines} plan={plan!} view={view} started showAll={false}
-            mode="word" hintOn={false} peeked={new Set()} onPeek={noop} />
+            mode="word" hintOn={false} peeked={new Set()} onPeek={noop} fit />
         )}
         {mushafFail && (
           <button onClick={() => setReloadTick((n) => n + 1)}
@@ -500,24 +501,24 @@ export default function DailyReadReveal({
         )}
       </div>
 
-      {/* bottom controls — same buttons as before */}
-      <div style={{ padding: "12px 16px", paddingBottom: "max(12px, env(safe-area-inset-bottom))", background: W, borderTop: `1px solid ${BRD}`, flexShrink: 0 }}>
-        <div style={{ display: "flex", gap: 10 }}>
+      {/* bottom controls — slim, so the printed page gets the room */}
+      <div style={{ padding: "6px 12px", paddingBottom: "max(6px, env(safe-area-inset-bottom))", background: W, borderTop: `1px solid ${BRD}`, flexShrink: 0 }}>
+        <div style={{ display: "flex", gap: 8 }}>
           <button onClick={paused ? onResume : onPause}
-            style={{ flexShrink: 0, minWidth: 112, padding: "15px 16px", borderRadius: 14, cursor: "pointer", border: `1.5px solid ${paused ? PASS : BRD}`,
-              background: paused ? `linear-gradient(135deg,${G2},${G3})` : W, color: paused ? W : G1, fontWeight: 900, fontSize: 14,
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "inherit" }}>
-            {paused ? <><Play size={17} /> Resume</> : <><Pause size={17} /> Pause</>}
+            style={{ flexShrink: 0, minWidth: 92, height: 42, padding: "0 12px", borderRadius: 12, cursor: "pointer", border: `1.5px solid ${paused ? PASS : BRD}`,
+              background: paused ? `linear-gradient(135deg,${G2},${G3})` : W, color: paused ? W : G1, fontWeight: 900, fontSize: 13,
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontFamily: "inherit", whiteSpace: "nowrap" }}>
+            {paused ? <><Play size={15} /> Resume</> : <><Pause size={15} /> Pause</>}
           </button>
           <button onClick={onFinish} disabled={sum.total - sum.pending === 0}
-            style={{ flex: 1, padding: "15px", borderRadius: 14, border: "none", cursor: "pointer", background: FAIL, color: W, fontWeight: 900, fontSize: 14,
-              opacity: sum.total - sum.pending === 0 ? 0.55 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "inherit" }}>
-            <MicOff size={17} /> Finished — Evaluate
+            style={{ flex: 1, minWidth: 0, height: 42, padding: "0 10px", borderRadius: 12, border: "none", cursor: "pointer", background: FAIL, color: W, fontWeight: 900, fontSize: 13,
+              opacity: sum.total - sum.pending === 0 ? 0.55 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontFamily: "inherit", whiteSpace: "nowrap" }}>
+            <MicOff size={15} /> Finished — Evaluate
           </button>
           <button onClick={onRetry} aria-label="Retry — start this page again" title="Retry"
-            style={{ flexShrink: 0, width: 54, borderRadius: 14, cursor: "pointer", border: `1.5px solid ${BRD}`, background: W, color: G1,
+            style={{ flexShrink: 0, width: 42, height: 42, borderRadius: 12, cursor: "pointer", border: `1.5px solid ${BRD}`, background: W, color: G1,
               display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}>
-            <RotateCcw size={20} />
+            <RotateCcw size={18} />
           </button>
         </div>
       </div>

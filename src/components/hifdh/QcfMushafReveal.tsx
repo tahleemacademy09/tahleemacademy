@@ -23,9 +23,10 @@ const surahNameAr = (n: number) => SURAHS.find((s) => s.num === n)?.nameAr ?? ""
 const BISMILLAH = "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ";
 const MIN_GAP = 0.16;        // minimum space between two words, in em
 const LINE_H = 1.9;          // printed line height, in em
+const LINE_H_FIT = 1.55;     // tighter lines when the whole page has to fit on screen
 
 export default function QcfMushafReveal({
-  pageNumbers, pages, plan, view, started, showAll, mode, hintOn, peeked, onPeek,
+  pageNumbers, pages, plan, view, started, showAll, mode, hintOn, peeked, onPeek, fit = false,
 }: {
   pageNumbers: number[];            // mushaf page number of each entry in `pages`
   pages: GlyphLine[][];
@@ -37,14 +38,20 @@ export default function QcfMushafReveal({
   hintOn: boolean;
   peeked: Set<number>;
   onPeek: (i: number) => void;
+  /** show the WHOLE page at once, static: tighter lines, and the page is scaled down to fit the box (no scrolling) */
+  fit?: boolean;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [fs, setFs] = useState(24);
+  const pageRef = useRef<HTMLDivElement>(null);
+  const [availH, setAvailH] = useState(0);
+  const [k, setK] = useState(1);
+  const lh = fit ? LINE_H_FIT : LINE_H;
 
   useLayoutEffect(() => {
     const el = boxRef.current; if (!el) return;
-    const measure = () => setWidth(Math.max(0, el.clientWidth - 20));
+    const measure = () => { setWidth(Math.max(0, el.clientWidth - 20)); setAvailH(Math.max(0, el.clientHeight - 8)); };
     measure();
     if (typeof ResizeObserver === "undefined") { window.addEventListener("resize", measure); return () => window.removeEventListener("resize", measure); }
     const ro = new ResizeObserver(measure); ro.observe(el);
@@ -66,11 +73,21 @@ export default function QcfMushafReveal({
     if (Math.abs(next - fs) > 0.25) setFs(next);
   }, [width, fs, pages]);
 
+  // fit mode: scale the whole printed page down (never up) so every line is on screen at once
+  useLayoutEffect(() => {
+    if (!fit) return;
+    const p = pageRef.current; if (!p || !availH) return;
+    const h = p.offsetHeight; if (!h) return;
+    const next = Math.min(1, availH / h);
+    if (Math.abs(next - k) > 0.004) setK(next);
+  }, [fit, availH, fs, width, pages, plan, k]);
+
   // keep the current word in view while reciting; before starting, show the first selected word
   useEffect(() => {
+    if (fit) return;                       // fit mode never scrolls
     const el = boxRef.current?.querySelector(`[data-w="${started ? view.cursor : 0}"]`);
     el?.scrollIntoView({ block: started ? "center" : "start", behavior: started ? "smooth" : "auto" });
-  }, [view.cursor, started, pages]);
+  }, [view.cursor, started, pages, fit]);
 
   const doneAyah = useMemo(() => {
     const m = new Map<number, boolean>();
@@ -92,21 +109,24 @@ export default function QcfMushafReveal({
   const lineStyle = (centered: boolean): CSSProperties => ({
     display: "flex", flexDirection: "row", direction: "rtl", flexWrap: "nowrap",
     justifyContent: centered ? "center" : "space-between", gap: centered ? `${0.34}em` : 0,
-    width, height: `${LINE_H}em`, lineHeight: `${LINE_H}em`, alignItems: "center", margin: "0 auto",
+    width, height: `${lh}em`, lineHeight: `${lh}em`, alignItems: "center", margin: "0 auto",
   });
 
   return (
-    <div ref={boxRef} style={{ position: "absolute", inset: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", background: "#fffdf8", padding: "10px 10px 30px" }}>
+    <div ref={boxRef} style={fit
+      ? { position: "absolute", inset: 0, overflow: "hidden", background: "#fffdf8", padding: "4px 10px", display: "flex", alignItems: "center", justifyContent: "center", touchAction: "none" }
+      : { position: "absolute", inset: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", background: "#fffdf8", padding: "10px 10px 30px" }}>
+      <div ref={pageRef} style={fit ? { width, flex: "0 0 auto", transform: `scale(${k})`, transformOrigin: "center center" } : { display: "contents" }}>
       {pages.map((lines, pi) => {
         if (!plan.usedPages.has(pi)) return null;
         const pageNo = pageNumbers[pi];
         const family = `${glyphFontFamily(pageNo)}, ${AMIRI}`;
         return (
-          <div key={pageNo} dir="rtl" style={{ width, margin: "0 auto 18px", fontSize: fs, color: "#000", borderBottom: "1px solid #eadfc2", paddingBottom: 10 }}>
+          <div key={pageNo} dir="rtl" style={fit ? { width, margin: "0 auto", fontSize: fs, color: "#000" } : { width, margin: "0 auto 18px", fontSize: fs, color: "#000", borderBottom: "1px solid #eadfc2", paddingBottom: 10 }}>
             {lines.map((line, li) => {
               if (line.type === "surah-header") {
                 return (
-                  <div key={li} style={{ ...lineStyle(true), height: `${LINE_H * 1.45}em`, justifyContent: "center", fontFamily: AMIRI }}>
+                  <div key={li} style={{ ...lineStyle(true), height: `${lh * 1.45}em`, justifyContent: "center", fontFamily: AMIRI }}>
                     <SurahBanner name={surahNameAr(line.surah ?? 0).replace(/^سورة\s*/, "")} />
                   </div>
                 );
@@ -152,10 +172,11 @@ export default function QcfMushafReveal({
                 </div>
               );
             })}
-            <div style={{ textAlign: "center", fontFamily: AMIRI, fontSize: "0.5em", color: "#8a7a4a", marginTop: 6 }}>{toArabicDigits(pageNo)}</div>
+            <div style={{ textAlign: "center", fontFamily: AMIRI, fontSize: "0.5em", color: "#8a7a4a", marginTop: fit ? "0.2em" : 6, lineHeight: 1 }}>{toArabicDigits(pageNo)}</div>
           </div>
         );
       })}
+      </div>
     </div>
   );
 }
