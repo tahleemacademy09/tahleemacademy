@@ -30,6 +30,7 @@ import { saveHifdhRecording, resolveHifdhSessionAudio } from "@/lib/hifdhAudio";
 import { mergeAudioSegments } from "@/lib/mergeAudioSegments";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
 import HifdhLiveClass from "@/components/hifdh/HifdhLiveClass";
+import DailyReadReveal, { readRevealSupported, type RevealHandle, type RevealFinish } from "@/components/hifdh/DailyReadReveal";
 import {
   ArrowLeft, Mic, MicOff, BookOpen, CalendarDays, Clock, Trophy,
   Star, CheckCircle, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
@@ -2064,7 +2065,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     const all = alignAyahs(tx, groups.flat());   // ONE grading of the whole recording, sliced per page
     let off = 0;
     let wAt = 0;
-    const heardAll = ctcResRef.current?.heard;
+    const heardAll = ctcResRef.current?.heard ?? revealHeardRef.current ?? undefined;
     const totalWords = all.perAyah.reduce((n, a) => n + a.words.length, 0);
     return todayPages.map((pn, i) => {
       const ay = groups[i] ?? [];
@@ -2148,7 +2149,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 word_results:    wordRes.map(w => ({ word: w.word, status: w.status })),
                 ayahs:           snapAyahs(pageAyahsRef.current),
                 grades:          encodeGrades(wordRes),   // green / yellow / red, read back by the admin + teacher screens
-                ...(ctcResRef.current?.heard && ctcResRef.current.heard.length === wordRes.length ? { heard_words: ctcResRef.current.heard } : {}),
+                ...((ctcResRef.current?.heard ?? revealHeardRef.current) && (ctcResRef.current?.heard ?? revealHeardRef.current)!.length === wordRes.length ? { heard_words: (ctcResRef.current?.heard ?? revealHeardRef.current)! } : {}),
                 extras:          analysisAll.extras,
                 ayahCorrectness: last?.ayahCorrectness ?? [],
                 errorWords,
@@ -2157,6 +2158,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             // Flag for admin/teacher dashboards only — never shown to the student.
             // Lets staff see at a glance that this page's score is unreliable
             // because no transcription engine returned text (e.g. API outage).
+            recitation_engine: revealOnRef.current ? "read_reveal" : "legacy",
+            ...(revealNoAudioRef.current ? { audio_unavailable: true, audio_unavailable_reason: "microphone_not_shared_with_speech_recognition" } : {}),
+            ...(revealSilentRef.current ? { audio_silent: true } : {}),
             ...(noApiWarning ? { transcription_failed: true, transcription_failed_reason: lastTranscribeErrorRef.current || "unknown" } : {}),
             // CTC-only test mode: raw per-word scores (0 = certain … very negative = not heard) for later analysis
             ...(ctcResRef.current ? { ctc_test: { v: 1, ok: -1, bad: -3, means: ctcResRef.current.words.map(w => (w.mean == null ? null : Math.round(w.mean * 100) / 100)), secs: Math.round(ctcResRef.current.secs), ms: ctcResRef.current.ms, basmalah: ctcResRef.current.basmalah } } : {}),
@@ -2257,12 +2261,50 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignment, todayPages, juzAyahs]);
 
+  /* ── Read & Reveal (replaces the recitation step) ──────────────────────────────────────────────────────── */
+  const [revealOn, setRevealOn] = useState(false);              // this recitation is graded live by Read & Reveal
+  const [revealAudioOn, setRevealAudioOn] = useState(true);     // …and the recorder is still running next to it
+  const revealOnRef = useRef(false);
+  const revealHandleRef = useRef<RevealHandle | null>(null);
+  const revealGradeRef = useRef<RevealFinish | null>(null);     // grading handed over at Finish; finalizeTranscript turns it into the page's key-transcript
+  const revealNoAudioRef = useRef(false);                       // the phone would not share the microphone → graded without a recording
+  const revealSilentRef = useRef(false);                        // the recorder only got silence (staff are told)
+  const revealHeardRef = useRef<string[] | null>(null);         // what was heard for each page word (saved for the staff review)
+  const micLevelRef = useRef(0);
+  const meterRef = useRef<{ ctx: AudioContext; id: ReturnType<typeof setInterval> } | null>(null);
+  const stopMeter = () => {
+    const m = meterRef.current; meterRef.current = null; micLevelRef.current = 0;
+    if (m) { clearInterval(m.id); try { void m.ctx.close(); } catch { /* noop */ } }
+  };
+  const startMeter = (stream: MediaStream) => {
+    stopMeter();
+    try {
+      const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
+      const ctx: AudioContext = new AC();
+      try { void ctx.resume(); } catch { /* noop */ }
+      const an = ctx.createAnalyser(); an.fftSize = 1024;
+      ctx.createMediaStreamSource(stream).connect(an);
+      const buf = new Float32Array(an.fftSize);
+      const id = setInterval(() => {
+        an.getFloatTimeDomainData(buf);
+        let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+        micLevelRef.current = micLevelRef.current * 0.5 + Math.sqrt(sum / buf.length) * 0.5;
+      }, 200);
+      meterRef.current = { ctx, id };
+    } catch { /* no meter → the "recorder is silent" check simply stays quiet */ }
+  };
+  useEffect(() => () => stopMeter(), []);   // eslint-disable-line react-hooks/exhaustive-deps
+
   const micRef = useRef<MediaStream | null>(null);
   useEffect(() => () => { try { micRef.current?.getTracks().forEach(t => t.stop()); } catch { /* noop */ } }, []);   // leaving the page releases the mic
   const startRecording = useCallback(async (resume: boolean = false) => {
     try {
       isPausedRef.current = false; setIsPaused(false);
       // Continuing a saved recording: its earlier audio becomes finished pieces and this run adds a new one.
+      const revealMode = readRevealSupported();          // Read & Reveal grades the recitation live; the old pipeline is the fallback
+      revealOnRef.current = revealMode; setRevealOn(revealMode); setRevealAudioOn(true);
+      revealNoAudioRef.current = false; revealSilentRef.current = false; revealGradeRef.current = null; revealHeardRef.current = null;
+      if (revealMode) { try { await clearSavedRecording(userId, todayISO()); } catch { /* noop */ } resume = false; }   // a reveal grading cannot be continued from a half recording
       const info = resume ? resumeInfoRef.current : null;
       const carry = info ? info.secs : 0;
       forceWholeRef.current = false;
@@ -2328,7 +2370,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         window.removeEventListener("pagehide", flushPartial);
         document.removeEventListener("visibilitychange", flushPartial);
         stream.getTracks().forEach(t => t.stop());
-        micRef.current = null;
+        micRef.current = null; stopMeter();
         clearInterval(timerRef.current);
 
         // Audio routing is handled inside FullAudioPlayer/AudioPlayerWidget via AudioContext.decodeAudioData().
@@ -2420,9 +2462,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       mediaRecRef.current = mr;
       // If the phone takes the microphone away (a call, another app) keep everything recited so far and
       // go to the result instead of leaving a dead recording running.
-      try { stream.getAudioTracks().forEach(t => { t.onended = () => { if (mediaRecRef.current === mr) handleStop(); }; }); } catch { /* noop */ }
+      try { stream.getAudioTracks().forEach(t => { t.onended = () => { if (mediaRecRef.current === mr) { if (revealOnRef.current) finishReveal(); else handleStop(); } }; }); } catch { /* noop */ }
       // Transcribe in the background AS the student recites (nothing is shown until Finished), so only
       // the last few seconds are left to process at Stop.
+      if (revealMode) startMeter(stream);   // Read & Reveal listens by itself; here we only watch the recorder's loudness
+      else {
       try { bgRef.current?.cancel(); } catch { /* noop */ }
       void refreshAsrSettings();   // pick up an admin switch change made since the page was opened (applies from the next recording)
       const cloudFirst = whisperCloudAvailable() && !ctcEnabled();   // with CTC on, all three models work WHILE the student recites (see below)   // cloud Whisper transcribes the whole recording on Stop — no on-device work while reciting
@@ -2445,6 +2489,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           if (lwRef.current && (carry > 0 || forceWholeRef.current)) lwRef.current.incomplete = true;   // not the whole recording → Whisper uses the full file instead
           lm.start(stream, (x) => { if (!isPausedRef.current) { ctcEngine.liveFeed(x); lwRef.current?.feed(x); } }).catch((e) => console.warn("[HifdhDaily] background mic tap failed:", e));
         } catch (e) { console.warn("[HifdhDaily] background check unavailable:", e); }
+      }
       }
       setIsRecording(true);
       setRecSecs(carry);                   // resume from previous session's elapsed time
@@ -2638,6 +2683,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
   const bgRef = useRef<ChunkTranscriber | null>(null);
   const finalizeTranscript = async (fullBlob: Blob): Promise<string> => {
+    // Read & Reveal already graded every word while the student recited: hand that grading to the page as its key-"transcript"
+    // (the same mechanism the CTC grading uses), so score, grid, red words, ayah colours and saving work unchanged.
+    const rg = revealGradeRef.current;
+    if (rg) { revealGradeRef.current = null; return registerCtcGrading(rg.heardText, rg.words); }
     // CTC available → it answers at once; Tarteel and cloud Whisper refine in the background (see ctcGrade). If CTC fails, fall through.
     if (ctcEnabled()) { const ctcTx = await ctcGrade(fullBlob); if (ctcTx !== "__NO_API__") return ctcTx; }
     // Cloud Whisper first. Any failure (offline, worker error, switched off) falls through to the original engines below.
@@ -2915,6 +2964,84 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     }
     mediaRecRef.current = null;
     // mr.onstop handles setPhase("page_result") + setScore(null) + fill
+  };
+
+  /* ── Read & Reveal: finish / pause / resume / leave / microphone problems ───────────────────────────────── */
+  // No recording to wait for (the phone would not share the microphone): show the result straight away.
+  const noAudioFinish = (g: RevealFinish) => {
+    stopTsRef.current = null;
+    isPausedRef.current = false; setIsPaused(false); setIsRecording(false);
+    clearInterval(timerRef.current); stopMeter();
+    const tx = registerCtcGrading(g.heardText, g.words);
+    const ayahs = pageAyahsRef.current;
+    const capturedSecs = recSecsRef.current;
+    audioBlobRef.current = null; audioStorageUrlRef.current = null; setAudioUrl(null); setSavedAudioUrl(null);
+    ctcResRef.current = null; setCtcRes(null); setCtcErr(""); setNoApiWarning(false);
+    setPhase("page_result"); setScore(null);
+    const sc = alignAyahs(tx, ayahs).score;
+    const errs = getErrorWords(tx, ayahs);
+    const corr = getAyahCorrectness(tx, ayahs, capturedSecs);
+    setLastTranscript(tx); setCheckSecs(null);
+    lastResultRef.current = { tx, ayahCorrectness: corr };
+    setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
+    idbDeleteBlob(`${userId}_${todayISO()}_partial`);
+    setCarryOverSecs(0);
+  };
+  const finishReveal = () => {
+    const g = revealHandleRef.current?.finish();
+    if (!g) return;                                   // nothing recited yet — the reader says so
+    revealGradeRef.current = g;
+    revealHeardRef.current = g.heard;
+    const mr = mediaRecRef.current;
+    if (mr && mr.state !== "inactive" && !revealNoAudioRef.current) handleStop();   // mr.onstop → finalizeTranscript hands over the grading
+    else noAudioFinish(g);
+  };
+  const revealPause = () => {
+    const mr = mediaRecRef.current;
+    if (mr && mr.state === "recording") { pauseRecording(); return; }
+    if (isPausedRef.current) return;
+    isPausedRef.current = true; setIsPaused(true);           // no recorder to pause (audio switched off) — just stop the clock
+    clearInterval(timerRef.current);
+    pausedElapsedRef.current = Date.now() - t0Ref.current;
+    setRecSecs(Math.floor(pausedElapsedRef.current / 1000));
+  };
+  const revealResume = () => {
+    const mr = mediaRecRef.current;
+    if (mr && mr.state === "paused") { resumeRecording(); return; }
+    if (!isPausedRef.current) return;
+    isPausedRef.current = false; setIsPaused(false);
+    t0Ref.current = Date.now() - pausedElapsedRef.current;
+    clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => { setRecSecs(Math.floor((Date.now() - t0Ref.current) / 1000)); }, 500);
+  };
+  // Speech recognition and the recorder cannot share the microphone on this phone: keep the recitation (it is what is graded),
+  // release the recorder, and tell staff there is no audio for this attempt.
+  const revealMicConflict = () => {
+    revealNoAudioRef.current = true; setRevealAudioOn(false);
+    const mr = mediaRecRef.current;
+    if (mr) { mr.onstop = null as any; try { if (mr.state !== "inactive") mr.stop(); } catch { /* noop */ } }
+    mediaRecRef.current = null;
+    try { micRef.current?.getTracks().forEach(t => t.stop()); } catch { /* noop */ }
+    micRef.current = null; stopMeter();
+    audioChunks.current = [];
+    idbDeleteBlob(`${userId}_${todayISO()}_partial`);
+  };
+  const revealAudioSilent = () => { revealSilentRef.current = true; };
+  // Back during a Read & Reveal recitation: its progress cannot be saved for later, so ask and then drop everything.
+  const leaveReveal = () => {
+    if (!window.confirm("Leave this recitation? Your progress on this page will be lost.")) return;
+    try { revealHandleRef.current?.finish(); } catch { /* noop */ }
+    const mr = mediaRecRef.current;
+    if (mr) { mr.onstop = null as any; try { if (mr.state !== "inactive") mr.stop(); } catch { /* noop */ } }
+    mediaRecRef.current = null;
+    try { micRef.current?.getTracks().forEach(t => t.stop()); } catch { /* noop */ }
+    micRef.current = null; stopMeter();
+    clearInterval(timerRef.current);
+    revealGradeRef.current = null; audioChunks.current = [];
+    isPausedRef.current = false; setIsPaused(false); setIsRecording(false);
+    clearSavedRecording(userId, todayISO());
+    idbDeleteBlob(`${userId}_${todayISO()}_partial`);
+    setPhase("intro");
   };
 
   // Reset per-question record state when question changes
@@ -3915,8 +4042,32 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         </>
       )}
 
+      {/* ══ READING — Read & Reveal while reciting (the screen before Start Reciting is unchanged) ══ */}
+      {phase==="reading"&&isRecording&&revealOn&&(
+        <DailyReadReveal
+          ayahs={pageAyahs}
+          pageNumbers={isGroup?todayPages:[todayPages[pageIdx]]}
+          title={`${isGroup ? `Pages ${todayPages[0]} – ${todayPages[todayPages.length-1]}` : `Page ${todayPages[pageIdx]}`} — Recite Aloud`}
+          subtitle={isGroup
+            ? `${todayPages.length} pages · one recording${retryCount>0?` · Attempt ${retryCount+1}`:""}`
+            : `Page ${pageIdx+1} of ${todayPages.length}${retryCount>0?` · Attempt ${retryCount+1}`:""}`}
+          dots={!isGroup?{total:todayPages.length,idx:pageIdx}:null}
+          backButton={<BackBtn onClick={leaveReveal}/>}
+          recSecs={recSecs}
+          paused={isPaused}
+          onPause={revealPause}
+          onResume={revealResume}
+          onFinish={finishReveal}
+          handleRef={revealHandleRef}
+          getMicLevel={()=>micLevelRef.current}
+          onMicConflict={revealMicConflict}
+          onAudioSilent={revealAudioSilent}
+          audioOn={revealAudioOn}
+        />
+      )}
+
       {/* ══ READING ══ */}
-      {phase==="reading"&&(
+      {phase==="reading"&&!(isRecording&&revealOn)&&(
         <>
           <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:isRecording?"14px 16px":"10px 14px",
             display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
@@ -4067,7 +4218,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             )}
             {!isRecording
               ?(
-(savedRec && (savedRec.page==null || savedRec.page===todayPages[isGroup?0:pageIdx]))
+(!readRevealSupported() && savedRec && (savedRec.page==null || savedRec.page===todayPages[isGroup?0:pageIdx]))
                   ? (
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
                       <p style={{margin:0,fontSize:12,fontWeight:700,color:G1,textAlign:"center"}}>

@@ -23,31 +23,52 @@ export interface QcfPlan {
   usedPages: Set<number>;
 }
 
+/** One continuous run of verses inside one surah. */
+export interface AyahRange { surah: number; from: number; to: number }
+
+/** Merge a list of (surah, ayah) pairs into ordered, continuous ranges (a Mushaf page can hold the end of one surah and the start of the next). */
+export function rangesOf(list: { surah: number; ayah: number }[]): AyahRange[] {
+  const out: AyahRange[] = [];
+  for (const { surah, ayah } of list) {
+    const last = out[out.length - 1];
+    if (last && last.surah === surah && ayah === last.to + 1) last.to = ayah;
+    else if (!last || last.surah !== surah || ayah > last.to + 1 || ayah < last.from) out.push({ surah, from: ayah, to: ayah });
+  }
+  return out;
+}
+
 export function buildQcfPlan(pages: GlyphLine[][], surah: number, from: number, to: number): QcfPlan {
+  return buildQcfPlanRanges(pages, [{ surah, from, to }]);
+}
+
+/** Same as buildQcfPlan, but the selected verses may be several runs (and several surahs) — e.g. an admin-assigned page. */
+export function buildQcfPlanRanges(pages: GlyphLine[][], ranges: AyahRange[]): QcfPlan {
   const words: RevealWord[] = [];
   const idx = new Map<string, number>();
   const endAfter = new Map<string, number>();
   const ungraded = new Set<string>();
   const usedPages = new Set<number>();
-  const countInAyah = new Map<number, number>();
+  const countInAyah = new Map<string, number>();
+  const firstR = ranges[0], lastR = ranges[ranges.length - 1];
   let firstWordSeen = false, lastEndSeen = false, anySelected = false;
 
   pages.forEach((lines, pi) => {
     lines.forEach((line, li) => {
       if (line.type !== "text") return;
       line.words.forEach((w, wi) => {
-        if (w.surah !== surah || w.ayah < from || w.ayah > to) return;
+        if (!ranges.some((r) => w.surah === r.surah && w.ayah >= r.from && w.ayah <= r.to)) return;
         const key = `${pi}:${li}:${wi}`;
         anySelected = true; usedPages.add(pi);
         if (w.kind === "word") {
-          if (w.ayah === from && w.pos === 1) firstWordSeen = true;
+          if (w.surah === firstR.surah && w.ayah === firstR.from && w.pos === 1) firstWordSeen = true;
           if (!w.text || !normalizeWord(w.text)) { ungraded.add(key); return; }
-          const n = countInAyah.get(w.ayah) ?? 0;
-          countInAyah.set(w.ayah, n + 1);
+          const ck = `${w.surah}:${w.ayah}`;
+          const n = countInAyah.get(ck) ?? 0;
+          countInAyah.set(ck, n + 1);
           idx.set(key, words.length);
-          words.push({ text: w.text, key: soundKey(w.text), ayah: w.ayah, idxInAyah: n });
+          words.push({ text: w.text, key: soundKey(w.text), ayah: w.ayah, surah: w.surah, idxInAyah: n });
         } else if (w.kind === "end") {
-          if (w.ayah === to) lastEndSeen = true;
+          if (w.surah === lastR.surah && w.ayah === lastR.to) lastEndSeen = true;
           endAfter.set(key, words.length - 1);
         } else {
           ungraded.add(key);

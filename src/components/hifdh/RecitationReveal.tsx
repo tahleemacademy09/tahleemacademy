@@ -263,7 +263,7 @@ const toArabicDigits = (n: number) => String(n).replace(/\d/g, (d) => "٠١٢٣�
 
 /** Continuous Mushaf-style text: one flowing, justified block (never split by verse or boxed per word).
  *  Unrecited words stay in place but are blurred, so the lines never move while the reader progresses. */
-function TextReader({ words, view, mode, fontSize, started, showAll, hintOn, peeked, onPeek, surahName, showBism }: {
+export function TextReader({ words, view, mode, fontSize, started, showAll, hintOn, peeked, onPeek, surahName, showBism }: {
   words: RevealWord[]; view: RevealState; mode: Mode; fontSize: number; started: boolean; showAll: boolean; hintOn: boolean;
   peeked: Set<number>; onPeek: (i: number) => void; surahName?: string; showBism: boolean;
 }) {

@@ -17,6 +17,7 @@ export interface RevealWord {
   text: string;      // Uthmani text exactly as displayed
   key: string;       // soundKey of the word
   ayah: number;      // ayah number in the surah (0 = bismillah)
+  surah?: number;    // set when the passage spans several surahs (an admin-assigned Mushaf page)
   idxInAyah: number;
 }
 
