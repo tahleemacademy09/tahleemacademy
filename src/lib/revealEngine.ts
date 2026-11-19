@@ -28,6 +28,7 @@ export interface RevealState {
   blocked: boolean;           // strict mode: a mistake was made at `cursor` and must be corrected before moving on
   errors: number;             // number of mistakes made so far (strict mode)
   fixed: boolean[];           // word was recited correctly only after a mistake
+  pre: number;                // how far the optional opening (isti'adha / Bismillah) has been heard — never graded
 }
 
 export const LOOKAHEAD = 3;
@@ -51,11 +52,12 @@ export const initialState = (n: number): RevealState => ({
   blocked: false,
   errors: 0,
   fixed: new Array(n).fill(false),
+  pre: 0,
 });
 
 export const cloneState = (s: RevealState): RevealState => ({
   status: s.status.slice(), heard: s.heard.slice(), cursor: s.cursor, junk: s.junk.slice(),
-  blocked: s.blocked, errors: s.errors, fixed: s.fixed.slice(),
+  blocked: s.blocked, errors: s.errors, fixed: s.fixed.slice(), pre: s.pre,
 });
 
 const grade = (sim: number): RevealStatus | null => (sim >= OK_T ? "ok" : sim >= CHECK_T ? "close" : null);
@@ -65,6 +67,27 @@ function sim(word: RevealWord, token: string): number {
   if (!token || !word.key) return 0;
   if (word.key.length <= 2 || token.length <= 2) return word.key === token ? 1 : 0;
   return similarity(word.key, token);
+}
+
+/**
+ * Optional opening: a reader may begin with the isti'adha and/or the Bismillah before the first verse, or go straight
+ * to the verse. These words are NOT part of the graded passage — they are simply accepted (never "wrong", never
+ * blocking strict mode) while nothing of the passage has been recited yet. The printed page shows the surah banner and
+ * the Bismillah line permanently, so there is nothing to reveal for them.
+ */
+const PRE_WORDS = ["أعوذ", "بالله", "من", "الشيطان", "الرجيم", "بسم", "الله", "الرحمن", "الرحيم"]
+  .map((text, i): RevealWord => ({ text, key: soundKey(text), ayah: 0, idxInAyah: i }));
+/** where the opening may begin: the isti'adha (0) or straight at the Bismillah (5) */
+const PRE_STARTS = [0, 5];
+
+function takePreamble(s: RevealState, token: string): boolean {
+  if (s.cursor !== 0 || s.pre >= PRE_WORDS.length) return false;
+  const first = s.pre === 0;
+  for (let j = s.pre; j < PRE_WORDS.length; j++) {
+    if (first ? !PRE_STARTS.includes(j) : j > s.pre + 1) continue;   // after the first word, allow at most one skipped word
+    if (grade(sim(PRE_WORDS[j], token))) { s.pre = j + 1; return true; }
+  }
+  return false;
 }
 
 /** The word the app itself says when it flags a mistake ("خطأ") — if the mic picks it up, ignore it. */
@@ -98,6 +121,9 @@ function step(words: RevealWord[], s: RevealState, rawToken: string, next: strin
   const cur = words[s.cursor];
   const g = grade(sim(cur, token));
   if (g) { accept(g, rawToken); return 1; }
+
+  // 1b. the optional isti'adha / Bismillah before the first verse: accept it silently
+  if (takePreamble(s, token)) return 1;
 
   // 2. the recogniser split one word in two ("و" + "لم" for "ولم") → try joining with the next token
   if (next) {

@@ -72,4 +72,31 @@ describe("revealEngine", () => {
       expect(strict("قل خطأ هو").cursor).toBe(2);
     });
   });
+
+  describe("optional opening (isti'adha / Bismillah)", () => {
+    const AY = [{ n: 1, text: "يَـٰٓأَيُّهَا ٱلنَّاسُ ٱتَّقُوا۟ رَبَّكُمُ" }, { n: 2, text: "وَءَاتُوا۟ ٱلْيَتَـٰمَىٰٓ أَمْوَٰلَهُمْ" }];
+    const WN = buildWords(AY);
+    const go = (text: string, strict = false) => feed(WN, initialState(WN.length), tokenize(text), true, strict);
+    it("starts straight at the verse", () => {
+      const s = go("يا ايها الناس اتقوا ربكم", true);
+      expect(s.cursor).toBe(4);
+      expect(s.errors).toBe(0);
+    });
+    it("accepts the Bismillah first without any mistake", () => {
+      const s = go("بسم الله الرحمن الرحيم يا ايها الناس اتقوا ربكم", true);
+      expect(s.cursor).toBe(4);
+      expect(s.errors).toBe(0);
+      expect(s.status.slice(1, 4)).toEqual(["ok", "ok", "ok"]);
+    });
+    it("accepts the isti'adha + Bismillah first", () => {
+      const s = go("اعوذ بالله من الشيطان الرجيم بسم الله الرحمن الرحيم يا ايها الناس", true);
+      expect(s.cursor).toBe(2);
+      expect(s.errors).toBe(0);
+    });
+    it("does not accept the Bismillah once the verse has started", () => {
+      const s = go("يا ايها بسم الله", true);
+      expect(s.cursor).toBe(1);
+      expect(s.blocked).toBe(true);
+    });
+  });
 });
