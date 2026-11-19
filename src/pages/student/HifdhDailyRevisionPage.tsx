@@ -56,6 +56,10 @@ import { KNOWLEDGE } from "@/lib/hifdhKnowledge";
 // Rollup scope-hoists this chunk together with surahData and the init order of the
 // cross-module `SURAHS` binding is not guaranteed. A Proxy defers the lookup until
 // after all module bindings have initialized, eliminating the TDZ entirely.
+// Audio of the recitation is NOT recorded: phones cannot listen (speech recognition) and record on the same microphone,
+// and the recitation is graded live anyway. Set to true to try recording again (it is kept only where the phone allows it).
+const RECORD_AUDIO = false;
+
 const SURAH_NAME_BY_NUM: Record<number, { name: string; arabicName: string }> =
   new Proxy({} as Record<number, { name: string; arabicName: string }>, {
     get(_t, key) {
@@ -2059,7 +2063,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             // Lets staff see at a glance that this page's score is unreliable
             // because no transcription engine returned text (e.g. API outage).
             recitation_engine: revealOnRef.current ? "read_reveal" : "legacy",
-            ...(revealNoAudioRef.current ? { audio_unavailable: true, audio_unavailable_reason: "microphone_not_shared_with_speech_recognition" } : {}),
+            ...(revealNoAudioRef.current ? { audio_unavailable: true, audio_unavailable_reason: RECORD_AUDIO ? "microphone_not_shared_with_speech_recognition" : "recording_switched_off" } : {}),
             ...(revealSilentRef.current ? { audio_silent: true } : {}),
             ...(noApiWarning ? { transcription_failed: true, transcription_failed_reason: lastTranscribeErrorRef.current || "unknown" } : {}),
             // Preserve teacher override so it isn't wiped by re-attempts
@@ -2204,8 +2208,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         return;
       }
       const revealMode = true;
-      revealOnRef.current = true; setRevealOn(true); setRevealAudioOn(true);
-      revealNoAudioRef.current = false; revealSilentRef.current = false; revealGradeRef.current = null; revealHeardRef.current = null;
+      revealOnRef.current = true; setRevealOn(true); setRevealAudioOn(RECORD_AUDIO);
+      revealNoAudioRef.current = !RECORD_AUDIO; revealSilentRef.current = false; revealGradeRef.current = null; revealHeardRef.current = null;
       try { await clearSavedRecording(userId, todayISO()); } catch { /* noop */ } resume = false;   // a reveal grading cannot be continued from a half recording
       const info = resume ? resumeInfoRef.current : null;
       const carry = info ? info.secs : 0;
@@ -2219,6 +2223,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         await clearSavedRecording(userId, todayISO());
       }
       setAudioUrl(null); setSavedAudioUrl(null); audioChunks.current = []; audioBlobRef.current = null; audioStorageUrlRef.current = null;
+      if (RECORD_AUDIO) {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           // Raw microphone — no browser processing at all (no echo cancel, noise suppression or auto-gain/compression)
@@ -2362,6 +2367,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       // go to the result instead of leaving a dead recording running.
       try { stream.getAudioTracks().forEach(t => { t.onended = () => { if (mediaRecRef.current === mr) { if (revealOnRef.current) finishReveal(); else handleStop(); } }; }); } catch { /* noop */ }
       startMeter(stream);   // Read & Reveal listens by itself; here we only watch the recorder's loudness
+      }
       setIsRecording(true);
       setRecSecs(carry);                   // resume from previous session's elapsed time
       recSecsRef.current = carry;
