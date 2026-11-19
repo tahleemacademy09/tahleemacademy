@@ -12,12 +12,14 @@ import {
 } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { fetchAyahs, fetchSurahs, type Ayah, type SurahInfo } from "@/lib/quranCheck";
-import { getAyahPage, getPageText } from "@/lib/quranTextApi";
+import { getAyahPage } from "@/lib/quranTextApi";
+import { getGlyphPage, loadGlyphFont, type GlyphLine } from "@/components/quran/mushafGlyphs";
+import { buildQcfPlan } from "@/lib/qcfPlan";
 import {
   ayahDone, buildWords, cloneState, feed, firstLetter, initialState, manualReveal, skipWord, stateScore, stripCumulative,
   summarize, tokenize, type RevealState, type RevealStatus, type RevealWord,
 } from "@/lib/revealEngine";
-import MushafPager from "./MushafPager";
+import QcfMushafReveal from "./QcfMushafReveal";
 
 /* ── palette (same as the Daily Hifdh Revision screen) ───────────────────────────────────────────────────── */
 const G0 = "#061409", G1 = "#0f2d1f", G2 = "#1a3d27", G3 = "#276749";
@@ -377,51 +379,65 @@ export default function RecitationReveal() {
     }
   }, [total, S.from, S.to, set]);
 
-  const words = useMemo(
-    // the Bismillah is NOT part of the graded words: the engine accepts it silently as an optional opening
+  // the Bismillah is NOT part of the graded words: the engine accepts it silently as an optional opening
+  const textWords = useMemo(
     () => buildWords(ayahs.filter((a) => a.n >= S.from && a.n <= S.to)),
     [ayahs, S.from, S.to],
   );
-  const wordsRef = useRef(words); wordsRef.current = words;
 
-  /* ── Mushaf pages that hold the selected verses ──────────────── */
-  const [pages, setPages] = useState<number[]>([]);
-  const [ayahPage, setAyahPage] = useState<Record<string, number>>({});
-  const [loadingPages, setLoadingPages] = useState(false);
+  /* ── printed Mushaf pages (QCF glyphs) that hold the selected verses ─────────────────────────────────────── */
+  const [pages, setPages] = useState<number[]>([]);                 // mushaf page numbers, ascending
+  const [qcfLines, setQcfLines] = useState<GlyphLine[][]>([]);      // glyph lines of each of those pages
+  const [, setLoadingPages] = useState(false);
   const [mushafFail, setMushafFail] = useState(false);
-  const [viewIdx, setViewIdx] = useState(0);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     if (phase === "setup" || !S.printed || !ayahs.length) return;
     let alive = true;
-    setLoadingPages(true);
+    setLoadingPages(true); setMushafFail(false);
     (async () => {
       try {
         const [p1, p2] = await Promise.all([getAyahPage(S.surah, S.from), getAyahPage(S.surah, S.to)]);
-        const lo = Math.min(p1, p2), hi = Math.max(p1, p2);
-        const map: Record<string, number> = {};
-        const list: number[] = [];
-        for (let p = lo; p <= hi && list.length < 8; p++) {
-          const verses = await getPageText(p, false);
-          verses.forEach((v) => { map[`${v.surah}:${v.ayah}`] = p; });
-          list.push(p);
+        let lo = Math.min(p1, p2), hi = Math.max(p1, p2);
+        const cache = new Map<number, GlyphLine[]>();
+        for (let round = 0; round < 4; round++) {
+          if (hi - lo + 1 > 10) throw new Error("range too long");
+          const need: number[] = [];
+          for (let p = lo; p <= hi; p++) if (!cache.has(p)) need.push(p);
+          const got = await Promise.all(need.map(async (p) => {
+            const [lines] = await Promise.all([getGlyphPage(p), loadGlyphFont(p)]);
+            if (!lines) throw new Error(`page ${p}`);
+            return [p, lines] as const;
+          }));
+          got.forEach(([p, lines]) => cache.set(p, lines));
+          const nums = Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
+          const plan = buildQcfPlan(nums.map((p) => cache.get(p)!), S.surah, S.from, S.to);
+          // a verse that runs over onto a neighbouring page → load that page too
+          if (plan.needPrev && lo > 1 && round < 3) { lo--; continue; }
+          if (plan.needNext && hi < 604 && round < 3) { hi++; continue; }
+          if (!plan.words.length) throw new Error("no words");
+          if (!alive) return;
+          setPages(nums); setQcfLines(nums.map((p) => cache.get(p)!));
+          return;
         }
-        if (!alive) return;
-        setPages(list); setAyahPage(map); setViewIdx(0); setMushafFail(false);
-      } catch {
-        if (alive) { setPages([]); setMushafFail(true); }
+      } catch (e) {
+        console.warn("[reveal] printed pages unavailable:", e);
+        if (alive) { setPages([]); setQcfLines([]); setMushafFail(true); }
       } finally {
         if (alive) setLoadingPages(false);
       }
     })();
     return () => { alive = false; };
-  }, [phase === "setup", S.printed, ayahs, S.surah, S.from, S.to]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phase === "setup", S.printed, ayahs, S.surah, S.from, S.to, reloadTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const blurRange = useMemo(
-    () => ({ from: { surah: S.surah, ayah: S.from }, to: { surah: S.surah, ayah: S.to } }),
-    [S.surah, S.from, S.to],
+  // the words the engine grades come from the SAME data the page is drawn with, so printed word N = heard word N
+  const plan = useMemo(
+    () => (pages.length && qcfLines.length === pages.length ? buildQcfPlan(qcfLines, S.surah, S.from, S.to) : null),
+    [pages, qcfLines, S.surah, S.from, S.to],
   );
-  const onUnavailable = useCallback(() => setMushafFail(true), []);
+  const words = plan && plan.words.length ? plan.words : textWords;
+  const wordsRef = useRef(words); wordsRef.current = words;
 
   /* ── session state ───────────────────────────────────────────── */
   const [listening, setListening] = useState(false);
@@ -480,15 +496,7 @@ export default function RecitationReveal() {
   useEffect(() => { setHint(false); setShowAnswer(false); }, [view.cursor]);
   useEffect(() => () => { hardStop(); if (doneTimer.current) clearTimeout(doneTimer.current); }, [hardStop]);
 
-  // follow the recitation across Mushaf pages
-  useEffect(() => {
-    if (!pages.length || !(listening || paused)) return;
-    const w = words[Math.min(view.cursor, words.length - 1)];
-    if (!w) return;
-    const pg = ayahPage[`${S.surah}:${w.ayah}`] ?? pages[0];
-    const i = pages.indexOf(pg);
-    if (i >= 0) setViewIdx(i);
-  }, [view.cursor, pages, ayahPage, listening, paused, words, S.surah]);
+
 
   /* ── feedback ─────────────────────────────────────────────────── */
   /** strong = a strict-mode mistake: long double buzz + "خطأ"; otherwise a short buzz. */
@@ -618,7 +626,7 @@ export default function RecitationReveal() {
   }
 
   /* ── navigation ──────────────────────────────────────────────── */
-  const startSession = () => { resetExercise(); setMushafFail(false); setViewIdx(0); setPhase("reading"); };
+  const startSession = () => { resetExercise(); setMushafFail(false); setPhase("reading"); };
   const sum = summarize(view);
   const checked = sum.total - sum.pending;
   const started = listening || paused || checked > 0;
@@ -631,10 +639,8 @@ export default function RecitationReveal() {
   const manual = { reveal: () => apply(manualReveal(words, committed.current, S.mode === "ayah")), skip: () => apply(skipWord(words, committed.current)), disabled: sum.done || !words.length };
   const togglePeek = (i: number) => setPeeked((p) => { const n = new Set(p); if (n.has(i)) n.delete(i); else n.add(i); return n; });
 
-  const useText = !S.printed || mushafFail;
-  // the printed Mushaf is for seeing the whole page (before reciting); while reciting, the words are revealed in a
-  // continuous text view instead (unless the reader chose to keep the verses visible)
-  const revealText = useText || (started && !S.showText);
+  const useText = !S.printed || mushafFail;           // plain continuous-text view (printed pages off, or they could not load)
+  const waitingPages = !useText && !plan;             // printed pages still loading
   const scorePct = Math.round(sum.score * 100);
   const title = `${surahInfo?.englishName ?? `${t("Surah", "سورة")} ${S.surah}`} · ${S.from}${S.to !== S.from ? `–${S.to}` : ""}`;
   const pagesLabel = pages.length ? (pages.length > 1 ? `${pages[0]}–${pages[pages.length - 1]}` : String(pages[0])) : "";
@@ -764,48 +770,54 @@ export default function RecitationReveal() {
           )}
 
           {/* the page */}
-          <div style={{ flex: 1, minHeight: 0, position: "relative", background: "#fff", marginTop: 8 }}>
-            {revealText ? (
+          <div style={{ flex: 1, minHeight: 0, position: "relative", background: "#fff" }}>
+            {useText ? (
               <TextReader words={words} view={view} mode={S.mode} fontSize={S.fontSize} started={started} showAll={S.showText}
                 hintOn={hint} peeked={peeked} onPeek={togglePeek}
                 surahName={S.from === 1 ? surahInfo?.name : undefined} showBism={canBism} />
-            ) : loadingPages || !pages.length ? (
+            ) : waitingPages ? (
               <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
                 <Loader2 size={30} color={GOLD} className="animate-spin" />
               </div>
             ) : (
-              <MushafPager key={pages.join(",")} pages={pages} viewIdx={viewIdx} onView={setViewIdx}
-                blurRange={blurRange} onUnavailable={onUnavailable} />
+              <QcfMushafReveal pageNumbers={pages} pages={qcfLines} plan={plan!} view={view} started={started} showAll={S.showText}
+                mode={S.mode} hintOn={hint} peeked={peeked} onPeek={togglePeek} />
+            )}
+            {S.printed && mushafFail && !started && (
+              <button onClick={() => setReloadTick((n) => n + 1)}
+                style={{ position: "absolute", top: 8, insetInlineStart: 8, zIndex: 5, padding: "6px 12px", borderRadius: 10, border: "1px solid #FCA5A5", background: "#FEF2F2", color: "#991B1B", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                {t("Printed page didn't load — tap to retry", "تعذّر تحميل المصحف — اضغط لإعادة المحاولة")}
+              </button>
             )}
           </div>
 
           {/* fixed bottom controls — same place as the Daily Hifdh Revision */}
-          <div style={{ padding: "12px 16px", paddingBottom: "max(12px, env(safe-area-inset-bottom))", background: W, borderTop: `1px solid ${BRD}`, flexShrink: 0 }}>
+          <div style={{ padding: "8px 16px", paddingBottom: "max(8px, env(safe-area-inset-bottom))", background: W, borderTop: `1px solid ${BRD}`, flexShrink: 0 }}>
             {!started && !supported && (
               <p style={{ margin: "0 0 8px", fontSize: 11, color: "#B45309", textAlign: "center" }}>
                 {t("Live recognition isn't available in this browser — use Chrome over HTTPS.", "التعرّف المباشر غير متاح في هذا المتصفح — استخدم Chrome عبر HTTPS.")}
               </p>
             )}
             {!started && (
-              <p style={{ margin: "0 0 8px", fontSize: 11, color: "#6b7280", textAlign: "center" }}>
-                {t("Read the highlighted verses, then tap Start Reciting and recite from memory.", "اقرأ الآيات الواضحة ثم اضغط ابدأ التلاوة وسمّع من الحفظ.")}
+              <p style={{ margin: "0 0 6px", fontSize: 11, color: "#6b7280", textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {t("Read the highlighted verses, then tap Start Reciting.", "اقرأ الآيات الواضحة ثم اضغط ابدأ التلاوة.")}
               </p>
             )}
             {!listening && !paused && checked === 0 ? (
-              <button onClick={begin} disabled={!words.length || (!useText && (loadingPages || !pages.length))}
-                style={{ width: "100%", padding: 15, borderRadius: 14, border: "none", cursor: "pointer", background: `linear-gradient(135deg,${G2},${G3})`, color: W, fontWeight: 900, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "inherit", opacity: !words.length || (!useText && (loadingPages || !pages.length)) ? 0.55 : 1 }}>
+              <button onClick={begin} disabled={!words.length || waitingPages}
+                style={{ width: "100%", padding: 13, borderRadius: 14, border: "none", cursor: "pointer", background: `linear-gradient(135deg,${G2},${G3})`, color: W, fontWeight: 900, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "inherit", opacity: !words.length || waitingPages ? 0.55 : 1 }}>
                 <Mic size={17} /> {t("Start Reciting", "ابدأ التلاوة")}
               </button>
             ) : (
               <div style={{ display: "flex", gap: 10 }}>
                 <button onClick={listening ? pauseRec : begin} disabled={sum.done}
-                  style={{ flexShrink: 0, minWidth: 112, padding: "15px 16px", borderRadius: 14, cursor: "pointer", border: `1.5px solid ${listening ? BRD : PASS}`,
+                  style={{ flexShrink: 0, minWidth: 112, padding: "13px 16px", borderRadius: 14, cursor: "pointer", border: `1.5px solid ${listening ? BRD : PASS}`,
                     background: listening ? W : `linear-gradient(135deg,${G2},${G3})`, color: listening ? G1 : W, fontWeight: 900, fontSize: 14,
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "inherit" }}>
                   {listening ? <><Pause size={17} /> {t("Pause", "إيقاف مؤقت")}</> : <><Play size={17} /> {t("Resume", "متابعة")}</>}
                 </button>
                 <button onClick={finish}
-                  style={{ flex: 1, padding: 15, borderRadius: 14, border: "none", cursor: "pointer", background: FAIL, color: W, fontWeight: 900, fontSize: 14,
+                  style={{ flex: 1, padding: 13, borderRadius: 14, border: "none", cursor: "pointer", background: FAIL, color: W, fontWeight: 900, fontSize: 14,
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "inherit" }}>
                   <MicOff size={17} /> {t("Finished — Evaluate", "انتهيت — قيّم")}
                 </button>
