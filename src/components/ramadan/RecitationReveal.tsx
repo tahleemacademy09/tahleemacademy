@@ -23,7 +23,6 @@ import MushafPager, { type RevealProgress } from "./MushafPager";
 const G0 = "#061409", G1 = "#0f2d1f", G2 = "#1a3d27", G3 = "#276749";
 const GOLD = "#c9a84c", WARM = "#faf8f4", BRD = "#e5ddd3", W = "#ffffff";
 const PASS = "#16a34a", FAIL = "#dc2626";
-const BISMILLAH = "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ";
 const MAX_AYAHS = 40;
 const ARABIC = "'Amiri Quran','Amiri','Noto Naskh Arabic',serif";
 
@@ -196,9 +195,9 @@ function SettingsPanel({ S, set, surahs, total, loading, wordCount, showQuran, c
             {loading ? t("Loading text…", "جارٍ تحميل النص…") : t(`${wordCount} words · up to ${MAX_AYAHS} ayahs per session`, `${wordCount} كلمة · حتى ${MAX_AYAHS} آية في الجلسة`)}
           </p>
           {canBism && (
-            <div style={{ marginTop: 6 }}>
-              <Toggle on={S.withBism} onClick={() => set({ withBism: !S.withBism })} label={t("I will start with the Bismillah", "سأبدأ بالبسملة")} />
-            </div>
+            <p style={{ margin: "6px 0 0", fontSize: 11, color: "#6b7280" }}>
+              {t("The Bismillah is optional — start with it or go straight to the verse.", "البسملة اختيارية — ابدأ بها أو ابدأ بالآية مباشرة.")}
+            </p>
           )}
         </Section>
       )}
@@ -362,8 +361,9 @@ export default function RecitationReveal() {
   }, [total, S.from, S.to, set]);
 
   const words = useMemo(
-    () => buildWords(ayahs.filter((a) => a.n >= S.from && a.n <= S.to), canBism && S.withBism ? BISMILLAH : undefined),
-    [ayahs, S.from, S.to, S.withBism, canBism],
+    // the Bismillah is NOT part of the graded words: the engine accepts it silently as an optional opening
+    () => buildWords(ayahs.filter((a) => a.n >= S.from && a.n <= S.to)),
+    [ayahs, S.from, S.to],
   );
   const wordsRef = useRef(words); wordsRef.current = words;
 
@@ -410,7 +410,6 @@ export default function RecitationReveal() {
   const [listening, setListening] = useState(false);
   const [paused, setPaused] = useState(false);
   const [seconds, setSeconds] = useState(0);
-  const [live, setLive] = useState("");
   const [rawView, setView] = useState<RevealState>(() => initialState(0));
   const [peeked, setPeeked] = useState<Set<number>>(new Set());
   const [hint, setHint] = useState(false);
@@ -451,7 +450,7 @@ export default function RecitationReveal() {
     committed.current = initialState(wordsRef.current.length);
     processed.current = 0; lastFinal.current = []; flags.current = 0; errBuzzed.current = 0; pendingErr.current = null;
     setView(cloneState(committed.current));
-    setPaused(false); setPeeked(new Set()); setHint(false); setShowAnswer(false); setSelected(null); setLive(""); setSeconds(0); setError(null);
+    setPaused(false); setPeeked(new Set()); setHint(false); setShowAnswer(false); setSelected(null); setSeconds(0); setError(null);
   }, [hardStop]);
   useEffect(() => { resetExercise(); }, [words, resetExercise]);
 
@@ -524,7 +523,6 @@ export default function RecitationReveal() {
         feed(w, shown, stripCumulative(lastFinal.current, full), false, strictRef.current, exactRef.current);
       }
     }
-    setLive(text.trim());
     setView(cloneState(shown));
 
     const sum = summarize(c);
@@ -735,7 +733,7 @@ export default function RecitationReveal() {
                 </span>
               )}
               <span dir="rtl" style={{ flex: 1, minWidth: 0, textAlign: "end", fontSize: 13, color: "#6b7280", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontFamily: ARABIC }}>
-                {hint && cur ? `${firstLetter(cur.text)}…` : live}
+                {hint && cur ? `${firstLetter(cur.text)}…` : null}
               </span>
               <button onClick={() => setHint(true)} disabled={!listening || sum.done} aria-label={t("Hint", "تلميح")}
                 style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 10, border: `1px solid ${BRD}`, background: W, display: "grid", placeItems: "center", opacity: !listening ? 0.4 : 1, cursor: "pointer" }}>
