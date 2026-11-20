@@ -171,7 +171,13 @@ function compile(doc: LessonDoc, logoDataUri: string | null) {
       // Steps in click order: item n → its Arabic (2n), then, if it has English, its meaning (2n+1).
       const st: number[] = [];
       items.forEach((x, n) => { st.push(n * 2); if (/^<div class="item[^"]*\bhasen\b/.test(x)) st.push(n * 2 + 1); });
-      slides.push({ p, g: esc(s.ghost || ""), k: esc(s.kicker || ""), t: rich(s.title || ""), grid: s.kind === "words" ? 1 : 0, i: items, st });
+      /* Word cards go in a 2-column grid only while every entry is short; long entries (names, phrases)
+         get a full-width list instead so the text can breathe. Diacritics are not counted. */
+      const longest = s.kind === "words"
+        ? Math.max(0, ...linesOf(s.lines).map(l => pair(l)[0].replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, "").length))
+        : 0;
+      const wordsGrid = s.kind === "words" && longest <= 16;
+      slides.push({ p, g: esc(s.ghost || ""), k: esc(s.kicker || ""), t: rich(s.title || ""), grid: wordsGrid ? 1 : 0, lg: s.kind === "words" && !wordsGrid ? 1 : 0, i: items, st });
     }
   });
   if (!slides.length) slides.push({ p: -1, g: "", k: "", t: "", i: [], st: [] });
@@ -206,6 +212,9 @@ h1{font:700 clamp(32px,9vw,56px)/1.5 'Amiri',serif;color:var(--gold);margin:0;te
 .item.shown{opacity:1;transform:none;visibility:visible;pointer-events:auto}
 .vc{background:var(--wash);border:1px solid var(--line);border-top:3px solid var(--ph);border-radius:12px;padding:12px 8px;text-align:center;display:flex;flex-direction:column;justify-content:center;gap:2px}
 .vc b{font:700 clamp(24px,5.6vw,32px)/1.5 'Amiri',serif;color:var(--ph)}
+.content.lg .vc{padding:10px 16px;text-align:right;align-items:stretch;border-top:1px solid var(--line);border-right:4px solid var(--ph);border-radius:8px;gap:0}
+.content.lg .vc b{font-size:clamp(21px,5vw,27px);line-height:2}
+.content.lg .vc i{text-align:left;font-size:clamp(14px,3.6vw,16px);line-height:1.7;font-weight:400;color:var(--dim)}
 .vc i{font-style:normal;direction:ltr;font-weight:600;font-size:15px;color:var(--ink)}
 .rd,.qq,.nt,.dd{background:var(--wash);border-right:4px solid var(--ph);border-radius:8px;padding:10px 16px}
 .rd p,.bb p{font:700 clamp(21px,5vw,27px)/2 'Amiri',serif;margin:0}
@@ -259,7 +268,7 @@ const RUNTIME = [
 " var cur=ii>0&&ii<=st.length?Math.floor(st[ii-1]/2):-1;",
 " var h='<div class=\"kick\">'+(s.k||'')+'</div>';",
 " if(s.cover)h+='<div class=\"cover\">'+s.cover+'</div>';",
-" else h+='<h2>'+(s.t||'')+'</h2><div class=\"content'+(s.grid?' g':'')+'\">'+s.i.map(function(x,i){return x.replace('class=\"item','class=\"item'+(seen[i*2]?' shown':'')+((EM!==1&&(EM===2?seen[i*2]:seen[i*2+1]))?' rv':'')+(i===cur?' cur':''))}).join('')+'</div>';",
+" else h+='<h2>'+(s.t||'')+'</h2><div class=\"content'+(s.grid?' g':'')+(s.lg?' lg':'')+'\">'+s.i.map(function(x,i){return x.replace('class=\"item','class=\"item'+(seen[i*2]?' shown':'')+((EM!==1&&(EM===2?seen[i*2]:seen[i*2+1]))?' rv':'')+(i===cur?' cur':''))}).join('')+'</div>';",
 " stage.innerHTML=h;",
 " var sh=stage.querySelector('.item.cur');if(sh)sh.scrollIntoView({behavior:'smooth',block:'nearest'});",
 " document.querySelectorAll('#tabs button').forEach(function(b,i){var on=i===s.p;b.classList.toggle('on',on);b.style.background=on?PH[i].c:''});",
