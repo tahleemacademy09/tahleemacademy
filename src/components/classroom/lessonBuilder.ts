@@ -132,7 +132,14 @@ function itemsFor(s: LessonSlide): string[] {
         return `<div class="item qq${e ? " hasen" : ""}">${rich(q)}${e ? `<div class="en">${rich(e)}</div>` : ""}</div>`;
       });
     case "notes":
-      return L.map(l => `<div class="item nt">${rich(l)}</div>`);
+      return L.map(l => {
+        /* "Arabic | English" pair → Arabic in the title font, English behind the EN button.
+           A line without Arabic before the "|" (older English-only notes) stays a plain note. */
+        const [a, e] = pair(l);
+        if (e && /[\u0600-\u06FF]/.test(a))
+          return `<div class="item na hasen"><p>${rich(a)}</p><div class="en">${rich(e)}</div></div>`;
+        return `<div class="item nt">${rich(l)}</div>`;
+      });
     case "memorise":
       return L.map(l => `<div class="item dd">${rich(l)}</div>`);
     default:
@@ -202,6 +209,8 @@ h1{font:700 clamp(32px,9vw,56px)/1.5 'Amiri',serif;color:var(--gold);margin:0;te
 .vc i{font-style:normal;direction:ltr;font-weight:600;font-size:15px;color:var(--ink)}
 .rd,.qq,.nt,.dd{background:var(--wash);border-right:4px solid var(--ph);border-radius:8px;padding:10px 16px}
 .rd p,.bb p{font:700 clamp(21px,5vw,27px)/2 'Amiri',serif;margin:0}
+.na{background:var(--wash);border-right:4px solid var(--ph);border-radius:8px;padding:10px 16px}
+.na p{font:700 clamp(21px,5vw,27px)/2 'Amiri',serif;margin:0}.na p b{color:var(--ph)}
 mark{background:rgba(169,121,30,.18);color:var(--ph);border-radius:5px;padding:0 5px;font-weight:700}
 .en{direction:ltr;text-align:left;color:var(--dim);font-size:clamp(14px,3.6vw,16px);line-height:1.7}
 /* The meaning stays hidden until its own click: first click = Arabic, next click = English */
