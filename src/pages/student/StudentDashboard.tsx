@@ -119,9 +119,14 @@ const timeAgo = (iso: string, ar: boolean) => {
 };
 
 /* ── Assignment data (single loader shared by the widget + the calendar) ── */
-async function loadAssignments(uid: string, level: string | null, termId: string | null) {
-  const { data: enrollments } = await supabase.from("enrollments").select("course_id").eq("user_id", uid);
-  const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id, levels").eq("is_active", true);
+async function loadAssignments(uid: string, level: string | null, termId: string | null, prefetchedEnrollments?: any[]) {
+  // Enrollments are already fetched by the dashboard batch; the timetable query is independent, so no waterfall.
+  const [enrRes, ttRes] = await Promise.all([
+    prefetchedEnrollments ? Promise.resolve({ data: prefetchedEnrollments }) : supabase.from("enrollments").select("course_id").eq("user_id", uid),
+    supabase.from("subject_timetable" as any).select("subject_id, levels").eq("is_active", true),
+  ]);
+  const enrollments: any[] | null = (enrRes as any).data;
+  const ttSlots: any[] | null = (ttRes as any).data;
   const ttIds = (ttSlots || []).filter((s: any) => {
     if (!s.levels || s.levels.length === 0) return true;
     return !!level && s.levels.includes(level);
@@ -431,7 +436,8 @@ const StudentDashboard = () => {
   const { settings, isExamsModuleEnabled, isTimetableModuleEnabled } = useAcademySettings();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true);          // core data (notifications, exams, stats)
+  const [asgLoading, setAsgLoading] = useState(true);     // assignments arrive separately, so they never block the page
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [attempts, setAttempts] = useState<any[]>([]);
@@ -583,7 +589,7 @@ const StudentDashboard = () => {
     const fetchData = async () => {
       setFetchError(null);
       // Fresh profile once per visit so a level / term change made elsewhere is picked up.
-      if (firstLoad.current && !isImpersonating) { firstLoad.current = false; await refreshProfile().catch(() => {}); }
+      if (firstLoad.current && !isImpersonating) { firstLoad.current = false; refreshProfile().catch(() => {}); } // not awaited: the batch below reads its own fresh profile row
       try {
         const uid = effectiveUserId;
 
@@ -591,23 +597,24 @@ const StudentDashboard = () => {
         const withTimeout = <T,>(p: Promise<T>, ms = 12000): Promise<T> =>
           Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
 
-        const [enrollRes, attemptsRes, notifsRes, assignedRes, studentProfileRes, yearRes, regsRes] = await withTimeout(Promise.all([
-          supabase.from("enrollments").select("id").eq("user_id", uid),
+        const [enrollRes, attemptsRes, notifsRes, assignedRes, studentProfileRes, yearRes, regsRes, currentTermRes] = await withTimeout(Promise.all([
+          supabase.from("enrollments").select("id, course_id").eq("user_id", uid),
           supabase.from("exam_attempts").select("id, exam_id, status, score, total_points, percentage, passed, submitted_at, exams(title, title_ar, type, term, session)").eq("user_id", uid).order("submitted_at", { ascending: false }),
           supabase.from("notifications").select("*").eq("user_id", uid).order("created_at", { ascending: false }).limit(20),
           supabase.from("exam_assignments").select("exam_id, extended_until, exams(*)").eq("user_id", uid),
           supabase.from("profiles").select("level, student_type, active_term_id").eq("user_id", uid).maybeSingle(),
           supabase.from("academic_years" as any).select("label").eq("is_current", true).maybeSingle(),
           supabase.from("subject_registrations").select("subject_id").eq("user_id", uid),
+          supabase.from("academic_terms").select("id").eq("is_current", true).maybeSingle(),
         ]));
 
         const sp: any = studentProfileRes?.data ?? null;
         const level: string | null = sp?.level || (displayProfile as any)?.level || null;
         let termId: string | null = viewingTermId || sp?.active_term_id || null;
-        if (!termId) {
-          const { data: ct } = await supabase.from("academic_terms").select("id").eq("is_current", true).maybeSingle();
-          termId = (ct as any)?.id || null;
-        }
+        if (!termId) termId = (currentTermRes?.data as any)?.id || null;
+
+        // Assignments only need level + term, so start them now and let them finish in the background.
+        const asgPromise = withTimeout(loadAssignments(uid, level, termId, (enrollRes.data as any[]) || [])).catch(() => null);
 
         // ── Exam eligibility — identical rules to the Exams page ──
         const sessionLabel = (yearRes?.data as any)?.label as string | undefined;
@@ -632,15 +639,18 @@ const StudentDashboard = () => {
             return true;
           });
 
-        const asg = await withTimeout(loadAssignments(uid, level, termId));
         if (cancelled) return;
 
         setEnrollmentCount(enrollRes.data?.length || 0);
         setAttempts(attemptsRes.data || []);
         setNotifications(notifsRes.data || []);
         setEligibleExams(eligible);
-        setAssignments(asg);
         setLoading(false);
+
+        const asg = await asgPromise;
+        if (cancelled) return;
+        if (asg) setAssignments(asg);
+        setAsgLoading(false);
       } catch (err) {
         if (cancelled) return;
         console.error("Dashboard data fetch error:", err);
@@ -799,19 +809,15 @@ const StudentDashboard = () => {
   const strokeDashoffset = circumference - ((stats.cgpa / 4.0) * circumference);
 
   // ── Loading / Pending State ─────────
-  if (loading) return (
-    <div style={{ background: CREAM, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ width: 40, height: 40, borderRadius: "50%", border: "4px solid #064E3B", borderTopColor: "transparent", animation: "spin .7s linear infinite" }} />
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-    </div>
-  );
+  // No full-page spinner: the header, greeting and quick actions need no data, so they show instantly
+  // and each data section shows its own skeleton until its data arrives.
 
   if (fetchError) return (
     <div className="container mx-auto flex flex-col items-center justify-center px-4 py-24 text-center">
       <AlertTriangle className="mb-4 h-12 w-12 text-destructive" aria-hidden="true" />
       <h2 className="mb-2 text-xl font-bold">{t("Something went wrong", "حدث خطأ ما")}</h2>
       <p className="mb-6 max-w-sm text-muted-foreground">{fetchError}</p>
-      <Button onClick={() => { setLoading(true); setFetchError(null); setReloadKey(k => k + 1); }}>
+      <Button onClick={() => { setLoading(true); setAsgLoading(true); setFetchError(null); setReloadKey(k => k + 1); }}>
         {t("Try Again", "حاول مجدداً")}
       </Button>
     </div>
@@ -1017,20 +1023,28 @@ const StudentDashboard = () => {
         {dashTab === "assignments" && (
           <>
         {/* ── Assignments ── */}
-        <AssignmentPreview items={assignments.list} subs={assignments.subs} loading={false} t={t} language={language} navigate={navigate} />
+        <AssignmentPreview items={assignments.list} subs={assignments.subs} loading={asgLoading} t={t} language={language} navigate={navigate} />
           </>
         )}
         {dashTab === "notifications" && (
           <>
         {/* ── Notifications ── */}
-        <NotificationsCard items={notifications} unread={unreadCount} expanded={showAllNotifs} onToggle={() => setShowAllNotifs(v => !v)}
-          onRead={markAsRead} onReadAll={markAllAsRead} t={t} language={language} />
+        {loading ? (
+          <SectionCard icon={Bell} title={t("Notifications", "الإشعارات")}><RowSkeleton rows={3} /></SectionCard>
+        ) : (
+          <NotificationsCard items={notifications} unread={unreadCount} expanded={showAllNotifs} onToggle={() => setShowAllNotifs(v => !v)}
+            onRead={markAsRead} onReadAll={markAllAsRead} t={t} language={language} />
+        )}
           </>
         )}
 
         {/* ── Upcoming exams ── */}
         {(isExamsModuleEnabled || isPrivileged) && (
-          <ExamsPreview exams={upcomingExams} t={t} language={language} navigate={navigate} />
+          loading ? (
+            <SectionCard icon={ClipboardList} title={t("Upcoming Exams", "الامتحانات القادمة")}><RowSkeleton rows={2} /></SectionCard>
+          ) : (
+            <ExamsPreview exams={upcomingExams} t={t} language={language} navigate={navigate} />
+          )
         )}
 
         {/* ── Islamic Daily Feed (Quran · Hadith · Tawheed · Seerah · Events · News) ── */}
@@ -1039,6 +1053,7 @@ const StudentDashboard = () => {
         {/* ── Academic Snapshot (released results only — matches Transcripts) ── */}
         <SectionCard icon={TrendingUp} title={t("Academic Snapshot", "نظرة أكاديمية")} noPad
           right={stats.session ? <span style={{ fontSize:10, fontWeight:800, color:MID_GREEN, background:"#e8f3ec", border:"1px solid #bcd9c5", padding:"3px 10px", borderRadius:20 }}>{stats.session}</span> : undefined}>
+          {loading ? <div style={{ padding:"18px 16px" }}><RowSkeleton rows={3} /></div> : (
           <div style={{ padding:"18px 16px" }}>
             <div style={{ display:"flex", alignItems:"center", gap:18, flexWrap:"wrap" as const }}>
               <div style={{ position:"relative", flexShrink:0 }}>
@@ -1091,6 +1106,7 @@ const StudentDashboard = () => {
               </div>
             )}
           </div>
+          )}
         </SectionCard>
 
         {/* ── Academic Calendar ── */}
