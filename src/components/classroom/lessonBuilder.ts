@@ -197,8 +197,8 @@ html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--
 #prog{height:3px;background:var(--line)}#prog i{display:block;height:100%;width:0;background:var(--ph);transition:width .4s}
 #ghost{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;overflow:hidden}
 #ghost span{font:700 min(36vw,330px)/1 'Amiri',serif;color:var(--gold);opacity:.07;white-space:nowrap}
-#wrap{position:fixed;inset:calc(78px + env(safe-area-inset-top,0px)) 0 calc(66px + env(safe-area-inset-bottom,0px)) 0;display:flex;justify-content:center;padding:10px;z-index:3}
-#stage{width:min(100%,900px);background:var(--card);border:1px solid var(--line);border-top:5px solid var(--ph);border-radius:14px;padding:22px 20px;box-shadow:0 6px 24px rgba(15,45,31,.08);overflow-y:auto;cursor:pointer;scrollbar-width:none;display:flex;flex-direction:column}
+#wrap{position:fixed;inset:calc(78px + env(safe-area-inset-top,0px)) 0 calc(66px + env(safe-area-inset-bottom,0px)) 0;display:flex;justify-content:center;padding:0;z-index:3}
+#stage{width:min(100%,900px);background:transparent;border:0;border-radius:0;padding:12px 18px 16px;box-shadow:none;overflow-y:auto;cursor:pointer;scrollbar-width:none;display:flex;flex-direction:column}
 #stage::-webkit-scrollbar{display:none}
 .kick{font:700 14px 'Amiri',serif;color:var(--ph);letter-spacing:.02em}
 h2{font:700 clamp(22px,5vw,30px)/1.5 'Amiri',serif;margin:2px 0 14px;padding-bottom:10px;border-bottom:1px solid var(--line)}
