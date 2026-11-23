@@ -8,6 +8,10 @@
 //  • The verses to recite are exactly the ones the admin assigned for today (the page passes them in already clipped);
 //    the printed Madinah Mushaf page(s) are shown with ONLY those verses covered and uncovered word by word.
 //  • Strict mode (as in the admin test): a skipped / wrong word buzzes, says "خطأ" and waits until it is corrected.
+//  • The microphone NEVER stops because of a mistake: a verse restart only rewinds the words on screen (the recogniser keeps
+//    running), and every recogniser hiccup (busy engine, dropped network, silence timeout) heals itself — the reciter is
+//    only paused for a real, permanent failure (permission refused).
+//  • Between two surahs on one page the Bismillah may be read — it is never a mistake (see revealEngine).
 //  • The page's own recorder keeps recording the audio on the same microphone. Some phones will not let speech
 //    recognition and a recorder share the microphone, so this component watches both and tells the page (see
 //    onMicConflict / onAudioSilent) — the recitation is never lost either way.
@@ -109,11 +113,13 @@ function mistakesIn(s: RevealState, a: number, b: number): number {
   if (s.blocked && s.cursor >= a && s.cursor < b) n++;
   return n;
 }
+/** a second mistake in one verse sends the reader back to that verse's first word (switch off: localStorage hifdh_verse_restart = "0") */
+const verseRestartOn = (): boolean => { try { return localStorage.getItem("hifdh_verse_restart") !== "0"; } catch { return true; } };
 /** wipe the verse [a,b) back to "not recited yet" and drop its mistakes from the count (mutates `s`) */
 function resetVerse(s: RevealState, a: number, b: number) {
   const removed = mistakesIn(s, a, b);
   for (let i = a; i < b; i++) { s.status[i] = "pending"; s.heard[i] = null; s.fixed[i] = false; }
-  if (s.cursor >= a) { s.cursor = a; s.blocked = false; s.junk = []; }
+  if (s.cursor >= a) { s.cursor = a; s.blocked = false; s.junk = []; s.pre = 0; s.preAt = a; }   // the Bismillah before this verse may be read again
   s.errors = Math.max(0, s.errors - removed);
 }
 
@@ -225,6 +231,10 @@ export default function DailyReadReveal({
   const committed = useRef<RevealState>(initialState(0));
   const processed = useRef(0);
   const lastFinal = useRef<string[]>([]);
+  const dropRef = useRef<{ idx: number; n: number } | null>(null);   // words of the still-open recogniser result that belong to a verse the reader just restarted
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const failStreak = useRef(0);          // recogniser failures in a row with no word heard in between
+  const softNote = useRef(false);        // the banner currently shows a self-healing notice (e.g. connection lost)
   const heardLog = useRef<string[]>([]);
   const restarts = useRef<number[]>([]);
   const errBuzzed = useRef(0);
@@ -262,13 +272,19 @@ export default function DailyReadReveal({
   }, []);
 
   /** Choose the recogniser alternative that advances the passage best (ar-SA often hears the right word as alt #2). */
-  function pickAlt(res: SRResult, base: RevealState, final: boolean) {
+  /** the words of result #idx that are new: without those thrown away by a verse restart, or repeated from the previous final result */
+  function freshOf(idx: number, full: string[]): string[] {
+    const d = dropRef.current;
+    if (d && d.idx === idx) return full.slice(Math.min(d.n, full.length));
+    return stripCumulative(lastFinal.current, full);
+  }
+  function pickAlt(res: SRResult, base: RevealState, final: boolean, idx: number) {
     let best: { full: string[]; fresh: string[] } | null = null;
     let bestGain = -Infinity;
     const count = final ? res.length : 1;
     for (let a = 0; a < count; a++) {
       const full = tokenize(res[a].transcript);
-      const fresh = stripCumulative(lastFinal.current, full);
+      const fresh = freshOf(idx, full);
       const gain = stateScore(feed(wordsRef.current, cloneState(base), fresh, final, true)) - stateScore(base);
       if (gain > bestGain) { bestGain = gain; best = { full, fresh }; }
     }
@@ -276,21 +292,23 @@ export default function DailyReadReveal({
   }
 
   function onResult(e: SREvent) {
-    gotResults.current++; deafSecs.current = 0;
+    gotResults.current++; deafSecs.current = 0; failStreak.current = 0;
+    if (softNote.current) { softNote.current = false; setVerseNote(null); }
     const res = e.results;
     const w = wordsRef.current;
     const c = committed.current;
     while (processed.current < res.length && res[processed.current].isFinal) {
-      const pick = pickAlt(res[processed.current], c, true);
+      const pick = pickAlt(res[processed.current], c, true, processed.current);
       feed(w, c, pick.fresh, true, true);
       if (pick.full.length) { lastFinal.current = pick.full; heardLog.current.push(pick.fresh.join(" ")); }
+      if (dropRef.current && dropRef.current.idx <= processed.current) dropRef.current = null;
       processed.current++;
     }
     let shown = c;
     if (processed.current < res.length) {
       shown = cloneState(c);
       for (let i = processed.current; i < res.length; i++) {
-        feed(w, shown, stripCumulative(lastFinal.current, tokenize(res[i][0].transcript)), false, true);
+        feed(w, shown, freshOf(i, tokenize(res[i][0].transcript)), false, true);
       }
     }
     setView(cloneState(shown));
@@ -303,16 +321,19 @@ export default function DailyReadReveal({
         // second mistake in the same verse → that verse must be recited again from its first word
         if (shown.blocked && shown.cursor < w.length) {
           const [va, vb] = verseRange(w, shown.cursor);
-          if (mistakesIn(shown, va, vb) >= 2) {
+          if (verseRestartOn() && mistakesIn(shown, va, vb) >= 2) {
+            // Keep everything heard so far — words still in the open result included — and wipe ONLY this verse. The recogniser is
+            // left running (stopping and restarting it is what used to leave the microphone dead until Resume was pressed); the
+            // words it has already heard for the bad attempt are simply ignored from here on.
+            if (shown !== c) Object.assign(c, cloneState(shown));
             resetVerse(c, va, vb);
+            if (processed.current < res.length) dropRef.current = { idx: processed.current, n: tokenize(res[processed.current][0].transcript).length };
             errBuzzed.current = c.errors; pendingErr.current = null;
             setView(cloneState(c)); setShowAnswer(false); setBannerOpen(false);
             setVerseNote(`أخطأتَ أكثر من مرة في الآية ${w[va].ayah} — أعد تلاوتها من أولها. ﴿وَرَتِّلِ الْقُرْآنَ تَرْتِيلًا﴾`);
             if (verseNoteTimer.current) clearTimeout(verseNoteTimer.current);
             verseNoteTimer.current = setTimeout(() => setVerseNote(null), 8000);
             alarm();
-            hardStop();   // a fresh recognition session, so words still in flight from the bad attempt are dropped
-            setTimeout(() => { if (!pausedRef.current && !finishedRef.current) begin(); }, 350);
             return;
           }
         }
@@ -334,7 +355,7 @@ export default function DailyReadReveal({
   function spawn(SR: SRCtor) {
     const rec = new SR();
     rec.lang = "ar-SA"; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 3;
-    processed.current = 0; lastFinal.current = []; gotResults.current = 0;
+    processed.current = 0; lastFinal.current = []; gotResults.current = 0; dropRef.current = null;
     rec.onresult = onResult;
     rec.onerror = (ev) => {
       if (ev.error === "audio-capture" && !conflictHandled.current && audioOnRef.current) {
@@ -342,32 +363,48 @@ export default function DailyReadReveal({
         conflictHandled.current = true;
         hardStop();
         onMicConflict();
-        setTimeout(() => { if (!pausedRef.current && !finishedRef.current) begin(); }, 500);
+        retryListening(400);
         return;
       }
+      // Permanent: the person said no. Only here does the reciter stop and ask for a manual resume.
       const fatal: Record<string, string> = {
-        "not-allowed": "لم يُسمح باستخدام الميكروفون. اسمح به من إعدادات المتصفح ثم أعد تحميل الصفحة.",
+        "not-allowed": "لم يُسمح باستخدام الميكروفون. اسمح به من إعدادات المتصفح أو التطبيق ثم اضغط استئناف.",
         "service-not-allowed": "خدمة التعرّف على الصوت غير متاحة على هذا الجهاز.",
-        "audio-capture": "لا يوجد ميكروفون، أو أن تطبيقًا آخر يستخدمه.",
-        "network": "لا حول ولا قوة إلا بالله — انقطع الاتصال بالإنترنت. ﴿وَاصْبِرْ فَإِنَّ اللَّهَ لَا يُضِيعُ أَجْرَ الْمُحْسِنِينَ﴾ تحقّق من الشبكة ثم اضغط استئناف.",
       };
       const f = fatal[ev.error];
-      if (f) { hardStop(); setError(f); onPause(); }
+      if (f) { hardStop(); setError(f); onPause(); return; }
+      // Everything else heals itself: a busy engine, a dropped connection, a silence time-out. Try again at once (a little slower
+      // each time); only after many failures in a row with not one word heard in between is the reader paused, with a clear message.
+      if (ev.error === "no-speech" || ev.error === "aborted") return;   // the session simply ends; onend restarts it
+      failStreak.current++;
+      if (failStreak.current > 12) {
+        hardStop();
+        setError(ev.error === "network" ? "انقطع الاتصال بالإنترنت. تحقّق من الشبكة ثم اضغط استئناف." : "تعذّر تشغيل الميكروفون. تأكّد أن تطبيقًا آخر لا يستخدمه ثم اضغط استئناف.");
+        failStreak.current = 0; onPause();
+        return;
+      }
+      if (ev.error === "network" && failStreak.current >= 2) { softNote.current = true; setVerseNote("انقطع الاتصال بالإنترنت — يُعاد الاتصال تلقائيًا، تابع التلاوة عند عودته."); }
+      hardStop();
+      retryListening(Math.min(2500, 250 * failStreak.current));
     };
     rec.onend = () => {
       if (!listeningRef.current || recRef.current !== rec) return;
-      // Chrome ends sessions on silence — restart, but give up if it keeps dying immediately
+      // The engine ends its session on silence — start the next one right away (no gap in which words could be lost).
       const now = Date.now();
       restarts.current = [...restarts.current.filter((x) => now - x < 4000), now];
       if (restarts.current.length > 5) {
         hardStop();
         if (audioOnRef.current && !conflictHandled.current) {   // most likely the recorder is in the way
           conflictHandled.current = true; onMicConflict();
-          setTimeout(() => { if (!pausedRef.current && !finishedRef.current) begin(); }, 500);
-        } else { setError("توقّف التعرّف على الصوت. اضغط استئناف للمحاولة من جديد."); onPause(); }
+          retryListening(400);
+        } else {
+          failStreak.current++;
+          if (failStreak.current > 12) { setError("توقّف التعرّف على الصوت. اضغط استئناف للمحاولة من جديد."); failStreak.current = 0; onPause(); }
+          else retryListening(1000);
+        }
         return;
       }
-      setTimeout(() => { if (listeningRef.current && recRef.current === rec) spawn(SR); }, 200);
+      setTimeout(() => { if (listeningRef.current && recRef.current === rec) spawn(SR); }, 40);
     };
     recRef.current = rec;
     try {
@@ -378,7 +415,18 @@ export default function DailyReadReveal({
         sharedTrack.current = t;
         rec.start(t);
       } else rec.start();
-    } catch { hardStop(); setError("تعذّر تشغيل الميكروفون."); onPause(); }
+    } catch {
+      // starting threw (engine still busy): same self-healing path
+      failStreak.current++;
+      hardStop();
+      if (failStreak.current > 12) { setError("تعذّر تشغيل الميكروفون."); failStreak.current = 0; onPause(); }
+      else retryListening(Math.min(2500, 250 * failStreak.current));
+    }
+  }
+  /** start listening again shortly — unless the reader was paused / finished in the meantime */
+  function retryListening(ms: number) {
+    if (retryTimer.current) clearTimeout(retryTimer.current);
+    retryTimer.current = setTimeout(() => { retryTimer.current = null; if (!pausedRef.current && !finishedRef.current) begin(); }, ms);
   }
   const getAudioTrackRef = useRef(getAudioTrack); getAudioTrackRef.current = getAudioTrack;
   const sharedTrack = useRef<MediaStreamTrack | null>(null);
@@ -388,6 +436,7 @@ export default function DailyReadReveal({
     const SR = getSR();
     if (!SR || !wordsRef.current.length) return;
     setError(null);
+    if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null; }
     hardStop();
     listeningRef.current = true; restarts.current = [];
     (navigator as Navigator & { wakeLock?: { request(t: "screen"): Promise<{ release(): Promise<void> }> } })
@@ -399,13 +448,14 @@ export default function DailyReadReveal({
   const ready = !waitingPages && words.length > 0;
   useEffect(() => {
     if (!ready || finishedRef.current) return;
-    if (paused) { hardStop(); return; }
+    if (paused) { if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null; } hardStop(); return; }
+    failStreak.current = 0;
     warmKhata();
     begin();
     return () => hardStop();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, paused]);
-  useEffect(() => () => { hardStop(); if (doneTimer.current) clearTimeout(doneTimer.current); if (verseNoteTimer.current) clearTimeout(verseNoteTimer.current); }, [hardStop]);
+  useEffect(() => () => { hardStop(); if (retryTimer.current) clearTimeout(retryTimer.current); if (doneTimer.current) clearTimeout(doneTimer.current); if (verseNoteTimer.current) clearTimeout(verseNoteTimer.current); }, [hardStop]);
 
   // Watchdog (1 s): tells apart "the recogniser is deaf" and "the recorder only gets silence" — the two ways the shared microphone can fail.
   useEffect(() => {
