@@ -26,6 +26,7 @@ import { mergeAudioSegments } from "@/lib/mergeAudioSegments";
 import { startListening } from "@/lib/browserSpeech";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
 import HifdhLiveClass from "@/components/hifdh/HifdhLiveClass";
+import { prefetchGlyphPage } from "@/components/quran/mushafGlyphs";
 import DailyReadReveal, { readRevealSupported, type RevealHandle, type RevealFinish } from "@/components/hifdh/DailyReadReveal";
 import {
   ArrowLeft, Mic, MicOff, BookOpen, CalendarDays, Clock, Trophy,
@@ -2210,7 +2211,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       const revealMode = true;
       revealOnRef.current = true; setRevealOn(true); setRevealAudioOn(RECORD_AUDIO);
       revealNoAudioRef.current = !RECORD_AUDIO; revealSilentRef.current = false; revealGradeRef.current = null; revealHeardRef.current = null;
-      try { await clearSavedRecording(userId, todayISO()); } catch { /* noop */ } resume = false;   // a reveal grading cannot be continued from a half recording
+      // storage clean-up runs while the microphone is being opened (it used to be awaited twice, one after the other, before anything showed)
+      const clearP = clearSavedRecording(userId, todayISO()).catch(() => undefined); resume = false;   // a reveal grading cannot be continued from a half recording
       const info = resume ? resumeInfoRef.current : null;
       const carry = info ? info.secs : 0;
       if (info) {
@@ -2220,7 +2222,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         resumeInfoRef.current = null; setSavedRec(null);
       } else {
         prevSegsRef.current = []; resumeInfoRef.current = null; setSavedRec(null);
-        await clearSavedRecording(userId, todayISO());
       }
       setAudioUrl(null); setSavedAudioUrl(null); audioChunks.current = []; audioBlobRef.current = null; audioStorageUrlRef.current = null;
       if (RECORD_AUDIO) {
@@ -2368,6 +2369,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       try { stream.getAudioTracks().forEach(t => { t.onended = () => { if (mediaRecRef.current === mr) { if (revealOnRef.current) finishReveal(); else handleStop(); } }; }); } catch { /* noop */ }
       startMeter(stream);   // Read & Reveal listens by itself; here we only watch the recorder's loudness
       }
+      await clearP;
       setIsRecording(true);
       setRecSecs(carry);                   // resume from previous session's elapsed time
       recSecsRef.current = carry;
@@ -5063,6 +5065,13 @@ export default function HifdhDailyRevisionPage({ embedded = false }: { embedded?
   /* ── Derived ── */
   const todayPages   = assignment ? getTodayPages(assignment)        : [];
   const cycleInfo    = assignment ? getTodayCycleInfo(assignment)     : null;
+  // Warm today's printed Mushaf pages (verse data + page font) the moment the session is known, so the recitation screen
+  // opens fully drawn when Start is tapped instead of showing a spinner while they download.
+  const pagesWarmKey = todayPages.join(",");
+  useEffect(() => {
+    if (!pagesWarmKey) return;
+    pagesWarmKey.split(",").map(Number).filter(Boolean).slice(0, 12).forEach(prefetchGlyphPage);
+  }, [pagesWarmKey]);
   const programDays  = assignment ? buildProgramDays(assignment,logs,today) : [];
   const doneDays     = programDays.filter(d=>d.status==="done");
   const missedDays   = programDays.filter(d=>d.status==="missed");
