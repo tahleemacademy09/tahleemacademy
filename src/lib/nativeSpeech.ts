@@ -33,6 +33,14 @@ interface NativePlugin {
 }
 const Native = registerPlugin<NativePlugin>("SpeechRecognition");
 
+/* Android's recogniser is ONE shared engine: a start() that lands while the previous session is still being stopped is refused
+ * ("recognizer busy") — the reciter then looked like it had died and had to be resumed by hand. Every start / stop therefore goes
+ * through one queue, and a new session begins only after the previous stop has finished and the engine had a moment to settle. */
+let chain: Promise<unknown> = Promise.resolve();
+const queue = <T>(fn: () => Promise<T>): Promise<T> => { const p = chain.then(fn, fn); chain = p.catch(() => undefined); return p; };
+const settle = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+let permissionOk = false;   // asked once per app run — asking again on every restart only adds delay
+
 /** true inside the installed app when this build contains the native speech plugin */
 export const nativeSpeechAvailable = (): boolean => {
   try { return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable("SpeechRecognition"); } catch { return false; }
@@ -82,10 +90,15 @@ class NativeSpeech implements SpeechInstance {
   start() {
     if (this.alive) return;
     this.alive = true; this.last = []; this.finalSent = false;
-    void (async () => {
+    void queue(async () => {
+      if (!this.alive) return;                       // aborted while waiting for its turn
       try {
-        const perm = await Native.requestPermissions().catch(() => null);
-        if (perm && perm.speechRecognition === "denied") { this.fail("not-allowed"); return; }
+        if (!permissionOk) {
+          const perm = await Native.requestPermissions().catch(() => null);
+          if (perm && perm.speechRecognition === "denied") { this.fail("not-allowed"); return; }
+          permissionOk = true;
+        }
+        if (!this.alive) return;
         this.handles.push(await Native.addListener("partialResults", (e: { matches?: string[] }) => {
           if (!this.alive) return;
           const m = (e?.matches ?? []).filter((x) => typeof x === "string" && x.trim());
@@ -103,24 +116,27 @@ class NativeSpeech implements SpeechInstance {
           // the session is over either way: 'listeningState: stopped' normally follows, but do not rely on it
           setTimeout(() => this.end(), 150);
         }));
-        await Native.start({ language: this.lang, maxResults: this.maxAlternatives, partialResults: true, popup: false });
+        if (!this.alive) { this.cleanup(); return; }
+        // not awaited: with some plugin versions this promise only settles when the session ends, and a stop() queued behind it would never run
+        Native.start({ language: this.lang, maxResults: this.maxAlternatives, partialResults: true, popup: false })
+          .catch((err) => this.fail(mapError("", String((err as { message?: string })?.message ?? err))));
       } catch (err) {
         const msg = String((err as { message?: string })?.message ?? err);
         this.fail(mapError("", msg));
       }
-    })();
+    });
   }
   private fail(code: string) {
     if (!this.alive) return;
     this.onerror?.({ error: code });
     this.end();
   }
-  stop() { void Native.stop().catch(() => { /* ended already */ }); setTimeout(() => this.end(), 1200); }
+  stop() { void queue(async () => { await Native.stop().catch(() => { /* ended already */ }); }); setTimeout(() => this.end(), 1200); }
   abort() {
     // the screens clear their handlers before aborting, so nothing is reported
     this.onresult = null; this.onerror = null; this.onend = null;
     this.alive = false; this.cleanup();
-    void Native.stop().catch(() => { /* noop */ });
+    void queue(async () => { await Native.stop().catch(() => { /* noop */ }); await settle(150); });   // the next session waits for this one to be gone
   }
 }
 

@@ -30,6 +30,7 @@ export interface RevealState {
   errors: number;             // number of mistakes made so far (strict mode)
   fixed: boolean[];           // word was recited correctly only after a mistake
   pre: number;                // how far the optional opening (isti'adha / Bismillah) has been heard — never graded
+  preAt: number;              // the cursor position that opening belongs to (0 = start of the passage, or the first word of a later surah)
 }
 
 export const LOOKAHEAD = 3;
@@ -54,11 +55,12 @@ export const initialState = (n: number): RevealState => ({
   errors: 0,
   fixed: new Array(n).fill(false),
   pre: 0,
+  preAt: 0,
 });
 
 export const cloneState = (s: RevealState): RevealState => ({
   status: s.status.slice(), heard: s.heard.slice(), cursor: s.cursor, junk: s.junk.slice(),
-  blocked: s.blocked, errors: s.errors, fixed: s.fixed.slice(), pre: s.pre,
+  blocked: s.blocked, errors: s.errors, fixed: s.fixed.slice(), pre: s.pre, preAt: s.preAt,
 });
 
 const grade = (sim: number): RevealStatus | null => (sim >= OK_T ? "ok" : sim >= CHECK_T ? "close" : null);
@@ -81,12 +83,35 @@ const PRE_WORDS = ["أعوذ", "بالله", "من", "الشيطان", "الرج
 /** where the opening may begin: the isti'adha (0) or straight at the Bismillah (5) */
 const PRE_STARTS = [0, 5];
 
-function takePreamble(s: RevealState, token: string): boolean {
-  if (s.cursor !== 0 || s.pre >= PRE_WORDS.length) return false;
+/**
+ * The first word of a surah that follows ANOTHER surah inside the passage (a Mushaf page can hold the end of one surah and the
+ * start of the next). The reader says the Bismillah there; it is not part of either surah's verses, so it must never be a
+ * mistake. (Al-Fatiha's Bismillah is verse 1 itself, so it is graded like any word.)
+ */
+function bismillahBoundary(words: RevealWord[], i: number): boolean {
+  if (i <= 0 || i >= words.length) return false;
+  const w = words[i], p = words[i - 1];
+  return w.surah !== undefined && p.surah !== undefined && w.surah !== p.surah && w.ayah === 1 && w.idxInAyah === 0 && w.surah !== 1;
+}
+const inOpeningSlot = (words: RevealWord[], s: RevealState) => s.cursor === 0 || bismillahBoundary(words, s.cursor);
+
+function takePreamble(words: RevealWord[], s: RevealState, token: string): boolean {
+  if (!inOpeningSlot(words, s) || s.pre >= PRE_WORDS.length && s.preAt === s.cursor) return false;
+  if (s.preAt !== s.cursor) { s.preAt = s.cursor; s.pre = 0; }   // progress belongs to the place it was heard at
+  if (s.pre >= PRE_WORDS.length) return false;
   const first = s.pre === 0;
+  const starts = s.cursor === 0 ? PRE_STARTS : [5];             // between surahs only the Bismillah is said, never the isti'adha
   for (let j = s.pre; j < PRE_WORDS.length; j++) {
-    if (first ? !PRE_STARTS.includes(j) : j > s.pre + 1) continue;   // after the first word, allow at most one skipped word
+    if (first ? !starts.includes(j) : j > s.pre + 1) continue;   // after the first word, allow at most one skipped word
     if (grade(sim(PRE_WORDS[j], token))) { s.pre = j + 1; return true; }
+  }
+  // the recogniser glued the whole (rest of the) opening into one token: "بسمالله الرحمنالرحيم"
+  if (token.length >= 6) {
+    for (let j = s.pre; j < PRE_WORDS.length - 1; j++) {
+      if (first ? !starts.includes(j) : j > s.pre + 1) continue;
+      const glued = soundKey(PRE_WORDS.slice(j).map((w) => w.text).join(""));
+      if (similarity(glued, token) >= 0.85) { s.pre = PRE_WORDS.length; return true; }
+    }
   }
   return false;
 }
@@ -106,6 +131,10 @@ function step(words: RevealWord[], s: RevealState, rawToken: string, next: strin
   if (s.cursor >= n) return 1;
   const token = soundKey(rawToken);
   if (!token || token === ERR_KEY) return 1;
+
+  // a Bismillah already under way (at the start, or between two surahs) keeps being read as the Bismillah — even where one of
+  // its words ("الله", "الرحمن") also happens to be the next verse's first word
+  if (s.pre > 0 && s.preAt === s.cursor && inOpeningSlot(words, s) && takePreamble(words, s, token)) return 1;
 
   /** Accept the word at the cursor. After a mistake it counts as "close" (corrected), never a clean "ok". */
   const accept = (g: RevealStatus, heard: string) => {
@@ -136,7 +165,7 @@ function step(words: RevealWord[], s: RevealState, rawToken: string, next: strin
   if (g) { accept(g, rawToken); return 1; }
 
   // 1b. the optional isti'adha / Bismillah before the first verse: accept it silently
-  if (takePreamble(s, token)) return 1;
+  if (takePreamble(words, s, token)) return 1;
 
   // 2. the recogniser split one word in two ("و" + "لم" for "ولم") → try joining with the next token
   if (next) {

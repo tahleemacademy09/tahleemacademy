@@ -100,3 +100,44 @@ describe("revealEngine", () => {
     });
   });
 });
+
+describe("Bismillah between two surahs on one page", () => {
+  const B = [{ n: 1, text: "قُلْ أَعُوذُ بِرَبِّ ٱلنَّاسِ" }, { n: 2, text: "مَلِكِ ٱلنَّاسِ" }];
+  const WS = [
+    ...buildWords([{ n: 5, text: "مِنَ ٱلْجِنَّةِ وَٱلنَّاسِ" }]).map((w) => ({ ...w, surah: 114 - 1 })),
+    ...buildWords(B).map((w) => ({ ...w, surah: 114 })),
+  ];
+  const strict = (text: string) => feed(WS, initialState(WS.length), tokenize(text), true, true);
+  const upTo = 3;   // the 3 words of the previous surah
+  it("reading the Bismillah before the new surah is not a mistake", () => {
+    const s = strict("من الجنه والناس بسم الله الرحمن الرحيم قل اعوذ برب الناس");
+    expect(s.errors).toBe(0);
+    expect(s.blocked).toBe(false);
+    expect(s.cursor).toBe(WS.length - 2);
+  });
+  it("going straight into the new surah is also fine", () => {
+    const s = strict("من الجنه والناس قل اعوذ برب الناس ملك الناس");
+    expect(s.errors).toBe(0);
+    expect(summarize(s).done).toBe(true);
+  });
+  it("a glued Bismillah is accepted", () => {
+    const s = strict("من الجنه والناس بسم الله الرحمن الرحيم قل");
+    expect(s.cursor).toBe(upTo + 1);
+    const g = strict("من الجنه والناس بسمالله الرحمنالرحيم قل");
+    expect(g.errors).toBe(0);
+    expect(g.cursor).toBe(upTo + 1);
+  });
+  it("a surah starting with a Bismillah word (الرحمن) does not swallow the Bismillah's word", () => {
+    const R = [
+      ...buildWords([{ n: 7, text: "وَٱلسَّمَآءَ رَفَعَهَا" }]).map((w) => ({ ...w, surah: 54 })),
+      ...buildWords([{ n: 1, text: "ٱلرَّحْمَٰنُ" }, { n: 2, text: "عَلَّمَ ٱلْقُرْءَانَ" }]).map((w) => ({ ...w, surah: 55 })),
+    ];
+    const s = feed(R, initialState(R.length), tokenize("والسماء رفعها بسم الله الرحمن الرحيم الرحمن علم القران"), true, true);
+    expect(s.errors).toBe(0);
+    expect(summarize(s).done).toBe(true);
+  });
+  it("without a Bismillah being read, a wrong word is still caught at the boundary", () => {
+    const s = strict("من الجنه والناس بلا");
+    expect(s.blocked).toBe(true);
+  });
+});
