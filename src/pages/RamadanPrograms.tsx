@@ -1,11 +1,15 @@
 import { lazy, Suspense, useState } from "react";
-import { Moon, Sparkles, BookOpen, Users, Mic, Loader2, EyeOff, FileAudio } from "lucide-react";
+import { Moon, Sparkles, BookOpen, Users, Mic, Loader2, EyeOff, FileAudio, Map as MapIcon } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 
 // Loaded only for admins, so other roles never download the tools.
 const RecitationReveal = lazy(() => import("@/components/ramadan/RecitationReveal"));
 const RecitationChecker = lazy(() => import("@/components/ramadan/RecitationChecker"));
+const RamadanJourney = lazy(() => import("@/components/ramadan/RamadanJourney"));
+
+/** Flip to true to open the Journey to every student (admins always see it). */
+const JOURNEY_PUBLIC = false;
 
 /** "Coming soon" screen shown to everyone except admins. */
 function ComingSoon() {
@@ -55,20 +59,21 @@ const Spinner = () => (
   </div>
 );
 
-type Tab = "reveal" | "check";
+type Tab = "journey" | "reveal" | "check";
 
 /** Admin tools: live Read & Reveal + recording-based word check. */
 function AdminTools() {
   const { t, dir } = useLanguage();
-  const [tab, setTab] = useState<Tab>("reveal");
+  const [tab, setTab] = useState<Tab>("journey");
   const tabs = [
+    { id: "journey" as const, icon: MapIcon, en: "Journey",         ar: "الرحلة" },
     { id: "reveal" as const, icon: EyeOff,    en: "Read & Reveal",   ar: "اقرأ وستظهر" },
     { id: "check" as const,  icon: FileAudio, en: "Recording Check", ar: "فحص التسجيل" },
   ];
   return (
     <div dir={dir}>
       <div className="mx-auto max-w-2xl px-4 pt-4">
-        <div className="grid grid-cols-2 gap-1 rounded-2xl bg-gray-100 p-1" role="tablist">
+        <div className="grid grid-cols-3 gap-1 rounded-2xl bg-gray-100 p-1" role="tablist">
           {tabs.map(({ id, icon: Icon, en, ar }) => (
             <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
               className="inline-flex h-11 items-center justify-center gap-2 rounded-xl text-sm font-bold transition"
@@ -79,7 +84,7 @@ function AdminTools() {
         </div>
       </div>
       <Suspense fallback={<Spinner />}>
-        {tab === "reveal" ? <RecitationReveal /> : <RecitationChecker />}
+        {tab === "journey" ? <RamadanJourney /> : tab === "reveal" ? <RecitationReveal /> : <RecitationChecker />}
       </Suspense>
     </div>
   );
@@ -89,6 +94,10 @@ function AdminTools() {
 export default function RamadanPrograms() {
   const { loading, hasRole } = useAuth();
   if (loading) return <Spinner />;
-  if (!hasRole("admin")) return <ComingSoon />;
+  if (!hasRole("admin")) {
+    return JOURNEY_PUBLIC
+      ? <Suspense fallback={<Spinner />}><RamadanJourney /></Suspense>
+      : <ComingSoon />;
+  }
   return <AdminTools />;
 }
