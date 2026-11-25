@@ -17,13 +17,15 @@ import { Burst, GOLD, GOLD_D, GREEN, GREEN_D, Glyph, NIGHT, SceneArt, buzz } fro
    Layout: the path runs BOTTOM → TOP (day 1 at the bottom, the gate of Eid at the top, under the moon).
    ════════════════════════════════════════════════════════════════════════════════════════════ */
 
-const W = 360, STEP = 122, BOTTOM = 130, TOP = 190;
-const H = BOTTOM + TOTAL_DAYS * STEP + TOP;
-const nodeX = (i: number) => (i >= TOTAL_DAYS ? W / 2 : W / 2 + Math.sin((i + 1) * 0.95) * 100);   // i = 0…29 days, 30 = Eid gate
-const nodeY = (i: number) => H - BOTTOM - i * STEP;
+/* the road runs TOP → BOTTOM (day 1 first, the star of Eid at the end) in a gentle S: the days alternate left / right */
+const W = 360, STEP = 112, PAD = 118, GAP = 64, AMP = 46, NODE = 46;
+const chapterOf = (i: number) => Math.min(2, Math.floor(i / 10));                  // i = 0…29 days, 30 = Eid
+const nodeX = (i: number) => (i >= TOTAL_DAYS ? W / 2 : W / 2 + (i % 2 === 0 ? -AMP : AMP));
+const nodeY = (i: number) => PAD + i * STEP + chapterOf(i) * GAP;
+const H = nodeY(TOTAL_DAYS) + 110;
 const segD = (k: number) => {
-  const x1 = nodeX(k), y1 = nodeY(k), x2 = nodeX(k + 1), y2 = nodeY(k + 1);
-  return `M ${x1} ${y1} C ${x1} ${y1 - STEP * 0.55}, ${x2} ${y2 + STEP * 0.55}, ${x2} ${y2}`;
+  const x1 = nodeX(k), y1 = nodeY(k), x2 = nodeX(k + 1), y2 = nodeY(k + 1), m = (y2 - y1) * 0.55;
+  return `M ${x1} ${y1} C ${x1} ${y1 + m}, ${x2} ${y2 - m}, ${x2} ${y2}`;
 };
 const pct = (v: number, of: number) => `${(v / of) * 100}%`;
 
@@ -86,20 +88,15 @@ function useJourneyStore(userId: string | undefined, live: boolean) {
   return { done, toggle, reset, cloud, loading };
 }
 
-const STARS = (() => {
-  let s = 7; const r = () => (s = (s * 16807) % 2147483647) / 2147483647;
-  return Array.from({ length: 70 }, () => ({ x: r() * 100, y: r() * 100, d: 1 + r() * 2.2, t: 2 + r() * 4, o: 0.35 + r() * 0.6 }));
-})();
+/* the look: warm paper, deep green, a thread of gold — and a serif for titles */
+const PAPER = "#f6f1e3", INK = "#12372a", MUTED = "#8b8470", LINE = "#cfc3a3", GOLDW = "#e9a93b";
+const SERIF = "'Playfair Display','Fraunces',Georgia,'Times New Roman',serif";
 
 const fmtDate = (day: number) => {
   const [y, m, d] = RAMADAN_START.split("-").map(Number);
   return new Date(y, m - 1, d + day - 1).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 };
 
-const yp = (i: number) => `${((nodeY(i) / H) * 100).toFixed(1)}%`;
-/** the sky of the whole road: it starts at dusk (day 1, the crescent) and ends in the deepest night (the last ten) */
-const WORLD_BG = `linear-gradient(180deg,#02081a 0%,#061633 ${yp(27)},#0b1e4a ${yp(20)},#0b3a4a ${yp(14)},#0d4a45 ${yp(8)},#1b5e3b ${yp(1)},#b45309 100%)`;
-const ridge = (y: number, amp: number) => `M0 ${y} Q90 ${y - amp} 180 ${y} T360 ${y} V${y + 90} H0Z`;
 const clearStoryMemory = () => { try { Object.keys(localStorage).filter((k) => k.startsWith("ramadan_story_")).forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ } };
 
 /* ════════════════════════════════ main ════════════════════════════════ */
@@ -178,146 +175,136 @@ export default function RamadanJourney() {
   const doneSegments = prog.statuses.map((s) => s === "done");
   const xpToNext = upNext ? upNext.from - prog.daysDone : 0;
 
+  const pctDone = Math.round((prog.daysDone / TOTAL_DAYS) * 100);
+  const R = 26, CIRC = 2 * Math.PI * R;
+
   return (
-    <div dir={dir} className="mx-auto w-full max-w-md px-3 pb-24 pt-3" style={{ color: "#fff" }}>
+    <div dir={dir} className="mx-auto w-full max-w-md pb-24 pt-2">
       <style>{`
-        @keyframes rj-twinkle{0%,100%{opacity:var(--o);transform:scale(1)}50%{opacity:.15;transform:scale(.6)}}
-        @keyframes rj-pulse{0%{box-shadow:0 0 0 0 rgba(251,191,36,.65)}70%{box-shadow:0 0 0 18px rgba(251,191,36,0)}100%{box-shadow:0 0 0 0 rgba(251,191,36,0)}}
-        @keyframes rj-sway{0%,100%{transform:rotate(-5deg)}50%{transform:rotate(5deg)}}
-        @keyframes rj-glow{0%,100%{filter:drop-shadow(0 0 6px rgba(251,191,36,.6))}50%{filter:drop-shadow(0 0 16px rgba(251,191,36,1))}}
+        @keyframes rj-pulse{0%{box-shadow:0 0 0 0 rgba(233,169,59,.6)}70%{box-shadow:0 0 0 16px rgba(233,169,59,0)}100%{box-shadow:0 0 0 0 rgba(233,169,59,0)}}
+        @keyframes rj-glow{0%,100%{filter:drop-shadow(0 0 5px rgba(251,146,60,.5))}50%{filter:drop-shadow(0 0 12px rgba(251,146,60,1))}}
         @media (prefers-reduced-motion: reduce){ .rj-anim{animation:none!important} }
       `}</style>
 
-      {/* ── HUD ── */}
-      <div className="sticky top-2 z-30 rounded-2xl p-3 shadow-lg backdrop-blur"
-        style={{ background: "rgba(7,26,51,.88)", border: "1px solid rgba(255,255,255,.14)" }}>
-        <div className="flex items-center gap-3">
-          <div className="flex flex-col items-center rounded-xl px-3 py-1.5" style={{ background: "rgba(251,146,60,.16)" }} aria-label={t("Daily streak", "سلسلة الأيام")}>
-            <Flame size={22} color="#fb923c" className={prog.streak > 0 ? "rj-anim" : ""} style={prog.streak > 0 ? { animation: "rj-glow 2s ease-in-out infinite" } : { opacity: 0.5 }} />
-            <span className="text-lg font-black leading-none" style={{ color: "#fdba74" }}>{prog.streak}</span>
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="truncate text-sm font-extrabold" style={{ color: GOLD }}>{t(rank.name.en, rank.name.ar)}</span>
-              <span className="shrink-0 text-xs font-bold" style={{ color: "#a7f3d0" }}><Zap size={11} className="inline" /> {prog.xp} XP</span>
-            </div>
-            <div className="mt-1.5 h-2.5 overflow-hidden rounded-full" style={{ background: "rgba(255,255,255,.12)" }}>
-              <motion.div className="h-full rounded-full" style={{ background: `linear-gradient(90deg,${GREEN},${GOLD})` }}
-                initial={false} animate={{ width: `${(prog.daysDone / TOTAL_DAYS) * 100}%` }} transition={{ type: "spring", stiffness: 90, damping: 18 }} />
-            </div>
-            <div className="mt-1 flex justify-between text-[11px]" style={{ color: "rgba(255,255,255,.7)" }}>
-              <span>{t(`${prog.daysDone} / ${TOTAL_DAYS} days`, `${prog.daysDone} / ${TOTAL_DAYS} يومًا`)}</span>
-              {upNext && <span>{t(`${xpToNext} more day${xpToNext === 1 ? "" : "s"} to ${upNext.name.en}`, `${xpToNext} للوصول إلى «${upNext.name.ar}»`)}</span>}
-            </div>
-          </div>
-          <button onClick={() => setBadgesOpen(true)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl" aria-label={t("Badges", "الأوسمة")}
-            style={{ background: "rgba(251,191,36,.16)" }}>
-            <Trophy size={20} color={GOLD} />
-          </button>
+      <div className="overflow-hidden rounded-[30px]" style={{ background: PAPER, color: INK, boxShadow: "0 12px 40px rgba(18,55,42,.18)" }}>
+        {/* ── header ── */}
+        <div className="px-5 pb-14 pt-6" style={{ background: "linear-gradient(165deg,#10513a 0%,#0c3a2a 60%,#0a2f23 100%)" }}>
+          <p className="text-[11px] font-bold tracking-[0.24em]" style={{ color: GOLDW }}>{t("RAMADAN JOURNEY", "رحلة رمضان")} · {RAMADAN_YEAR}</p>
+          <h1 className="mt-2 text-[28px] font-bold leading-[1.15] text-white" style={{ fontFamily: SERIF }}>{t("Walk the road of Ramadan", "سِر في طريق رمضان")}</h1>
+          <p className="mt-2 text-[13px]" style={{ color: "rgba(255,255,255,.72)" }}>{t("Tahleem Academy · 30 days · 3 chapters", "أكاديمية تعليم · ٣٠ يومًا · ٣ فصول")}</p>
         </div>
-      </div>
 
-      {!live && (
-        <div className="mt-3 flex items-center gap-2 rounded-xl px-3 py-2 text-xs" style={{ background: "rgba(251,191,36,.14)", border: "1px solid rgba(251,191,36,.35)", color: "#fde68a" }}>
-          <Sparkles size={14} className="shrink-0" />
-          <span className="flex-1">{t(`Rehearsal — Ramadan starts ${fmtDate(1)}. Every level is open to try; nothing here is saved to your account.`, `تجربة — يبدأ رمضان ${fmtDate(1)}. كل المراحل مفتوحة للتجربة ولا يُحفظ شيء في حسابك.`)}</span>
-          <button onClick={() => { store.reset(); clearStoryMemory(); standing.current = 0; setPos({ x: nodeX(0), y: nodeY(0) }); }} className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 font-bold" style={{ background: "rgba(0,0,0,.3)" }}>
-            <RotateCcw size={12} /> {t("Reset", "إعادة")}
-          </button>
+        {/* ── summary card, floating over the header ── */}
+        <div className="relative z-10 -mt-10 px-4">
+          <div className="rounded-3xl bg-white p-4" style={{ boxShadow: "0 10px 30px rgba(18,55,42,.14)", border: "1px solid rgba(18,55,42,.06)" }}>
+            <div className="flex items-center gap-3.5">
+              <div className="relative h-[62px] w-[62px] shrink-0" role="img" aria-label={t(`${pctDone}% complete`, `${pctDone}% مكتمل`)}>
+                <svg viewBox="0 0 62 62" className="h-full w-full -rotate-90" aria-hidden>
+                  <circle cx="31" cy="31" r={R} fill="none" stroke="#efe6cc" strokeWidth="7" />
+                  <motion.circle cx="31" cy="31" r={R} fill="none" stroke={GOLDW} strokeWidth="7" strokeLinecap="round" strokeDasharray={CIRC}
+                    initial={false} animate={{ strokeDashoffset: CIRC * (1 - prog.daysDone / TOTAL_DAYS) }} transition={{ type: "spring", stiffness: 90, damping: 18 }} />
+                </svg>
+                <span className="absolute inset-0 flex items-center justify-center text-[14px] font-extrabold" style={{ fontFamily: SERIF }}>{pctDone}%</span>
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[19px] font-bold leading-tight" style={{ fontFamily: SERIF }}>{t(rank.name.en, rank.name.ar)}</p>
+                <p className="mt-0.5 text-[12.5px]" style={{ color: MUTED }}>{t(`${prog.daysDone} of ${TOTAL_DAYS} days`, `${prog.daysDone} من ${TOTAL_DAYS} يومًا`)}</p>
+              </div>
+              <div className="text-end">
+                <p className="text-[26px] font-bold leading-none" style={{ color: GOLDW, fontFamily: SERIF }}>{prog.xp}</p>
+                <p className="mt-1 text-[11px]" style={{ color: MUTED }}>XP</p>
+              </div>
+            </div>
+            <div className="mt-3.5 flex items-center gap-2 border-t pt-3" style={{ borderColor: "#efe9d8" }}>
+              <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[12px] font-extrabold" style={{ background: "#fdeedb", color: "#b45309" }} aria-label={t("Daily streak", "سلسلة الأيام")}>
+                <Flame size={14} className={prog.streak > 0 ? "rj-anim" : ""} style={prog.streak > 0 ? { animation: "rj-glow 2s ease-in-out infinite" } : { opacity: 0.45 }} /> {prog.streak}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[12px]" style={{ color: MUTED }}>
+                {upNext ? t(`${xpToNext} more day${xpToNext === 1 ? "" : "s"} to ${upNext.name.en}`, `${xpToNext} للوصول إلى «${upNext.name.ar}»`) : t("Highest rank reached", "بلغتَ أعلى رتبة")}
+              </span>
+              <button onClick={() => setBadgesOpen(true)} className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-extrabold" style={{ background: INK, color: "#fff" }} aria-label={t("Badges", "الأوسمة")}>
+                <Trophy size={13} color={GOLDW} /> {t("Badges", "الأوسمة")}
+              </button>
+            </div>
+          </div>
+
+          {!live && (
+            <div className="mt-3 flex items-center gap-2 rounded-2xl px-3 py-2 text-xs" style={{ background: "#fbefd0", border: "1px solid #ecd58f", color: "#7c4a12" }}>
+              <Sparkles size={14} className="shrink-0" />
+              <span className="flex-1">{t(`Rehearsal — Ramadan starts ${fmtDate(1)}. Every level is open to try; nothing here is saved to your account.`, `تجربة — يبدأ رمضان ${fmtDate(1)}. كل المراحل مفتوحة للتجربة ولا يُحفظ شيء في حسابك.`)}</span>
+              <button onClick={() => { store.reset(); clearStoryMemory(); standing.current = 0; setPos({ x: nodeX(0), y: nodeY(0) }); }} className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 font-bold" style={{ background: "rgba(124,74,18,.12)" }}>
+                <RotateCcw size={12} /> {t("Reset", "إعادة")}
+              </button>
+            </div>
+          )}
+          {live && !store.cloud && !store.loading && (
+            <p className="mt-3 rounded-2xl px-3 py-2 text-xs" style={{ background: "#efe9d8", color: MUTED }}>
+              {t("Your progress is being saved on this device only for now.", "يُحفظ تقدّمك على هذا الجهاز فقط حاليًا.")}
+            </p>
+          )}
+
+          {/* ── tonight's story ── */}
+          {!allDone && <StoryCard day={todayInfo} status={prog.statuses[todayDay - 1]} count={dayCount(todayInfo, done)} onOpen={() => openNode(todayDay)} t={t} />}
         </div>
-      )}
-      {live && !store.cloud && !store.loading && (
-        <p className="mt-3 rounded-xl px-3 py-2 text-xs" style={{ background: "rgba(255,255,255,.08)", color: "rgba(255,255,255,.8)" }}>
-          {t("Your progress is being saved on this device only for now.", "يُحفظ تقدّمك على هذا الجهاز فقط حاليًا.")}
-        </p>
-      )}
 
-      {/* ── tonight's story ── */}
-      {!allDone && <StoryCard day={todayInfo} status={prog.statuses[todayDay - 1]} count={dayCount(todayInfo, done)} onOpen={() => openNode(todayDay)} t={t} />}
-
-      {/* ── the world ── */}
-      <div dir="ltr" className="relative mt-3 overflow-hidden rounded-3xl" style={{ aspectRatio: `${W} / ${H}`, background: WORLD_BG, border: "1px solid rgba(255,255,255,.1)" }}>
-        {/* stars */}
-        {STARS.map((s, i) => (
-          <span key={i} className="rj-anim absolute rounded-full bg-white"
-            style={{ left: `${s.x}%`, top: `${s.y * 0.8}%`, width: s.d, height: s.d, ["--o" as any]: s.o, opacity: s.o, animation: `rj-twinkle ${s.t}s ease-in-out ${i % 7 * 0.4}s infinite` }} />
-        ))}
-        {/* moon + Eid skyline at the top */}
-        <div className="absolute left-1/2 -translate-x-1/2" style={{ top: pct(18, H) }}>
-          <svg width="150" height="104" viewBox="0 0 150 104" aria-hidden>
-            <defs><radialGradient id="rjm" cx="50%" cy="50%" r="50%"><stop offset="0%" stopColor="#fef3c7" /><stop offset="100%" stopColor="#fbbf24" /></radialGradient></defs>
-            <circle cx="75" cy="50" r="38" fill="url(#rjm)" opacity=".18" />
-            <path d="M92 26a30 30 0 1 0 0 48a24 24 0 1 1 0-48z" fill="url(#rjm)" />
-            <path d="M12 104V84l7-10 7 10v20zM30 104V70l10-14 10 14v34zM58 104V58l17-22 17 22v46zM100 104V70l10-14 10 14v34zM124 104V84l7-10 7 10v20z" fill="#0b2a4a" opacity=".9" />
+        {/* ── the road ── */}
+        <div dir="ltr" className="relative mt-2" style={{ aspectRatio: `${W} / ${H}` }}>
+          <svg className="absolute inset-0 h-full w-full" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden>
+            {Array.from({ length: TOTAL_DAYS }, (_, k) => <path key={`b${k}`} ref={(el) => { segRefs.current[k] = el; }} d={segD(k)} fill="none" stroke={LINE} strokeWidth="4.5" strokeLinecap="round" strokeDasharray="0.5 11" />)}
+            {Array.from({ length: TOTAL_DAYS }, (_, k) => (
+              <motion.path key={`l${k}`} d={segD(k)} fill="none" stroke={GOLDW} strokeWidth="5.5" strokeLinecap="round"
+                initial={false} animate={{ pathLength: doneSegments[k] ? 1 : 0, opacity: doneSegments[k] ? 1 : 0 }} transition={{ duration: reduce ? 0 : 0.9, ease: "easeInOut" }} />
+            ))}
           </svg>
-        </div>
 
-        {/* far ridges between the chapters + the dunes where the road begins */}
-        <svg className="absolute inset-0 h-full w-full" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden>
-          <path d={ridge(nodeY(19) - 20, 34)} fill="#000" opacity=".22" />
-          <path d={ridge(nodeY(9) - 30, 40)} fill="#000" opacity=".2" />
-          <path d={ridge(nodeY(3) + 40, 26)} fill="#000" opacity=".16" />
-          <path d={ridge(H - 70, 46)} fill="#000" opacity=".3" />
-        </svg>
-        {/* the ten lanterns of the last chapter */}
-        {Array.from({ length: 10 }, (_, k) => k + 20).map((i) => (
-          <div key={`lan${i}`} className="rj-anim pointer-events-none absolute z-[1]"
-            style={{ left: i % 2 ? "3%" : "89%", top: pct(nodeY(i) - 46, H), transformOrigin: "50% 0", animation: `rj-sway ${3 + (i % 3) * 0.6}s ease-in-out ${(i % 4) * 0.3}s infinite`, opacity: prog.statuses[i] === "locked" ? 0.45 : 1 }}>
-            <Glyph kind="lantern" size={30} style={{ color: GOLD, filter: "drop-shadow(0 0 8px rgba(251,191,36,.9))" }} />
-          </div>
-        ))}
+          {/* chapter headings */}
+          {CHAPTERS.map((c, ci) => {
+            const y = ci === 0 ? nodeY(0) - 66 : nodeY(c.from - 2) + (nodeY(c.from - 1) - nodeY(c.from - 2)) / 2;
+            return (
+              <div key={ci} className="absolute left-1/2 z-[1] w-[84%] -translate-x-1/2 -translate-y-1/2 text-center" style={{ top: pct(y, H) }}>
+                <div className="flex items-center gap-2.5">
+                  <span className="h-px flex-1" style={{ background: `linear-gradient(90deg,transparent,${GOLDW})` }} />
+                  <span className="text-[10px] font-extrabold tracking-[0.2em]" style={{ color: "#a9731a" }}>{t(`CHAPTER ${ci + 1} · DAYS ${c.from}–${c.to}`, `الفصل ${ci + 1} · الأيام ${c.from}–${c.to}`)}</span>
+                  <span className="h-px flex-1" style={{ background: `linear-gradient(270deg,transparent,${GOLDW})` }} />
+                </div>
+                <div className="mt-1 text-[19px] font-bold leading-tight" style={{ fontFamily: SERIF, color: INK }}>{t(c.name.en, c.name.ar)}</div>
+              </div>
+            );
+          })}
 
-        {/* path */}
-        <svg className="absolute inset-0 h-full w-full" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden>
-          {Array.from({ length: TOTAL_DAYS }, (_, k) => <path key={`b${k}`} ref={(el) => { segRefs.current[k] = el; }} d={segD(k)} fill="none" stroke="rgba(255,255,255,.16)" strokeWidth="9" strokeLinecap="round" strokeDasharray="1 14" />)}
-          {Array.from({ length: TOTAL_DAYS }, (_, k) => (
-            <motion.path key={`l${k}`} d={segD(k)} fill="none" stroke={GOLD} strokeWidth="6" strokeLinecap="round" style={{ filter: "drop-shadow(0 0 5px rgba(251,191,36,.8))" }}
-              initial={false} animate={{ pathLength: doneSegments[k] ? 1 : 0, opacity: doneSegments[k] ? 1 : 0 }} transition={{ duration: reduce ? 0 : 0.9, ease: "easeInOut" }} />
+          {/* the days */}
+          {DAYS.map((d, i) => (
+            <Node key={d.day} d={d} i={i} status={prog.statuses[i]} count={dayCount(d, done)} current={prog.travelerDay === d.day} onOpen={() => openNode(d.day)} t={t} />
           ))}
-        </svg>
 
-        {/* chapter banners */}
-        {CHAPTERS.map((c, ci) => (
-          <div key={ci} className="absolute left-1/2 z-[1] w-[78%] -translate-x-1/2 rounded-2xl px-3 py-2 text-center"
-            style={{ top: pct(nodeY(c.from - 1) + STEP * 0.62, H), background: "rgba(2,8,26,.72)", border: "1px solid rgba(251,191,36,.4)" }}>
-            <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "#a7f3d0" }}>{t(`Chapter ${ci + 1}`, `الفصل ${ci + 1}`)} · {t(`Days ${c.from}–${c.to}`, `الأيام ${c.from}–${c.to}`)}</div>
-            <div className="text-sm font-black" style={{ color: GOLD }}>{t(c.name.en, c.name.ar)}</div>
-            <div className="mt-0.5 text-[10.5px] leading-snug" style={{ color: "rgba(255,255,255,.72)" }}>{t(c.blurb.en, c.blurb.ar)}</div>
+          {/* Eid: the star at the end of the road */}
+          <button onClick={() => (allDone ? setOpenDay(TOTAL_DAYS + 1) : say(t("Finish all 30 days to open the gate of Eid", "أتمّ الأيام الثلاثين لتفتح باب العيد")))}
+            className="absolute z-[2]" style={{ left: pct(nodeX(TOTAL_DAYS), W), top: pct(nodeY(TOTAL_DAYS), H), transform: "translate(-50%,-50%)" }} aria-label={t("Eid Mubarak", "عيد مبارك")}>
+            <span className={`flex items-center justify-center rounded-full ${allDone ? "rj-anim" : ""}`}
+              style={{ width: NODE + 8, height: NODE + 8, background: allDone ? `radial-gradient(circle at 35% 30%,#ffe9a8,${GOLDW})` : "#fff", border: `2.5px solid ${allDone ? "#fff" : LINE}`, boxShadow: allDone ? "0 0 22px rgba(233,169,59,.7)" : "0 2px 8px rgba(18,55,42,.08)", animation: allDone ? "rj-pulse 2s infinite" : undefined }}>
+              <Star size={24} fill={allDone ? "#7c4a12" : "none"} color={allDone ? "#7c4a12" : INK} />
+            </span>
+            <span className="mt-1.5 block text-center text-[15px] font-bold" style={{ fontFamily: SERIF, color: INK }}>{t("Eid Mubarak", "عيد مبارك")}</span>
+            <span className="block text-center text-[11px]" style={{ color: MUTED }}>{t("The gate of Eid", "باب العيد")}</span>
+          </button>
+
+          {/* "you are here": a gold crescent that walks the road */}
+          <div ref={travelerRef} className="pointer-events-none absolute z-[3]" style={{ left: pct(pos.x, W), top: pct(pos.y, H), transform: "translate(-50%,-50%)" }}>
+            <motion.div animate={reduce || walking ? { scale: 1 } : { scale: [1, 1.07, 1] }} transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+              className="rj-anim flex items-center justify-center rounded-full"
+              style={{ width: NODE, height: NODE, background: `radial-gradient(circle at 35% 30%,#ffe9a8,${GOLDW} 70%)`, border: "3px solid #fff", boxShadow: "0 0 0 5px rgba(233,169,59,.28), 0 6px 18px rgba(233,169,59,.55)" }}>
+              <Moon size={20} color="#5a3408" fill="#5a3408" />
+            </motion.div>
           </div>
-        ))}
-
-        {/* nodes */}
-        {DAYS.map((d, i) => (
-          <Node key={d.day} d={d} i={i} status={prog.statuses[i]} count={dayCount(d, done)} current={prog.travelerDay === d.day} onOpen={() => openNode(d.day)} t={t} />
-        ))}
-        {/* Eid gate */}
-        <button onClick={() => (allDone ? setOpenDay(TOTAL_DAYS + 1) : say(t("Finish all 30 days to open the gate of Eid", "أتمّ الأيام الثلاثين لتفتح باب العيد")))}
-          className="absolute z-[2] flex flex-col items-center" style={{ left: pct(nodeX(TOTAL_DAYS), W), top: pct(nodeY(TOTAL_DAYS), H), transform: "translate(-50%,-50%)" }}>
-          <span className={`flex h-16 w-16 items-center justify-center rounded-full ${allDone ? "rj-anim" : ""}`}
-            style={{ background: allDone ? `radial-gradient(circle,#fef3c7,${GOLD})` : "rgba(255,255,255,.1)", border: `2px solid ${allDone ? "#fff" : "rgba(255,255,255,.3)"}`, animation: allDone ? "rj-pulse 2s infinite" : undefined }}>
-            {allDone ? <Trophy size={28} color={GOLD_D} /> : <Lock size={22} color="rgba(255,255,255,.7)" />}
-          </span>
-          <span className="mt-1 rounded-full px-2 py-0.5 text-[11px] font-black" style={{ background: "rgba(2,8,26,.8)", color: GOLD }}>{t("Eid Mubarak", "عيد مبارك")}</span>
-        </button>
-
-        {/* the traveller */}
-        <div ref={travelerRef} className="pointer-events-none absolute z-[3]" style={{ left: pct(pos.x, W), top: pct(pos.y, H), transform: "translate(-50%,-135%)" }}>
-          <motion.div animate={reduce || walking ? { y: 0 } : { y: [0, -6, 0] }} transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
-            className="flex h-11 w-11 items-center justify-center rounded-full"
-            style={{ background: "radial-gradient(circle at 35% 30%,#fff7d6,#fbbf24 60%,#b45309)", boxShadow: "0 0 22px rgba(251,191,36,.9)", border: "2px solid #fff" }}>
-            <Moon size={20} color="#78350f" fill="#78350f" />
-          </motion.div>
-          <div className="mx-auto mt-0.5 h-1.5 w-5 rounded-full" style={{ background: "rgba(0,0,0,.45)", filter: "blur(2px)" }} />
         </div>
       </div>
 
-      {/* ── today's quest button ── */}
+      {/* ── today's story button ── */}
       {!allDone && (
         <div className="sticky bottom-4 z-30 mt-4 flex justify-center">
           <motion.button whileTap={{ scale: 0.96 }} onClick={() => openNode(todayDay)}
-            className="rj-anim inline-flex items-center gap-3 rounded-full px-5 py-3 text-sm font-black shadow-xl"
-            style={{ background: `linear-gradient(90deg,${GOLD},#f59e0b)`, color: "#422006", animation: "rj-pulse 2.4s infinite" }}>
-            <BookOpen size={18} />
+            className="inline-flex items-center gap-2.5 rounded-full px-5 py-3 text-sm font-extrabold shadow-xl" style={{ background: INK, color: "#fff", border: `1.5px solid ${GOLDW}` }}>
+            <BookOpen size={17} color={GOLDW} />
             {t(`Day ${todayDay} story`, `قصة اليوم ${todayDay}`)} · {dayCount(todayInfo, done)}/{todayInfo.tasks.length}
           </motion.button>
         </div>
@@ -327,7 +314,7 @@ export default function RamadanJourney() {
       <AnimatePresence>
         {toast && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }}
-            className="fixed bottom-24 left-1/2 z-[60] -translate-x-1/2 rounded-full px-4 py-2 text-sm font-bold shadow-xl" style={{ background: "#fff", color: GREEN_D }}>
+            className="fixed bottom-24 left-1/2 z-[60] -translate-x-1/2 rounded-full px-4 py-2 text-sm font-bold shadow-xl" style={{ background: INK, color: "#fff" }}>
             {toast}
           </motion.div>
         )}
@@ -346,34 +333,32 @@ export default function RamadanJourney() {
   );
 }
 
-/* ── one place on the road: a medallion with the landmark of the day ── */
+/* ── one day on the road: a clean medallion, and its title + date beside it ── */
 function Node({ d, i, status, count, current, onOpen, t }: { d: JourneyDay; i: number; status: DayStatus; count: number; current: boolean; onOpen: () => void; t: (en: string, ar: string) => string }) {
   const x = nodeX(i), y = nodeY(i);
-  const right = x < W / 2;                               // label goes toward the middle of the map
+  const onLeft = x < W / 2;                              // the label sits on the outside, like the number is on the inside
   const locked = status === "locked", done = status === "done";
-  const bg = done ? `radial-gradient(circle at 35% 30%,#fff7d6,${GOLD})`
-    : locked ? "rgba(255,255,255,.08)"
-    : status === "partial" ? `conic-gradient(${GOLD} ${(count / d.tasks.length) * 360}deg, rgba(255,255,255,.2) 0)`
-    : `linear-gradient(160deg,${GREEN},${GREEN_D})`;
   return (
-    <div className="absolute z-[2]" style={{ left: pct(x, W), top: pct(y, H), transform: "translate(-50%,-50%)" }}>
-      <motion.button onClick={onOpen} whileTap={{ scale: 0.9 }} whileHover={locked ? undefined : { scale: 1.08 }}
+    <div className="absolute z-[2]" style={{ left: pct(x, W), top: pct(y, H), transform: "translate(-50%,-50%)", width: NODE, height: NODE }}>
+      <motion.button onClick={onOpen} whileTap={{ scale: 0.92 }} whileHover={locked ? undefined : { scale: 1.06 }}
         aria-label={t(`Day ${d.day}: ${d.title.en}`, `اليوم ${d.day}: ${d.title.ar}`)}
-        className={`relative flex h-[62px] w-[62px] items-center justify-center rounded-full ${current ? "rj-anim" : ""}`}
-        style={{ background: bg, border: `3px solid ${done ? "#fff" : locked ? "rgba(255,255,255,.2)" : "rgba(255,255,255,.8)"}`, animation: current ? "rj-pulse 2s infinite" : undefined, boxShadow: d.qadr && !locked ? "0 0 20px rgba(251,191,36,.8)" : done ? "0 0 14px rgba(251,191,36,.45)" : undefined }}>
-        {status === "partial" && <span className="absolute inset-[5px] rounded-full" style={{ background: GREEN_D }} />}
-        <span className="relative" style={{ color: done ? GOLD_D : locked ? "rgba(255,255,255,.35)" : "#fff" }}>
-          <Glyph kind={landmarkOf(d.day)} size={30} />
-        </span>
-        {locked && <Lock size={13} color="rgba(255,255,255,.7)" className="absolute -bottom-0.5 -right-0.5" />}
-        {done && <span className="absolute -bottom-1 -right-1 flex h-[22px] w-[22px] items-center justify-center rounded-full" style={{ background: GREEN, border: "2px solid #fff" }}><Check size={12} color="#fff" strokeWidth={4} /></span>}
-        {d.qadr && !locked && <Star size={16} fill={GOLD} color={GOLD} className="absolute -right-1 -top-1" style={{ filter: "drop-shadow(0 0 4px #fbbf24)" }} />}
-        <span className="absolute -top-2 left-1/2 -translate-x-1/2 rounded-full px-1.5 text-[10px] font-black leading-[16px]" style={{ background: locked ? "#1e293b" : "#02081a", color: locked ? "rgba(255,255,255,.5)" : GOLD, border: "1px solid rgba(255,255,255,.2)" }}>{d.day}</span>
+        className="relative flex h-full w-full items-center justify-center rounded-full"
+        style={{
+          background: done ? "#14452f" : "#fff", color: done ? GOLDW : locked ? "#b9b096" : INK,
+          border: done ? "2.5px solid #0e3322" : `2.5px solid ${locked ? "#e3dcc3" : status === "partial" ? GOLDW : LINE}`,
+          boxShadow: done ? "0 4px 12px rgba(20,69,47,.35)" : "0 2px 8px rgba(18,55,42,.08)",
+        }}>
+        {done ? <Check size={22} strokeWidth={3.4} /> : locked ? <Lock size={15} /> : <span className="text-[17px] font-bold" style={{ fontFamily: SERIF }}>{d.day}</span>}
+        {d.qadr && !locked && <Star size={15} fill={GOLDW} color={GOLDW} className="absolute -right-1.5 -top-1.5" />}
       </motion.button>
-      <span className="pointer-events-none absolute top-1/2 w-[116px] -translate-y-1/2 rounded-xl px-2 py-1.5 text-[11.5px] font-extrabold leading-tight"
-        style={{ [right ? "left" : "right"]: 70, textAlign: right ? "left" : "right", background: "rgba(2,8,26,.7)", color: locked ? "rgba(255,255,255,.45)" : "#fff", border: current ? `1px solid ${GOLD}` : "1px solid rgba(255,255,255,.08)" } as any}>
-        {t(d.title.en, d.title.ar)}
-      </span>
+      <div className="pointer-events-none absolute top-1/2 w-[96px] -translate-y-1/2"
+        style={{ [onLeft ? "right" : "left"]: `calc(100% + 11px)`, textAlign: onLeft ? "right" : "left", opacity: locked ? 0.55 : 1 } as any}>
+        <p className="text-[13.5px] font-bold leading-[1.22]" style={{ fontFamily: SERIF, color: INK }}>{t(d.title.en, d.title.ar)}</p>
+        <p className="mt-0.5 text-[10.5px] leading-tight" style={{ color: MUTED }}>
+          {current ? t(`Now · ${count}/${d.tasks.length} quests`, `الآن · ${count}/${d.tasks.length}`) : `${t(`Day ${d.day}`, `اليوم ${d.day}`)} · ${fmtDate(d.day)}`}
+        </p>
+        {current && <span className="mt-1 inline-block rounded-md px-1.5 py-0.5 text-[10px] font-extrabold tracking-wide" style={{ background: "#fbe7b5", color: "#a8650c" }}>+{d.tasks.reduce((a, x) => a + x.xp, 0)} XP</span>}
+      </div>
     </div>
   );
 }
