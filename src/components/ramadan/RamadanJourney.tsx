@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import {
-  BookOpen, Check, Flame, GraduationCap, HeartHandshake, Lock, Moon, RotateCcw, Sparkles, Star, Trophy, X, Zap,
-} from "lucide-react";
+import { BookOpen, Check, Flame, Lock, Moon, RotateCcw, Sparkles, Star, Trophy, X, Zap } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  CHAPTERS, DAYS, RAMADAN_START, RAMADAN_YEAR, TOTAL_DAYS, badgesFor, computeProgress, currentDay, dayCount, dayDone,
-  nextRank, rankFor, type Bi, type DayStatus, type JourneyDay, type TaskCat,
+  CHAPTERS, DAYS, RAMADAN_START, RAMADAN_YEAR, TOTAL_DAYS, badgesFor, computeProgress, currentDay, dayCount,
+  nextRank, rankFor, type DayStatus, type JourneyDay,
 } from "@/lib/ramadanJourney";
+import { hasStory, landmarkOf } from "@/lib/ramadanStory";
+import StoryReader from "./StoryReader";
+import { Burst, GOLD, GOLD_D, GREEN, GREEN_D, Glyph, NIGHT, SceneArt, buzz } from "./JourneyArt";
 
 /* ════════════════════════════════════════════════════════════════════════════════════════════
    Ramadan Journey — a story path of 30 levels. Finish a day's tasks and the traveller walks on to the next one.
@@ -25,15 +26,6 @@ const segD = (k: number) => {
   return `M ${x1} ${y1} C ${x1} ${y1 - STEP * 0.55}, ${x2} ${y2 + STEP * 0.55}, ${x2} ${y2}`;
 };
 const pct = (v: number, of: number) => `${(v / of) * 100}%`;
-
-const GOLD = "#fbbf24", GOLD_D = "#b45309", GREEN = "#10b981", GREEN_D = "#064e3b", NIGHT = "#071a33";
-
-const CAT: Record<TaskCat, { icon: typeof BookOpen; color: string; label: Bi }> = {
-  quran:     { icon: BookOpen,       color: "#34d399", label: { en: "Qur'an",    ar: "القرآن" } },
-  salah:     { icon: Moon,           color: "#a78bfa", label: { en: "Salah & dhikr", ar: "الصلاة والذكر" } },
-  charity:   { icon: HeartHandshake, color: "#fb7185", label: { en: "Charity",   ar: "الإحسان" } },
-  knowledge: { icon: GraduationCap,  color: "#60a5fa", label: { en: "Knowledge", ar: "العلم" } },
-};
 
 /* ── saving progress: the student's account when possible, this device otherwise ── */
 const readLS = (key: string): Set<string> => { try { return new Set(JSON.parse(localStorage.getItem(key) || "[]")); } catch { return new Set(); } };
@@ -72,10 +64,12 @@ function useJourneyStore(userId: string | undefined, live: boolean) {
     return () => { off = true; };
   }, [key, live, userId]);
 
-  const toggle = useCallback((taskId: string) => {
+  /** `force` true = make sure it is ticked, false = make sure it is not, undefined = flip */
+  const toggle = useCallback((taskId: string, force?: boolean) => {
     setDone((prev) => {
+      const adding = force ?? !prev.has(taskId);
+      if (adding === prev.has(taskId)) return prev;
       const next = new Set(prev);
-      const adding = !next.has(taskId);
       if (adding) next.add(taskId); else next.delete(taskId);
       writeLS(key, next);
       if (live && userId && cloudRef.current) {
@@ -92,43 +86,6 @@ function useJourneyStore(userId: string | undefined, live: boolean) {
   return { done, toggle, reset, cloud, loading };
 }
 
-/* ── small pieces ── */
-const buzz = (ms = 12) => { try { navigator.vibrate?.(ms); } catch { /* not supported */ } };
-
-/** text that is "told" letter by letter — the story feel */
-function Told({ text, speed = 16 }: { text: string; speed?: number }) {
-  const reduce = useReducedMotion();
-  const [n, setN] = useState(reduce ? text.length : 0);
-  useEffect(() => {
-    if (reduce) { setN(text.length); return; }
-    setN(0);
-    const id = setInterval(() => setN((v) => { if (v >= text.length) { clearInterval(id); return v; } return v + 1; }), speed);
-    return () => clearInterval(id);
-  }, [text, speed, reduce]);
-  return <>{text.slice(0, n)}<span style={{ opacity: n < text.length ? 0.6 : 0 }}>▍</span></>;
-}
-
-/** a burst of sparkles — played when a day is completed */
-function Burst({ big = false }: { big?: boolean }) {
-  const reduce = useReducedMotion();
-  const parts = useMemo(() => Array.from({ length: big ? 46 : 26 }, (_, i) => {
-    const a = (i / (big ? 46 : 26)) * Math.PI * 2 + (i % 3) * 0.3;
-    const d = 90 + ((i * 37) % 120);
-    return { x: Math.cos(a) * d, y: Math.sin(a) * d - 30, r: (i * 53) % 360, c: ["#fbbf24", "#34d399", "#fde68a", "#a7f3d0", "#fb7185"][i % 5], s: 6 + (i % 4) * 2 };
-  }), [big]);
-  if (reduce) return null;
-  return (
-    <div className="pointer-events-none absolute left-1/2 top-24 z-10" aria-hidden>
-      {parts.map((p, i) => (
-        <motion.span key={i} className="absolute block rounded-sm" style={{ width: p.s, height: p.s * 1.6, background: p.c }}
-          initial={{ x: 0, y: 0, opacity: 1, rotate: 0, scale: 0.6 }}
-          animate={{ x: p.x, y: [0, p.y, p.y + 140], opacity: [1, 1, 0], rotate: p.r, scale: 1 }}
-          transition={{ duration: 1.5, ease: "easeOut" }} />
-      ))}
-    </div>
-  );
-}
-
 const STARS = (() => {
   let s = 7; const r = () => (s = (s * 16807) % 2147483647) / 2147483647;
   return Array.from({ length: 70 }, () => ({ x: r() * 100, y: r() * 100, d: 1 + r() * 2.2, t: 2 + r() * 4, o: 0.35 + r() * 0.6 }));
@@ -138,6 +95,12 @@ const fmtDate = (day: number) => {
   const [y, m, d] = RAMADAN_START.split("-").map(Number);
   return new Date(y, m - 1, d + day - 1).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 };
+
+const yp = (i: number) => `${((nodeY(i) / H) * 100).toFixed(1)}%`;
+/** the sky of the whole road: it starts at dusk (day 1, the crescent) and ends in the deepest night (the last ten) */
+const WORLD_BG = `linear-gradient(180deg,#02081a 0%,#061633 ${yp(27)},#0b1e4a ${yp(20)},#0b3a4a ${yp(14)},#0d4a45 ${yp(8)},#1b5e3b ${yp(1)},#b45309 100%)`;
+const ridge = (y: number, amp: number) => `M0 ${y} Q90 ${y - amp} 180 ${y} T360 ${y} V${y + 90} H0Z`;
+const clearStoryMemory = () => { try { Object.keys(localStorage).filter((k) => k.startsWith("ramadan_story_")).forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ } };
 
 /* ════════════════════════════════ main ════════════════════════════════ */
 export default function RamadanJourney() {
@@ -258,7 +221,7 @@ export default function RamadanJourney() {
         <div className="mt-3 flex items-center gap-2 rounded-xl px-3 py-2 text-xs" style={{ background: "rgba(251,191,36,.14)", border: "1px solid rgba(251,191,36,.35)", color: "#fde68a" }}>
           <Sparkles size={14} className="shrink-0" />
           <span className="flex-1">{t(`Rehearsal — Ramadan starts ${fmtDate(1)}. Every level is open to try; nothing here is saved to your account.`, `تجربة — يبدأ رمضان ${fmtDate(1)}. كل المراحل مفتوحة للتجربة ولا يُحفظ شيء في حسابك.`)}</span>
-          <button onClick={() => { store.reset(); standing.current = 0; setPos({ x: nodeX(0), y: nodeY(0) }); }} className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 font-bold" style={{ background: "rgba(0,0,0,.3)" }}>
+          <button onClick={() => { store.reset(); clearStoryMemory(); standing.current = 0; setPos({ x: nodeX(0), y: nodeY(0) }); }} className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 font-bold" style={{ background: "rgba(0,0,0,.3)" }}>
             <RotateCcw size={12} /> {t("Reset", "إعادة")}
           </button>
         </div>
@@ -269,8 +232,11 @@ export default function RamadanJourney() {
         </p>
       )}
 
+      {/* ── tonight's story ── */}
+      {!allDone && <StoryCard day={todayInfo} status={prog.statuses[todayDay - 1]} count={dayCount(todayInfo, done)} onOpen={() => openNode(todayDay)} t={t} />}
+
       {/* ── the world ── */}
-      <div dir="ltr" className="relative mt-3 overflow-hidden rounded-3xl" style={{ aspectRatio: `${W} / ${H}`, background: `linear-gradient(0deg,#0a3d2e 0%,#0b2a4a 38%,${NIGHT} 78%,#02081a 100%)`, border: "1px solid rgba(255,255,255,.1)" }}>
+      <div dir="ltr" className="relative mt-3 overflow-hidden rounded-3xl" style={{ aspectRatio: `${W} / ${H}`, background: WORLD_BG, border: "1px solid rgba(255,255,255,.1)" }}>
         {/* stars */}
         {STARS.map((s, i) => (
           <span key={i} className="rj-anim absolute rounded-full bg-white"
@@ -285,6 +251,21 @@ export default function RamadanJourney() {
             <path d="M12 104V84l7-10 7 10v20zM30 104V70l10-14 10 14v34zM58 104V58l17-22 17 22v46zM100 104V70l10-14 10 14v34zM124 104V84l7-10 7 10v20z" fill="#0b2a4a" opacity=".9" />
           </svg>
         </div>
+
+        {/* far ridges between the chapters + the dunes where the road begins */}
+        <svg className="absolute inset-0 h-full w-full" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden>
+          <path d={ridge(nodeY(19) - 20, 34)} fill="#000" opacity=".22" />
+          <path d={ridge(nodeY(9) - 30, 40)} fill="#000" opacity=".2" />
+          <path d={ridge(nodeY(3) + 40, 26)} fill="#000" opacity=".16" />
+          <path d={ridge(H - 70, 46)} fill="#000" opacity=".3" />
+        </svg>
+        {/* the ten lanterns of the last chapter */}
+        {Array.from({ length: 10 }, (_, k) => k + 20).map((i) => (
+          <div key={`lan${i}`} className="rj-anim pointer-events-none absolute z-[1]"
+            style={{ left: i % 2 ? "3%" : "89%", top: pct(nodeY(i) - 46, H), transformOrigin: "50% 0", animation: `rj-sway ${3 + (i % 3) * 0.6}s ease-in-out ${(i % 4) * 0.3}s infinite`, opacity: prog.statuses[i] === "locked" ? 0.45 : 1 }}>
+            <Glyph kind="lantern" size={30} style={{ color: GOLD, filter: "drop-shadow(0 0 8px rgba(251,191,36,.9))" }} />
+          </div>
+        ))}
 
         {/* path */}
         <svg className="absolute inset-0 h-full w-full" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden>
@@ -301,6 +282,7 @@ export default function RamadanJourney() {
             style={{ top: pct(nodeY(c.from - 1) + STEP * 0.62, H), background: "rgba(2,8,26,.72)", border: "1px solid rgba(251,191,36,.4)" }}>
             <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "#a7f3d0" }}>{t(`Chapter ${ci + 1}`, `الفصل ${ci + 1}`)} · {t(`Days ${c.from}–${c.to}`, `الأيام ${c.from}–${c.to}`)}</div>
             <div className="text-sm font-black" style={{ color: GOLD }}>{t(c.name.en, c.name.ar)}</div>
+            <div className="mt-0.5 text-[10.5px] leading-snug" style={{ color: "rgba(255,255,255,.72)" }}>{t(c.blurb.en, c.blurb.ar)}</div>
           </div>
         ))}
 
@@ -335,8 +317,8 @@ export default function RamadanJourney() {
           <motion.button whileTap={{ scale: 0.96 }} onClick={() => openNode(todayDay)}
             className="rj-anim inline-flex items-center gap-3 rounded-full px-5 py-3 text-sm font-black shadow-xl"
             style={{ background: `linear-gradient(90deg,${GOLD},#f59e0b)`, color: "#422006", animation: "rj-pulse 2.4s infinite" }}>
-            <Sparkles size={18} />
-            {t(`Day ${todayDay} quest`, `مهمة اليوم ${todayDay}`)} · {dayCount(todayInfo, done)}/{todayInfo.tasks.length}
+            <BookOpen size={18} />
+            {t(`Day ${todayDay} story`, `قصة اليوم ${todayDay}`)} · {dayCount(todayInfo, done)}/{todayInfo.tasks.length}
           </motion.button>
         </div>
       )}
@@ -354,8 +336,8 @@ export default function RamadanJourney() {
       {/* ── sheets ── */}
       <AnimatePresence>
         {openDay !== null && openDay <= TOTAL_DAYS && (
-          <DaySheet key="day" day={DAYS[openDay - 1]} done={done} toggle={store.toggle} onClose={() => setOpenDay(null)} streak={prog.streak} t={t} dir={dir}
-            canEdit={openDay <= unlocked} />
+          <StoryReader key={`day-${openDay}`} day={DAYS[openDay - 1]} done={done} toggle={store.toggle} onClose={() => setOpenDay(null)}
+            streak={prog.streak} userId={user?.id} t={t} dir={dir} canEdit={openDay <= unlocked} />
         )}
         {openDay === TOTAL_DAYS + 1 && <Finale key="eid" onClose={() => setOpenDay(null)} xp={prog.xp} best={prog.bestStreak} t={t} dir={dir} />}
         {badgesOpen && <BadgesSheet key="badges" badges={badges} onClose={() => setBadgesOpen(false)} t={t} dir={dir} />}
@@ -364,34 +346,55 @@ export default function RamadanJourney() {
   );
 }
 
-/* ── one level on the path ── */
+/* ── one place on the road: a medallion with the landmark of the day ── */
 function Node({ d, i, status, count, current, onOpen, t }: { d: JourneyDay; i: number; status: DayStatus; count: number; current: boolean; onOpen: () => void; t: (en: string, ar: string) => string }) {
   const x = nodeX(i), y = nodeY(i);
   const right = x < W / 2;                               // label goes toward the middle of the map
   const locked = status === "locked", done = status === "done";
   const bg = done ? `radial-gradient(circle at 35% 30%,#fff7d6,${GOLD})`
     : locked ? "rgba(255,255,255,.08)"
-    : status === "partial" ? `conic-gradient(${GREEN} ${(count / d.tasks.length) * 360}deg, rgba(255,255,255,.18) 0)`
+    : status === "partial" ? `conic-gradient(${GOLD} ${(count / d.tasks.length) * 360}deg, rgba(255,255,255,.2) 0)`
     : `linear-gradient(160deg,${GREEN},${GREEN_D})`;
   return (
     <div className="absolute z-[2]" style={{ left: pct(x, W), top: pct(y, H), transform: "translate(-50%,-50%)" }}>
       <motion.button onClick={onOpen} whileTap={{ scale: 0.9 }} whileHover={locked ? undefined : { scale: 1.08 }}
         aria-label={t(`Day ${d.day}: ${d.title.en}`, `اليوم ${d.day}: ${d.title.ar}`)}
-        className={`relative flex h-[50px] w-[50px] items-center justify-center rounded-full ${current ? "rj-anim" : ""}`}
-        style={{ background: bg, border: `2.5px solid ${done ? "#fff" : locked ? "rgba(255,255,255,.2)" : "rgba(255,255,255,.75)"}`, animation: current ? "rj-pulse 2s infinite" : undefined, boxShadow: d.qadr && !locked ? "0 0 18px rgba(251,191,36,.75)" : undefined }}>
+        className={`relative flex h-[62px] w-[62px] items-center justify-center rounded-full ${current ? "rj-anim" : ""}`}
+        style={{ background: bg, border: `3px solid ${done ? "#fff" : locked ? "rgba(255,255,255,.2)" : "rgba(255,255,255,.8)"}`, animation: current ? "rj-pulse 2s infinite" : undefined, boxShadow: d.qadr && !locked ? "0 0 20px rgba(251,191,36,.8)" : done ? "0 0 14px rgba(251,191,36,.45)" : undefined }}>
         {status === "partial" && <span className="absolute inset-[5px] rounded-full" style={{ background: GREEN_D }} />}
-        <span className="relative">
-          {done ? <Check size={24} color={GOLD_D} strokeWidth={3.2} />
-            : locked ? <Lock size={17} color="rgba(255,255,255,.55)" />
-            : <span className="text-base font-black text-white">{d.day}</span>}
+        <span className="relative" style={{ color: done ? GOLD_D : locked ? "rgba(255,255,255,.35)" : "#fff" }}>
+          <Glyph kind={landmarkOf(d.day)} size={30} />
         </span>
-        {d.qadr && <Star size={15} fill={GOLD} color={GOLD} className="absolute -right-1 -top-1" style={{ filter: "drop-shadow(0 0 4px #fbbf24)" }} />}
+        {locked && <Lock size={13} color="rgba(255,255,255,.7)" className="absolute -bottom-0.5 -right-0.5" />}
+        {done && <span className="absolute -bottom-1 -right-1 flex h-[22px] w-[22px] items-center justify-center rounded-full" style={{ background: GREEN, border: "2px solid #fff" }}><Check size={12} color="#fff" strokeWidth={4} /></span>}
+        {d.qadr && !locked && <Star size={16} fill={GOLD} color={GOLD} className="absolute -right-1 -top-1" style={{ filter: "drop-shadow(0 0 4px #fbbf24)" }} />}
+        <span className="absolute -top-2 left-1/2 -translate-x-1/2 rounded-full px-1.5 text-[10px] font-black leading-[16px]" style={{ background: locked ? "#1e293b" : "#02081a", color: locked ? "rgba(255,255,255,.5)" : GOLD, border: "1px solid rgba(255,255,255,.2)" }}>{d.day}</span>
       </motion.button>
-      <span className="pointer-events-none absolute top-1/2 w-[112px] -translate-y-1/2 rounded-lg px-1.5 py-1 text-[11px] font-bold leading-tight"
-        style={{ [right ? "left" : "right"]: 58, textAlign: right ? "left" : "right", background: "rgba(2,8,26,.62)", color: locked ? "rgba(255,255,255,.45)" : "#fff" } as any}>
+      <span className="pointer-events-none absolute top-1/2 w-[116px] -translate-y-1/2 rounded-xl px-2 py-1.5 text-[11.5px] font-extrabold leading-tight"
+        style={{ [right ? "left" : "right"]: 70, textAlign: right ? "left" : "right", background: "rgba(2,8,26,.7)", color: locked ? "rgba(255,255,255,.45)" : "#fff", border: current ? `1px solid ${GOLD}` : "1px solid rgba(255,255,255,.08)" } as any}>
         {t(d.title.en, d.title.ar)}
       </span>
     </div>
+  );
+}
+
+/* ── the story card at the top: tonight's chapter of the story, with a big way in ── */
+function StoryCard({ day, status, count, onOpen, t }: { day: JourneyDay; status: DayStatus; count: number; onOpen: () => void; t: (en: string, ar: string) => string }) {
+  const authored = hasStory(day.day);
+  const verb = status === "partial" ? t("Continue the story", "تابع القصة") : t("Begin the story", "ابدأ القصة");
+  return (
+    <motion.button onClick={onOpen} whileTap={{ scale: 0.985 }} className="relative mt-3 block w-full overflow-hidden rounded-3xl text-start" style={{ color: "#fff" }}>
+      <SceneArt chapter={day.chapter} kind={landmarkOf(day.day)} height={236} />
+      <div className="absolute inset-0 flex flex-col justify-end rounded-3xl p-4" style={{ background: "linear-gradient(0deg,rgba(2,8,26,.95) 0%,rgba(2,8,26,.7) 42%,transparent 78%)" }}>
+        <span className="text-[11px] font-bold" style={{ color: "#a7f3d0" }}>{t(CHAPTERS[day.chapter].name.en, CHAPTERS[day.chapter].name.ar)} · {t(`Day ${day.day}`, `اليوم ${day.day}`)}</span>
+        <h3 className="mt-0.5 text-2xl font-black leading-tight" style={{ color: GOLD }}>{t(day.title.en, day.title.ar)}</h3>
+        <p className="mt-1 line-clamp-2 text-[13px] leading-snug" style={{ color: "rgba(255,255,255,.85)" }}>{t(day.story.en, day.story.ar)}</p>
+        <span className="rj-anim mt-3 inline-flex w-fit items-center gap-2 rounded-full px-4 py-2 text-sm font-black" style={{ background: `linear-gradient(90deg,${GOLD},#f59e0b)`, color: "#422006", animation: "rj-pulse 2.4s infinite" }}>
+          <BookOpen size={16} /> {verb}
+          <span className="font-bold opacity-70">· {authored ? t("scenes, verses & a quiz", "مشاهد وآيات واختبار") : t("quest", "مهمة")} {count}/{day.tasks.length}</span>
+        </span>
+      </div>
+    </motion.button>
   );
 }
 
@@ -414,104 +417,6 @@ function Sheet({ children, onClose, dir, tall = false }: { children: React.React
         {children}
       </motion.div>
     </motion.div>
-  );
-}
-
-/* ── a day: story + tasks ── */
-function DaySheet({ day, done, toggle, onClose, streak, canEdit, t, dir }: {
-  day: JourneyDay; done: ReadonlySet<string>; toggle: (id: string) => void; onClose: () => void; streak: number; canEdit: boolean;
-  t: (en: string, ar: string) => string; dir: string;
-}) {
-  const complete = dayDone(day, done);
-  const wasComplete = useRef(complete);
-  const [celebrate, setCelebrate] = useState(false);
-  const [floats, setFloats] = useState<{ id: number; taskId: string; xp: number }[]>([]);
-  const fid = useRef(0);
-  const total = day.tasks.reduce((a, x) => a + x.xp, 0);
-  const next = DAYS[day.day] as JourneyDay | undefined;
-  const chapterEnd = CHAPTERS.find((c) => c.to === day.day);
-
-  useEffect(() => {
-    if (complete && !wasComplete.current) { setCelebrate(true); buzz(60); }
-    if (!complete) setCelebrate(false);
-    wasComplete.current = complete;
-  }, [complete]);
-
-  const tick = (id: string, xp: number) => {
-    if (!canEdit) return;
-    const adding = !done.has(id);
-    toggle(id);
-    if (adding) { buzz(14); const n = ++fid.current; setFloats((f) => [...f, { id: n, taskId: id, xp }]); setTimeout(() => setFloats((f) => f.filter((x) => x.id !== n)), 1100); }
-  };
-
-  return (
-    <Sheet onClose={onClose} dir={dir} tall>
-      {celebrate && <Burst big={!!chapterEnd} />}
-      <div className="pr-10">
-        <span className="inline-block rounded-full px-2.5 py-0.5 text-[11px] font-extrabold" style={{ background: "rgba(251,191,36,.18)", color: GOLD }}>
-          {t(CHAPTERS[day.chapter].name.en, CHAPTERS[day.chapter].name.ar)} · {t(`Day ${day.day}`, `اليوم ${day.day}`)}
-        </span>
-        {day.qadr && <span className="ms-2 inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-extrabold" style={{ background: "rgba(167,139,250,.2)", color: "#ddd6fe" }}><Star size={11} fill="#ddd6fe" /> {t("Odd night — seek Laylatul Qadr", "ليلة وتر — تحرَّ ليلة القدر")}</span>}
-        <h2 className="mt-2 text-2xl font-black" style={{ color: "#fff" }}>{t(day.title.en, day.title.ar)}</h2>
-      </div>
-      <p className="mt-2 min-h-[3.2rem] rounded-2xl px-4 py-3 text-sm leading-relaxed" style={{ background: "rgba(255,255,255,.07)", color: "#e2e8f0", borderInlineStart: `3px solid ${GOLD}` }}>
-        <Told key={day.day} text={t(day.story.en, day.story.ar)} />
-      </p>
-
-      <div className="mt-4 flex items-center justify-between text-xs font-bold" style={{ color: "rgba(255,255,255,.75)" }}>
-        <span>{t("Today's quests", "مهام اليوم")}</span>
-        <span>{dayCount(day, done)}/{day.tasks.length} · {total} XP</span>
-      </div>
-      <ul className="mt-2 space-y-2.5">
-        {day.tasks.map((task) => {
-          const on = done.has(task.id);
-          const C = CAT[task.cat];
-          return (
-            <li key={task.id} className="relative">
-              <motion.button whileTap={canEdit ? { scale: 0.97 } : undefined} onClick={() => tick(task.id, task.xp)} aria-pressed={on} disabled={!canEdit}
-                className="flex w-full items-center gap-3 rounded-2xl p-3 text-start"
-                style={{ background: on ? "rgba(16,185,129,.2)" : "rgba(255,255,255,.07)", border: `1.5px solid ${on ? GREEN : "rgba(255,255,255,.14)"}`, opacity: canEdit ? 1 : 0.6 }}>
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ background: `${C.color}26` }}><C.icon size={20} color={C.color} /></span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[11px] font-bold" style={{ color: C.color }}>{t(C.label.en, C.label.ar)} · +{task.xp} XP</span>
-                  <span className="block text-sm font-semibold leading-snug" style={{ color: "#fff", textDecoration: on ? "line-through" : "none", textDecorationColor: "rgba(255,255,255,.5)" }}>{t(task.text.en, task.text.ar)}</span>
-                </span>
-                <motion.span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
-                  animate={{ scale: on ? [1, 1.35, 1] : 1, background: on ? GREEN : "rgba(255,255,255,.08)" }} transition={{ duration: 0.35 }}
-                  style={{ border: `2px solid ${on ? "#fff" : "rgba(255,255,255,.3)"}` }}>
-                  {on && <Check size={18} color="#fff" strokeWidth={3.4} />}
-                </motion.span>
-              </motion.button>
-              <AnimatePresence>
-                {floats.filter((f) => f.taskId === task.id).map((f) => (
-                  <motion.span key={f.id} initial={{ opacity: 1, y: 0 }} animate={{ opacity: 0, y: -46 }} exit={{ opacity: 0 }} transition={{ duration: 1 }}
-                    className="pointer-events-none absolute end-14 top-2 text-lg font-black" style={{ color: GOLD, textShadow: "0 0 8px rgba(0,0,0,.6)" }}>+{f.xp} XP</motion.span>
-                ))}
-              </AnimatePresence>
-            </li>
-          );
-        })}
-      </ul>
-      {!canEdit && <p className="mt-3 text-center text-xs" style={{ color: "rgba(255,255,255,.6)" }}>{t("This level is not open yet.", "هذه المرحلة لم تُفتح بعد.")}</p>}
-
-      <AnimatePresence>
-        {complete && (
-          <motion.div initial={{ opacity: 0, y: 16, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0 }}
-            className="mt-5 rounded-2xl p-4 text-center" style={{ background: "linear-gradient(135deg,rgba(251,191,36,.25),rgba(16,185,129,.2))", border: `1.5px solid ${GOLD}` }}>
-            <div className="text-lg font-black" style={{ color: GOLD }}>{t(`Day ${day.day} complete!`, `أتممتَ اليوم ${day.day}!`)}</div>
-            <div className="mt-1 flex items-center justify-center gap-3 text-sm font-bold">
-              <span><Zap size={14} className="inline" color={GOLD} /> +{total} XP</span>
-              <span><Flame size={14} className="inline" color="#fb923c" /> {t(`${streak}-day streak`, `${streak} أيام متتالية`)}</span>
-            </div>
-            {chapterEnd && <p className="mt-2 text-sm" style={{ color: "#fde68a" }}>{t(`You finished «${chapterEnd.name.en}».`, `أتممتَ «${chapterEnd.name.ar}».`)}</p>}
-            {next && <p className="mt-2 text-xs" style={{ color: "rgba(255,255,255,.8)" }}>{t("Next on the road:", "على الطريق بعدها:")} <b>{t(next.title.en, next.title.ar)}</b></p>}
-            <button onClick={onClose} className="mt-3 w-full rounded-xl py-2.5 text-sm font-black" style={{ background: GOLD, color: "#422006" }}>
-              {next ? t("Continue the journey", "تابع الرحلة") : t("See the gate of Eid", "إلى باب العيد")}
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </Sheet>
   );
 }
 
