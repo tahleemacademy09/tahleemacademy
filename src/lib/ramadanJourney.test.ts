@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DAYS, TOTAL_DAYS, computeProgress, currentDay, rankFor, badgesFor } from "./ramadanJourney";
+import { DAYS, TOTAL_DAYS, STORY_XP_BONUS, computeProgress, currentDay, rankFor, badgesFor } from "./ramadanJourney";
 
 const finish = (days: number[]) => new Set(days.flatMap((d) => DAYS[d - 1].tasks.map((t) => t.id)));
 
@@ -37,7 +37,7 @@ describe("ramadan journey", () => {
   });
   it("xp, rank and badges", () => {
     const p = computeProgress(finish([1, 2, 3, 4, 5, 6, 7]), 8, 8);
-    expect(p.xp).toBe(7 * 60);
+    expect(p.xp).toBe(7 * 60 + 3 * STORY_XP_BONUS);   // days 1-3 carry a full story
     expect(rankFor(p.daysDone).name.en).toBe("Steadfast");
     expect(badgesFor(p, finish([1, 2, 3, 4, 5, 6, 7])).find((b) => b.id === "s7")?.earned).toBe(true);
   });

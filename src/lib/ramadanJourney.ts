@@ -5,6 +5,8 @@
   touching the screen. The task texts below are a first FRAME — to be replaced once the real daily tasks are agreed.
 */
 
+import { hasStory } from "./ramadanStory";
+
 export const TOTAL_DAYS = 30;
 /** Hijri year of the season — also the key progress is saved under. */
 export const RAMADAN_YEAR = 1448;
@@ -111,6 +113,8 @@ const KNOWLEDGE: Bi[] = [
 
 export const CAT_XP: Record<TaskCat, number> = { quran: 20, salah: 15, charity: 15, knowledge: 10 };
 export const QADR_BONUS = 10;
+/** extra XP on top of the knowledge task when the day has a full story to walk through */
+export const STORY_XP_BONUS = 15;
 const QADR_NIGHTS = new Set([21, 23, 25, 27, 29]);
 export const chapterOf = (day: number): 0 | 1 | 2 => (day <= 10 ? 0 : day <= 20 ? 1 : 2);
 
@@ -126,7 +130,10 @@ export function buildDays(): JourneyDay[] {
         mk("quran", { en: `Recite Juz ${day} and do your daily revision`, ar: `اقرأ الجزء ${day} وأنجز مراجعتك اليومية` }),
         mk("salah", qadr ? QADR_SALAH : SALAH[i % SALAH.length], qadr ? QADR_BONUS : 0),
         mk("charity", CHARITY[i % CHARITY.length]),
-        mk("knowledge", KNOWLEDGE[i % KNOWLEDGE.length]),
+        // a day with an authored story: the story IS the knowledge task (ticked by finishing it). Otherwise the old study task.
+        hasStory(day)
+          ? mk("knowledge", { en: `Walk through today's story: “${title.en}”`, ar: `أكمل قصة اليوم: «${title.ar}»` }, STORY_XP_BONUS)
+          : mk("knowledge", KNOWLEDGE[i % KNOWLEDGE.length]),
       ],
     };
   });
